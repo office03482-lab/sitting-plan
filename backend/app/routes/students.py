@@ -1,0 +1,1123 @@
+"""
+Student management routes
+"""
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse, FileResponse
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, selectinload
+from typing import List
+from app.database import get_db
+from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest
+from app.schemas import (
+    HostelCreate,
+    HostelResponse,
+    HostelRoomCreate,
+    HostelRoomResponse,
+    HostelUpdate,
+    StudentBatchTransferRequest,
+    StudentBatchTransferResponse,
+    StudentCreate,
+    StudentHostelRequestCreate,
+    StudentHostelRequestDecision,
+    StudentHostelRequestResponse,
+    StudentImportResponse,
+    StudentResponse,
+    StudentUpdate,
+)
+from app.utils.excel import parse_student_excel, create_student_excel_template
+import tempfile
+import os
+
+router = APIRouter()
+
+
+def split_batch_to_class_section(batch_name: str | None) -> tuple[str | None, str | None]:
+    normalized = (batch_name or "").strip()
+    if not normalized:
+        return None, None
+
+    if "|" in normalized:
+        class_part, section_part = normalized.split("|", 1)
+        return class_part.strip() or None, section_part.strip() or None
+
+    return normalized, None
+
+
+def release_student_seats(db: Session, student_ids: List[int]) -> int:
+    """
+    Remove student assignments from seats before deleting student rows.
+    """
+    if not student_ids:
+        return 0
+
+    seats = db.query(Seat).filter(Seat.student_id.in_(student_ids)).all()
+    for seat in seats:
+        seat.student_id = None
+        seat.is_occupied = False
+    return len(seats)
+
+
+def get_or_create_batch(
+    db: Session,
+    school_id: int,
+    batch_name: str,
+    category: str = "batch",
+    course: str | None = None,
+    program: str | None = None,
+) -> BatchTable:
+    """
+    Resolve batch by name and create it on the fly when missing.
+    """
+    cleaned_name = (batch_name or "").strip()
+    cleaned_course = (course or "").strip()
+    cleaned_program = (program or "").strip()
+    syllabus_parts = [part for part in [cleaned_program, cleaned_course] if part]
+    computed_syllabus = " | ".join(syllabus_parts) if syllabus_parts else None
+
+    if not cleaned_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch name is required",
+        )
+
+    def merge_syllabus(existing_value: str | None, program_value: str, course_value: str) -> str | None:
+        current_parts = [part.strip() for part in (existing_value or "").split("|") if part.strip()]
+        normalized_parts = {part.lower() for part in current_parts}
+
+        if program_value and program_value.lower() not in normalized_parts:
+            current_parts.insert(0, program_value)
+            normalized_parts.add(program_value.lower())
+
+        if course_value and course_value.lower() not in normalized_parts:
+            current_parts.append(course_value)
+
+        return " | ".join(current_parts) if current_parts else None
+
+    existing_batch = db.query(BatchTable).filter(
+        BatchTable.school_id == school_id,
+        BatchTable.category == category,
+        BatchTable.name.ilike(cleaned_name),
+    ).first()
+    if existing_batch:
+        if not existing_batch.is_active:
+            existing_batch.is_active = True
+        if computed_syllabus:
+            existing_batch.syllabus = merge_syllabus(existing_batch.syllabus, cleaned_program, cleaned_course)
+        db.flush()
+        return existing_batch
+
+    new_batch = BatchTable(
+        name=cleaned_name,
+        category=category,
+        syllabus=computed_syllabus,
+        school_id=school_id,
+        is_active=True,
+    )
+    db.add(new_batch)
+    db.flush()
+    return new_batch
+
+
+def delete_school_batches(db: Session, school_id: int) -> int:
+    """
+    Delete all batches for the school and release optional references first.
+    """
+    batches = db.query(BatchTable).filter(BatchTable.school_id == school_id).all()
+    if not batches:
+        return 0
+
+    batch_ids = [batch.id for batch in batches]
+
+    # Keep inventory history labels intact via batch_name, but remove FK links.
+    db.query(StockOutEntry).filter(
+        StockOutEntry.school_id == school_id,
+        StockOutEntry.batch_id.in_(batch_ids),
+    ).update(
+        {StockOutEntry.batch_id: None},
+        synchronize_session=False,
+    )
+
+    for batch in batches:
+        db.delete(batch)
+
+    return len(batches)
+
+
+def serialize_hostel_room(room: HostelRoom) -> HostelRoomResponse:
+    return HostelRoomResponse(
+        id=room.id,
+        hostel_id=room.hostel_id,
+        room_number=room.room_number,
+        total_beds=room.total_beds,
+        occupied_beds=room.occupied_beds,
+        available_beds=max(int(room.total_beds or 0) - int(room.occupied_beds or 0), 0),
+        is_active=room.is_active,
+    )
+
+
+def serialize_hostel(hostel: Hostel) -> HostelResponse:
+    active_rooms = [room for room in hostel.rooms if room.is_active]
+    total_capacity = sum(int(room.total_beds or 0) for room in active_rooms)
+    occupied_beds = sum(int(room.occupied_beds or 0) for room in active_rooms)
+    return HostelResponse(
+        id=hostel.id,
+        name=hostel.name,
+        hostel_head=hostel.hostel_head,
+        warden_name=hostel.warden_name,
+        gender_category=hostel.gender_category,
+        address=hostel.address,
+        is_active=hostel.is_active,
+        total_capacity=total_capacity,
+        occupied_beds=occupied_beds,
+        available_beds=max(total_capacity - occupied_beds, 0),
+        total_rooms=len(active_rooms),
+        rooms=[serialize_hostel_room(room) for room in active_rooms],
+    )
+
+
+def serialize_student(student: Student) -> StudentResponse:
+    return StudentResponse(
+        id=student.id,
+        roll_number=student.roll_number,
+        name=student.name,
+        father_name=student.father_name,
+        batch=student.batch,
+        class_name=student.class_name,
+        section=student.section,
+        academic_session=student.academic_session,
+        email=student.email,
+        phone=student.phone,
+        special_needs=student.special_needs,
+        requires_near_exit=bool(student.requires_near_exit),
+        requires_extra_time=bool(student.requires_extra_time),
+        boarding_type=student.boarding_type,
+        hostel_required=bool(student.hostel_required),
+        preferred_hostel_id=student.preferred_hostel_id,
+        hostel_request_status=student.hostel_request_status,
+        assigned_hostel_id=student.assigned_hostel_id,
+        assigned_hostel_name=student.assigned_hostel.name if student.assigned_hostel else None,
+        assigned_room_id=student.assigned_room_id,
+        assigned_room_number=student.assigned_room.room_number if student.assigned_room else None,
+        assigned_bed_label=student.assigned_bed_label,
+        hostel_notes=student.hostel_notes,
+        reference_name=student.reference_name,
+        reference_number=student.reference_number,
+        reference_remark=student.reference_remark,
+        school_id=student.school_id,
+        is_active=student.is_active,
+        created_at=student.created_at,
+        updated_at=student.updated_at,
+    )
+
+
+def serialize_hostel_request(request: StudentHostelRequest) -> StudentHostelRequestResponse:
+    return StudentHostelRequestResponse(
+        id=request.id,
+        student_id=request.student_id,
+        student_name=request.student.name if request.student else "",
+        roll_number=request.student.roll_number if request.student else "",
+        batch=request.student.batch if request.student else "",
+        class_name=request.student.class_name if request.student else None,
+        section=request.student.section if request.student else None,
+        reference_name=request.student.reference_name if request.student else None,
+        reference_number=request.student.reference_number if request.student else None,
+        reference_remark=request.student.reference_remark if request.student else None,
+        hostel_id=request.hostel_id,
+        hostel_name=request.hostel.name if request.hostel else "",
+        room_id=request.room_id,
+        room_number=request.room.room_number if request.room else None,
+        requested_notes=request.requested_notes,
+        status=request.status,
+        assigned_bed_label=request.assigned_bed_label,
+        reviewed_by=request.reviewed_by,
+        review_notes=request.review_notes,
+        requested_at=request.requested_at,
+        reviewed_at=request.reviewed_at,
+    )
+
+
+def sync_hostel_room_occupancy(db: Session, room_id: int | None) -> None:
+    if not room_id:
+        return
+    # SessionLocal uses autoflush=False, so push in-memory room/student moves
+    # before recounting approved allocations for a room.
+    db.flush()
+    room = db.query(HostelRoom).filter(HostelRoom.id == room_id).first()
+    if not room:
+        return
+    room.occupied_beds = db.query(Student).filter(
+        Student.assigned_room_id == room_id,
+        Student.hostel_request_status == "approved",
+    ).count()
+    db.flush()
+
+
+def build_next_bed_label(room: HostelRoom) -> str:
+    next_bed_index = int(room.occupied_beds or 0)
+    return f"Bed {next_bed_index}"
+
+
+@router.get("/template/download", responses={200: {"content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}}}})
+async def download_student_template():
+    """
+    Download Excel template for student data upload
+    """
+    try:
+        excel_file = create_student_excel_template()
+        
+        # Write to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            tmp.write(excel_file.getvalue())
+            tmp_path = tmp.name
+
+        return FileResponse(
+            path=tmp_path,
+            filename="student_data_template.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=student_data_template.xlsx"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating template: {str(e)}")
+
+
+@router.post("/import", response_model=StudentImportResponse)
+async def import_students(
+    file: UploadFile = File(...),
+    school_id: int = 1,  # TODO: Get from authenticated user
+    db: Session = Depends(get_db),
+):
+    """
+    Import students from Excel file
+    """
+    # Ensure school exists
+    from app.models import School, User, UserRole
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        # Ensure admin user exists
+        admin = db.query(User).filter(User.id == 1).first()
+        if not admin:
+            admin = User(
+                id=1,
+                email="admin@school.edu",
+                full_name="System Administrator",
+                password_hash="dummy_hash",  # TODO: Proper password hashing
+                role=UserRole.ADMIN,
+                is_active=True,
+                is_verified=True
+            )
+            db.add(admin)
+            db.commit()
+        
+        # Create default school
+        school = School(
+            id=school_id,
+            name="Default School",
+            admin_id=1,
+            is_active=True
+        )
+        db.add(school)
+        db.commit()
+        db.refresh(school)
+
+    # Validate file type
+    if not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file format. Only .xlsx Excel files are allowed."
+        )
+
+    # Read file
+    content = await file.read()
+
+    # Parse Excel
+    valid_students, errors = parse_student_excel(content)
+
+    if not valid_students and errors:
+        # If the file is invalid or missing required columns, return a clear error
+        first_error = errors[0].get('error', 'Invalid Excel file. Please use the provided template.')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=first_error
+        )
+
+    imported_count = 0
+    skipped_count = 0
+
+    # Check for duplicates and save
+    for student_data in valid_students:
+        # Check if roll number already exists
+        existing = db.query(Student).filter(
+            Student.roll_number == student_data['roll_no'],
+            Student.school_id == school_id,
+        ).first()
+
+        if existing:
+            skipped_count += 1
+            errors.append({
+                'roll_no': student_data['roll_no'],
+                'error': 'Student already exists'
+            })
+            continue
+
+        batch = get_or_create_batch(
+            db,
+            school_id,
+            student_data['batch'],
+            category="batch",
+            course=student_data.get('course'),
+            program=student_data.get('program'),
+        )
+        class_name, section = split_batch_to_class_section(student_data.get('batch'))
+        if class_name:
+            get_or_create_batch(db, school_id, class_name, category="class")
+
+        # Create student
+        student = Student(
+            roll_number=student_data['roll_no'],
+            name=student_data['candidate_name'],
+            father_name=student_data.get('father_name') or None,
+            batch=batch.name,
+            batch_id=batch.id,
+            class_name=class_name,
+            section=section,
+            academic_session=student_data.get('academic_session') or None,
+            email=student_data.get('email') or None,
+            phone=student_data.get('phone') or None,
+            special_needs=student_data.get('special_needs') or None,
+            hostel_required=False,
+            hostel_request_status="not_requested",
+            school_id=school_id,
+            is_active=True,
+        )
+        db.add(student)
+        imported_count += 1
+
+    db.commit()
+
+    return StudentImportResponse(
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        errors=errors,
+        message=f"Imported {imported_count} students, skipped {skipped_count}"
+    )
+
+
+@router.post("", response_model=StudentResponse)
+async def create_student(
+    student: StudentCreate,
+    school_id: int = 1,  # TODO: Get from authenticated user
+    db: Session = Depends(get_db),
+):
+    """
+    Create a new student
+    """
+    # Check if roll number already exists
+    existing = db.query(Student).filter(
+        Student.roll_number == student.roll_number,
+        Student.school_id == school_id,
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Student with this roll number already exists"
+        )
+
+    batch = get_or_create_batch(db, school_id, student.batch, category="batch")
+    normalized_class_name = (student.class_name or "").strip() or None
+    normalized_section = (student.section or "").strip() or None
+    if normalized_class_name:
+        get_or_create_batch(db, school_id, normalized_class_name, category="class")
+
+    # Create student
+    db_student = Student(
+        roll_number=student.roll_number,
+        name=student.name,
+        father_name=student.father_name,
+        batch=batch.name,
+        batch_id=batch.id,
+        class_name=normalized_class_name,
+        section=normalized_section,
+        academic_session=student.academic_session,
+        email=student.email,
+        phone=student.phone,
+        special_needs=student.special_needs,
+        boarding_type=student.boarding_type,
+        hostel_required=student.hostel_required,
+        preferred_hostel_id=student.preferred_hostel_id,
+        hostel_request_status="pending" if student.hostel_required and student.preferred_hostel_id else (student.hostel_request_status or "not_requested"),
+        hostel_notes=student.hostel_notes,
+        reference_name=student.reference_name,
+        reference_number=student.reference_number,
+        reference_remark=student.reference_remark,
+        school_id=school_id,
+    )
+    db.add(db_student)
+    db.commit()
+    db.refresh(db_student)
+    if db_student.hostel_required and db_student.preferred_hostel_id:
+        request = StudentHostelRequest(
+            school_id=school_id,
+            student_id=db_student.id,
+            hostel_id=db_student.preferred_hostel_id,
+            requested_notes=student.hostel_notes,
+            status="pending",
+        )
+        db.add(request)
+        db.commit()
+        db.refresh(db_student)
+
+    return serialize_student(db_student)
+
+
+@router.get("", response_model=List[StudentResponse])
+async def list_students(
+    school_id: int = 1,
+    skip: int = 0,
+    limit: int = 100,
+    batch: str = None,
+    db: Session = Depends(get_db),
+):
+    """
+    List students for a school
+    """
+    query = db.query(Student).filter(Student.school_id == school_id)
+    
+    if batch:
+        query = query.filter(Student.batch == batch)
+    
+    students = query.offset(skip).limit(limit).all()
+    
+    return [serialize_student(student) for student in students]
+
+@router.get("/hostels", response_model=List[HostelResponse])
+async def list_hostels(
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    try:
+        hostels = (
+            db.query(Hostel)
+            .options(selectinload(Hostel.rooms))
+            .filter(Hostel.school_id == school_id)
+            .order_by(Hostel.name.asc())
+            .all()
+        )
+        return [serialize_hostel(hostel) for hostel in hostels]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load hostels: {exc}") from exc
+
+
+@router.post("/hostels", response_model=HostelResponse)
+async def create_hostel(
+    payload: HostelCreate,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    try:
+        hostel = Hostel(
+            school_id=school_id,
+            name=payload.name.strip(),
+            hostel_head=payload.hostel_head,
+            warden_name=payload.warden_name,
+            gender_category=payload.gender_category,
+            address=payload.address,
+            is_active=payload.is_active,
+        )
+        db.add(hostel)
+        db.flush()
+
+        generated_room_count = max(int(payload.total_rooms or 0), 0)
+        if generated_room_count:
+            for room_index in range(1, generated_room_count + 1):
+                db.add(
+                    HostelRoom(
+                        hostel_id=hostel.id,
+                        room_number=f"Room {room_index}",
+                        total_beds=2,
+                        occupied_beds=0,
+                        is_active=True,
+                    )
+                )
+        else:
+            for room in payload.rooms:
+                db.add(
+                    HostelRoom(
+                        hostel_id=hostel.id,
+                        room_number=room.room_number.strip(),
+                        total_beds=2,
+                        occupied_beds=0,
+                        is_active=True,
+                    )
+                )
+
+        db.commit()
+        db.refresh(hostel)
+        return serialize_hostel(hostel)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create hostel: {exc}") from exc
+
+
+@router.put("/hostels/{hostel_id}", response_model=HostelResponse)
+async def update_hostel(
+    hostel_id: int,
+    payload: HostelUpdate,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
+    if not hostel:
+        raise HTTPException(status_code=404, detail="Hostel not found")
+
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(hostel, key, value)
+
+    db.commit()
+    db.refresh(hostel)
+    return serialize_hostel(hostel)
+
+
+@router.delete("/hostels/{hostel_id}")
+async def delete_hostel(
+    hostel_id: int,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
+    if not hostel:
+        raise HTTPException(status_code=404, detail="Hostel not found")
+
+    try:
+        related_students = db.query(Student).filter(
+            Student.school_id == school_id,
+            or_(
+                Student.preferred_hostel_id == hostel_id,
+                Student.assigned_hostel_id == hostel_id,
+            ),
+        ).all()
+
+        for student in related_students:
+            if student.preferred_hostel_id == hostel_id:
+                student.preferred_hostel_id = None
+            if student.assigned_hostel_id == hostel_id:
+                student.assigned_hostel_id = None
+                student.assigned_room_id = None
+                student.assigned_bed_label = None
+            if student.hostel_request_status in {"pending", "approved"}:
+                student.hostel_request_status = "not_requested"
+
+        db.query(StudentHostelRequest).filter(
+            StudentHostelRequest.school_id == school_id,
+            StudentHostelRequest.hostel_id == hostel_id,
+        ).delete(synchronize_session=False)
+
+        db.delete(hostel)
+        db.commit()
+        return {"message": "Hostel deleted successfully"}
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete hostel: {exc}") from exc
+
+
+@router.post("/hostels/{hostel_id}/rooms", response_model=HostelRoomResponse)
+async def add_hostel_room(
+    hostel_id: int,
+    payload: HostelRoomCreate,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
+    if not hostel:
+        raise HTTPException(status_code=404, detail="Hostel not found")
+
+    room = HostelRoom(
+        hostel_id=hostel_id,
+        room_number=payload.room_number.strip(),
+        total_beds=2,
+        occupied_beds=0,
+        is_active=True,
+    )
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return serialize_hostel_room(room)
+
+
+@router.get("/hostel-requests", response_model=List[StudentHostelRequestResponse])
+async def list_hostel_requests(
+    school_id: int = 1,
+    status_filter: str | None = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        query = (
+            db.query(StudentHostelRequest)
+            .options(
+                selectinload(StudentHostelRequest.student),
+                selectinload(StudentHostelRequest.hostel),
+                selectinload(StudentHostelRequest.room),
+            )
+            .filter(StudentHostelRequest.school_id == school_id)
+        )
+        if status_filter:
+            query = query.filter(StudentHostelRequest.status == status_filter)
+        requests = query.order_by(StudentHostelRequest.requested_at.desc(), StudentHostelRequest.id.desc()).all()
+        return [serialize_hostel_request(item) for item in requests]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load hostel requests: {exc}") from exc
+
+
+@router.post("/{student_id}/hostel-request", response_model=StudentHostelRequestResponse)
+async def create_or_update_hostel_request(
+    student_id: int,
+    payload: StudentHostelRequestCreate,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    hostel = db.query(Hostel).filter(Hostel.id == payload.hostel_id, Hostel.school_id == school_id, Hostel.is_active == True).first()
+    if not hostel:
+        raise HTTPException(status_code=404, detail="Hostel not found")
+
+    request = db.query(StudentHostelRequest).filter(
+        StudentHostelRequest.student_id == student_id,
+        StudentHostelRequest.status.in_(["pending", "approved"]),
+    ).order_by(StudentHostelRequest.id.desc()).first()
+
+    if request and request.status == "approved":
+        raise HTTPException(status_code=400, detail="Hostel already allocated for this student")
+
+    if request:
+        request.hostel_id = hostel.id
+        request.requested_notes = payload.requested_notes
+        request.status = "pending"
+        request.reviewed_by = None
+        request.review_notes = None
+        request.reviewed_at = None
+        request.room_id = None
+        request.assigned_bed_label = None
+    else:
+        request = StudentHostelRequest(
+            school_id=school_id,
+            student_id=student_id,
+            hostel_id=hostel.id,
+            requested_notes=payload.requested_notes,
+            status="pending",
+        )
+        db.add(request)
+
+    student.hostel_required = True
+    student.preferred_hostel_id = hostel.id
+    student.hostel_request_status = "pending"
+    student.hostel_notes = payload.requested_notes
+    student.assigned_hostel_id = None
+    student.assigned_room_id = None
+    student.assigned_bed_label = None
+    db.commit()
+    db.refresh(request)
+    return serialize_hostel_request(request)
+
+
+@router.post("/hostel-requests/{request_id}/approve", response_model=StudentHostelRequestResponse)
+async def approve_hostel_request(
+    request_id: int,
+    payload: StudentHostelRequestDecision,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    request = db.query(StudentHostelRequest).filter(
+        StudentHostelRequest.id == request_id,
+        StudentHostelRequest.school_id == school_id,
+    ).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Hostel request not found")
+    if request.status == "approved":
+        raise HTTPException(status_code=400, detail="Hostel request already approved")
+
+    if payload.hostel_id:
+        target_hostel = db.query(Hostel).filter(
+            Hostel.id == payload.hostel_id,
+            Hostel.school_id == school_id,
+            Hostel.is_active == True,
+        ).first()
+        if not target_hostel:
+            raise HTTPException(status_code=404, detail="Selected hostel not found")
+        request.hostel_id = target_hostel.id
+
+    room_query = db.query(HostelRoom).filter(
+        HostelRoom.hostel_id == request.hostel_id,
+        HostelRoom.is_active == True,
+    )
+    if payload.room_id:
+        room_query = room_query.filter(HostelRoom.id == payload.room_id)
+
+    room = room_query.order_by(HostelRoom.room_number.asc()).first()
+    if not room:
+        raise HTTPException(status_code=400, detail="No hostel room available for allocation")
+    if int(room.occupied_beds or 0) >= int(room.total_beds or 0):
+        raise HTTPException(status_code=400, detail="Selected room is already full")
+
+    student = request.student
+    previous_room_id = student.assigned_room_id
+    if previous_room_id and previous_room_id != room.id:
+        sync_hostel_room_occupancy(db, previous_room_id)
+
+    room.occupied_beds = int(room.occupied_beds or 0) + 1
+    assigned_bed_label = build_next_bed_label(room)
+
+    request.status = "approved"
+    request.room_id = room.id
+    request.assigned_bed_label = assigned_bed_label
+    request.reviewed_by = payload.reviewed_by or request.hostel.hostel_head or request.hostel.warden_name
+    request.review_notes = payload.review_notes
+    request.reviewed_at = datetime.now(timezone.utc)
+
+    student.hostel_required = True
+    student.hostel_request_status = "approved"
+    student.assigned_hostel_id = request.hostel_id
+    student.assigned_room_id = room.id
+    student.assigned_bed_label = assigned_bed_label
+    student.hostel_notes = request.requested_notes
+    db.commit()
+    db.refresh(request)
+    return serialize_hostel_request(request)
+
+
+@router.post("/hostel-requests/{request_id}/move", response_model=StudentHostelRequestResponse)
+async def move_hostel_allocation(
+    request_id: int,
+    payload: StudentHostelRequestDecision,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    request = db.query(StudentHostelRequest).filter(
+        StudentHostelRequest.id == request_id,
+        StudentHostelRequest.school_id == school_id,
+    ).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Hostel request not found")
+    if request.status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved hostel allocations can be moved")
+
+    target_hostel_id = payload.hostel_id or request.hostel_id
+    target_hostel = db.query(Hostel).filter(
+        Hostel.id == target_hostel_id,
+        Hostel.school_id == school_id,
+        Hostel.is_active == True,
+    ).first()
+    if not target_hostel:
+        raise HTTPException(status_code=404, detail="Selected hostel not found")
+
+    room_query = db.query(HostelRoom).filter(
+        HostelRoom.hostel_id == target_hostel.id,
+        HostelRoom.is_active == True,
+    )
+    if payload.room_id:
+        room_query = room_query.filter(HostelRoom.id == payload.room_id)
+
+    room = room_query.order_by(HostelRoom.room_number.asc()).first()
+    if not room:
+        raise HTTPException(status_code=400, detail="No hostel room available for move")
+    if int(room.occupied_beds or 0) >= int(room.total_beds or 0) and room.id != request.room_id:
+        raise HTTPException(status_code=400, detail="Selected room is already full")
+
+    student = request.student
+    previous_room_id = request.room_id
+    previous_hostel_id = request.hostel_id
+
+    request.hostel_id = target_hostel.id
+    request.room_id = room.id
+    request.assigned_bed_label = build_next_bed_label(room) if room.id != previous_room_id else request.assigned_bed_label
+    request.reviewed_by = payload.reviewed_by or request.reviewed_by or target_hostel.hostel_head or target_hostel.warden_name
+    request.review_notes = payload.review_notes
+    request.reviewed_at = datetime.now(timezone.utc)
+
+    student.hostel_required = True
+    student.preferred_hostel_id = target_hostel.id
+    student.hostel_request_status = "approved"
+    student.assigned_hostel_id = target_hostel.id
+    student.assigned_room_id = room.id
+    student.assigned_bed_label = request.assigned_bed_label
+
+    sync_hostel_room_occupancy(db, previous_room_id)
+    sync_hostel_room_occupancy(db, room.id)
+    db.commit()
+    db.refresh(request)
+    return serialize_hostel_request(request)
+
+
+@router.post("/hostel-requests/{request_id}/reject", response_model=StudentHostelRequestResponse)
+async def reject_hostel_request(
+    request_id: int,
+    payload: StudentHostelRequestDecision,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    request = db.query(StudentHostelRequest).filter(
+        StudentHostelRequest.id == request_id,
+        StudentHostelRequest.school_id == school_id,
+    ).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Hostel request not found")
+
+    request.status = "rejected"
+    request.reviewed_by = payload.reviewed_by or request.hostel.hostel_head or request.hostel.warden_name
+    request.review_notes = payload.review_notes
+    request.reviewed_at = datetime.now(timezone.utc)
+
+    student = request.student
+    if student:
+        student.hostel_request_status = "rejected"
+        student.assigned_hostel_id = None
+        student.assigned_room_id = None
+        student.assigned_bed_label = None
+
+    db.commit()
+    db.refresh(request)
+    return serialize_hostel_request(request)
+
+
+@router.post("/transfer", response_model=StudentBatchTransferResponse)
+async def transfer_students_to_batch(
+    transfer_data: StudentBatchTransferRequest,
+    school_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    """
+    Transfer selected students or a whole batch to another batch.
+    """
+    target_batch = get_or_create_batch(db, school_id, transfer_data.target_batch)
+    normalized_source_batch = (transfer_data.source_batch or "").strip() or None
+
+    if transfer_data.transfer_all_from_batch:
+        if not normalized_source_batch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source batch is required when transferring all students from a batch",
+            )
+
+        if normalized_source_batch.lower() == target_batch.name.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source batch and target batch cannot be the same",
+            )
+
+        students_to_transfer = db.query(Student).filter(
+            Student.school_id == school_id,
+            Student.batch == normalized_source_batch,
+        ).all()
+    else:
+        if not transfer_data.student_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Select at least one student to transfer",
+            )
+
+        students_to_transfer = db.query(Student).filter(
+            Student.school_id == school_id,
+            Student.id.in_(transfer_data.student_ids),
+        ).all()
+
+        if len(students_to_transfer) != len(set(transfer_data.student_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or more selected students were not found",
+            )
+
+        if all((student.batch or "").lower() == target_batch.name.lower() for student in students_to_transfer):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected students are already in the target batch",
+            )
+
+    if not students_to_transfer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No students found to transfer",
+        )
+
+    source_batches_before_transfer = sorted({student.batch for student in students_to_transfer if student.batch})
+
+    for student in students_to_transfer:
+        student.batch = target_batch.name
+        student.batch_id = target_batch.id
+
+    db.commit()
+
+    source_batch_label = normalized_source_batch
+    if not source_batch_label and len(source_batches_before_transfer) == 1:
+        source_batch_label = source_batches_before_transfer[0]
+
+    return StudentBatchTransferResponse(
+        transferred_count=len(students_to_transfer),
+        source_batch=source_batch_label,
+        target_batch=target_batch.name,
+        message=f"{len(students_to_transfer)} student(s) transferred to {target_batch.name}",
+    )
+
+
+@router.get("/{student_id}", response_model=StudentResponse)
+async def get_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Get student by ID
+    """
+    student = db.query(Student).filter(Student.id == student_id).first()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    return serialize_student(student)
+
+
+@router.put("/{student_id}", response_model=StudentResponse)
+async def update_student(
+    student_id: int,
+    update_data: StudentUpdate,
+    db: Session = Depends(get_db),
+):
+    """
+    Update student information
+    """
+    student = db.query(Student).filter(Student.id == student_id).first()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    # Update fields
+    update_dict = update_data.dict(exclude_unset=True)
+    if 'roll_number' in update_dict and update_dict['roll_number'] is not None:
+        normalized_roll_number = update_dict['roll_number'].strip()
+        if not normalized_roll_number:
+            raise HTTPException(status_code=400, detail="Roll number cannot be empty")
+
+        existing_student = db.query(Student).filter(
+            Student.roll_number == normalized_roll_number,
+            Student.id != student.id,
+            Student.school_id == student.school_id,
+        ).first()
+        if existing_student:
+            raise HTTPException(status_code=400, detail="Student with this roll number already exists")
+
+        update_dict['roll_number'] = normalized_roll_number
+
+    if 'batch' in update_dict and update_dict['batch'] is not None:
+        batch = get_or_create_batch(db, student.school_id, update_dict['batch'], category="batch")
+        update_dict['batch'] = batch.name
+        update_dict['batch_id'] = batch.id
+
+    if 'class_name' in update_dict:
+        normalized_class_name = (update_dict['class_name'] or '').strip()
+        update_dict['class_name'] = normalized_class_name or None
+        if normalized_class_name:
+            get_or_create_batch(db, student.school_id, normalized_class_name, category="class")
+
+    if 'section' in update_dict:
+        normalized_section = (update_dict['section'] or '').strip()
+        update_dict['section'] = normalized_section or None
+
+    if "preferred_hostel_id" in update_dict and not update_dict.get("hostel_required", student.hostel_required):
+        update_dict["preferred_hostel_id"] = None
+
+    if "hostel_required" in update_dict and update_dict["hostel_required"] is False:
+        if student.assigned_room_id:
+            sync_hostel_room_occupancy(db, student.assigned_room_id)
+        update_dict["hostel_request_status"] = "not_requested"
+        update_dict["preferred_hostel_id"] = None
+        update_dict["assigned_hostel_id"] = None
+        update_dict["assigned_room_id"] = None
+        update_dict["assigned_bed_label"] = None
+
+    for key, value in update_dict.items():
+        setattr(student, key, value)
+    
+    db.commit()
+    db.refresh(student)
+
+    if student.hostel_required and student.preferred_hostel_id and student.hostel_request_status in {"not_requested", "", None}:
+        request = StudentHostelRequest(
+            school_id=student.school_id,
+            student_id=student.id,
+            hostel_id=student.preferred_hostel_id,
+            requested_notes=student.hostel_notes,
+            status="pending",
+        )
+        db.add(request)
+        student.hostel_request_status = "pending"
+        db.commit()
+        db.refresh(student)
+
+    return serialize_student(student)
+
+
+@router.delete("/{student_id}")
+async def delete_student(
+    student_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Delete student
+    """
+    student = db.query(Student).filter(Student.id == student_id).first()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    assigned_room_id = student.assigned_room_id
+    release_student_seats(db, [student.id])
+    db.delete(student)
+    db.commit()
+    sync_hostel_room_occupancy(db, assigned_room_id)
+    db.commit()
+    
+    return {"message": "Student deleted"}
+
+
+@router.delete("")
+async def delete_all_students(
+    school_id: int = 1,
+    is_admin: bool = False,
+    db: Session = Depends(get_db),
+):
+    """
+    Delete all students for a school (Admin only).
+    """
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can delete all students",
+        )
+
+    students = db.query(Student).filter(Student.school_id == school_id).all()
+    student_ids = [student.id for student in students]
+    released_seats = release_student_seats(db, student_ids)
+
+    deleted_count = 0
+    for student in students:
+        db.delete(student)
+        deleted_count += 1
+
+    deleted_batches = delete_school_batches(db, school_id)
+
+    # Generated seating plans become stale once all students are removed.
+    seating_plans = db.query(SeatingPlan).all()
+    deleted_plans = len(seating_plans)
+    for plan in seating_plans:
+        db.delete(plan)
+
+    db.commit()
+
+    return {
+        "message": f"All {deleted_count} students, {deleted_batches} batches, and {deleted_plans} seating plans deleted successfully",
+        "deleted_count": deleted_count,
+        "released_seats": released_seats,
+        "deleted_batches": deleted_batches,
+        "deleted_plans": deleted_plans,
+    }

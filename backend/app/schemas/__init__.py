@@ -1,0 +1,1523 @@
+"""
+Pydantic validation schemas
+"""
+from pydantic import BaseModel, Field, validator
+from datetime import date, datetime
+from typing import Optional, List, Dict, Any
+from enum import Enum
+
+from app.models import DoorLocation, LeaveStatus, LeaveType
+
+
+# ==================== Auth Schemas ====================
+
+class SendOTPRequest(BaseModel):
+    """Request to send OTP"""
+    email: str
+
+
+class VerifyOTPRequest(BaseModel):
+    """Request to verify OTP"""
+    email: str
+    otp_code: str
+
+
+class LoginResponse(BaseModel):
+    """Login successful response"""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    email: str
+    username: Optional[str] = None
+    full_name: str
+    role: str
+    user_type: Optional[str] = None
+    permissions: List[str] = Field(default_factory=list)
+
+
+class PasswordLoginRequest(BaseModel):
+    """Password login request"""
+    username: str
+    password: str
+
+
+class UserBase(BaseModel):
+    """Base user schema"""
+    email: str
+    full_name: str
+    phone: Optional[str] = None
+
+
+class UserCreate(UserBase):
+    """Create user schema"""
+    password: str
+
+
+class UserResponse(UserBase):
+    """User response schema"""
+    id: int
+    role: str
+    is_active: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class UserRolePowerBase(BaseModel):
+    """Shared schema for admin-managed users"""
+    username: Optional[str] = None
+    full_name: str
+    email: Optional[str] = None
+    password: Optional[str] = None
+    role: str
+    user_type: str = "non_teaching"
+    permissions: List[str] = Field(default_factory=list)
+
+
+class UserRolePowerCreate(UserRolePowerBase):
+    """Create role user schema"""
+    pass
+
+
+class UserRolePowerUpdate(BaseModel):
+    """Update role user schema"""
+    full_name: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    user_type: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
+class UserRolePowerResponse(UserRolePowerBase):
+    """Role user response schema"""
+    id: int
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== Batch Schemas ====================
+
+class BatchBase(BaseModel):
+    """Base batch schema"""
+    name: str
+    category: str = "batch"
+    syllabus: Optional[str] = None
+    display_order: int = 0
+    is_active: bool = True
+
+
+class BatchCreate(BatchBase):
+    """Create batch schema"""
+    pass
+
+
+class BatchUpdate(BaseModel):
+    """Update batch schema"""
+    name: Optional[str] = None
+    category: Optional[str] = None
+    syllabus: Optional[str] = None
+    display_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class BatchResponse(BatchBase):
+    """Batch response schema"""
+    id: int
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BatchWithStudentCount(BatchResponse):
+    """Batch response with student count"""
+    student_count: int
+
+
+class BatchReorderItem(BaseModel):
+    batch_id: int
+    display_order: int
+
+
+class BatchReorderRequest(BaseModel):
+    items: List[BatchReorderItem]
+
+
+# ==================== Student Schemas ====================
+
+class StudentBase(BaseModel):
+    """Base student schema"""
+    roll_number: str
+    name: str
+    father_name: Optional[str] = None
+    batch: str  # Batch enum as string
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    academic_session: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    special_needs: Optional[str] = None
+    requires_near_exit: bool = False
+    requires_extra_time: bool = False
+    boarding_type: Optional[str] = None
+    hostel_required: bool = False
+    preferred_hostel_id: Optional[int] = None
+    hostel_request_status: Optional[str] = None
+    assigned_hostel_id: Optional[int] = None
+    assigned_hostel_name: Optional[str] = None
+    assigned_room_id: Optional[int] = None
+    assigned_room_number: Optional[str] = None
+    assigned_bed_label: Optional[str] = None
+    hostel_notes: Optional[str] = None
+    reference_name: Optional[str] = None
+    reference_number: Optional[str] = None
+    reference_remark: Optional[str] = None
+
+
+class StudentCreate(StudentBase):
+    """Create student schema"""
+    pass
+
+
+class StudentUpdate(BaseModel):
+    """Update student schema"""
+    roll_number: Optional[str] = None
+    name: Optional[str] = None
+    father_name: Optional[str] = None
+    batch: Optional[str] = None
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    academic_session: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    special_needs: Optional[str] = None
+    requires_near_exit: Optional[bool] = None
+    requires_extra_time: Optional[bool] = None
+    boarding_type: Optional[str] = None
+    hostel_required: Optional[bool] = None
+    preferred_hostel_id: Optional[int] = None
+    hostel_request_status: Optional[str] = None
+    assigned_hostel_id: Optional[int] = None
+    assigned_room_id: Optional[int] = None
+    assigned_bed_label: Optional[str] = None
+    hostel_notes: Optional[str] = None
+    reference_name: Optional[str] = None
+    reference_number: Optional[str] = None
+    reference_remark: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class StudentResponse(StudentBase):
+    """Student response schema"""
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class StudentImportResponse(BaseModel):
+    """Response from student import"""
+    imported_count: int
+    skipped_count: int
+    errors: List[Dict[str, Any]]
+    message: str
+
+
+class StudentBatchTransferRequest(BaseModel):
+    """Transfer selected or whole-batch students to another batch"""
+    target_batch: str
+    student_ids: List[int] = Field(default_factory=list)
+    source_batch: Optional[str] = None
+    transfer_all_from_batch: bool = False
+
+
+class StudentBatchTransferResponse(BaseModel):
+    """Response for student batch transfer"""
+    transferred_count: int
+    source_batch: Optional[str] = None
+    target_batch: str
+    message: str
+
+
+class HostelRoomCreate(BaseModel):
+    room_number: str
+    total_beds: int = 1
+
+
+class HostelRoomResponse(BaseModel):
+    id: int
+    hostel_id: int
+    room_number: str
+    total_beds: int
+    occupied_beds: int
+    available_beds: int
+    is_active: bool
+
+
+class HostelCreate(BaseModel):
+    name: str
+    hostel_head: Optional[str] = None
+    warden_name: Optional[str] = None
+    gender_category: Optional[str] = None
+    address: Optional[str] = None
+    is_active: bool = True
+    total_rooms: int = 0
+    rooms: List[HostelRoomCreate] = Field(default_factory=list)
+
+
+class HostelUpdate(BaseModel):
+    name: Optional[str] = None
+    hostel_head: Optional[str] = None
+    warden_name: Optional[str] = None
+    gender_category: Optional[str] = None
+    address: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class HostelResponse(BaseModel):
+    id: int
+    name: str
+    hostel_head: Optional[str] = None
+    warden_name: Optional[str] = None
+    gender_category: Optional[str] = None
+    address: Optional[str] = None
+    is_active: bool
+    total_capacity: int
+    occupied_beds: int
+    available_beds: int
+    total_rooms: int
+    rooms: List[HostelRoomResponse] = Field(default_factory=list)
+
+
+class StudentHostelRequestCreate(BaseModel):
+    hostel_id: int
+    requested_notes: Optional[str] = None
+
+
+class StudentHostelRequestDecision(BaseModel):
+    hostel_id: Optional[int] = None
+    room_id: Optional[int] = None
+    reviewed_by: Optional[str] = None
+    review_notes: Optional[str] = None
+
+
+class StudentHostelRequestResponse(BaseModel):
+    id: int
+    student_id: int
+    student_name: str
+    roll_number: str
+    batch: str
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    reference_name: Optional[str] = None
+    reference_number: Optional[str] = None
+    reference_remark: Optional[str] = None
+    hostel_id: int
+    hostel_name: str
+    room_id: Optional[int] = None
+    room_number: Optional[str] = None
+    requested_notes: Optional[str] = None
+    status: str
+    assigned_bed_label: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    review_notes: Optional[str] = None
+    requested_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+
+# ==================== Room Schemas ====================
+
+DOOR_LOCATION_ALIASES = {
+    'front': DoorLocation.top.value,
+    'back': DoorLocation.bottom.value,
+    'top': DoorLocation.top.value,
+    'bottom': DoorLocation.bottom.value,
+    'left': DoorLocation.left.value,
+    'right': DoorLocation.right.value,
+    'front_left': DoorLocation.top_left.value,
+    'left_front': DoorLocation.top_left.value,
+    'top_left': DoorLocation.top_left.value,
+    'front_right': DoorLocation.top_right.value,
+    'right_front': DoorLocation.top_right.value,
+    'top_right': DoorLocation.top_right.value,
+    'back_left': DoorLocation.bottom_left.value,
+    'left_back': DoorLocation.bottom_left.value,
+    'bottom_left': DoorLocation.bottom_left.value,
+    'back_right': DoorLocation.bottom_right.value,
+    'right_back': DoorLocation.bottom_right.value,
+    'bottom_right': DoorLocation.bottom_right.value,
+}
+
+VALID_DOOR_LOCATIONS = {location.value for location in DoorLocation}
+
+
+def normalize_door_location(value: Optional[str], default: Optional[str] = None) -> Optional[str]:
+    if value is None:
+        return default
+
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+
+    if not normalized:
+        return default
+
+    normalized = DOOR_LOCATION_ALIASES.get(normalized, normalized)
+    if normalized not in VALID_DOOR_LOCATIONS:
+        raise ValueError(f"Invalid door_location: {value}")
+    return normalized
+
+
+class RoomBase(BaseModel):
+    """Base room schema"""
+    name: str
+    length_feet: float
+    width_feet: float
+    desk_length_feet: float = 2.0
+    desk_width_feet: float = 3.0
+    num_benches: int
+    teaching_zone_clearance_feet: float = 5.0
+    aisle_width_feet: float = 3.0
+    door_location: str = DoorLocation.left.value
+    window_location: Optional[str] = None
+    glare_mitigation: bool = False
+    is_accessible: bool = False
+
+    @validator('door_location', pre=True, always=True)
+    def validate_door_location(cls, value):
+        return normalize_door_location(value, default=DoorLocation.left.value)
+
+
+class RoomCreate(RoomBase):
+    """Create room schema"""
+    pass
+
+
+class RoomUpdate(BaseModel):
+    """Update room schema"""
+    name: Optional[str] = None
+    length_feet: Optional[float] = None
+    width_feet: Optional[float] = None
+    desk_length_feet: Optional[float] = None
+    desk_width_feet: Optional[float] = None
+    num_benches: Optional[int] = None
+    teaching_zone_clearance_feet: Optional[float] = None
+    aisle_width_feet: Optional[float] = None
+    door_location: Optional[str] = None
+    window_location: Optional[str] = None
+    is_accessible: Optional[bool] = None
+    glare_mitigation: Optional[bool] = None
+
+    @validator('door_location', pre=True, always=True)
+    def validate_door_location(cls, value):
+        return normalize_door_location(value)
+
+
+class RoomResponse(BaseModel):
+    id: int
+    name: str
+    length_feet: float
+    width_feet: float
+    desk_length_feet: float
+    desk_width_feet: float
+    num_benches: int
+    capacity: int
+    teaching_zone_clearance_feet: float
+    aisle_width_feet: float
+    door_location: str
+    window_location: str
+    glare_mitigation: bool
+    is_accessible: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== Seating Plan Schemas ====================
+
+class SeatPosition(BaseModel):
+    """Single seat position"""
+    seat_id: int
+    desk_id: int
+    position: int  # 1 or 2
+    student_id: Optional[int] = None
+    student_name: Optional[str] = None
+    student_roll: Optional[str] = None
+    batch: Optional[str] = None
+    is_occupied: bool
+    row: int
+    col: int
+
+
+class DeskLayout(BaseModel):
+    """Desk with both seat positions"""
+    desk_id: int
+    row: int
+    col: int
+    seats: List[SeatPosition]
+    is_reserved: bool = False
+    reservation_reason: Optional[str] = None
+
+
+class RoomLayout(BaseModel):
+    """Complete room layout"""
+    room_id: int
+    room_name: str
+    desks: List[DeskLayout]
+    dimensions: Dict[str, float]
+    capacity: int
+    occupied: int
+
+
+class GenerateSeatingRequest(BaseModel):
+    """Request to generate seating plans"""
+    exam_id: int
+    room_ids: List[int]
+    algorithm_version: str = "1.0"
+    batches: List[str] = Field(default_factory=list)
+    plan_type: Optional[str] = None
+    generated_date: Optional[datetime] = None
+    invigilator_assignments: Dict[str, Optional[int]] = Field(default_factory=dict)
+    batch_conflict_groups: List[List[str]] = Field(default_factory=list)
+
+
+class SeatingPlanResponse(BaseModel):
+    """Seating plan response"""
+    id: int
+    exam_id: int
+    room_id: int
+    exam_name: Optional[str] = None
+    exam_subject: Optional[str] = None
+    room_name: Optional[str] = None
+    batches: List[str] = Field(default_factory=list)
+    name: str
+    plan_type: str
+    status: str
+    students_assigned: int
+    is_valid: bool
+    validation_errors: Optional[List[str]] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SeatingPlanEntry(BaseModel):
+    """Individual seating plan entry from Excel"""
+    sr_no: Optional[int] = None
+    roll_no: str
+    candidate_name: str
+    father_name: Optional[str] = None
+    batch: str
+    room_no: str
+
+
+class SeatingPlanImportResponse(BaseModel):
+    """Response for seating plan import"""
+    success: bool
+    imported_count: int
+    skipped_count: int
+    errors: List[Dict[str, Any]]
+    room_summary: Dict[str, int]  # room_no -> count
+
+
+# ==================== Teacher Schemas ====================
+
+class TeacherBase(BaseModel):
+    """Base teacher schema"""
+    name: str = Field(..., min_length=1, max_length=255)
+    subject: str = Field(..., min_length=1, max_length=255)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class TeacherCreate(TeacherBase):
+    """Create teacher schema"""
+    pass
+
+
+class TeacherUpdate(BaseModel):
+    """Update teacher schema"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    subject: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TeacherResponse(TeacherBase):
+    """Teacher response schema"""
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+# ==================== Timetable Schemas ====================
+
+class DayOfWeek(str, Enum):
+    """Days of the week"""
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+
+
+class TimetableEntryBase(BaseModel):
+    """Base timetable entry schema"""
+    teacher_id: Optional[int] = None
+    room_id: Optional[int] = None
+    session_mode: str = "offline"
+    session_type: str = "regular_class"
+    extra_class_scope: Optional[str] = None
+    online_platform: Optional[str] = None
+    online_link: Optional[str] = None
+    notes: Optional[str] = None
+    day_of_week: DayOfWeek
+    start_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')  # HH:MM format
+    end_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')    # HH:MM format
+    class_name: str = Field(..., min_length=1, max_length=50)
+    subject: str = Field(..., min_length=1, max_length=255)
+
+
+class TimetableEntryCreate(TimetableEntryBase):
+    """Create timetable entry schema"""
+    pass
+
+
+class TimetableEntryUpdate(BaseModel):
+    """Update timetable entry schema"""
+    teacher_id: Optional[int] = None
+    room_id: Optional[int] = None
+    session_mode: Optional[str] = None
+    session_type: Optional[str] = None
+    extra_class_scope: Optional[str] = None
+    online_platform: Optional[str] = None
+    online_link: Optional[str] = None
+    notes: Optional[str] = None
+    day_of_week: Optional[DayOfWeek] = None
+    start_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    end_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
+    class_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    subject: Optional[str] = Field(None, min_length=1, max_length=255)
+    is_active: Optional[bool] = None
+
+
+class TimetableEntryResponse(TimetableEntryBase):
+    """Timetable entry response schema"""
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    teacher_name: Optional[str] = None  # Joined field
+    room_name: Optional[str] = None
+
+
+class TimetableView(BaseModel):
+    """Timetable view with teacher info"""
+    id: int
+    day_of_week: DayOfWeek
+    start_time: str
+    end_time: str
+    class_name: str
+    subject: str
+    teacher_name: str
+    teacher_id: int
+    room_id: Optional[int] = None
+    room_name: Optional[str] = None
+    session_mode: str = "offline"
+    session_type: str = "regular_class"
+    extra_class_scope: Optional[str] = None
+    online_platform: Optional[str] = None
+    online_link: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ConflictCheckResponse(BaseModel):
+    """Response for conflict checking"""
+    has_conflict: bool
+    conflicting_entries: Optional[List[TimetableEntryResponse]] = None
+    message: str
+    
+    class Config:
+        from_attributes = True
+
+
+class PlansComparisonResponse(BaseModel):
+    """Comparison of two seating plans"""
+    plan_a: SeatingPlanResponse
+    plan_b: SeatingPlanResponse
+    room_layout_a: RoomLayout
+    room_layout_b: RoomLayout
+
+
+# ==================== Export Schemas ====================
+
+class ExportPDFRequest(BaseModel):
+    """Request to export PDF"""
+    plan_id: int
+    include_batch_info: bool = True
+    include_invigilator_notes: bool = True
+
+
+class ExportExcelRequest(BaseModel):
+    """Request to export Excel"""
+    plan_id: int
+    include_room_diagram: bool = False
+
+
+# ==================== Analytics Schemas ====================
+
+class BatchDistribution(BaseModel):
+    """Batch distribution in plan"""
+    batch: str
+    count: int
+    percentage: float
+
+
+class PlanStatistics(BaseModel):
+    """Statistics for a seating plan"""
+    plan_id: int
+    total_students: int
+    total_desks: int
+    occupancy_rate: float
+    batch_distribution: List[BatchDistribution]
+    same_batch_violations: int
+    adjacency_violations: int
+
+
+# ==================== Error Response ====================
+
+class ErrorResponse(BaseModel):
+    """Standard error response"""
+    detail: str
+    error_code: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+
+# ==================== Invigilator Schemas ====================
+
+class InvigilatorBase(BaseModel):
+    staff_id: str
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+
+
+class InvigilatorCreate(InvigilatorBase):
+    pass
+
+
+class InvigilatorUpdate(BaseModel):
+    staff_id: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class InvigilatorResponse(InvigilatorBase):
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoomInvigilatorBase(BaseModel):
+    room_id: int
+    invigilator_id: int
+    exam_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class RoomInvigilatorCreate(RoomInvigilatorBase):
+    pass
+
+
+class RoomInvigilatorUpdate(BaseModel):
+    invigilator_id: Optional[int] = None
+    exam_id: Optional[int] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class RoomInvigilatorResponse(RoomInvigilatorBase):
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    invigilator: Optional[InvigilatorResponse] = None
+    room: Optional[RoomResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InvigilatorWithRoomsResponse(InvigilatorResponse):
+    room_assignments: List[RoomInvigilatorResponse] = Field(default_factory=list)
+
+
+# ==================== Inventory Schemas ====================
+
+class SupplierBase(BaseModel):
+    name: str
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    is_active: bool = True
+
+
+class SupplierCreate(SupplierBase):
+    pass
+
+
+class SupplierUpdate(BaseModel):
+    name: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class SupplierResponse(SupplierBase):
+    id: int
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InventorySubjectBase(BaseModel):
+    name: str
+    is_active: bool = True
+
+
+class InventorySubjectCreate(InventorySubjectBase):
+    pass
+
+
+class InventorySubjectUpdate(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class InventorySubjectResponse(InventorySubjectBase):
+    id: int
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InventorySetBase(BaseModel):
+    subject_id: int
+    name: str
+    is_active: bool = True
+
+
+class InventorySetCreate(InventorySetBase):
+    pass
+
+
+class InventorySetUpdate(BaseModel):
+    subject_id: Optional[int] = None
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class InventorySetResponse(InventorySetBase):
+    id: int
+    subject_name: str
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class InventoryVolumeBase(BaseModel):
+    set_id: int
+    name: str
+    volume_number: int
+    is_active: bool = True
+
+
+class InventoryVolumeCreate(InventoryVolumeBase):
+    pass
+
+
+class InventoryVolumeUpdate(BaseModel):
+    set_id: Optional[int] = None
+    name: Optional[str] = None
+    volume_number: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class InventoryVolumeResponse(InventoryVolumeBase):
+    id: int
+    set_name: str
+    subject_id: int
+    subject_name: str
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class MaterialBase(BaseModel):
+    name: str
+    subject_id: Optional[int] = None
+    subject: Optional[str] = None
+    set_id: Optional[int] = None
+    set_name: Optional[str] = None
+    volume_id: Optional[int] = None
+    volume_name: Optional[str] = None
+    volume_number: Optional[int] = None
+    set_part_name: Optional[str] = None
+    batch_names: List[str] = Field(default_factory=list)
+    description: Optional[str] = None
+    unit_type: str = "book"
+    price: float = 0.0
+    low_stock_threshold: int = 10
+    is_active: bool = True
+
+
+class MaterialCreate(MaterialBase):
+    pass
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    subject_id: Optional[int] = None
+    subject: Optional[str] = None
+    set_id: Optional[int] = None
+    set_name: Optional[str] = None
+    volume_id: Optional[int] = None
+    volume_name: Optional[str] = None
+    volume_number: Optional[int] = None
+    set_part_name: Optional[str] = None
+    batch_names: Optional[List[str]] = None
+    description: Optional[str] = None
+    unit_type: Optional[str] = None
+    price: Optional[float] = None
+    low_stock_threshold: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class MaterialResponse(MaterialBase):
+    id: int
+    school_id: int
+    current_stock: int = 0
+    total_distributed: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class InventoryMaterialImportResponse(BaseModel):
+    imported_count: int
+    updated_count: int
+    skipped_count: int
+    errors: List[Dict[str, Any]]
+    message: str
+
+
+class StockInCreate(BaseModel):
+    date: datetime
+    supplier_id: int
+    material_id: int
+    quantity_received: int
+    entry_type: str = "purchase"
+    added_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class StockInResponse(BaseModel):
+    id: int
+    date: datetime
+    supplier_id: int
+    supplier_name: str
+    material_id: int
+    material_name: str
+    quantity_received: int
+    entry_type: str
+    added_by: str
+    notes: Optional[str] = None
+    school_id: int
+    created_at: datetime
+
+
+class StockOutCreate(BaseModel):
+    date: datetime
+    batch_id: Optional[int] = None
+    batch_name: Optional[str] = None
+    batch_ids: List[int] = Field(default_factory=list)
+    material_id: int
+    quantity_issued: int
+    issued_by: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class StockOutResponse(BaseModel):
+    id: int
+    date: datetime
+    batch_id: Optional[int] = None
+    batch_name: str
+    material_id: int
+    material_name: str
+    quantity_issued: int
+    issued_by: str
+    remarks: Optional[str] = None
+    school_id: int
+    created_at: datetime
+
+
+class StudentIssueCreate(BaseModel):
+    date: datetime
+    batch_id: Optional[int] = None
+    student_ids: List[int] = Field(default_factory=list)
+    material_id: int
+    quantity_issued: int
+    issued_by: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class StudentIssueResponse(BaseModel):
+    id: int
+    date: datetime
+    batch_id: Optional[int] = None
+    batch_name: Optional[str] = None
+    student_id: int
+    student_name: str
+    material_id: int
+    material_name: str
+    quantity_issued: int
+    issued_by: str
+    remarks: Optional[str] = None
+    school_id: int
+    created_at: datetime
+
+
+class InventoryDashboardResponse(BaseModel):
+    total_materials_registered: int
+    total_books_in_inventory: int
+    total_books_distributed: int
+    current_stock_available: int
+    low_stock_alert_count: int
+    low_stock_items: List[MaterialResponse] = Field(default_factory=list)
+
+
+class InventoryHistoryEntry(BaseModel):
+    entry_id: int
+    entry_kind: str
+    date: datetime
+    material_id: int
+    material_name: str
+    quantity: int
+    counterparty: str
+    performed_by: str
+    notes: Optional[str] = None
+
+
+class InventoryCatalogVolume(BaseModel):
+    id: int
+    name: str
+    volume_number: int
+    is_active: bool
+    materials: List[MaterialResponse] = Field(default_factory=list)
+
+
+class InventoryCatalogSet(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    volumes: List[InventoryCatalogVolume] = Field(default_factory=list)
+
+
+class InventoryCatalogSubject(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    sets: List[InventoryCatalogSet] = Field(default_factory=list)
+
+
+class InventoryReportRow(BaseModel):
+    values: Dict[str, Any]
+
+
+class InventoryReportResponse(BaseModel):
+    report_type: str
+    generated_at: datetime
+    rows: List[InventoryReportRow] = Field(default_factory=list)
+    total_records: int
+
+
+# ==================== EduPay Schemas ====================
+
+class EduPayParentResponse(BaseModel):
+    id: int
+    full_name: str
+    mobile_number: str
+    email: Optional[str] = None
+    relation: str
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EduPayStudentCreate(BaseModel):
+    admission_no: str
+    full_name: str
+    class_name: str
+    batch_name: Optional[str] = None
+    parent_name: str
+    parent_mobile: str
+    parent_email: Optional[str] = None
+    parent_relation: str = "parent"
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class EduPayStudentResponse(BaseModel):
+    id: int
+    admission_no: str
+    full_name: str
+    class_name: str
+    batch_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    school_id: int
+    parent_id: int
+    parent_name: str
+    parent_mobile: str
+    parent_email: Optional[str] = None
+    total_due: float
+    total_paid: float
+    status: str
+    next_due_date: Optional[datetime] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class EduPayFeeStructureCreate(BaseModel):
+    name: str
+    fee_type: str
+    class_name: Optional[str] = None
+    installment_plan: str = "monthly"
+    total_amount: float
+    discount_amount: float = 0.0
+    late_fee_rule: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class EduPayFeeStructureResponse(BaseModel):
+    id: int
+    name: str
+    fee_type: str
+    class_name: Optional[str] = None
+    installment_plan: str
+    total_amount: float
+    discount_amount: float
+    late_fee_rule: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool
+    school_id: int
+    assigned_students: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class EduPayFeeAssignmentResponse(BaseModel):
+    id: int
+    student_id: int
+    student_name: str
+    fee_structure_id: int
+    fee_structure_name: str
+    installment_label: str
+    due_date: datetime
+    amount_due: float
+    amount_paid: float
+    discount_amount: float
+    late_fee_applied: float
+    status: str
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class EduPayPaymentCreate(BaseModel):
+    assignment_id: int
+    amount: float
+    method: str = "upi"
+    payment_date: Optional[datetime] = None
+    transaction_reference: Optional[str] = None
+
+
+class EduPayPaymentResponse(BaseModel):
+    id: int
+    assignment_id: int
+    student_id: int
+    student_name: str
+    amount: float
+    method: str
+    payment_date: datetime
+    transaction_reference: Optional[str] = None
+    receipt_number: str
+    verification_status: str
+    school_id: int
+    created_at: datetime
+
+
+class EduPayReminderItem(BaseModel):
+    title: str
+    channel: str
+    audience: str
+    scheduled_for: str
+
+
+class EduPayTrendPoint(BaseModel):
+    month: str
+    amount: float
+
+
+class EduPayMethodSplit(BaseModel):
+    method: str
+    amount: float
+    percentage: float
+
+
+class EduPayDashboardResponse(BaseModel):
+    total_collected: float
+    pending_amount: float
+    overdue_amount: float
+    upcoming_dues: int
+    total_students: int
+    active_fee_structures: int
+    reminders_queued: int
+    collection_trend: List[EduPayTrendPoint] = Field(default_factory=list)
+    payment_method_split: List[EduPayMethodSplit] = Field(default_factory=list)
+    reminders: List[EduPayReminderItem] = Field(default_factory=list)
+    recent_payments: List[EduPayPaymentResponse] = Field(default_factory=list)
+
+
+class EduPayParentChildSummary(BaseModel):
+    student_id: int
+    student_name: str
+    class_name: str
+    due_amount: float
+    next_due_date: Optional[datetime] = None
+    status: str
+
+
+class EduPayParentPortalResponse(BaseModel):
+    parent: EduPayParentResponse
+    children: List[EduPayParentChildSummary] = Field(default_factory=list)
+    payment_history: List[EduPayPaymentResponse] = Field(default_factory=list)
+
+
+# ==================== Attendance Schemas ====================
+
+class AttendanceStudentCreate(BaseModel):
+    name: str
+    class_name: str
+    section: str
+    roll_no: str
+    parent_contact: Optional[str] = None
+
+
+class AttendanceStudentResponse(AttendanceStudentCreate):
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttendanceStaffCreate(BaseModel):
+    staff_id: str
+    name: str
+    department: str
+    designation: Optional[str] = None
+    shift: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class AttendanceStaffResponse(AttendanceStaffCreate):
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttendanceSubjectCreate(BaseModel):
+    name: str
+    class_name: str
+    section: str
+
+
+class AttendanceSubjectResponse(AttendanceSubjectCreate):
+    id: int
+    school_id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttendanceSettingUpdate(BaseModel):
+    minimum_attendance_threshold: float
+    working_hours_start: str
+    working_hours_end: str
+
+
+class AttendanceSettingResponse(AttendanceSettingUpdate):
+    updated_at: datetime
+
+
+class AttendanceHolidayCreate(BaseModel):
+    title: str
+    holiday_date: date
+    description: Optional[str] = None
+
+
+class AttendanceHolidayResponse(BaseModel):
+    id: int
+    title: str
+    holiday_date: datetime
+    description: Optional[str] = None
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttendanceNotificationResponse(BaseModel):
+    id: int
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    message: str
+    notification_type: str
+    is_read: bool
+    school_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttendanceLeaveCreate(BaseModel):
+    staff_member_id: int
+    leave_type: LeaveType
+    from_date: date
+    to_date: date
+    reason: Optional[str] = None
+
+
+class AttendanceLeaveDecision(BaseModel):
+    status: LeaveStatus
+    approved_by: Optional[str] = None
+
+
+class AttendanceLeaveResponse(BaseModel):
+    id: int
+    staff_member_id: int
+    staff_name: str
+    leave_type: str
+    from_date: datetime
+    to_date: datetime
+    reason: Optional[str] = None
+    status: str
+    approved_by: Optional[str] = None
+    created_at: datetime
+
+
+class StudentAttendanceMarkingRow(BaseModel):
+    student_id: int
+    roll_no: str
+    student_name: str
+    status: str = "present"
+    absence_reason: Optional[str] = None
+
+
+class StudentAttendanceMarkEntry(BaseModel):
+    student_id: int
+    status: str = "present"
+    absence_reason: Optional[str] = None
+
+
+class StudentAttendanceMarkRequest(BaseModel):
+    date: date
+    subject_id: int
+    marked_by: Optional[str] = None
+    entries: List[StudentAttendanceMarkEntry] = Field(default_factory=list)
+
+
+class StudentAttendanceMarkingResponse(BaseModel):
+    date: datetime
+    class_name: str
+    section: str
+    subject_id: int
+    subject_name: str
+    students: List[StudentAttendanceMarkingRow] = Field(default_factory=list)
+
+
+class StudentAttendanceRecordResponse(BaseModel):
+    id: int
+    student_id: int
+    student_name: str
+    roll_no: str
+    class_name: str
+    section: str
+    date: datetime
+    subject_id: int
+    subject_name: str
+    status: str
+    absence_reason: Optional[str] = None
+    marked_by: str
+    created_at: datetime
+
+
+class TeacherAttendanceContextResponse(BaseModel):
+    teacher_id: int
+    teacher_name: str
+    date: datetime
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    subject: Optional[str] = None
+    subject_id: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timetable_entry_id: Optional[int] = None
+    matched_by_current_time: bool = False
+
+
+class StudentDashboardResponse(BaseModel):
+    total_present: int
+    total_absent: int
+    total_late: int
+    attendance_percentage: float
+    low_attendance_alert: bool
+    subject_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class StaffAttendanceMarkingRow(BaseModel):
+    staff_member_id: int
+    staff_id: str
+    staff_name: str
+    department: str
+    designation: Optional[str] = None
+    status: str = "present"
+    check_in: Optional[str] = None
+    check_out: Optional[str] = None
+    is_on_approved_leave: bool = False
+    leave_type: Optional[str] = None
+    leave_reason: Optional[str] = None
+
+
+class StaffAttendanceMarkEntry(BaseModel):
+    staff_member_id: int
+    status: str = "present"
+    check_in: Optional[str] = None
+    check_out: Optional[str] = None
+
+
+class StaffAttendanceMarkRequest(BaseModel):
+    date: date
+    marked_by: Optional[str] = None
+    entries: List[StaffAttendanceMarkEntry] = Field(default_factory=list)
+
+
+class StaffAttendanceMarkingResponse(BaseModel):
+    date: datetime
+    department: str
+    staff: List[StaffAttendanceMarkingRow] = Field(default_factory=list)
+
+
+class StaffAttendanceRecordResponse(BaseModel):
+    id: int
+    staff_member_id: int
+    staff_id: str
+    staff_name: str
+    department: str
+    designation: Optional[str] = None
+    date: datetime
+    status: str
+    check_in: Optional[str] = None
+    check_out: Optional[str] = None
+    marked_by: str
+    created_at: datetime
+
+
+class StaffDashboardResponse(BaseModel):
+    present_count: int
+    absent_count: int
+    late_count: int
+    half_day_count: int
+    monthly_attendance_percentage: float
+    department_summary: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class AttendanceOverviewResponse(BaseModel):
+    student_count: int
+    staff_count: int
+    class_options: List[str] = Field(default_factory=list)
+    section_options: List[str] = Field(default_factory=list)
+    subject_options: List[AttendanceSubjectResponse] = Field(default_factory=list)
+    department_options: List[str] = Field(default_factory=list)
+    notifications: List[AttendanceNotificationResponse] = Field(default_factory=list)
+    holidays: List[AttendanceHolidayResponse] = Field(default_factory=list)
+    settings: AttendanceSettingResponse
+
+
+class AttendanceReportRow(BaseModel):
+    values: Dict[str, Any]
+
+
+class AttendanceReportResponse(BaseModel):
+    report_type: str
+    generated_at: datetime
+    rows: List[AttendanceReportRow] = Field(default_factory=list)
+    total_records: int

@@ -1,0 +1,16 @@
+BATCH_MAP = {
+    "11th": "BATCH_11",
+    "12th": "BATCH_12",
+    "12th Medical": "BATCH_12_MEDICAL",
+    "12th IIT": "BATCH_12_IIT",
+    "Dropper 1": "DROPPER_1",
+    "Dropper 2": "DROPPER_2",
+    "Dropper 3": "DROPPER_3",
+    "Dropper 4": "DROPPER_4",
+    "Dropper 5": "DROPPER_5",
+    "Dropper 6": "DROPPER_6",
+    "Dropper 7": "DROPPER_7",
+    "Dropper 8": "DROPPER_8",
+    "Dropper 9": "DROPPER_9",
+    "Dropper 10": "DROPPER_10",
+}
