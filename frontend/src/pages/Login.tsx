@@ -24,16 +24,20 @@ export default function Login() {
     try {
       const response = await apiService.loginWithPassword({ username, password });
       const data = response.data;
-      login(data.access_token, {
-        id: data.user_id,
-        username: data.username,
-        email: data.email,
-        full_name: data.full_name,
-        role: data.role,
-        user_type: data.user_type,
-        permissions: data.permissions || [],
-        is_active: true,
-      });
+      login(
+        data.access_token,
+        {
+          id: data.user_id,
+          username: data.username,
+          email: data.email,
+          full_name: data.full_name,
+          role: data.role,
+          user_type: data.user_type,
+          permissions: data.permissions || [],
+          is_active: true,
+        },
+        data.refresh_token || null,
+      );
       navigate('/', { replace: true });
     } catch (requestError: any) {
       setError(requestError?.response?.data?.detail || requestError?.message || 'Login failed');

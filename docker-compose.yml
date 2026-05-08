@@ -1,28 +1,28 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: seating_planner_db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: seating_planner
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: seating_planner_redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -31,17 +31,34 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI Backend
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: seating_planner_api
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:password@postgres:5432/seating_planner
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: your-secret-key-change-in-production
+      ENVIRONMENT: production
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRATION_MINUTES: ${ACCESS_TOKEN_EXPIRATION_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRATION_DAYS: ${REFRESH_TOKEN_EXPIRATION_DAYS:-14}
+      OTP_EXPIRATION_MINUTES: ${OTP_EXPIRATION_MINUTES:-10}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_IP_MAX_ATTEMPTS: ${LOGIN_IP_MAX_ATTEMPTS:-12}
+      OTP_SEND_MAX_ATTEMPTS: ${OTP_SEND_MAX_ATTEMPTS:-5}
+      OTP_VERIFY_MAX_ATTEMPTS: ${OTP_VERIFY_MAX_ATTEMPTS:-5}
+      AUTH_LOCKOUT_MINUTES: ${AUTH_LOCKOUT_MINUTES:-15}
+      AUTH_RATE_LIMIT_WINDOW_MINUTES: ${AUTH_RATE_LIMIT_WINDOW_MINUTES:-15}
+      SMTP_EMAIL: ${SMTP_EMAIL:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SERVER: ${SMTP_SERVER:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
       DEBUG: "false"
+      RELOAD: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
     ports:
       - "8000:8000"
     depends_on:
@@ -50,28 +67,29 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./backend:/app
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      - backend_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
-  # React Frontend
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: seating_planner_web
+    restart: unless-stopped
     ports:
       - "3000:3000"
     depends_on:
-      - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      VITE_API_URL: http://backend:8000/api
-    command: npm run dev
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
+  backend_uploads:
 
 networks:
   default:

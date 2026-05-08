@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { apiService } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 
@@ -55,7 +56,6 @@ export default function Layout({ children }: LayoutProps) {
   const [openSections, setOpenSections] = useState<string[]>(['dashboard']);
   const [hoveredCollapsedKey, setHoveredCollapsedKey] = useState<string | null>(null);
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const isAdmin = user?.role === 'admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
@@ -266,8 +266,8 @@ export default function Layout({ children }: LayoutProps) {
     navigate(path);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await apiService.logout();
     setMobileMenuOpen(false);
     navigate('/login', { replace: true });
   };

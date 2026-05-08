@@ -1,14 +1,13 @@
-"""
-FastAPI main application setup
-"""
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException
+"""FastAPI main application setup."""
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
 import traceback
+from sqlalchemy import text
 from app.config import settings
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 
 # Configure logging
@@ -25,7 +24,12 @@ async def lifespan(app: FastAPI):
     Manage application lifecycle
     """
     # Startup
-    logger.info("Application startup complete. Run Alembic migrations before serving traffic.")
+    logger.info(
+        "Application startup complete. environment=%s debug=%s reload=%s",
+        settings.environment,
+        settings.debug,
+        settings.reload,
+    )
     
     yield
     
@@ -59,7 +63,23 @@ async def health_check():
         "status": "ok",
         "service": "Dr. GIRISH APP",
         "version": settings.api_version,
+        "environment": settings.environment,
     }
+
+
+@app.get("/readyz", tags=["Health"])
+async def readiness_check():
+    """Readiness probe that verifies database connectivity."""
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "service": "Dr. GIRISH APP",
+            "version": settings.api_version,
+        }
+    finally:
+        db.close()
 
 
 # Root endpoint

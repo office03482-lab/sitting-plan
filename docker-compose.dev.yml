@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  backend:
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: sqlite:///seating_planner.db
+      DEBUG: "true"
+      RELOAD: "true"
+    volumes:
+      - ./backend:/app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  frontend:
+    environment:
+      VITE_API_URL: http://localhost:8000/api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 3000

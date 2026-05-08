@@ -47,7 +47,12 @@ async def verify_token(request: Request) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    
+    if payload.get("type") not in {None, "access"}:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type"
+        )
+
     return payload
 
 
@@ -75,8 +80,8 @@ def build_actor_context(
     """
     payload = extract_token_payload(authorization)
 
-    fallback_role = (x_user_role or UserRole.ADMIN.value).strip().lower()
-    fallback_name = (x_user_name or "Administrator").strip() or "Administrator"
+    fallback_role = (x_user_role or UserRole.VIEWER.value).strip().lower()
+    fallback_name = (x_user_name or "Unknown User").strip() or "Unknown User"
 
     if payload:
         token_role = str(payload.get("role") or fallback_role).strip().lower() or UserRole.ADMIN.value
@@ -105,8 +110,8 @@ def build_actor_context(
 
 def get_actor_context(
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
-    x_user_role: Optional[str] = Header(default="admin"),
-    x_user_name: Optional[str] = Header(default="Administrator"),
+    x_user_role: Optional[str] = Header(default="viewer"),
+    x_user_name: Optional[str] = Header(default="Unknown User"),
 ) -> Dict[str, str]:
     return build_actor_context(authorization, x_user_role, x_user_name)
 
@@ -120,6 +125,11 @@ def get_authenticated_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",
+        )
+    if payload.get("type") not in {None, "access"}:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token type",
         )
 
     user_id_raw = payload.get("sub")

@@ -154,7 +154,6 @@ function SectionCard({
 export default function Dashboard() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const isAdmin = user?.role === 'admin';
 
@@ -431,8 +430,8 @@ export default function Dashboard() {
                   {user?.role || 'viewer'}
                 </div>
                 <button
-                  onClick={() => {
-                    logout();
+                  onClick={async () => {
+                    await apiService.logout();
                     navigate('/login');
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"

@@ -1,19 +1,20 @@
-"""
-Database configuration and setup
-"""
+"""Database configuration and setup."""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import settings
 
-# Create database engine
-engine = create_engine(
-    settings.database_url,
-    echo=settings.debug,
-    future=True,
-    pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=40,
-)
+engine_kwargs = {
+    "echo": settings.debug,
+    "future": True,
+    "pool_pre_ping": True,
+}
+if settings.database_url.startswith("sqlite:///"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs["pool_size"] = 20
+    engine_kwargs["max_overflow"] = 40
+
+engine = create_engine(settings.database_url, **engine_kwargs)
 
 # Session factory
 SessionLocal = sessionmaker(

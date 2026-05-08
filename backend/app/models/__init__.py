@@ -95,27 +95,70 @@ class User(Base):
     # Relationships
     schools = relationship("School", back_populates="admin")
     activity_logs = relationship("ActivityLog", back_populates="user")
+    auth_tokens = relationship("Token", back_populates="user")
+    auth_security_events = relationship("AuthSecurityEvent", back_populates="user")
     
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
 
 
 class Token(Base):
-    """OTP and token storage model"""
+    """OTP and refresh token storage model."""
     __tablename__ = "tokens"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     email = Column(String(255), nullable=False, index=True)
     token = Column(String(255), nullable=False)
+    token_jti = Column(String(64), nullable=True, index=True)
+    token_family = Column(String(64), nullable=True, index=True)
     token_type = Column(String(50), nullable=False)
     otp_code = Column(String(20), nullable=True)
     is_used = Column(Boolean, default=False, nullable=False)
+    failure_count = Column(Integer, default=0, nullable=False)
+    replaced_by_jti = Column(String(64), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(512), nullable=True)
     used_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    user = relationship("User", back_populates="auth_tokens")
 
     def __repr__(self):
         return f"<Token(email={self.email}, type={self.token_type}, used={self.is_used})>"
+
+
+class AuthThrottle(Base):
+    """Tracks recent auth attempts and temporary lockouts."""
+    __tablename__ = "auth_throttles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scope_key = Column(String(255), unique=True, nullable=False, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    failure_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    window_started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AuthSecurityEvent(Base):
+    """Audit trail for authentication and security events."""
+    __tablename__ = "auth_security_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    email = Column(String(255), nullable=True, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    outcome = Column(String(50), nullable=False, index=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    user = relationship("User", back_populates="auth_security_events")
 
 
 # ==================== School & Organization ====================

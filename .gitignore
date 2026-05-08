@@ -28,6 +28,9 @@ ENV/
 env.bak/
 venv.bak/
 .venv
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # IDE
 .vscode/
@@ -49,13 +52,16 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 dist/
 build/
+*.tsbuildinfo
 
 # React
 .next/
 out/
 .cache/
+.vite/
 
 # Test coverage
 coverage/
@@ -73,6 +79,8 @@ htmlcov/
 # Logs
 *.log
 logs/
+*.pid
+*.pid.lock
 
 # OS
 Thumbs.db
@@ -89,3 +97,9 @@ tmp/
 
 # Docker
 docker-compose.override.yml
+
+# Local tools / installers
+tools/*.log
+tools/*.exe
+tools/python311/
+tools/python-portable/

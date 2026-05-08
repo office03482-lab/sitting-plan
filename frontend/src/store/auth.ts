@@ -4,44 +4,53 @@ import type { User, AuthState } from '@types';
 interface AuthStore extends AuthState {
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
-  login: (token: string, user: User) => void;
+  setRefreshToken: (refreshToken: string | null) => void;
+  login: (token: string, user: User, refreshToken?: string | null) => void;
   logout: () => void;
   isLoggedIn: () => boolean;
   hasPermission: (permission: string) => boolean;
 }
 
-const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'is_authenticated'> => {
+const decodeJwtExp = (token: string): number | null => {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payloadRaw = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(payloadRaw) as { exp?: number };
+    return typeof payload?.exp === 'number' ? payload.exp : null;
+  } catch {
+    return null;
+  }
+};
+
+const isJwtActive = (token: string) => {
+  const exp = decodeJwtExp(token);
+  if (!exp) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return exp > now;
+};
+
+const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_token' | 'is_authenticated'> => {
   if (typeof window === 'undefined') {
     return {
       user: null,
       token: null,
+      refresh_token: null,
       is_authenticated: false,
     };
   }
 
   const storedToken = localStorage.getItem('auth_token');
+  const storedRefreshToken = localStorage.getItem('refresh_token');
   const rawUser = localStorage.getItem('user');
 
   const clearAuthStorage = () => {
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
   };
 
-  const isTokenStructurallyValidJwt = (token: string) => {
-    const parts = token.split('.');
-    if (parts.length !== 3) return false;
-    try {
-      const payloadRaw = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
-      const payload = JSON.parse(payloadRaw) as { exp?: number };
-      if (!payload?.exp) return false;
-      const now = Math.floor(Date.now() / 1000);
-      return payload.exp > now;
-    } catch {
-      return false;
-    }
-  };
-
-  if (rawUser && storedToken) {
+  if (rawUser && (storedToken || storedRefreshToken)) {
     try {
       const parsedUser = JSON.parse(rawUser) as User;
       if (!parsedUser?.id || !parsedUser?.role || !parsedUser?.email) {
@@ -49,20 +58,24 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'is_authenti
         return {
           user: null,
           token: null,
+          refresh_token: null,
           is_authenticated: false,
         };
       }
-      if (!isTokenStructurallyValidJwt(storedToken)) {
+      const activeAccessToken = storedToken && isJwtActive(storedToken) ? storedToken : null;
+      if (!activeAccessToken && !storedRefreshToken) {
         clearAuthStorage();
         return {
           user: null,
           token: null,
+          refresh_token: null,
           is_authenticated: false,
         };
       }
       return {
         user: parsedUser,
-        token: storedToken,
+        token: activeAccessToken,
+        refresh_token: storedRefreshToken,
         is_authenticated: true,
       };
     } catch {
@@ -73,6 +86,7 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'is_authenti
   return {
     user: null,
     token: null,
+    refresh_token: null,
     is_authenticated: false,
   };
 };
@@ -82,25 +96,47 @@ const initialAuthState = loadInitialAuthState();
 export const useAuthStore = create<AuthStore>((set, get) => ({
   user: initialAuthState.user,
   token: initialAuthState.token,
+  refresh_token: initialAuthState.refresh_token,
   is_authenticated: initialAuthState.is_authenticated,
 
   setUser: (user) => set({ user }),
-  setToken: (token) => set({ token }),
+  setToken: (token) => {
+    if (token) {
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_token');
+    }
+    set({ token, is_authenticated: !!(token || get().refresh_token) });
+  },
+  setRefreshToken: (refreshToken) => {
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken);
+    } else {
+      localStorage.removeItem('refresh_token');
+    }
+    set({ refresh_token: refreshToken, is_authenticated: !!(get().token || refreshToken) });
+  },
 
-  login: (token, user) => {
+  login: (token, user, refreshToken = null) => {
     localStorage.setItem('auth_token', token);
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken);
+    } else {
+      localStorage.removeItem('refresh_token');
+    }
     localStorage.setItem('user', JSON.stringify(user));
-    set({ token, user, is_authenticated: true });
+    set({ token, refresh_token: refreshToken, user, is_authenticated: true });
   },
 
   logout: () => {
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
-    set({ token: null, user: null, is_authenticated: false });
+    set({ token: null, refresh_token: null, user: null, is_authenticated: false });
   },
 
   isLoggedIn: () => {
-    return get().is_authenticated && !!get().token;
+    return get().is_authenticated && !!(get().token || get().refresh_token);
   },
 
   hasPermission: (permission) => {

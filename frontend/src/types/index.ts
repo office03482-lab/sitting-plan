@@ -69,7 +69,23 @@ export interface RolePowerUser {
 export interface AuthState {
   user: User | null;
   token: string | null;
+  refresh_token: string | null;
   is_authenticated: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  refresh_token?: string | null;
+  token_type: string;
+  access_token_expires_in_seconds: number;
+  refresh_token_expires_in_seconds: number;
+  user_id: number;
+  email: string;
+  username?: string;
+  full_name: string;
+  role: UserRole;
+  user_type?: UserType;
+  permissions: string[];
 }
 
 // ==================== Student ====================

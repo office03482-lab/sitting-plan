@@ -25,7 +25,10 @@ class VerifyOTPRequest(BaseModel):
 class LoginResponse(BaseModel):
     """Login successful response"""
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
+    access_token_expires_in_seconds: int = 0
+    refresh_token_expires_in_seconds: int = 0
     user_id: int
     email: str
     username: Optional[str] = None
@@ -39,6 +42,16 @@ class PasswordLoginRequest(BaseModel):
     """Password login request"""
     username: str
     password: str
+
+
+class RefreshTokenRequest(BaseModel):
+    """Refresh token request."""
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    """Logout request."""
+    refresh_token: Optional[str] = None
 
 
 class UserBase(BaseModel):

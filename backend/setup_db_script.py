@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models import BatchTable, Exam, Room, School, Student, Teacher, User, UserRole
-from app.utils.auth import hash_password
+from app.services.admin_bootstrap import bootstrap_initial_admin
 from sample_data import get_sample_rooms, get_sample_students, get_sample_teachers
 
 
@@ -26,30 +26,10 @@ def ensure_schema_is_migrated(db):
 
 
 def ensure_admin(db):
-    admin = (
-        db.query(User)
-        .filter((User.username == "admin") | (User.email == "admin@school.edu"))
-        .first()
-    )
+    admin = db.query(User).filter(User.role == UserRole.ADMIN).order_by(User.created_at.asc()).first()
     if admin:
         return admin
-
-    admin = User(
-        username="admin",
-        email="admin@school.edu",
-        full_name="System Administrator",
-        password_hash=hash_password("admin123"),
-        role=UserRole.ADMIN,
-        user_type="non_teaching",
-        permissions="admin_office,timetable,attendance,inventory,edupay,settings",
-        is_active=True,
-        is_verified=True,
-    )
-    db.add(admin)
-    db.commit()
-    db.refresh(admin)
-    print("Created default admin user")
-    return admin
+    return bootstrap_initial_admin(db)
 
 
 def ensure_school(db, admin):
@@ -184,6 +164,11 @@ def main():
     except Exception as exc:
         db.rollback()
         print(f"Error: {exc}")
+        if "Initial admin bootstrap" in str(exc):
+            print(
+                "Set INITIAL_ADMIN_ENABLED=true and provide INITIAL_ADMIN_USERNAME, "
+                "INITIAL_ADMIN_EMAIL, and INITIAL_ADMIN_PASSWORD before running this setup script."
+            )
         raise
     finally:
         db.close()

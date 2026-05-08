@@ -9,8 +9,9 @@ import type {
   AttendanceSettings, AttendanceStaff, AttendanceSubject, AttendanceStudent, StaffAttendanceMarkingResponse,
   StaffAttendanceRecord, StaffDashboard, StudentAttendanceMarkingResponse, StudentAttendanceRecord, StudentBatchTransferResponse, StudentDashboard, TeacherAttendanceContext,
   Hostel, HostelRoom, StudentHostelRequest,
-  RolePowerUser
+  AuthResponse, RolePowerUser, User
 } from '@types';
+import { useAuthStore } from '@store/auth';
 
 const MAX_GET_RETRIES = 2;
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
@@ -24,6 +25,97 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class ApiService {
   private api: AxiosInstance;
+  private refreshPromise: Promise<string | null> | null = null;
+
+  private getAccessToken() {
+    return typeof window === 'undefined' ? null : localStorage.getItem('auth_token');
+  }
+
+  private getRefreshToken() {
+    return typeof window === 'undefined' ? null : localStorage.getItem('refresh_token');
+  }
+
+  private isJwtExpired(token: string) {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return true;
+      const payloadRaw = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+      const payload = JSON.parse(payloadRaw) as { exp?: number };
+      if (!payload?.exp) return true;
+      const now = Math.floor(Date.now() / 1000);
+      return payload.exp <= now + 10;
+    } catch {
+      return true;
+    }
+  }
+
+  private isRefreshExcluded(url?: string) {
+    if (!url) return false;
+    return [
+      '/auth/login-password',
+      '/auth/send-otp',
+      '/auth/verify-otp',
+      '/auth/refresh',
+    ].some((path) => url.includes(path));
+  }
+
+  private buildUserFromAuthResponse(data: AuthResponse): User {
+    return {
+      id: data.user_id,
+      username: data.username,
+      email: data.email,
+      full_name: data.full_name,
+      role: data.role,
+      user_type: data.user_type,
+      permissions: data.permissions || [],
+      is_active: true,
+    };
+  }
+
+  private applyAuthResponse(data: AuthResponse) {
+    useAuthStore.getState().login(
+      data.access_token,
+      this.buildUserFromAuthResponse(data),
+      data.refresh_token || null,
+    );
+  }
+
+  private clearClientAuth(redirectToLogin: boolean = true) {
+    useAuthStore.getState().logout();
+    if (typeof window !== 'undefined' && redirectToLogin && !window.location.pathname.startsWith('/login')) {
+      window.location.replace('/login');
+    }
+  }
+
+  private async refreshAccessToken() {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    const refreshToken = this.getRefreshToken();
+    if (!refreshToken) {
+      return null;
+    }
+
+    this.refreshPromise = (async () => {
+      try {
+        const response = await axios.post<AuthResponse>(
+          `${this.api.defaults.baseURL}/auth/refresh`,
+          { refresh_token: refreshToken },
+          { timeout: API_TIMEOUT_MS },
+        );
+        this.applyAuthResponse(response.data);
+        return response.data.access_token;
+      } catch {
+        this.clearClientAuth();
+        return null;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
+  }
 
   private isDatetimeValidationError(error: any) {
     const status = error?.response?.status;
@@ -46,7 +138,7 @@ class ApiService {
     });
 
     // Ensure multipart uploads do not send a JSON content type header.
-    this.api.interceptors.request.use((config) => {
+    this.api.interceptors.request.use(async (config) => {
       if (config.data instanceof FormData) {
         if (config.headers) {
           delete config.headers['Content-Type'];
@@ -54,7 +146,10 @@ class ApiService {
         }
       }
 
-      const token = localStorage.getItem('auth_token');
+      let token = this.getAccessToken();
+      if ((!token || this.isJwtExpired(token)) && !this.isRefreshExcluded(config.url) && this.getRefreshToken()) {
+        token = await this.refreshAccessToken();
+      }
 
       if (token) {
         config.headers = config.headers || {};
@@ -67,22 +162,36 @@ class ApiService {
     this.api.interceptors.response.use(
       (response) => response,
       async (error) => {
-        if (error?.response?.status === 401) {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('user');
-          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-            window.location.replace('/login');
-          }
-          return Promise.reject(error);
-        }
-
         const config = error.config as
           | (typeof error.config & {
               __retryCount?: number;
               __directFallbackIndex?: number;
               __usingDirectFallback?: boolean;
+              __retryAfterRefresh?: boolean;
             })
           | undefined;
+        if (error?.response?.status === 401) {
+          if (!config || this.isRefreshExcluded(config.url)) {
+            this.clearClientAuth();
+            return Promise.reject(error);
+          }
+
+          if (config.__retryAfterRefresh) {
+            this.clearClientAuth();
+            return Promise.reject(error);
+          }
+
+          const refreshedToken = await this.refreshAccessToken();
+          if (!refreshedToken) {
+            return Promise.reject(error);
+          }
+
+          config.__retryAfterRefresh = true;
+          config.headers = config.headers || {};
+          config.headers.Authorization = `Bearer ${refreshedToken}`;
+          return this.api.request(config);
+        }
+
         const method = config?.method?.toLowerCase();
         const status = error.response?.status;
         const isNetworkError = !error.response;
@@ -162,12 +271,12 @@ class ApiService {
   }
 
   async verifyOTP(credentials: OTPLoginCredentials) {
-    return this.api.post('/auth/verify-otp', credentials);
+    return this.api.post<AuthResponse>('/auth/verify-otp', credentials);
   }
 
   async loginWithPassword(credentials: LoginCredentials) {
     try {
-      return await this.api.post('/auth/login-password', credentials);
+      return await this.api.post<AuthResponse>('/auth/login-password', credentials);
     } catch (error: any) {
       const status = error?.response?.status;
       if (
@@ -177,7 +286,7 @@ class ApiService {
       ) {
         for (const baseURL of DIRECT_API_FALLBACKS) {
           try {
-            const response = await axios.post(`${baseURL}/auth/login-password`, credentials);
+            const response = await axios.post<AuthResponse>(`${baseURL}/auth/login-password`, credentials);
             return response;
           } catch {
             // Try next direct URL.
@@ -189,10 +298,19 @@ class ApiService {
     }
   }
 
+  async refreshSession(refreshToken: string) {
+    return this.api.post<AuthResponse>('/auth/refresh', { refresh_token: refreshToken });
+  }
+
   async logout() {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
-    return this.api.post('/auth/logout');
+    const refreshToken = this.getRefreshToken();
+    try {
+      return await this.api.post('/auth/logout', {
+        refresh_token: refreshToken || undefined,
+      });
+    } finally {
+      this.clearClientAuth(false);
+    }
   }
 
   async listRoleUsers() {

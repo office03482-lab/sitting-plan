@@ -1,7 +1,9 @@
-"""
-Authentication utilities
-"""
-from datetime import datetime, timedelta
+"""Authentication utilities."""
+from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
+import secrets
+import uuid
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -25,45 +27,51 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """
-    Create JWT access token.
-    
-    Args:
-        data: Payload to encode
-        expires_delta: Token expiration time
-    
-    Returns:
-        Encoded JWT token
-    """
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _encode_jwt(data: dict, *, token_type: str, expires_delta: timedelta) -> str:
     to_encode = data.copy()
-    
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(hours=settings.jwt_expiration_hours)
-    
-    to_encode.update({"exp": expire})
-    
+    now = _utcnow()
+    expire = now + expires_delta
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "type": token_type,
+            "jti": str(uuid.uuid4()),
+        }
+    )
     encoded_jwt = jwt.encode(
         to_encode,
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm
     )
-    
     return encoded_jwt
 
 
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT access token."""
+    return _encode_jwt(
+        data,
+        token_type="access",
+        expires_delta=expires_delta or timedelta(minutes=settings.access_token_expiration_minutes),
+    )
+
+
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT refresh token."""
+    return _encode_jwt(
+        data,
+        token_type="refresh",
+        expires_delta=expires_delta or timedelta(days=settings.refresh_token_expiration_days),
+    )
+
+
 def decode_token(token: str) -> Optional[dict]:
-    """
-    Decode and validate JWT token.
-    
-    Args:
-        token: JWT token string
-    
-    Returns:
-        Decoded payload or None if invalid
-    """
+    """Decode and validate JWT token."""
     try:
         payload = jwt.decode(
             token,
@@ -76,17 +84,19 @@ def decode_token(token: str) -> Optional[dict]:
 
 
 def generate_otp(length: int = 6) -> str:
-    """
-    Generate a numeric OTP code.
-    
-    Args:
-        length: Length of OTP code
-    
-    Returns:
-        Random numeric string
-    """
     import random
     return ''.join(random.choices('0123456789', k=length))
+
+
+def generate_secure_token(length: int = 48) -> str:
+    """Generate a URL-safe random token."""
+    return secrets.token_urlsafe(length)
+
+
+def hash_token_value(value: str) -> str:
+    """Hash a token or OTP value before persisting it."""
+    secret = (settings.jwt_secret or "").encode("utf-8")
+    return hmac.new(secret, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def require_admin(user_role: Optional[str]) -> bool:

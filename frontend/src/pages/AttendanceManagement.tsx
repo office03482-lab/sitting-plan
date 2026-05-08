@@ -2099,7 +2099,7 @@ function AttendanceManagementContent() {
         {activeTab === 'student' ? (
           <div className="mt-6 grid gap-6">
             <section className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
-              <div className={sectionClass}>
+              <div className={`${sectionClass} min-w-0`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">Mark Student Attendance</h2>
@@ -2283,8 +2283,8 @@ function AttendanceManagementContent() {
                 </button>
               </div>
 
-              <div className="grid gap-6">
-                <div className={sectionClass}>
+              <div className="grid min-w-0 gap-6">
+                <div className={`${sectionClass} min-w-0`}>
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
                       <h2 className="text-2xl font-bold text-slate-900">Student Records</h2>
@@ -2344,7 +2344,7 @@ function AttendanceManagementContent() {
                   </div>
                 </div>
 
-                <div className={sectionClass}>
+                <div className={`${sectionClass} min-w-0`}>
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">Student Dashboard</h2>
                     <p className="mt-2 text-sm text-slate-500">Selected date ({todayLabel}) ke saare batches ka present/absent summary.</p>
@@ -2496,7 +2496,7 @@ function AttendanceManagementContent() {
           <div className="mt-6 grid gap-6">
             <section className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
               {!isTeacherSelfView ? (
-              <div className={sectionClass}>
+              <div className={`${sectionClass} min-w-0`}>
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Mark Staff Attendance</h2>
                   <p className="mt-2 text-sm text-slate-500">HR / Admin controlled daily attendance.</p>
@@ -2726,8 +2726,8 @@ function AttendanceManagementContent() {
               </div>
               ) : null}
 
-              <div className="grid gap-6">
-                <div className={sectionClass}>
+              <div className="grid min-w-0 gap-6">
+                <div className={`${sectionClass} min-w-0`}>
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div>
                       <h2 className="text-2xl font-bold text-slate-900">{isTeacherSelfView ? 'My Attendance Summary' : 'Staff Dashboard'}</h2>
@@ -2803,7 +2803,7 @@ function AttendanceManagementContent() {
                   )}
                 </div>
 
-                <div className={sectionClass}>
+                <div className={`${sectionClass} min-w-0`}>
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <h2 className="text-2xl font-bold text-slate-900">{isTeacherSelfView ? 'My Attendance Records' : 'Staff Records'}</h2>
                     {!isTeacherSelfView ? (
