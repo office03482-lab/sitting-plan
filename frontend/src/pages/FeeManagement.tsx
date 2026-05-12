@@ -116,19 +116,6 @@ const eduPaySideItems: EduPaySideItem[] = [
       { id: 'page-transactions', label: 'Page Transactions', tab: 'payments', paymentView: 'transactions' },
     ],
   },
-  {
-    id: 'flex',
-    label: 'Flex',
-    icon: FileClock,
-    children: [{ id: 'subscriptions', label: 'Subscriptions', tab: 'fees' }],
-  },
-  {
-    id: 'cred',
-    label: 'Cred',
-    icon: ShieldCheck,
-    children: [{ id: 'cred-dashboard', label: 'Dashboard', tab: 'overview' }],
-  },
-  { id: 'cashflow', label: 'Cashflow', icon: IndianRupee, tab: 'overview' },
   { id: 'overdue', label: 'Overdue', icon: Bell, tab: 'payments' },
   { id: 'reports', label: 'Reports', icon: BarChart3, tab: 'overview' },
   { id: 'users', label: 'Users', icon: Users, tab: 'parent' },
@@ -323,7 +310,7 @@ const initialPaymentForm = {
   transaction_reference: '',
 };
 
-const sectionClass = 'rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.06)]';
+const sectionClass = 'rounded-[1.35rem] border border-slate-200 bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.05)]';
 const inputClass =
   'w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-200/70';
 const selectClass =
@@ -389,7 +376,7 @@ function statusClass(status: EduPayAssignmentStatus) {
 
 export default function FeeManagement() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
-  const [expandedEduPaySections, setExpandedEduPaySections] = useState<string[]>(['pay', 'flex', 'cred']);
+  const [expandedEduPaySections, setExpandedEduPaySections] = useState<string[]>(['pay']);
   const [studentWorkspaceView, setStudentWorkspaceView] = useState<StudentWorkspaceView>('admission');
   const [paymentWorkspaceView, setPaymentWorkspaceView] = useState<PaymentWorkspaceView>('collector');
   const [admissionDeskStep, setAdmissionDeskStep] = useState<AdmissionDeskStep>('details');
@@ -460,20 +447,20 @@ export default function FeeManagement() {
     if (activeTab === 'students') {
       return studentWorkspaceView === 'ledger'
         ? {
-            label: 'EduPay Ledger',
+            label: 'BRAIN OF HIMACHAL Ledger',
             title: 'Student ledger and fee visibility',
             description: 'Student listing, payment status, filters, and fee-side tracking ko yahan se monitor karo.',
           }
         : {
-            label: 'EduPay Admission',
+            label: 'BRAIN OF HIMACHAL Admission',
             title: 'Admission desk and fee onboarding',
-            description: 'Admin requests review karo ya direct EduPay admission process yahin se start karo.',
+            description: 'Admin requests review karo ya direct BRAIN OF HIMACHAL admission process yahin se start karo.',
           };
     }
 
     if (activeTab === 'fees') {
       return {
-        label: 'EduPay Plans',
+        label: 'BRAIN OF HIMACHAL Plans',
         title: 'Fee structure and installment planning',
         description: 'Class-wise fee plans, discounts, and installment schedules ko manage karo.',
       };
@@ -497,7 +484,7 @@ export default function FeeManagement() {
       }
 
       return {
-        label: 'EduPay Payments',
+        label: 'BRAIN OF HIMACHAL Payments',
         title: 'Payment collection workspace',
         description: 'Receipts, pending dues, payment entries, aur verification state ko track karo.',
       };
@@ -505,15 +492,15 @@ export default function FeeManagement() {
 
     if (activeTab === 'parent') {
       return {
-        label: 'EduPay Parent Portal',
+        label: 'BRAIN OF HIMACHAL Parent Portal',
         title: 'Parent portal and child fee summary',
         description: 'Parent view, child-wise dues, aur payment history ko review karo.',
       };
     }
 
     return {
-      label: 'EduPay Dashboard',
-      title: 'Live fee management environment',
+      label: 'BRAIN OF HIMACHAL Dashboard',
+      title: 'BRAIN OF HIMACHAL Dashboard',
       description: 'Institute dashboard, collections, reminders, aur payment insights ek hi jagah par connected hain.',
     };
   }, [activeTab, studentWorkspaceView, paymentWorkspaceView]);
@@ -543,7 +530,7 @@ export default function FeeManagement() {
         message:
           error?.response?.data?.detail ||
           error?.response?.data?.error ||
-          'EduPay data load nahi ho paya.',
+          'BRAIN OF HIMACHAL data load nahi ho paya.',
       });
     } finally {
       setLoading(false);
@@ -1227,7 +1214,7 @@ export default function FeeManagement() {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <LoadingSpinner message="EduPay workspace load ho raha hai..." />
+        <LoadingSpinner message="BRAIN OF HIMACHAL workspace load ho raha hai..." />
       </div>
     );
   }
@@ -1244,24 +1231,18 @@ export default function FeeManagement() {
                     <Landmark className="h-3.5 w-3.5" />
                     {currentWorkspaceMeta.label}
                   </div>
-                  <h1 className="font-body mt-4 text-4xl font-bold tracking-tight text-slate-900 md:text-5xl">
-                    {currentWorkspaceMeta.title}
-                  </h1>
-                  <p className="font-body mt-4 max-w-3xl text-base leading-7 text-slate-600">
-                    {currentWorkspaceMeta.description}
-                  </p>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-950 p-4 text-white">
-                    <p className="text-sm text-slate-500">Active students</p>
-                    <p className="font-body mt-3 text-3xl font-bold text-white">{dashboardCards.activeStudents}</p>
-                    <p className="mt-2 text-sm text-slate-300">Institute side registry</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[1.2rem] border border-slate-200 bg-slate-950 p-3 text-white">
+                    <p className="text-xs text-slate-500">Active students</p>
+                    <p className="font-body mt-2 text-2xl font-bold text-white">{dashboardCards.activeStudents}</p>
+                    <p className="mt-1 text-xs text-slate-300">Institute side registry</p>
                   </div>
-                  <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4">
-                    <p className="text-sm text-slate-500">Queued reminders</p>
-                    <p className="font-body mt-3 text-3xl font-bold text-slate-900">{dashboardCards.queuedReminders}</p>
-                    <p className="mt-2 text-sm text-slate-500">WhatsApp and email nudges</p>
+                  <div className="rounded-[1.2rem] border border-slate-200 bg-white p-3">
+                    <p className="text-xs text-slate-500">Queued reminders</p>
+                    <p className="font-body mt-2 text-2xl font-bold text-slate-900">{dashboardCards.queuedReminders}</p>
+                    <p className="mt-1 text-xs text-slate-500">WhatsApp and email nudges</p>
                   </div>
                 </div>
               </div>
@@ -1276,54 +1257,54 @@ export default function FeeManagement() {
 
             {activeTab === 'overview' ? (
               <div className="mt-6 grid gap-6">
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <StatCard label="Collected" value={formatCurrency(dashboardCards.collected)} icon={IndianRupee} />
               <StatCard label="Pending" value={formatCurrency(dashboardCards.pending)} icon={Users} />
               <StatCard label="Overdue" value={formatCurrency(dashboardCards.overdue)} icon={Bell} />
               <StatCard label="Upcoming Dues" value={`${dashboardCards.upcomingDues}`} icon={CreditCard} />
             </section>
 
-            <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+            <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
               <div className={sectionClass}>
-                <h2 className="font-body text-2xl font-bold text-slate-900">Collection trend</h2>
-                <div className="mt-8 grid grid-cols-6 items-end gap-3">
+                <h2 className="font-body text-xl font-bold text-slate-900">Collection trend</h2>
+                <div className="mt-6 grid grid-cols-6 items-end gap-2">
                   {dashboardCards.collectionTrend.length ? dashboardCards.collectionTrend.map((point) => {
                     const maxAmount = Math.max(...dashboardCards.collectionTrend.map((item) => item.amount), 1);
                     const height = Math.max((point.amount / maxAmount) * 100, 8);
                     return (
-                      <div key={point.month} className="flex flex-col items-center gap-3">
-                        <div className="flex h-56 w-full items-end justify-center rounded-3xl bg-slate-100 px-2 py-3">
+                      <div key={point.month} className="flex flex-col items-center gap-2">
+                        <div className="flex h-44 w-full items-end justify-center rounded-[1.25rem] bg-slate-100 px-2 py-2">
                           <div
-                            className="w-full rounded-3xl bg-gradient-to-t from-sky-500 via-cyan-400 to-emerald-300"
+                            className="w-full rounded-[1.25rem] bg-gradient-to-t from-sky-500 via-cyan-400 to-emerald-300"
                             style={{ height: `${height}%` }}
                           />
                         </div>
                         <div className="text-center">
-                          <p className="text-xs text-slate-400">{point.month}</p>
-                          <p className="mt-1 text-xs text-slate-500">{formatCurrency(point.amount)}</p>
+                          <p className="text-[11px] text-slate-400">{point.month}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">{formatCurrency(point.amount)}</p>
                         </div>
                       </div>
                     );
                   }) : (
                     <div className="col-span-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                      Abhi tak current EduPay flow ka collection data nahi hai.
+                      Abhi tak current BRAIN OF HIMACHAL flow ka collection data nahi hai.
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="grid gap-6">
+              <div className="grid gap-4">
                 <div className={sectionClass}>
-                  <h2 className="font-body text-2xl font-bold text-slate-900">Payment method split</h2>
-                  <div className="mt-6 space-y-4">
+                  <h2 className="font-body text-xl font-bold text-slate-900">Payment method split</h2>
+                  <div className="mt-5 space-y-3">
                     {dashboardCards.paymentMethodSplit.length ? dashboardCards.paymentMethodSplit.map((item) => (
                       <div key={item.method}>
-                        <div className="mb-2 flex items-center justify-between text-sm">
+                        <div className="mb-2 flex items-center justify-between text-xs">
                           <span className="text-slate-700 capitalize">{item.method.replace('_', ' ')}</span>
                           <span className="text-slate-500">{item.percentage}%</span>
                         </div>
-                        <div className="h-3 rounded-full bg-slate-100">
-                          <div className="h-3 rounded-full bg-gradient-to-r from-sky-500 to-emerald-400" style={{ width: `${item.percentage}%` }} />
+                        <div className="h-2.5 rounded-full bg-slate-100">
+                          <div className="h-2.5 rounded-full bg-gradient-to-r from-sky-500 to-emerald-400" style={{ width: `${item.percentage}%` }} />
                         </div>
                       </div>
                     )) : (
@@ -1335,18 +1316,18 @@ export default function FeeManagement() {
                 </div>
 
                 <div className={sectionClass}>
-                  <h2 className="font-body text-2xl font-bold text-slate-900">Reminder queue</h2>
-                  <div className="mt-6 space-y-3">
+                  <h2 className="font-body text-xl font-bold text-slate-900">Reminder queue</h2>
+                  <div className="mt-5 space-y-2.5">
                     {dashboardCards.reminders.length ? dashboardCards.reminders.map((item) => (
-                      <div key={`${item.title}-${item.scheduled_for}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                        <p className="mt-1 text-sm text-slate-500">{item.channel}</p>
-                        <p className="mt-3 text-sm text-slate-700">{item.audience}</p>
+                      <div key={`${item.title}-${item.scheduled_for}`} className="rounded-[1rem] border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold text-slate-900">{item.title}</p>
+                        <p className="mt-1 text-xs text-slate-500">{item.channel}</p>
+                        <p className="mt-2 text-xs text-slate-700">{item.audience}</p>
                         <p className="mt-1 text-xs text-sky-700">{item.scheduled_for}</p>
                       </div>
                     )) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                        Reminder queue clean hai. Koi pending EduPay reminder nahi hai.
+                        Reminder queue clean hai. Koi pending BRAIN OF HIMACHAL reminder nahi hai.
                       </div>
                     )}
                   </div>
@@ -1361,7 +1342,7 @@ export default function FeeManagement() {
             <section className={`${sectionClass} p-5 md:p-6`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="font-display text-2xl font-semibold text-slate-900">EduPay admission desk</h2>
+                  <h2 className="font-display text-2xl font-semibold text-slate-900">BRAIN OF HIMACHAL admission desk</h2>
                   <p className="mt-2 text-sm text-slate-500">Admin request review, direct admission, aur student ledger ko yahan se clearly manage karo.</p>
                 </div>
                 <div className="flex flex-wrap gap-2 rounded-full border border-slate-200 bg-slate-50 p-1">
@@ -1458,7 +1439,7 @@ export default function FeeManagement() {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-emerald-300 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                  Direct EduPay admission mode active hai. Yahan full admission summary bhar kar student aur payment flow start kar sakte ho.
+                  Direct BRAIN OF HIMACHAL admission mode active hai. Yahan full admission summary bhar kar student aur payment flow start kar sakte ho.
                 </div>
               )}
 
@@ -2333,7 +2314,7 @@ export default function FeeManagement() {
           <aside className="hidden xl:block">
             <div className="fixed right-8 top-6 z-20 w-[290px] overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.08)]">
               <div className="border-b border-slate-100 px-5 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">EduPay Panel</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">BRAIN OF HIMACHAL Panel</p>
                 <p className="mt-2 text-lg font-semibold text-slate-900">Secondary Navigation</p>
               </div>
 
@@ -2455,14 +2436,14 @@ function StatCard({
   icon: typeof IndianRupee;
 }) {
   return (
-    <article className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.06)]">
+    <article className="rounded-[1.25rem] border border-slate-200 bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-slate-500">{label}</p>
-          <p className="font-body mt-3 text-3xl font-bold text-slate-900">{value}</p>
+          <p className="text-xs text-slate-500">{label}</p>
+          <p className="font-body mt-2 text-2xl font-bold text-slate-900">{value}</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-100 p-3">
-          <Icon className="h-5 w-5 text-slate-700" />
+        <div className="rounded-[1rem] border border-slate-200 bg-slate-100 p-2.5">
+          <Icon className="h-4 w-4 text-slate-700" />
         </div>
       </div>
     </article>

@@ -165,7 +165,7 @@ export default function Layout({ children }: LayoutProps) {
       iconBackground: 'linear-gradient(180deg, #818cf8 0%, #4f46e5 100%)',
       permission: 'edupay',
       children: [
-        { name: 'EduPay Dashboard', path: '/edupay', permission: 'edupay' },
+        { name: 'BRAIN OF HIMACHAL Dashboard', path: '/edupay', permission: 'edupay' },
       ],
     },
     {

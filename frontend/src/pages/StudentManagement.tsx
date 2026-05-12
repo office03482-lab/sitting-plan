@@ -1052,7 +1052,7 @@ export default function StudentManagement() {
           sendHostelRequestOnSubmit && studentForm.hostelRequired
             ? 'Student updated and hostel request sent for approval.'
             : sendToEduPayOnSubmit
-              ? 'Student updated and sent to EduPay snapshot.'
+              ? 'Student updated and sent to BRAIN OF HIMACHAL snapshot.'
               : 'Student updated successfully'
         );
       } else {
@@ -1072,7 +1072,7 @@ export default function StudentManagement() {
           sendHostelRequestOnSubmit && studentForm.hostelRequired
             ? 'Student saved and hostel request sent for approval.'
             : sendToEduPayOnSubmit
-              ? 'Student saved successfully and sent to EduPay snapshot.'
+              ? 'Student saved successfully and sent to BRAIN OF HIMACHAL snapshot.'
               : 'Student saved successfully.'
         );
       }
@@ -1562,7 +1562,7 @@ export default function StudentManagement() {
                       disabled={isSubmitting}
                       className="rounded-md border border-[#c07a10] bg-[#fff5e8] px-5 py-2.5 text-sm font-semibold text-[#a9680d] hover:bg-[#fde8c7] disabled:opacity-70"
                     >
-                      {isSubmitting ? 'Sending...' : editStudent ? 'Send To EduPay' : 'Send To EduPay For Fee'}
+                      {isSubmitting ? 'Sending...' : editStudent ? 'Send To BRAIN OF HIMACHAL' : 'Send To BRAIN OF HIMACHAL For Fee'}
                     </button>
                     {studentForm.hostelRequired ? (
                       <button
@@ -1789,9 +1789,9 @@ export default function StudentManagement() {
                       </StudentField>
                     </div>
                     <div className="lg:col-span-3 rounded-xl border border-[#d8e2ec] bg-slate-50 px-4 py-3">
-                      <p className="text-sm font-semibold text-slate-800">EduPay Request</p>
+                      <p className="text-sm font-semibold text-slate-800">BRAIN OF HIMACHAL Request</p>
                       <p className="mt-1 text-xs text-slate-500">
-                        Yeh form direct admission create nahi karega. `Send To EduPay For Fee` ke baad request EduPay review queue mein jayegi, aur fee submit hone ke baad hi student admission hogi.
+                        Yeh form direct admission create nahi karega. `Send To BRAIN OF HIMACHAL For Fee` ke baad request BRAIN OF HIMACHAL review queue mein jayegi, aur fee submit hone ke baad hi student admission hogi.
                       </p>
                     </div>
                   </div>

@@ -74,7 +74,7 @@ const POWER_MODULES: PowerModule[] = [
   },
   {
     key: 'edupay',
-    label: 'EduPay',
+    label: 'BRAIN OF HIMACHAL',
     sections: [
       { key: 'edupay.dashboard', label: 'Dashboard' },
       { key: 'edupay.students', label: 'Student Management' },

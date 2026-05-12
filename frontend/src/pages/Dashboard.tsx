@@ -295,7 +295,7 @@ export default function Dashboard() {
     {
       key: 'edupay',
       visible: canViewEduPay,
-      title: 'EduPay',
+      title: 'BRAIN OF HIMACHAL',
       subtitle: 'Fee management',
       path: '/edupay',
       icon: Landmark,
