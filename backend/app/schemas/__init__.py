@@ -512,6 +512,7 @@ class SeatingPlanResponse(BaseModel):
     exam_subject: Optional[str] = None
     room_name: Optional[str] = None
     batches: List[str] = Field(default_factory=list)
+    batch_distribution: List[dict] = Field(default_factory=list)
     name: str
     plan_type: str
     status: str
@@ -647,8 +648,8 @@ class TimetableView(BaseModel):
     end_time: str
     class_name: str
     subject: str
-    teacher_name: str
-    teacher_id: int
+    teacher_name: Optional[str] = None
+    teacher_id: Optional[int] = None
     room_id: Optional[int] = None
     room_name: Optional[str] = None
     session_mode: str = "offline"

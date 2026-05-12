@@ -145,15 +145,26 @@ def serialize_seating_plan(plan: SeatingPlan) -> SeatingPlanResponse:
                 validation_errors = [str(plan.validation_errors)]
 
     batches: List[str] = []
+    batch_distribution: List[Dict] = []
     if plan.batch_distribution:
         try:
             parsed_batches = json.loads(plan.batch_distribution)
             if isinstance(parsed_batches, dict):
                 batches = [str(item) for item in parsed_batches.keys()]
+                total_students = sum(int(value or 0) for value in parsed_batches.values()) or 0
+                batch_distribution = [
+                    {
+                        "batch": str(batch_name),
+                        "count": int(count or 0),
+                        "percentage": round((int(count or 0) / total_students) * 100, 2) if total_students else 0.0,
+                    }
+                    for batch_name, count in parsed_batches.items()
+                ]
             elif isinstance(parsed_batches, list):
                 batches = [str(item) for item in parsed_batches]
         except Exception:
             batches = []
+            batch_distribution = []
 
     return SeatingPlanResponse(
         id=plan.id,
@@ -163,6 +174,7 @@ def serialize_seating_plan(plan: SeatingPlan) -> SeatingPlanResponse:
         exam_subject=plan.exam.subject if plan.exam else None,
         room_name=plan.room.name if plan.room else None,
         batches=batches,
+        batch_distribution=batch_distribution,
         name=plan.name,
         plan_type=str(plan.plan_type.value if hasattr(plan.plan_type, "value") else plan.plan_type),
         status=str(plan.status.value if hasattr(plan.status, "value") else plan.status),

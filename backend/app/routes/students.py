@@ -32,6 +32,32 @@ import os
 router = APIRouter()
 
 
+def looks_like_academic_batch_name(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return False
+
+    coaching_keywords = [
+        "med",
+        "medical",
+        "non med",
+        "non medical",
+        "newton",
+        "aiims",
+        "neet",
+        "jee",
+        "advance",
+        "adv",
+        "ssb",
+        "sure selection",
+        "dropper",
+        "pcm",
+        "pcb",
+        "batch",
+    ]
+    return any(keyword in normalized for keyword in coaching_keywords)
+
+
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str | None, str | None]:
     normalized = (batch_name or "").strip()
     if not normalized:
@@ -41,7 +67,32 @@ def split_batch_to_class_section(batch_name: str | None) -> tuple[str | None, st
         class_part, section_part = normalized.split("|", 1)
         return class_part.strip() or None, section_part.strip() or None
 
-    return normalized, None
+    if looks_like_academic_batch_name(normalized):
+        return None, None
+
+    simple_class_match = normalized.lower().replace(" ", "")
+    if (
+        simple_class_match in {"nursery", "lkg", "ukg"}
+        or simple_class_match.rstrip("abcdefghijklmnopqrstuvwxyz") != simple_class_match
+        or any(token in simple_class_match for token in ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"])
+    ):
+        return normalized, None
+
+    return None, None
+
+
+def normalize_student_class_name(class_name: str | None, batch_name: str | None = None) -> str | None:
+    normalized_class = (class_name or "").strip()
+    if not normalized_class:
+        return None
+
+    if looks_like_academic_batch_name(normalized_class):
+        return None
+
+    if batch_name and normalized_class.lower() == (batch_name or "").strip().lower():
+        return None
+
+    return normalized_class
 
 
 def release_student_seats(db: Session, student_ids: List[int]) -> int:
@@ -177,13 +228,14 @@ def serialize_hostel(hostel: Hostel) -> HostelResponse:
 
 
 def serialize_student(student: Student) -> StudentResponse:
+    safe_class_name = normalize_student_class_name(student.class_name, student.batch)
     return StudentResponse(
         id=student.id,
         roll_number=student.roll_number,
         name=student.name,
         father_name=student.father_name,
         batch=student.batch,
-        class_name=student.class_name,
+        class_name=safe_class_name,
         section=student.section,
         academic_session=student.academic_session,
         email=student.email,
@@ -425,7 +477,7 @@ async def create_student(
         )
 
     batch = get_or_create_batch(db, school_id, student.batch, category="batch")
-    normalized_class_name = (student.class_name or "").strip() or None
+    normalized_class_name = normalize_student_class_name(student.class_name, student.batch)
     normalized_section = (student.section or "").strip() or None
     if normalized_class_name:
         get_or_create_batch(db, school_id, normalized_class_name, category="class")
@@ -1014,7 +1066,7 @@ async def update_student(
         update_dict['batch_id'] = batch.id
 
     if 'class_name' in update_dict:
-        normalized_class_name = (update_dict['class_name'] or '').strip()
+        normalized_class_name = normalize_student_class_name(update_dict['class_name'], update_dict.get('batch', student.batch))
         update_dict['class_name'] = normalized_class_name or None
         if normalized_class_name:
             get_or_create_batch(db, student.school_id, normalized_class_name, category="class")

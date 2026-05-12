@@ -43,6 +43,7 @@ DAYS_LABELS = {day.value: day.value.capitalize() for day in DAYS_ORDER}
 EXPORT_GROUPINGS = {"day", "teacher", "room", "batch"}
 SESSION_MODE_FILTERS = {"all", "offline", "online", "merged"}
 BREAK_TEACHER_NAME = "__BREAK_SESSION__"
+SELF_STUDY_TEACHER_NAME = "__SELF_STUDY_SESSION__"
 
 
 def resolve_teacher_for_actor(db: Session, school_id: int, actor: Dict[str, str]) -> Optional[Teacher]:
@@ -98,6 +99,7 @@ def format_session_type(value: Optional[str]) -> str:
         "break_time": "Break Time",
         "doubt_session": "Doubt Session",
         "extra_class": "Extra Class",
+        "self_study": "Self Study",
     }
     return mapping.get(value or "regular_class", "Regular Class")
 
@@ -105,6 +107,17 @@ def format_session_type(value: Optional[str]) -> str:
 def is_break_entry(entry: TimetableView) -> bool:
     subject_value = (entry.subject or "").strip().lower()
     return entry.session_type == "break_time" or subject_value == "break time"
+
+
+def is_self_study_entry(entry: TimetableView) -> bool:
+    subject_value = (entry.subject or "").strip().lower()
+    return entry.session_type == "self_study" or subject_value == "self study"
+
+
+def is_no_teacher_session(session_type: Optional[str], subject: Optional[str] = None) -> bool:
+    normalized_type = (session_type or "").strip().lower()
+    normalized_subject = (subject or "").strip().lower()
+    return normalized_type in {"break_time", "self_study"} or normalized_subject in {"break time", "self study"}
 
 
 def build_subject_label(entry: TimetableView) -> str:
@@ -122,6 +135,8 @@ def build_location_label(entry: TimetableView) -> str:
 def build_teacher_label(entry: TimetableView) -> str:
     if is_break_entry(entry):
         return "BREAK TIME"
+    if is_self_study_entry(entry):
+        return "SELF STUDY"
     return entry.teacher_name or ""
 
 
@@ -169,7 +184,9 @@ def build_timetable_view(entry: TimetableEntry, teacher_name: str, room_name: Op
         notes=entry.notes,
     )
     if is_break_entry(timetable_view):
-        timetable_view.teacher_name = ""
+        timetable_view.teacher_name = "BREAK TIME"
+    elif is_self_study_entry(timetable_view):
+        timetable_view.teacher_name = "SELF STUDY"
     return timetable_view
 
 
@@ -197,7 +214,9 @@ def build_timetable_response(entry: TimetableEntry, teacher_name: Optional[str],
         notes=entry.notes,
     )
     if response.session_type == "break_time" or (response.subject or "").strip().lower() == "break time":
-        response.teacher_name = None
+        response.teacher_name = "Break Time"
+    elif response.session_type == "self_study" or (response.subject or "").strip().lower() == "self study":
+        response.teacher_name = "Self Study"
     return response
 
 
@@ -208,7 +227,7 @@ def get_entry_query(db: Session, school_id: int):
             Teacher.name.label("teacher_name"),
             Room.name.label("room_name"),
         )
-        .join(Teacher, TimetableEntry.teacher_id == Teacher.id)
+        .outerjoin(Teacher, TimetableEntry.teacher_id == Teacher.id)
         .outerjoin(Room, TimetableEntry.room_id == Room.id)
         .filter(
             TimetableEntry.school_id == school_id,
@@ -231,6 +250,31 @@ def ensure_break_teacher(db: Session, school_id: int) -> Teacher:
 
     teacher = Teacher(
         name=BREAK_TEACHER_NAME,
+        subject="system",
+        school_id=school_id,
+        email=None,
+        phone=None,
+        is_active=False,
+    )
+    db.add(teacher)
+    db.flush()
+    return teacher
+
+
+def ensure_self_study_teacher(db: Session, school_id: int) -> Teacher:
+    teacher = (
+        db.query(Teacher)
+        .filter(
+            Teacher.school_id == school_id,
+            Teacher.name == SELF_STUDY_TEACHER_NAME,
+        )
+        .first()
+    )
+    if teacher:
+        return teacher
+
+    teacher = Teacher(
+        name=SELF_STUDY_TEACHER_NAME,
         subject="system",
         school_id=school_id,
         email=None,
@@ -541,10 +585,13 @@ async def create_timetable_entry(
     db: Session = Depends(get_db),
 ):
     is_break_session = entry.session_type == "break_time"
+    is_no_teacher_entry = is_no_teacher_session(entry.session_type, entry.subject)
     teacher = None
     if is_break_session:
         teacher = ensure_break_teacher(db, school_id)
-    else:
+    elif entry.session_type == "self_study":
+        teacher = ensure_self_study_teacher(db, school_id)
+    elif not is_no_teacher_entry:
         if not entry.teacher_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Teacher is required")
         teacher = db.query(Teacher).filter(
@@ -563,7 +610,7 @@ async def create_timetable_entry(
         room_name = room.name
 
     conflicts = []
-    if not is_break_session and teacher:
+    if not is_no_teacher_entry and teacher:
         conflicts = check_teacher_conflict(db, teacher.id, entry.day_of_week, entry.start_time, entry.end_time)
     if conflicts:
         raise HTTPException(
@@ -591,7 +638,7 @@ async def create_timetable_entry(
     db.commit()
     db.refresh(db_entry)
 
-    return build_timetable_response(db_entry, teacher.name, room_name)
+    return build_timetable_response(db_entry, teacher.name if teacher else None, room_name)
 
 
 @router.get("", response_model=List[TimetableView])
@@ -707,20 +754,26 @@ async def update_timetable_entry(
     if not entry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable entry not found")
 
-    is_break_session = (entry_update.session_type or entry.session_type) == "break_time"
-    teacher_id = entry_update.teacher_id or entry.teacher_id
+    next_session_type = entry_update.session_type or entry.session_type
+    next_subject = entry_update.subject or entry.subject
+    is_break_session = next_session_type == "break_time"
+    is_no_teacher_entry = is_no_teacher_session(next_session_type, next_subject)
+    teacher_id = entry_update.teacher_id if entry_update.teacher_id is not None else entry.teacher_id
     day_of_week = entry_update.day_of_week or entry.day_of_week
     start_time = entry_update.start_time or entry.start_time
     end_time = entry_update.end_time or entry.end_time
 
     if is_break_session:
-        break_teacher = ensure_break_teacher(db, school_id)
-        teacher_id = break_teacher.id
+        teacher_id = ensure_break_teacher(db, school_id).id
+    elif next_session_type == "self_study":
+        teacher_id = ensure_self_study_teacher(db, school_id).id
+    elif is_no_teacher_entry:
+        teacher_id = entry.teacher_id
     elif not teacher_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Teacher is required")
 
     conflicts = []
-    if not is_break_session:
+    if not is_no_teacher_entry:
         conflicts = check_teacher_conflict(db, teacher_id, day_of_week, start_time, end_time, entry_id)
     if conflicts:
         teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()

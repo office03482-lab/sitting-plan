@@ -3,7 +3,7 @@ import { Zap, Download, PlusCircle, Trash2, AlertTriangle, UserPlus, ArrowUp, Ar
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
 import { apiService } from '@services/api';
-import type { SeatingPlan, Exam, Invigilator, Batch, Student, RoomInvigilator, Room } from '@types';
+import type { SeatingPlan, Exam, Invigilator, Batch, Student, RoomInvigilator, Room, RoomLayout } from '@types';
 
 const toDateTimeLocalValue = (date: Date) => {
   const offsetMs = date.getTimezoneOffset() * 60000;
@@ -20,6 +20,72 @@ const extractBatchesFromPlanName = (planName: string) => {
 
   const legacyMatch = planName.match(/Batches\s+(.+)$/i);
   return legacyMatch?.[1]?.trim() || '';
+};
+
+interface RoomBatchSummary {
+  planId: number;
+  roomId: number;
+  roomName: string;
+  totalStudents: number;
+  totalBatches: number;
+  batches: Array<{
+    batchName: string;
+    studentCount: number;
+  }>;
+}
+
+const buildRoomBatchSummary = (plan: SeatingPlan, layout: RoomLayout): RoomBatchSummary => {
+  const batchCounts = new Map<string, number>();
+
+  layout.desks.forEach((desk) => {
+    desk.seats.forEach((seat) => {
+      if (!seat.is_occupied) return;
+      const batchName = String(seat.batch || 'Unknown').trim() || 'Unknown';
+      batchCounts.set(batchName, (batchCounts.get(batchName) || 0) + 1);
+    });
+  });
+
+  const batches = Array.from(batchCounts.entries())
+    .map(([batchName, studentCount]) => ({ batchName, studentCount }))
+    .sort((a, b) => {
+      if (b.studentCount !== a.studentCount) return b.studentCount - a.studentCount;
+      return a.batchName.localeCompare(b.batchName);
+    });
+
+  return {
+    planId: plan.id,
+    roomId: plan.room_id,
+    roomName: plan.room_name || layout.room_name || `Room ${plan.room_id}`,
+    totalStudents: batches.reduce((sum, batch) => sum + batch.studentCount, 0),
+    totalBatches: batches.length,
+    batches,
+  };
+};
+
+const buildRoomBatchSummaryFromPlan = (plan: SeatingPlan): RoomBatchSummary | null => {
+  const planBatchDistribution = toArray<{ batch?: string; count?: number }>(plan.batch_distribution)
+    .map((item) => ({
+      batchName: String(item?.batch || '').trim(),
+      studentCount: Number(item?.count || 0),
+    }))
+    .filter((item) => item.batchName && item.studentCount > 0)
+    .sort((a, b) => {
+      if (b.studentCount !== a.studentCount) return b.studentCount - a.studentCount;
+      return a.batchName.localeCompare(b.batchName);
+    });
+
+  if (planBatchDistribution.length === 0) {
+    return null;
+  }
+
+  return {
+    planId: plan.id,
+    roomId: plan.room_id,
+    roomName: plan.room_name || `Room ${plan.room_id}`,
+    totalStudents: planBatchDistribution.reduce((sum, batch) => sum + batch.studentCount, 0),
+    totalBatches: planBatchDistribution.length,
+    batches: planBatchDistribution,
+  };
 };
 
 export default function SeatingGeneration() {
@@ -51,6 +117,9 @@ export default function SeatingGeneration() {
   const [deletingExam, setDeletingExam] = useState(false);
   const [studentsByBatch, setStudentsByBatch] = useState<{ [batch: string]: any[] }>({});
   const [loadingBatchStudents, setLoadingBatchStudents] = useState(false);
+  const [roomBatchSummaries, setRoomBatchSummaries] = useState<Record<number, RoomBatchSummary>>({});
+  const [loadingRoomBatchSummaries, setLoadingRoomBatchSummaries] = useState(false);
+  const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<number | null>(null);
 
   const selectedExamDetails = exams.find((exam) => exam.id === selectedExam);
   const activeSavedAssignments = useMemo(
@@ -64,6 +133,10 @@ export default function SeatingGeneration() {
     }
 
     return extractBatchesFromPlanName(plan.name) || selectedBatches.join(', ') || 'Mixed / Legacy Plan';
+  };
+
+  const getPlanRoom = (plan: SeatingPlan) => {
+    return roomBatchSummaries[plan.id]?.roomName || plan.room_name || `Room ${plan.room_id}`;
   };
 
   const getExamLabel = (plan: SeatingPlan) => {
@@ -87,12 +160,7 @@ export default function SeatingGeneration() {
   }, []);
 
   useEffect(() => {
-    if (!selectedExam) {
-      setGeneratedPlans([]);
-      setSeatingPlans([]);
-      return;
-    }
-    void loadPlansForExam(selectedExam);
+    void loadPlansForExam(selectedExam ?? undefined);
   }, [selectedExam]);
 
   // Load students for selected batches
@@ -103,6 +171,59 @@ export default function SeatingGeneration() {
       setStudentsByBatch({});
     }
   }, [selectedBatches]);
+
+  useEffect(() => {
+    if (generatedPlans.length === 0) {
+      setRoomBatchSummaries({});
+      setLoadingRoomBatchSummaries(false);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadRoomBatchSummaries = async () => {
+      setLoadingRoomBatchSummaries(true);
+      try {
+        const summaryEntries = await Promise.all(
+          generatedPlans.map(async (plan) => {
+            const planLevelSummary = buildRoomBatchSummaryFromPlan(plan);
+            if (planLevelSummary) {
+              return [plan.id, planLevelSummary] as const;
+            }
+
+            try {
+              const response = await apiService.getPlanLayout(plan.id);
+              return [plan.id, buildRoomBatchSummary(plan, response.data)] as const;
+            } catch (error) {
+              console.error(`Failed to load layout summary for seating plan ${plan.id}:`, error);
+              return null;
+            }
+          })
+        );
+
+        if (isCancelled) return;
+
+        const nextSummaries = summaryEntries.reduce<Record<number, RoomBatchSummary>>((accumulator, entry) => {
+          if (!entry) return accumulator;
+          const [planId, summary] = entry;
+          accumulator[planId] = summary;
+          return accumulator;
+        }, {});
+
+        setRoomBatchSummaries(nextSummaries);
+      } finally {
+        if (!isCancelled) {
+          setLoadingRoomBatchSummaries(false);
+        }
+      }
+    };
+
+    void loadRoomBatchSummaries();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [generatedPlans]);
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -189,7 +310,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const loadPlansForExam = async (examId: number) => {
+  const loadPlansForExam = async (examId?: number) => {
     try {
       const plansResponse = await apiService.listAllPlans(examId);
       const plans = toArray<SeatingPlan>(plansResponse.data);
@@ -996,11 +1117,12 @@ export default function SeatingGeneration() {
         </div>
 
         {/* Generated Plans Section */}
-        {selectedExam && (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-white rounded-lg shadow overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-800">
-                Generated Plans For {selectedExamDetails?.name || 'Selected Exam'} ({generatedPlans.length})
+                {selectedExam
+                  ? `Generated Plans For ${selectedExamDetails?.name || 'Selected Exam'} (${generatedPlans.length})`
+                  : `All Generated Plans (${generatedPlans.length})`}
               </h2>
               {generatedPlans.length > 0 && (
                 <div className="flex items-center gap-3">
@@ -1029,91 +1151,174 @@ export default function SeatingGeneration() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Plan Name</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Exam</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Batches</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Plan Type</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Students</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Generated Date</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
-                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {generatedPlans.map((plan) => (
-                      <tr key={plan.id} className="border-b border-gray-200 hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm font-medium text-gray-900">{plan.name}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          <div className="font-medium text-gray-800">{getExamLabel(plan)}</div>
-                          <div className="text-xs text-gray-500">{getExamSubject(plan)}</div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{getPlanBatches(plan)}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-medium ${
-                              plan.plan_type === 'strict'
-                                ? 'bg-red-100 text-red-800'
-                                : plan.plan_type === 'compact'
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-blue-100 text-blue-800'
-                            }`}
-                          >
-                            {getPlanTypeLabel(plan.plan_type)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{plan.students_assigned}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{formatGeneratedDate(plan.created_at)}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-medium ${
-                              plan.status === 'finalized'
-                                ? 'bg-green-100 text-green-800'
-                                : plan.status === 'reviewed'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : plan.status === 'draft'
-                                    ? 'bg-yellow-100 text-yellow-800'
-                                    : 'bg-gray-100 text-gray-800'
-                            }`}
-                          >
-                            {plan.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <div className="flex justify-center gap-2">
-                            <button
-                              onClick={() => handleExportPDF(plan.id)}
-                              className="text-purple-600 hover:text-purple-700 p-2 rounded hover:bg-purple-50"
-                              title="Export as PDF"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleExportExcel(plan.id)}
-                              className="text-green-600 hover:text-green-700 p-2 rounded hover:bg-green-50"
-                              title="Export as Excel"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirm({ planId: plan.id, planName: plan.name })}
-                              className="text-red-600 hover:text-red-700 p-2 rounded hover:bg-red-50"
-                              title="Delete plan"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Room</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Plan</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Exam</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Batches</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Type</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Students</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Date</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-700">Status</th>
+                        <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-700">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {generatedPlans.map((plan) => {
+                        const summary = roomBatchSummaries[plan.id];
+                        const isExpanded = expandedSummaryPlanId === plan.id;
+                        return [
+                            <tr key={plan.id} className="border-b border-gray-200 hover:bg-gray-50">
+                              <td className="px-4 py-3 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedSummaryPlanId(isExpanded ? null : plan.id)}
+                                  className="inline-flex max-w-[12rem] items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
+                                  title={summary ? 'Click to show room summary' : 'Summary loading'}
+                                >
+                                  <span className="truncate">{getPlanRoom(plan)}</span>
+                                  <span className="text-[10px] text-slate-500">{isExpanded ? 'Hide' : 'Show'}</span>
+                                </button>
+                              </td>
+                              <td className="px-4 py-3 text-xs font-medium text-gray-900">
+                                <div className="max-w-[14rem] truncate">{plan.name}</div>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-gray-600">
+                                <div className="max-w-[10rem] truncate font-medium text-gray-800">{getExamLabel(plan)}</div>
+                                <div className="max-w-[10rem] truncate text-[11px] text-gray-500">{getExamSubject(plan)}</div>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-gray-600">
+                                <div className="max-w-[12rem] truncate">{getPlanBatches(plan)}</div>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-gray-600">
+                                <span
+                                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${
+                                    plan.plan_type === 'strict'
+                                      ? 'bg-red-100 text-red-800'
+                                      : plan.plan_type === 'compact'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-blue-100 text-blue-800'
+                                  }`}
+                                >
+                                  {getPlanTypeLabel(plan.plan_type)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{plan.students_assigned}</td>
+                              <td className="px-4 py-3 text-xs text-gray-600">{formatGeneratedDate(plan.created_at)}</td>
+                              <td className="px-4 py-3 text-xs text-gray-600">
+                                <span
+                                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium ${
+                                    plan.status === 'finalized'
+                                      ? 'bg-green-100 text-green-800'
+                                      : plan.status === 'reviewed'
+                                        ? 'bg-blue-100 text-blue-800'
+                                        : plan.status === 'draft'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                  }`}
+                                >
+                                  {plan.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <div className="flex justify-center gap-2">
+                                  <button
+                                    onClick={() => handleExportPDF(plan.id)}
+                                    className="rounded p-1.5 text-purple-600 hover:bg-purple-50 hover:text-purple-700"
+                                    title="Export as PDF"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleExportExcel(plan.id)}
+                                    className="rounded p-1.5 text-green-600 hover:bg-green-50 hover:text-green-700"
+                                    title="Export as Excel"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteConfirm({ planId: plan.id, planName: plan.name })}
+                                    className="rounded p-1.5 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    title="Delete plan"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>,
+                            isExpanded ? (
+                              <tr key={`${plan.id}-summary`} className="border-b border-gray-200 bg-slate-50/70">
+                                <td colSpan={9} className="px-4 py-3">
+                                  {summary ? (
+                                    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                                      <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100 px-3 py-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[10px] font-semibold text-white">
+                                            {summary.roomName}
+                                          </span>
+                                          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
+                                            {summary.totalStudents} students
+                                          </span>
+                                          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
+                                            {summary.totalBatches} batches
+                                          </span>
+                                        </div>
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                          Room Summary Sheet
+                                        </span>
+                                      </div>
+
+                                      <div className="overflow-x-auto">
+                                        <table className="min-w-full text-xs">
+                                          <thead className="bg-slate-50">
+                                            <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-600">
+                                              <th className="px-3 py-2 text-left font-semibold">S.No.</th>
+                                              <th className="px-3 py-2 text-left font-semibold">Batch Name</th>
+                                              <th className="px-3 py-2 text-left font-semibold">Students</th>
+                                              <th className="px-3 py-2 text-left font-semibold">Share</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {summary.batches.map((batch, index) => (
+                                              <tr
+                                                key={`${summary.planId}-${batch.batchName}`}
+                                                className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}
+                                              >
+                                                <td className="px-3 py-2 text-slate-500">{index + 1}</td>
+                                                <td className="px-3 py-2 font-medium text-slate-800">{batch.batchName}</td>
+                                                <td className="px-3 py-2">
+                                                  <span className="inline-flex min-w-8 items-center justify-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                                                    {batch.studentCount}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-600">
+                                                  {summary.totalStudents > 0
+                                                    ? `${((batch.studentCount / summary.totalStudents) * 100).toFixed(1)}%`
+                                                    : '0%'}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  ) : loadingRoomBatchSummaries ? (
+                                    <p className="text-xs text-slate-500">Room summary load ho rahi hai...</p>
+                                  ) : (
+                                    <p className="text-xs text-slate-500">Is room ke liye summary available nahi hai.</p>
+                                  )}
+                                </td>
+                              </tr>
+                            ) : null,
+                        ];
+                      })}
+                    </tbody>
+                  </table>
               </div>
             )}
           </div>
-        )}
 
         {/* Delete Confirmation Modal */}
         {deleteConfirm && (

@@ -69,6 +69,9 @@ const getWeekDateForDay = (referenceDate: string, day: DayOfWeek) => {
   return date;
 };
 
+const isNoTeacherSession = (sessionType?: TimetableSessionType) =>
+  sessionType === 'break_time' || sessionType === 'self_study';
+
 const TimetableManagement: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
@@ -124,9 +127,26 @@ const TimetableManagement: React.FC = () => {
 
   const visibleTeachers = useMemo(() => {
     if (!isTeacherSelfView) return teachers;
+    if (teachers.length === 0) {
+      const teacherMap = new Map<number, Teacher>();
+      entries.forEach((entry) => {
+        if (!entry.teacher_id) return;
+        if (teacherMap.has(entry.teacher_id)) return;
+        teacherMap.set(entry.teacher_id, {
+          id: entry.teacher_id,
+          name: String(entry.teacher_name || user?.full_name || 'Teacher'),
+          subject: String(entry.subject || 'Assigned Subject'),
+          email: user?.email,
+          phone: '',
+          school_id: 1,
+          is_active: true,
+        } as Teacher);
+      });
+      return Array.from(teacherMap.values());
+    }
     const actorName = String(user?.full_name || '').trim().toLowerCase();
     return teachers.filter((teacher) => String(teacher.name || '').trim().toLowerCase() === actorName);
-  }, [isTeacherSelfView, teachers, user?.full_name]);
+  }, [entries, isTeacherSelfView, teachers, user?.email, user?.full_name]);
 
   useEffect(() => {
     loadData();
@@ -143,6 +163,25 @@ const TimetableManagement: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
+      setAlert(null);
+      if (isTeacherSelfView) {
+        const [entriesResponse, teachersResponse] = await Promise.allSettled([
+          apiService.listTimetableEntries(),
+          apiService.listTeachers(),
+        ]);
+
+        if (entriesResponse.status !== 'fulfilled') {
+          throw entriesResponse.reason;
+        }
+
+        setEntries(entriesResponse.value.data);
+        setTeachers(teachersResponse.status === 'fulfilled' ? teachersResponse.value.data : []);
+        setRooms([]);
+        setStudents([]);
+        setManagedBatchOptions([]);
+        return;
+      }
+
       const [entriesResponse, teachersResponse, roomsResponse, studentsResponse, batchResponse, classResponse] = await Promise.all([
         apiService.listTimetableEntries(),
         apiService.listTeachers(),
@@ -206,14 +245,15 @@ const TimetableManagement: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const isBreakSession = formData.session_type === 'break_time';
+    const isTeacherFreeSession = isNoTeacherSession(formData.session_type);
 
-    if ((!isBreakSession && !formData.teacher_id) || formData.class_names.length === 0 || (!isBreakSession && !formData.subject) || !formData.start_time || !formData.end_time) {
+    if ((!isTeacherFreeSession && !formData.teacher_id) || formData.class_names.length === 0 || (!isBreakSession && !formData.subject) || !formData.start_time || !formData.end_time) {
       setAlert({ type: 'error', message: 'All fields are required' });
       return;
     }
 
     // Check for conflicts
-    const conflictCheck = isBreakSession ? null : await checkConflict(formData, editingEntry?.id);
+    const conflictCheck = isTeacherFreeSession ? null : await checkConflict(formData, editingEntry?.id);
     if (conflictCheck?.has_conflict) {
       setAlert({ type: 'error', message: conflictCheck.message });
       return;
@@ -221,7 +261,7 @@ const TimetableManagement: React.FC = () => {
 
     try {
       const submitData = {
-        teacher_id: isBreakSession ? undefined : parseInt(formData.teacher_id),
+        teacher_id: isTeacherFreeSession ? undefined : parseInt(formData.teacher_id),
         room_id: formData.room_id ? parseInt(formData.room_id) : undefined,
         session_mode: formData.session_mode,
         session_type: formData.session_type,
@@ -276,7 +316,7 @@ const TimetableManagement: React.FC = () => {
       const fullEntry = response.data;
       setEditingEntry(fullEntry);
       setFormData({
-        teacher_id: fullEntry.teacher_id.toString(),
+        teacher_id: fullEntry.teacher_id?.toString() || '',
         room_id: fullEntry.room_id?.toString() || '',
         session_mode: fullEntry.session_mode || 'offline',
         session_type: fullEntry.session_type || 'regular_class',
@@ -348,7 +388,7 @@ const TimetableManagement: React.FC = () => {
 
       for (const sourceEntry of sourceEntries) {
         await apiService.createTimetableEntry({
-          teacher_id: sourceEntry.session_type === 'break_time' ? undefined : sourceEntry.teacher_id,
+          teacher_id: isNoTeacherSession(sourceEntry.session_type) ? undefined : sourceEntry.teacher_id,
           room_id: sourceEntry.room_id || undefined,
           session_mode: sourceEntry.session_mode || 'offline',
           session_type: sourceEntry.session_type || 'regular_class',
@@ -395,6 +435,8 @@ const getSessionTypeLabel = (value?: TimetableSessionType) => {
         return 'Doubt Session';
       case 'extra_class':
         return 'Extra Class';
+      case 'self_study':
+        return 'Self Study';
       default:
         return 'Regular Class';
     }
@@ -760,7 +802,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
 
             <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
               <div className="space-y-4 overflow-y-auto px-6 py-4">
-              {formData.session_type !== 'break_time' && (
+              {!isNoTeacherSession(formData.session_type) && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Teacher *
@@ -808,11 +850,23 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                 <select
                   value={formData.session_type}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      session_type: e.target.value as TimetableSessionType,
-                      teacher_id: e.target.value === 'break_time' ? '' : formData.teacher_id,
-                      subject: e.target.value === 'break_time' ? 'Break Time' : formData.subject === 'Break Time' ? '' : formData.subject,
+                    setFormData((current) => {
+                      const nextSessionType = e.target.value as TimetableSessionType;
+                      return {
+                        ...current,
+                        session_type: nextSessionType,
+                        teacher_id: isNoTeacherSession(nextSessionType) ? '' : current.teacher_id,
+                        subject:
+                          nextSessionType === 'break_time'
+                            ? 'Break Time'
+                            : nextSessionType === 'self_study'
+                              ? current.subject === 'Break Time' || !current.subject
+                                ? 'Self Study'
+                                : current.subject
+                              : current.subject === 'Break Time' || current.subject === 'Self Study'
+                                ? ''
+                                : current.subject,
+                      };
                     })
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -822,6 +876,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                   <option value="break_time">Break Time</option>
                   <option value="doubt_session">Doubt Session</option>
                   <option value="extra_class">Extra Class</option>
+                  <option value="self_study">Self Study</option>
                 </select>
               </div>
 
@@ -981,7 +1036,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                   value={formData.subject}
                   onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder={formData.session_type === 'break_time' ? 'Auto set as Break Time' : 'Auto-filled from teacher selection'}
+                  placeholder={formData.session_type === 'break_time' ? 'Auto set as Break Time' : formData.session_type === 'self_study' ? 'Self Study subject' : 'Auto-filled from teacher selection'}
                   required={formData.session_type !== 'break_time'}
                   disabled={formData.session_type === 'break_time'}
                 />

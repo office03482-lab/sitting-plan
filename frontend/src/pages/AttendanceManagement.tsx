@@ -827,6 +827,25 @@ function AttendanceManagementContent() {
   }, [activeTab, loadedTabs.student]);
 
   useEffect(() => {
+    if (activeTab !== 'overview' || !loadedTabs.overview) return;
+
+    const refreshOverview = () => {
+      if (document.visibilityState === 'hidden') return;
+      void loadOverviewData();
+    };
+
+    const intervalId = window.setInterval(refreshOverview, 15000);
+    window.addEventListener('focus', refreshOverview);
+    document.addEventListener('visibilitychange', refreshOverview);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshOverview);
+      document.removeEventListener('visibilitychange', refreshOverview);
+    };
+  }, [activeTab, loadedTabs.overview]);
+
+  useEffect(() => {
     if (staffFilters.department) {
       loadStaffMarking();
     }

@@ -361,6 +361,12 @@ class ApiService {
     });
   }
 
+  async downloadStudentTemplate() {
+    return this.api.get('/students/template/download', {
+      responseType: 'blob',
+    });
+  }
+
   async listStudents(schoolId: number = 1, skip = 0, limit = 10000, batch?: string) {
     return this.api.get<Student[]>('/students', {
       params: { school_id: schoolId, skip, limit, batch },
@@ -729,8 +735,8 @@ class ApiService {
     return this.api.put<any>(`/batches/${batchId}`, data, { params: { school_id: schoolId } });
   }
 
-  async reorderBatches(items: Array<{ batch_id: number; display_order: number }>, schoolId: number = 1) {
-    return this.api.post<any[]>('/batches/reorder', { items }, { params: { school_id: schoolId } });
+  async reorderBatches(items: Array<{ batch_id: number; display_order: number }>, schoolId: number = 1, category?: string) {
+    return this.api.post<any[]>('/batches/reorder', { items }, { params: { school_id: schoolId, category } });
   }
 
   async deleteBatch(batchId: number, schoolId: number = 1) {

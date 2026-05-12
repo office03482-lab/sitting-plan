@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { apiService } from '@services/api';
 import type { Batch, Student } from '@types';
 import { Plus, Pencil, Trash2, AlertCircle, Search, Filter, X, ArrowUp, ArrowDown, ListOrdered } from 'lucide-react';
@@ -88,6 +88,96 @@ const getCourseFromBatch = (batch: Pick<Batch, 'name' | 'syllabus'>): string => 
   return parseBatchMeta(batch).course;
 };
 
+const naturalNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+const getClassSortKey = (value: string) => {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ');
+  const compact = normalized.replace(/[^a-z0-9]/g, '');
+  const aliasMap: Record<string, number> = {
+    prenursery: -3,
+    preprimary: -3,
+    prenur: -3,
+    nursery: -2,
+    lkg: -1,
+    ukg: 0,
+    kg: 0,
+  };
+  const wordNumberMap: Record<string, number> = {
+    one: 1,
+    first: 1,
+    two: 2,
+    second: 2,
+    three: 3,
+    third: 3,
+    four: 4,
+    fourth: 4,
+    five: 5,
+    fifth: 5,
+    six: 6,
+    sixth: 6,
+    seven: 7,
+    seventh: 7,
+    eight: 8,
+    eighth: 8,
+    nine: 9,
+    ninth: 9,
+    ten: 10,
+    tenth: 10,
+    eleven: 11,
+    eleventh: 11,
+    twelve: 12,
+    twelfth: 12,
+  };
+  const romanMap: Record<string, number> = {
+    i: 1,
+    ii: 2,
+    iii: 3,
+    iv: 4,
+    v: 5,
+    vi: 6,
+    vii: 7,
+    viii: 8,
+    ix: 9,
+    x: 10,
+    xi: 11,
+    xii: 12,
+  };
+
+  if (compact in aliasMap) {
+    return { rank: aliasMap[compact], section: '', label: normalized };
+  }
+
+  for (const [alias, rank] of Object.entries(aliasMap)) {
+    if (compact.includes(alias)) {
+      return { rank, section: '', label: normalized };
+    }
+  }
+
+  const numericMatch = normalized.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
+  if (numericMatch) {
+    const rank = Number(numericMatch[1]);
+    const section = normalized.replace(numericMatch[0], '').trim();
+    return { rank, section, label: normalized };
+  }
+
+  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const token of tokens) {
+    if (token in wordNumberMap) {
+      const section = normalized.replace(token, '').trim();
+      return { rank: wordNumberMap[token], section, label: normalized };
+    }
+    if (token in romanMap) {
+      const section = normalized.replace(token, '').trim();
+      return { rank: romanMap[token], section, label: normalized };
+    }
+  }
+
+  return { rank: Number.POSITIVE_INFINITY, section: '', label: normalized };
+};
+
 type BatchCourse = '' | 'NEET' | 'JEE-MAIN' | 'ADVANCE' | 'S.S.B' | 'General';
 type BatchProgram = '' | 'Medical' | 'Non Medical';
 type BatchTypeValue = '' | 'Dropper' | '11th' | '12th' | 'Regular';
@@ -114,6 +204,8 @@ const toBatchFormState = (batch?: Pick<Batch, 'name' | 'syllabus' | 'is_active'>
   };
 };
 
+type BatchFormState = ReturnType<typeof toBatchFormState>;
+
 const normalizeStudent = (student: any): Student => ({
   ...student,
   id: Number(student?.id ?? 0),
@@ -130,6 +222,12 @@ const normalizeStudent = (student: any): Student => ({
 
 const BatchManagement: React.FC = () => {
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [categoryTotals, setCategoryTotals] = useState({
+    batch: 0,
+    class: 0,
+    batchStudents: 0,
+    classStudents: 0,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -152,6 +250,8 @@ const BatchManagement: React.FC = () => {
   const [studentsError, setStudentsError] = useState<string | null>(null);
   const [reorderLoading, setReorderLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'batch' | 'class'>('batch');
+  const formDataRef = useRef<BatchFormState>(toBatchFormState());
+  const streamManuallyChangedRef = useRef(false);
 
   const schoolId = 1; // TODO: Get from auth context
 
@@ -162,8 +262,37 @@ const BatchManagement: React.FC = () => {
   const loadBatches = async () => {
     try {
       setLoading(true);
-      const response = await apiService.listBatches(schoolId, undefined, selectedCategory);
-      setBatches(response.data);
+      const [selectedResponse, otherCategoryResponse, studentsResponse] = await Promise.all([
+        apiService.listBatches(schoolId, undefined, selectedCategory),
+        apiService.listBatches(schoolId, undefined, selectedCategory === 'batch' ? 'class' : 'batch'),
+        apiService.listStudents(schoolId, 0, 10000),
+      ]);
+      const selectedItems = Array.isArray(selectedResponse.data) ? selectedResponse.data : [];
+      const otherItems = Array.isArray(otherCategoryResponse.data) ? otherCategoryResponse.data : [];
+      const students = Array.isArray(studentsResponse.data)
+        ? studentsResponse.data
+            .map(normalizeStudent)
+            .filter((student) => student.id > 0 && (student.name || student.roll_number))
+        : [];
+      const batchStudents = students.filter((student) => student.batch.trim()).length;
+      const classStudents = students.filter((student) => (student.class_name || '').trim()).length;
+
+      setBatches(selectedItems);
+      setCategoryTotals(
+        selectedCategory === 'batch'
+          ? {
+              batch: selectedItems.length,
+              class: otherItems.length,
+              batchStudents,
+              classStudents,
+            }
+          : {
+              batch: otherItems.length,
+              class: selectedItems.length,
+              batchStudents,
+              classStudents,
+            }
+      );
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load batches');
@@ -172,27 +301,65 @@ const BatchManagement: React.FC = () => {
     }
   };
 
+  const setFormState = (next: BatchFormState | ((current: BatchFormState) => BatchFormState)) => {
+    setFormData((current) => {
+      const resolved = typeof next === 'function' ? next(current) : next;
+      formDataRef.current = resolved;
+      return resolved;
+    });
+  };
+
+  const setStreamManualState = (value: boolean) => {
+    streamManuallyChangedRef.current = value;
+    setStreamManuallyChanged(value);
+  };
+
+  const buildResolvedBatchPayload = (state: BatchFormState) => {
+    const autoName = buildBatchNameFromMeta(
+      state.course as BatchCourse,
+      state.program as BatchProgram,
+      state.batchType as BatchTypeValue
+    );
+    const autoSyllabus = buildBatchSyllabusFromMeta(
+      state.course as BatchCourse,
+      state.program as BatchProgram,
+      state.batchType as BatchTypeValue
+    );
+
+    const name = selectedCategory === 'batch' ? (state.name.trim() || autoName.trim()) : state.name.trim();
+    const syllabus = selectedCategory === 'batch'
+      ? ((streamManuallyChangedRef.current ? state.syllabus : autoSyllabus || state.syllabus).trim() || undefined)
+      : undefined;
+
+    return {
+      name,
+      category: selectedCategory,
+      syllabus,
+      is_active: state.is_active,
+    };
+  };
+
   const resetForm = () => {
-    setFormData(toBatchFormState());
-    setStreamManuallyChanged(false);
+    setFormState(toBatchFormState());
+    setStreamManualState(false);
   };
 
   const handleBatchNameChange = (value: string) => {
     const detectedStream = detectStreamFromBatchName(value);
-    setFormData((current) => ({
+    setFormState((current) => ({
       ...current,
       name: value,
-      syllabus: streamManuallyChanged ? current.syllabus : detectedStream || current.syllabus,
+      syllabus: streamManuallyChangedRef.current ? current.syllabus : detectedStream || current.syllabus,
     }));
   };
 
   const handleStreamChange = (value: string) => {
-    setStreamManuallyChanged(true);
-    setFormData((current) => ({ ...current, syllabus: value }));
+    setStreamManualState(true);
+    setFormState((current) => ({ ...current, syllabus: value }));
   };
 
   const handleStructuredMetaChange = (patch: Partial<typeof formData>) => {
-    setFormData((current) => {
+    setFormState((current) => {
       const next = { ...current, ...patch };
       const currentAutoName = buildBatchNameFromMeta(
         current.course as BatchCourse,
@@ -206,7 +373,7 @@ const BatchManagement: React.FC = () => {
       return {
         ...next,
         name: shouldReplaceName ? autoName || next.name : next.name,
-        syllabus: streamManuallyChanged ? next.syllabus : autoSyllabus || next.syllabus,
+        syllabus: streamManuallyChangedRef.current ? next.syllabus : autoSyllabus || next.syllabus,
       };
     });
   };
@@ -214,20 +381,13 @@ const BatchManagement: React.FC = () => {
   const handleAddBatch = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (!formData.name.trim()) {
+      const payload = buildResolvedBatchPayload(formDataRef.current);
+      if (!payload.name) {
         setError('Batch name cannot be empty');
         return;
       }
 
-      await apiService.createBatch(
-        {
-          name: formData.name,
-          category: selectedCategory,
-          syllabus: selectedCategory === 'batch' ? formData.syllabus || undefined : undefined,
-          is_active: formData.is_active,
-        },
-        schoolId
-      );
+      await apiService.createBatch(payload, schoolId);
       resetForm();
       setShowAddModal(false);
       loadBatches();
@@ -241,17 +401,13 @@ const BatchManagement: React.FC = () => {
     if (!selectedBatch) return;
 
     try {
-      if (!formData.name.trim()) {
+      const payload = buildResolvedBatchPayload(formDataRef.current);
+      if (!payload.name) {
         setError('Batch name cannot be empty');
         return;
       }
 
-      await apiService.updateBatch(selectedBatch.id, {
-        name: formData.name,
-        category: selectedCategory,
-        syllabus: selectedCategory === 'batch' ? formData.syllabus || undefined : undefined,
-        is_active: formData.is_active,
-      }, schoolId);
+      await apiService.updateBatch(selectedBatch.id, payload, schoolId);
       resetForm();
       setShowEditModal(false);
       setSelectedBatch(null);
@@ -277,8 +433,8 @@ const BatchManagement: React.FC = () => {
 
   const openEditModal = (batch: Batch) => {
     setSelectedBatch(batch);
-    setFormData(toBatchFormState(batch));
-    setStreamManuallyChanged(false);
+    setFormState(toBatchFormState(batch));
+    setStreamManualState(false);
     setShowEditModal(true);
   };
 
@@ -376,8 +532,8 @@ const BatchManagement: React.FC = () => {
         batch_id: batch.id,
         display_order: index + 1,
       }));
-      const response = await apiService.reorderBatches(payload, schoolId);
-      setBatches(response.data);
+      const response = await apiService.reorderBatches(payload, schoolId, selectedCategory);
+      setBatches(Array.isArray(response.data) ? response.data : []);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Batch sequence save nahi ho payi');
@@ -400,37 +556,103 @@ const BatchManagement: React.FC = () => {
 
   const handleAutoSequence = async () => {
     const nextBatches = [...batches].sort((a, b) => {
+      if (selectedCategory === 'class') {
+        const classA = getClassSortKey(a.name);
+        const classB = getClassSortKey(b.name);
+        if (classA.rank !== classB.rank) return classA.rank - classB.rank;
+        if (classA.section !== classB.section) {
+          return naturalNameCollator.compare(classA.section, classB.section);
+        }
+        return naturalNameCollator.compare(a.name, b.name);
+      }
+
       const typeRankDiff = getBatchTypeRank(a) - getBatchTypeRank(b);
       if (typeRankDiff !== 0) return typeRankDiff;
       const courseDiff = getCourseFromBatch(a).localeCompare(getCourseFromBatch(b));
       if (courseDiff !== 0) return courseDiff;
-      return a.name.localeCompare(b.name);
+      return naturalNameCollator.compare(a.name, b.name);
     });
     await persistBatchOrder(nextBatches);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-4 md:p-8">
+    <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-4 md:p-6">
       <div className="mx-auto max-w-6xl">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="mb-2 text-3xl font-bold text-white md:text-4xl">{selectedCategory === 'class' ? 'Class Management' : 'Batch Management'}</h1>
-          <p className="text-slate-300">{selectedCategory === 'class' ? 'Create and manage school classes' : 'Create and manage exam batches'}</p>
-          <div className="mt-4 inline-flex rounded-xl border border-slate-700 bg-slate-800 p-1">
-            <button
-              type="button"
-              onClick={() => setSelectedCategory('batch')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${selectedCategory === 'batch' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
-            >
-              Batches
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedCategory('class')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${selectedCategory === 'class' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
-            >
-              Classes
-            </button>
+        <div className="mb-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h1 className="mb-2 text-3xl font-bold text-white md:text-4xl">{selectedCategory === 'class' ? 'Class Management' : 'Batch Management'}</h1>
+              <p className="text-slate-300">{selectedCategory === 'class' ? 'Create and manage school classes' : 'Create and manage exam batches'}</p>
+            </div>
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[540px] sm:flex-row sm:items-center sm:justify-end">
+              <div className="relative flex-1 sm:min-w-[260px]">
+                <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder={selectedCategory === 'class' ? 'Search class name' : 'Search batch, course, program, type'}
+                  className="h-11 w-full rounded-xl border border-slate-600 bg-slate-900/80 py-2 pl-10 pr-4 text-sm text-white placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleDeleteAllBatches}
+                disabled={loading || batches.length === 0}
+                className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-red-500/50 bg-red-600/90 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Trash2 size={18} />
+                Delete All
+              </button>
+              <button
+                onClick={() => {
+                  resetForm();
+                  setError(null);
+                  setShowAddModal(true);
+                }}
+                className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+              >
+                <Plus size={18} />
+                {selectedCategory === 'class' ? 'Add Class' : 'Add Batch'}
+              </button>
+            </div>
+          </div>
+          <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-800/70 p-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="inline-flex rounded-xl border border-slate-700 bg-slate-900/70 p-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory('batch')}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${selectedCategory === 'batch' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+                >
+                  Batches
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory('class')}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${selectedCategory === 'class' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
+                >
+                  Classes
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-3 xl:justify-end">
+                <div className="min-w-[210px] rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Total Batches</p>
+                  <div className="mt-1 flex items-baseline justify-between gap-3">
+                    <p className="text-2xl font-bold text-white">{categoryTotals.batch}</p>
+                    <p className="text-xs text-slate-400">{categoryTotals.batchStudents} students</p>
+                  </div>
+                </div>
+                <div className="min-w-[210px] rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Total Classes</p>
+                  <div className="mt-1 flex items-baseline justify-between gap-3">
+                    <p className="text-2xl font-bold text-white">{categoryTotals.class}</p>
+                    <p className="text-xs text-slate-400">{categoryTotals.classStudents} students</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -445,115 +667,100 @@ const BatchManagement: React.FC = () => {
           </div>
         )}
 
-        {/* Add Button */}
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className={`grid gap-3 ${selectedCategory === 'class' ? 'md:grid-cols-3' : 'md:grid-cols-6'}`}>
-            <div className="relative">
-              <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder={selectedCategory === 'class' ? 'Search class name' : 'Search batch, course, program, type'}
-                className="w-full rounded-lg border border-slate-600 bg-slate-800 py-2 pl-10 pr-4 text-white placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            <div className="relative">
-              <Filter size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        {/* Controls */}
+        <div className="mb-6">
+          <div className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4">
+            <p className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">Filters</p>
+            <div className={`grid gap-2 ${selectedCategory === 'class' ? 'md:grid-cols-3 xl:grid-cols-[minmax(165px,1.15fr)_minmax(145px,0.95fr)_minmax(125px,0.85fr)_138px_158px]' : 'md:grid-cols-3 xl:grid-cols-[minmax(165px,1.25fr)_minmax(128px,0.85fr)_minmax(138px,0.95fr)_minmax(138px,0.95fr)_minmax(138px,0.95fr)_138px_158px]'} xl:items-center`}>
+              <div className="relative">
+                <Filter size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <select
+                  value={selectedBatchFilter}
+                  onChange={(e) => setSelectedBatchFilter(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900/80 py-1.5 pl-9 pr-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="all">{selectedCategory === 'class' ? 'All Classes' : 'All Batch Names'}</option>
+                  {batchFilterOptions.map((batchName) => (
+                    <option key={batchName} value={batchName}>
+                      {batchName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {selectedCategory === 'batch' ? (
+                <>
+                  <select
+                    value={selectedCourseFilter}
+                    onChange={(e) => setSelectedCourseFilter(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900/80 px-2.5 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="all">All Courses</option>
+                    {courseFilterOptions.map((course) => (
+                      <option key={course} value={course}>
+                        {course}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedProgramFilter}
+                    onChange={(e) => setSelectedProgramFilter(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900/80 px-2.5 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="all">All Programs</option>
+                    {programFilterOptions.map((program) => (
+                      <option key={program} value={program}>
+                        {program}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedBatchTypeFilter}
+                    onChange={(e) => setSelectedBatchTypeFilter(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900/80 px-2.5 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="all">All Batch Types</option>
+                    {batchTypeFilterOptions.map((batchType) => (
+                      <option key={batchType} value={batchType}>
+                        {batchType}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
               <select
-                value={selectedBatchFilter}
-                onChange={(e) => setSelectedBatchFilter(e.target.value)}
-                className="w-full rounded-lg border border-slate-600 bg-slate-800 py-2 pl-10 pr-4 text-white focus:border-blue-500 focus:outline-none"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                className="h-9 w-full rounded-lg border border-slate-600 bg-slate-900/80 px-2.5 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
               >
-                <option value="all">{selectedCategory === 'class' ? 'All Classes' : 'All Batch Names'}</option>
-                {batchFilterOptions.map((batchName) => (
-                  <option key={batchName} value={batchName}>
-                    {batchName}
-                  </option>
-                ))}
+                <option value="all">All Status</option>
+                <option value="active">Active Only</option>
+                <option value="inactive">Inactive Only</option>
               </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setSelectedBatchFilter('all');
+                  setSelectedCourseFilter('all');
+                  setSelectedProgramFilter('all');
+                  setSelectedBatchTypeFilter('all');
+                  setStatusFilter('all');
+                }}
+                className="flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-600 bg-transparent px-2.5 py-1.5 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700/70"
+              >
+                <X size={18} />
+                Reset Filters
+              </button>
+              <button
+                type="button"
+                onClick={handleAutoSequence}
+                disabled={reorderLoading || batches.length <= 1}
+                className="flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-900/80 px-2.5 py-1.5 text-sm font-medium text-white transition-colors hover:border-slate-500 hover:bg-slate-700/80 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ListOrdered size={18} />
+                {reorderLoading ? 'Saving Sequence...' : 'Auto Sequence'}
+              </button>
             </div>
-            {selectedCategory === 'batch' ? (
-              <>
-                <select
-                  value={selectedCourseFilter}
-                  onChange={(e) => setSelectedCourseFilter(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-white focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="all">All Courses</option>
-                  {courseFilterOptions.map((course) => (
-                    <option key={course} value={course}>
-                      {course}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={selectedProgramFilter}
-                  onChange={(e) => setSelectedProgramFilter(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-white focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="all">All Programs</option>
-                  {programFilterOptions.map((program) => (
-                    <option key={program} value={program}>
-                      {program}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={selectedBatchTypeFilter}
-                  onChange={(e) => setSelectedBatchTypeFilter(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-white focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="all">All Batch Types</option>
-                  {batchTypeFilterOptions.map((batchType) => (
-                    <option key={batchType} value={batchType}>
-                      {batchType}
-                    </option>
-                  ))}
-                </select>
-              </>
-            ) : null}
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
-              className="w-full rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-white focus:border-blue-500 focus:outline-none"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active Only</option>
-              <option value="inactive">Inactive Only</option>
-            </select>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={handleAutoSequence}
-              disabled={reorderLoading || batches.length <= 1}
-              className="flex items-center gap-2 rounded-lg border border-slate-500 px-4 py-2 text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <ListOrdered size={18} />
-              {reorderLoading ? 'Saving Sequence...' : 'Auto Sequence'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteAllBatches}
-              disabled={loading || batches.length === 0}
-              className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Trash2 size={18} />
-              Delete All
-            </button>
-            <button
-              onClick={() => {
-                resetForm();
-                setError(null);
-                setShowAddModal(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-            >
-              <Plus size={20} />
-              {selectedCategory === 'class' ? 'Add Class' : 'Add Batch'}
-            </button>
           </div>
         </div>
 
@@ -575,9 +782,10 @@ const BatchManagement: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-lg bg-slate-700/50">
-            <table className="w-full min-w-[980px]">
-              <thead className="bg-slate-600">
+          <div className="overflow-hidden rounded-lg bg-slate-700/50">
+            <div className="max-h-[68vh] overflow-auto">
+              <table className="w-full min-w-[980px]">
+              <thead className="sticky top-0 z-10 bg-slate-600 shadow-sm">
                 <tr>
                   <th className="px-6 py-3 text-left text-white font-semibold">Seq</th>
                   <th className="px-6 py-3 text-left text-white font-semibold">{selectedCategory === 'class' ? 'Class Name' : 'Batch Name'}</th>
@@ -591,86 +799,87 @@ const BatchManagement: React.FC = () => {
                   <th className="px-6 py-3 text-left text-white font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredBatches.map((batch) => {
-                  const meta = parseBatchMeta(batch);
-                  const actualIndex = batches.findIndex((item) => item.id === batch.id);
-                  return (
-                  <tr key={batch.id} className="border-t border-slate-600 hover:bg-slate-600/50 transition-colors">
-                    <td className="px-6 py-4 text-slate-300">{(batch.display_order || actualIndex + 1 || 0)}</td>
-                    <td className="px-6 py-4 text-white font-medium">
-                      <button
-                        type="button"
-                        onClick={() => openStudentsModal(batch)}
-                        className="text-left text-white transition hover:text-blue-300 hover:underline"
-                        title={`${batch.name} ke students dekhein`}
-                      >
-                        {batch.name}
-                      </button>
-                      {selectedCategory === 'batch' && batch.syllabus ? <div className="mt-1 text-xs text-slate-400">{batch.syllabus}</div> : null}
-                    </td>
-                    <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? '-' : meta.course}</td>
-                    <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? '-' : meta.stream}</td>
-                    <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? 'Class' : meta.batchType}</td>
-                    <td className="px-6 py-4 text-slate-300">{batch.student_count || 0}</td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm font-medium ${
-                          batch.is_active
-                            ? 'bg-green-500/20 text-green-200'
-                            : 'bg-gray-500/20 text-gray-200'
-                        }`}
-                      >
-                        {batch.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-slate-300">
-                      {new Date(batch.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex gap-2">
+                <tbody>
+                  {filteredBatches.map((batch) => {
+                    const meta = parseBatchMeta(batch);
+                    const actualIndex = batches.findIndex((item) => item.id === batch.id);
+                    return (
+                    <tr key={batch.id} className="border-t border-slate-600 hover:bg-slate-600/50 transition-colors">
+                      <td className="px-6 py-4 text-slate-300">{(batch.display_order || actualIndex + 1 || 0)}</td>
+                      <td className="px-6 py-4 text-white font-medium">
                         <button
                           type="button"
-                          onClick={() => handleMoveBatch(batch.id, 'up')}
-                          disabled={reorderLoading || actualIndex <= 0}
-                          className="rounded p-2 text-slate-300 transition-colors hover:bg-slate-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                          title="Move up"
+                          onClick={() => openStudentsModal(batch)}
+                          className="text-left text-white transition hover:text-blue-300 hover:underline"
+                          title={`${batch.name} ke students dekhein`}
                         >
-                          <ArrowUp size={16} />
+                          {batch.name}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleMoveBatch(batch.id, 'down')}
-                          disabled={reorderLoading || actualIndex === -1 || actualIndex >= batches.length - 1}
-                          className="rounded p-2 text-slate-300 transition-colors hover:bg-slate-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                          title="Move down"
+                        {selectedCategory === 'batch' && batch.syllabus ? <div className="mt-1 text-xs text-slate-400">{batch.syllabus}</div> : null}
+                      </td>
+                      <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? '-' : meta.course}</td>
+                      <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? '-' : meta.stream}</td>
+                      <td className="px-6 py-4 text-slate-300">{selectedCategory === 'class' ? 'Class' : meta.batchType}</td>
+                      <td className="px-6 py-4 text-slate-300">{batch.student_count || 0}</td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`px-3 py-1 rounded-full text-sm font-medium ${
+                            batch.is_active
+                              ? 'bg-green-500/20 text-green-200'
+                              : 'bg-gray-500/20 text-gray-200'
+                          }`}
                         >
-                          <ArrowDown size={16} />
-                        </button>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => openEditModal(batch)}
-                          className="p-2 text-slate-300 hover:text-white hover:bg-slate-600 rounded transition-colors"
-                          title="Edit batch"
-                        >
-                          <Pencil size={18} />
-                        </button>
-                        <button
-                          onClick={() => openDeleteModal(batch)}
-                          className="p-2 text-red-300 hover:text-red-100 hover:bg-red-900/30 rounded transition-colors"
-                          title="Delete batch"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )})}
-              </tbody>
-            </table>
+                          {batch.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-300">
+                        {new Date(batch.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveBatch(batch.id, 'up')}
+                            disabled={reorderLoading || actualIndex <= 0}
+                            className="rounded p-2 text-slate-300 transition-colors hover:bg-slate-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Move up"
+                          >
+                            <ArrowUp size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveBatch(batch.id, 'down')}
+                            disabled={reorderLoading || actualIndex === -1 || actualIndex >= batches.length - 1}
+                            className="rounded p-2 text-slate-300 transition-colors hover:bg-slate-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Move down"
+                          >
+                            <ArrowDown size={16} />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => openEditModal(batch)}
+                            className="p-2 text-slate-300 hover:text-white hover:bg-slate-600 rounded transition-colors"
+                            title="Edit batch"
+                          >
+                            <Pencil size={18} />
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(batch)}
+                            className="p-2 text-red-300 hover:text-red-100 hover:bg-red-900/30 rounded transition-colors"
+                            title="Delete batch"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )})}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -761,7 +970,7 @@ const BatchManagement: React.FC = () => {
                   type="checkbox"
                   id="add_is_active"
                   checked={formData.is_active}
-                  onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                  onChange={(e) => setFormState((current) => ({ ...current, is_active: e.target.checked }))}
                   className="w-4 h-4 rounded"
                 />
                 <label htmlFor="add_is_active" className="ml-2 text-slate-300">
@@ -877,7 +1086,7 @@ const BatchManagement: React.FC = () => {
                   type="checkbox"
                   id="edit_is_active"
                   checked={formData.is_active}
-                  onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                  onChange={(e) => setFormState((current) => ({ ...current, is_active: e.target.checked }))}
                   className="w-4 h-4 rounded"
                 />
                 <label htmlFor="edit_is_active" className="ml-2 text-slate-300">

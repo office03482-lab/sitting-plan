@@ -14,7 +14,11 @@ import {
   setStudentPhoto,
   setStudentSession,
 } from '@utils/studentDirectory';
-import { upsertEduPayAdmissionRequest, type EduPayAdmissionSnapshot } from '@utils/eduPayAdmissions';
+import {
+  readEduPayAdmissionRequests,
+  upsertEduPayAdmissionRequest,
+  type EduPayAdmissionSnapshot,
+} from '@utils/eduPayAdmissions';
 
 type StudentDocument = {
   id: string;
@@ -192,6 +196,7 @@ const detectStudentProgramFromBatch = (batch: Pick<Batch, 'name' | 'syllabus'> |
   if (
     normalized.includes('medical') ||
     normalized.includes('neet') ||
+    normalized.includes('aiims') ||
     normalized.includes('pcb') ||
     normalized.includes('bio')
   ) {
@@ -201,8 +206,9 @@ const detectStudentProgramFromBatch = (batch: Pick<Batch, 'name' | 'syllabus'> |
   return '';
 };
 
-const inferStudentCourseFromBatch = (batchName: string): StudentCourse => {
-  const normalized = normalizeBatchText(batchName);
+const inferStudentCourseFromBatch = (batch: Pick<Batch, 'name' | 'syllabus'> | string): StudentCourse => {
+  const rawValue = typeof batch === 'string' ? batch : `${batch.name} ${batch.syllabus || ''}`;
+  const normalized = normalizeBatchText(rawValue);
 
   if (normalized.includes('ssb') || normalized.includes('sure selection')) return 'ssb';
   if (normalized.includes('advance') || normalized.includes('adv')) return 'advance';
@@ -212,7 +218,17 @@ const inferStudentCourseFromBatch = (batchName: string): StudentCourse => {
   return '';
 };
 
+const deriveProgramFromCourse = (course: StudentCourse): StudentProgram => {
+  if (course === 'neet') return 'medical';
+  if (course === 'jee_main' || course === 'advance') return 'non_medical';
+  return '';
+};
+
 const sortBatchNames = (items: string[]) => items.sort((a, b) => a.localeCompare(b));
+const toNullableString = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed || null;
+};
 
 const calculateAgeAsOfToday = (dob: string) => {
   if (!dob) return '';
@@ -309,6 +325,7 @@ export default function StudentManagement() {
   const studentMediaStreamRef = useRef<MediaStream | null>(null);
   const importSectionRef = useRef<HTMLDivElement | null>(null);
   const directorySectionRef = useRef<HTMLDivElement | null>(null);
+  const skipNextAddAutoOpenRef = useRef(false);
   const isDedicatedAddView = location.hash === '#add';
 
   useEffect(() => {
@@ -318,7 +335,35 @@ export default function StudentManagement() {
   }, []);
 
   useEffect(() => {
+    const refreshBatchDependencies = () => {
+      if (document.visibilityState === 'visible') {
+        void loadBatches();
+      }
+    };
+
+    window.addEventListener('focus', refreshBatchDependencies);
+    document.addEventListener('visibilitychange', refreshBatchDependencies);
+
+    return () => {
+      window.removeEventListener('focus', refreshBatchDependencies);
+      document.removeEventListener('visibilitychange', refreshBatchDependencies);
+    };
+  }, []);
+
+  useEffect(() => {
+    const state = location.state as
+      | {
+          directoryEditStudent?: Student;
+          directoryEditDetails?: Partial<EduPayAdmissionSnapshot>;
+        }
+      | undefined;
+
     if (location.hash === '#add') {
+      if (skipNextAddAutoOpenRef.current) {
+        skipNextAddAutoOpenRef.current = false;
+        return;
+      }
+      if (state?.directoryEditStudent) return;
       setTimeout(() => openAddModal(), 0);
       return;
     }
@@ -337,7 +382,7 @@ export default function StudentManagement() {
       resetStudentForm();
       setTimeout(() => directorySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     }
-  }, [location.hash]);
+  }, [location.hash, location.state]);
 
   useEffect(() => {
     return () => {
@@ -402,9 +447,8 @@ export default function StudentManagement() {
 
   const handleDownloadTemplate = async () => {
     try {
-      const response = await fetch('/api/students/template/download');
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const response = await apiService.downloadStudentTemplate();
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'student_data_template.xlsx';
@@ -638,6 +682,7 @@ export default function StudentManagement() {
   };
 
   const openAddModal = () => {
+    void loadBatches();
     setEditStudent(null);
     setSendHostelRequestOnSubmit(false);
     setSendToEduPayOnSubmit(false);
@@ -651,7 +696,7 @@ export default function StudentManagement() {
     setSendToEduPayOnSubmit(false);
     resetStudentForm();
     if (isDedicatedAddView) {
-      navigate('/');
+      navigate('/students/directory');
     }
   };
 
@@ -660,11 +705,17 @@ export default function StudentManagement() {
   };
 
   const openEditModalWithDetails = (student: Student, details?: Partial<EduPayAdmissionSnapshot>) => {
+    void loadBatches();
     setEditStudent(student);
     const [parsedClassName = '', parsedSection = ''] = (student.batch || '').split('|').map((item) => item.trim());
     const nameParts = student.name.trim().split(/\s+/);
-    const inferredCourse = inferStudentCourseFromBatch(student.batch || '');
-    const inferredProgram = detectStudentProgramFromBatch(student.batch || '');
+    const currentBatchName = details?.managedBatch || student.batch || '';
+    const matchedBatchRecord = batches.find(
+      (batch) => batch.category !== 'class' && batch.name.trim().toLowerCase() === currentBatchName.trim().toLowerCase(),
+    );
+    const inferredCourse = inferStudentCourseFromBatch(matchedBatchRecord || currentBatchName);
+    const inferredProgram =
+      detectStudentProgramFromBatch(matchedBatchRecord || currentBatchName) || deriveProgramFromCourse(inferredCourse);
     const savedPhoto = getStudentPhoto(student.id, student.roll_number);
     const savedSession = student.academic_session || getStudentSession(student.id, student.roll_number);
     setStudentForm({
@@ -673,11 +724,12 @@ export default function StudentManagement() {
       academicYear: details?.academicYear || savedSession || studentInitialForm.academicYear,
       course: details?.course || inferredCourse,
       program: details?.program || inferredProgram,
-      managedBatch: details?.managedBatch || student.batch || '',
+      managedBatch: currentBatchName,
       firstName: details?.firstName || nameParts[0] || '',
       middleName: details?.middleName || (nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : ''),
       lastName: details?.lastName || (nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''),
-      localName: details?.identifier || '',
+      localName: details?.localName || details?.identifier || '',
+      ageAsOfToday: details?.ageAsOfToday || calculateAgeAsOfToday(details?.dob || ''),
       dob: details?.dob || '',
       rollNumber: details?.rollNumber || student.roll_number,
       fatherName: details?.fatherName || student.father_name || '',
@@ -698,14 +750,18 @@ export default function StudentManagement() {
       previousExam: details?.previousExam || '',
       previousBoard: details?.previousBoard || '',
       previousPercentage: details?.previousPercentage || '',
+      previousTotalMarks: details?.previousTotalMarks || '',
+      previousAverage: details?.previousAverage || '',
       category: details?.category || '',
       subCategory: details?.subCategory || '',
+      siblingName: details?.siblingName || '',
+      siblingSchool: details?.siblingSchool || '',
       guardianName: details?.guardianName || '',
       guardianRelation: details?.guardianRelation || '',
       guardianMobile: details?.guardianMobile || '',
       guardianAddress: details?.guardianAddress || '',
-      emergencyName: details?.guardianName || '',
-      emergencyMobile: details?.guardianMobile || '',
+      emergencyName: details?.emergencyName || '',
+      emergencyMobile: details?.emergencyMobile || '',
       priorityContact: details?.priorityContact || studentInitialForm.priorityContact,
       address1: details?.address1 || '',
       address2: details?.address2 || '',
@@ -720,6 +776,12 @@ export default function StudentManagement() {
       admissionType: details?.admissionType || studentInitialForm.admissionType,
       specialNeeds: details?.specialNeeds || student.special_needs || '',
       boardingType: details?.boardingType || (student.boarding_type as string) || '',
+      pickupEnabled: Boolean(details?.pickupEnabled),
+      dropEnabled: Boolean(details?.dropEnabled),
+      transportMonth: details?.transportMonth || studentInitialForm.transportMonth,
+      transportRoute: details?.transportRoute || '',
+      transportStop: details?.transportStop || '',
+      availingMessFacility: details?.availingMessFacility || studentInitialForm.availingMessFacility,
       hostelRequired: Boolean(student.hostel_required),
       preferredHostelId: student.preferred_hostel_id ? String(student.preferred_hostel_id) : '',
       hostelRequestNote: (student.hostel_notes as string) || '',
@@ -745,6 +807,7 @@ export default function StudentManagement() {
     if (!state?.directoryEditStudent) return;
 
     openEditModalWithDetails(state.directoryEditStudent, state.directoryEditDetails);
+    skipNextAddAutoOpenRef.current = true;
     navigate({ pathname: location.pathname, hash: location.hash }, { replace: true, state: null });
   }, [location.state, location.pathname, location.hash, navigate]);
 
@@ -851,24 +914,101 @@ export default function StudentManagement() {
     try {
       const fullName = [studentForm.firstName, studentForm.middleName, studentForm.lastName].filter(Boolean).join(' ').trim();
       const batchName = studentForm.managedBatch.trim() || [studentForm.className, studentForm.section].filter(Boolean).join(' | ').trim() || studentForm.className.trim();
+      const buildAdmissionSnapshot = (): EduPayAdmissionSnapshot => ({
+        admissionId: studentForm.admissionId.trim(),
+        academicYear: studentForm.academicYear,
+        course: studentForm.course,
+        program: studentForm.program,
+        managedBatch: studentForm.managedBatch.trim() || batchName,
+        className: studentForm.className.trim(),
+        section: studentForm.section.trim(),
+        rollNumber: studentForm.rollNumber.trim(),
+        firstName: studentForm.firstName.trim(),
+        middleName: studentForm.middleName.trim() || undefined,
+        lastName: studentForm.lastName.trim() || undefined,
+        fullName,
+        localName: studentForm.localName.trim() || undefined,
+        ageAsOfToday: studentForm.ageAsOfToday.trim() || undefined,
+        dob: studentForm.dob,
+        gender: studentForm.gender,
+        email: studentForm.email.trim(),
+        phone: studentForm.phone.trim(),
+        admissionDate: studentForm.admissionDate,
+        fatherName: studentForm.fatherName.trim(),
+        fatherMobile: studentForm.fatherMobile.trim(),
+        fatherOccupation: studentForm.fatherOccupation.trim(),
+        motherName: studentForm.motherName.trim(),
+        motherMobile: studentForm.motherMobile.trim(),
+        motherOccupation: studentForm.motherOccupation.trim(),
+        guardianName: studentForm.guardianName.trim(),
+        guardianRelation: studentForm.guardianRelation.trim(),
+        guardianMobile: studentForm.guardianMobile.trim(),
+        guardianAddress: studentForm.guardianAddress.trim(),
+        address1: studentForm.address1.trim(),
+        address2: studentForm.address2.trim(),
+        city: studentForm.city.trim(),
+        state: studentForm.state.trim(),
+        country: studentForm.country.trim(),
+        pincode: studentForm.pincode.trim(),
+        region: studentForm.region.trim(),
+        category: studentForm.category.trim(),
+        subCategory: studentForm.subCategory.trim(),
+        previousSchool: studentForm.previousSchool.trim(),
+        previousBoard: studentForm.previousBoard.trim(),
+        previousExam: studentForm.previousExam.trim(),
+        previousPercentage: studentForm.previousPercentage.trim(),
+        previousTotalMarks: studentForm.previousTotalMarks.trim(),
+        previousAverage: studentForm.previousAverage.trim(),
+        siblingName: studentForm.siblingName.trim(),
+        siblingSchool: studentForm.siblingSchool.trim(),
+        emergencyName: studentForm.emergencyName.trim(),
+        emergencyMobile: studentForm.emergencyMobile.trim(),
+        pickupEnabled: studentForm.pickupEnabled,
+        dropEnabled: studentForm.dropEnabled,
+        transportMonth: studentForm.transportMonth.trim(),
+        transportRoute: studentForm.transportRoute.trim(),
+        transportStop: studentForm.transportStop.trim(),
+        specialNeeds: studentForm.specialNeeds.trim(),
+        admissionType: studentForm.admissionType,
+        boardingType: studentForm.boardingType.trim(),
+        availingMessFacility: studentForm.availingMessFacility,
+        feeSchedule: studentForm.feeSchedule.trim(),
+        tcNumber: studentForm.tcNumber.trim(),
+        priorityContact: studentForm.priorityContact,
+        photoDataUrl: studentPhotoDataUrl || undefined,
+      });
+      const syncAdmissionSnapshot = (studentId: number, rollNumber: string, queueForEduPay: boolean) => {
+        const existingRequest = readEduPayAdmissionRequests().find(
+          (item) => item.linkedStudentId === studentId || item.linkedStudentRollNumber === rollNumber,
+        );
+        upsertEduPayAdmissionRequest({
+          source: 'admin_request',
+          status: queueForEduPay ? 'pending' : existingRequest?.status || 'processed',
+          linkedStudentId: studentId,
+          linkedStudentRollNumber: rollNumber,
+          details: buildAdmissionSnapshot(),
+        });
+      };
       const payload: Partial<Student> = {
         name: fullName,
         roll_number: studentForm.rollNumber.trim(),
-        father_name: studentForm.fatherName.trim() || undefined,
+        father_name: toNullableString(studentForm.fatherName) as unknown as string | undefined,
         batch: batchName,
-        class_name: studentForm.className.trim() || undefined,
-        section: studentForm.section.trim() || undefined,
-        academic_session: studentForm.academicYear.trim() || undefined,
-        email: studentForm.email.trim() || undefined,
-        phone: studentForm.phone.trim() || undefined,
-        reference_name: studentForm.referenceName.trim() || undefined,
-        reference_number: studentForm.referenceNumber.trim() || undefined,
-        reference_remark: studentForm.referenceRemark.trim() || undefined,
-        special_needs: studentForm.specialNeeds.trim() || undefined,
-        boarding_type: studentForm.boardingType.trim() || undefined,
+        class_name: toNullableString(studentForm.className) as unknown as string | undefined,
+        section: toNullableString(studentForm.section) as unknown as string | undefined,
+        academic_session: toNullableString(studentForm.academicYear) as unknown as string | undefined,
+        email: toNullableString(studentForm.email) as unknown as string | undefined,
+        phone: toNullableString(studentForm.phone) as unknown as string | undefined,
+        reference_name: toNullableString(studentForm.referenceName) as unknown as string | undefined,
+        reference_number: toNullableString(studentForm.referenceNumber) as unknown as string | undefined,
+        reference_remark: toNullableString(studentForm.referenceRemark) as unknown as string | undefined,
+        special_needs: toNullableString(studentForm.specialNeeds) as unknown as string | undefined,
+        boarding_type: toNullableString(studentForm.boardingType) as unknown as string | undefined,
         hostel_required: studentForm.hostelRequired,
         preferred_hostel_id: studentForm.hostelRequired && studentForm.preferredHostelId ? Number(studentForm.preferredHostelId) : undefined,
-        hostel_notes: studentForm.hostelRequired ? (studentForm.hostelRequestNote.trim() || undefined) : undefined,
+        hostel_notes: studentForm.hostelRequired
+          ? (toNullableString(studentForm.hostelRequestNote) as unknown as string | undefined)
+          : (null as unknown as string | undefined),
       };
 
       if (studentForm.course === 'ssb' && !studentForm.program) {
@@ -895,67 +1035,19 @@ export default function StudentManagement() {
           });
         }
         if (studentPhotoDataUrl) {
+          if (editStudent.roll_number !== payload.roll_number) {
+            removeStudentPhoto(response.data.id, editStudent.roll_number);
+          }
           setStudentPhoto(studentPhotoDataUrl, response.data.id, payload.roll_number);
+        } else {
+          removeStudentPhoto(response.data.id, editStudent.roll_number);
+          removeStudentPhoto(response.data.id, payload.roll_number);
+        }
+        if (editStudent.roll_number !== payload.roll_number) {
+          removeStudentSession(response.data.id, editStudent.roll_number);
         }
         setStudentSession(studentForm.academicYear, response.data.id, payload.roll_number);
-        const admissionSnapshot: EduPayAdmissionSnapshot = {
-          admissionId: studentForm.admissionId.trim(),
-          academicYear: studentForm.academicYear,
-          course: studentForm.course,
-          program: studentForm.program,
-          managedBatch: studentForm.managedBatch.trim(),
-          className: studentForm.className.trim(),
-          section: studentForm.section.trim(),
-          rollNumber: studentForm.rollNumber.trim(),
-          firstName: studentForm.firstName.trim(),
-          middleName: studentForm.middleName.trim(),
-          lastName: studentForm.lastName.trim(),
-          fullName,
-          dob: studentForm.dob,
-          gender: studentForm.gender,
-          email: studentForm.email.trim(),
-          phone: studentForm.phone.trim(),
-          admissionDate: studentForm.admissionDate,
-          fatherName: studentForm.fatherName.trim(),
-          fatherMobile: studentForm.fatherMobile.trim(),
-          fatherOccupation: studentForm.fatherOccupation.trim(),
-          motherName: studentForm.motherName.trim(),
-          motherMobile: studentForm.motherMobile.trim(),
-          motherOccupation: studentForm.motherOccupation.trim(),
-          guardianName: studentForm.guardianName.trim(),
-          guardianRelation: studentForm.guardianRelation.trim(),
-          guardianMobile: studentForm.guardianMobile.trim(),
-          guardianAddress: studentForm.guardianAddress.trim(),
-          address1: studentForm.address1.trim(),
-          address2: studentForm.address2.trim(),
-          city: studentForm.city.trim(),
-          state: studentForm.state.trim(),
-          country: studentForm.country.trim(),
-          pincode: studentForm.pincode.trim(),
-          region: studentForm.region.trim(),
-          category: studentForm.category.trim(),
-          subCategory: studentForm.subCategory.trim(),
-          previousSchool: studentForm.previousSchool.trim(),
-          previousBoard: studentForm.previousBoard.trim(),
-          previousExam: studentForm.previousExam.trim(),
-          previousPercentage: studentForm.previousPercentage.trim(),
-          specialNeeds: studentForm.specialNeeds.trim(),
-          admissionType: studentForm.admissionType,
-          boardingType: studentForm.boardingType.trim(),
-          feeSchedule: studentForm.feeSchedule.trim(),
-          tcNumber: studentForm.tcNumber.trim(),
-          priorityContact: studentForm.priorityContact,
-          photoDataUrl: studentPhotoDataUrl || undefined,
-        };
-        if (sendToEduPayOnSubmit) {
-          upsertEduPayAdmissionRequest({
-            source: 'admin_request',
-            status: 'pending',
-            linkedStudentId: response.data.id,
-            linkedStudentRollNumber: payload.roll_number,
-            details: admissionSnapshot,
-          });
-        }
+        syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired
             ? 'Student updated and hostel request sent for approval.'
@@ -971,64 +1063,11 @@ export default function StudentManagement() {
             requested_notes: studentForm.hostelRequestNote.trim() || undefined,
           });
         }
-        const admissionSnapshot: EduPayAdmissionSnapshot = {
-          admissionId: studentForm.admissionId.trim(),
-          academicYear: studentForm.academicYear,
-          course: studentForm.course,
-          program: studentForm.program,
-          managedBatch: studentForm.managedBatch.trim(),
-          className: studentForm.className.trim(),
-          section: studentForm.section.trim(),
-          rollNumber: studentForm.rollNumber.trim(),
-          firstName: studentForm.firstName.trim(),
-          middleName: studentForm.middleName.trim(),
-          lastName: studentForm.lastName.trim(),
-          fullName,
-          dob: studentForm.dob,
-          gender: studentForm.gender,
-          email: studentForm.email.trim(),
-          phone: studentForm.phone.trim(),
-          admissionDate: studentForm.admissionDate,
-          fatherName: studentForm.fatherName.trim(),
-          fatherMobile: studentForm.fatherMobile.trim(),
-          fatherOccupation: studentForm.fatherOccupation.trim(),
-          motherName: studentForm.motherName.trim(),
-          motherMobile: studentForm.motherMobile.trim(),
-          motherOccupation: studentForm.motherOccupation.trim(),
-          guardianName: studentForm.guardianName.trim(),
-          guardianRelation: studentForm.guardianRelation.trim(),
-          guardianMobile: studentForm.guardianMobile.trim(),
-          guardianAddress: studentForm.guardianAddress.trim(),
-          address1: studentForm.address1.trim(),
-          address2: studentForm.address2.trim(),
-          city: studentForm.city.trim(),
-          state: studentForm.state.trim(),
-          country: studentForm.country.trim(),
-          pincode: studentForm.pincode.trim(),
-          region: studentForm.region.trim(),
-          category: studentForm.category.trim(),
-          subCategory: studentForm.subCategory.trim(),
-          previousSchool: studentForm.previousSchool.trim(),
-          previousBoard: studentForm.previousBoard.trim(),
-          previousExam: studentForm.previousExam.trim(),
-          previousPercentage: studentForm.previousPercentage.trim(),
-          specialNeeds: studentForm.specialNeeds.trim(),
-          admissionType: studentForm.admissionType,
-          boardingType: studentForm.boardingType.trim(),
-          feeSchedule: studentForm.feeSchedule.trim(),
-          tcNumber: studentForm.tcNumber.trim(),
-          priorityContact: studentForm.priorityContact,
-          photoDataUrl: studentPhotoDataUrl || undefined,
-        };
-        if (sendToEduPayOnSubmit) {
-          upsertEduPayAdmissionRequest({
-            source: 'admin_request',
-            status: 'pending',
-            linkedStudentId: response.data.id,
-            linkedStudentRollNumber: payload.roll_number,
-            details: admissionSnapshot,
-          });
+        if (studentPhotoDataUrl) {
+          setStudentPhoto(studentPhotoDataUrl, response.data.id, payload.roll_number);
         }
+        setStudentSession(studentForm.academicYear, response.data.id, payload.roll_number);
+        syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired
             ? 'Student saved and hostel request sent for approval.'
@@ -1043,8 +1082,12 @@ export default function StudentManagement() {
       resetStudentForm();
       await loadStudents();
       await loadHostels();
-      if (!editStudent && isDedicatedAddView && sendToEduPayOnSubmit) {
-        navigate('/edupay');
+      if (isDedicatedAddView) {
+        if (!editStudent && sendToEduPayOnSubmit) {
+          navigate('/edupay');
+        } else {
+          navigate('/students/directory');
+        }
       }
     } catch (error: any) {
       console.error('Failed to save student:', error);
@@ -1067,44 +1110,64 @@ export default function StudentManagement() {
   const allBatchNames = sortBatchNames(
     Array.from(new Set([...batches.filter((batch) => batch.category !== 'class').map((b) => b.name), ...existingBatches]))
   );
+  const regularBatchNamesLower = new Set(
+    batches
+      .filter((batch) => batch.category !== 'class')
+      .map((batch) => batch.name.trim().toLowerCase())
+  );
   const classMasterOptions = sortBatchNames(
-    Array.from(new Set(batches.filter((batch) => batch.category === 'class').map((batch) => batch.name)))
+    Array.from(
+      new Set(
+        batches
+          .filter((batch) => batch.category === 'class')
+          .map((batch) => batch.name)
+          .filter((name) => !regularBatchNamesLower.has(name.trim().toLowerCase()))
+      )
+    )
   );
   const selectedStudents = students.filter((student) => selectedStudentIds.includes(student.id));
   const filteredStudentIds = filteredStudents.map((student) => student.id);
   const isAllFilteredSelected = filteredStudentIds.length > 0 && filteredStudentIds.every((id) => selectedStudentIds.includes(id));
   const batchTransferOptions = allBatchNames.filter((batchName) => batchName !== selectedBatch);
   const admissionBatchOptions = sortBatchNames(
-    batches
-      .filter((batch) => batch.category !== 'class')
-      .filter((batch) => {
-        const normalizedName = normalizeBatchText(batch.name);
-        const stream = detectStudentProgramFromBatch(batch);
-        const isDropper = normalizedName.includes('dropper');
-        const isEleventhOrTwelfth = normalizedName.includes('11') || normalizedName.includes('11th') || normalizedName.includes('12') || normalizedName.includes('12th');
+    Array.from(
+      new Set(
+        batches
+          .filter((batch) => batch.category !== 'class')
+          .filter((batch) => {
+            if (studentForm.managedBatch && batch.name === studentForm.managedBatch) {
+              return true;
+            }
 
-        if (!studentForm.course) return true;
+            const normalizedName = normalizeBatchText(batch.name);
+            const stream = detectStudentProgramFromBatch(batch);
+            const isDropper = normalizedName.includes('dropper');
+            const isEleventhOrTwelfth = normalizedName.includes('11') || normalizedName.includes('11th') || normalizedName.includes('12') || normalizedName.includes('12th');
 
-        if (studentForm.course === 'neet') {
-          return stream === 'medical' && isDropper;
-        }
+            if (!studentForm.course) return true;
 
-        if (studentForm.course === 'jee_main') {
-          return stream === 'non_medical' && isDropper;
-        }
+            if (studentForm.course === 'neet') {
+              return stream === 'medical' && isDropper;
+            }
 
-        if (studentForm.course === 'ssb') {
-          if (!studentForm.program) return false;
-          return stream === studentForm.program && isEleventhOrTwelfth && !isDropper;
-        }
+            if (studentForm.course === 'jee_main') {
+              return stream === 'non_medical' && isDropper;
+            }
 
-        if (studentForm.course === 'advance') {
-          return stream === 'non_medical' && (isDropper || isEleventhOrTwelfth);
-        }
+            if (studentForm.course === 'ssb') {
+              if (!studentForm.program) return false;
+              return stream === studentForm.program && isEleventhOrTwelfth && !isDropper;
+            }
 
-        return true;
-      })
-      .map((batch) => batch.name)
+            if (studentForm.course === 'advance') {
+              return stream === 'non_medical' && (isDropper || isEleventhOrTwelfth);
+            }
+
+            return true;
+          })
+          .map((batch) => batch.name)
+      )
+    )
   );
 
   return (
@@ -1475,6 +1538,20 @@ export default function StudentManagement() {
                     >
                       Cancel
                     </button>
+                    {editStudent ? (
+                      <button
+                        type="submit"
+                        form="student-structured-form"
+                        onClick={() => {
+                          setSendHostelRequestOnSubmit(false);
+                          setSendToEduPayOnSubmit(false);
+                        }}
+                        disabled={isSubmitting}
+                        className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+                      >
+                        {isSubmitting ? 'Updating...' : 'Update Student'}
+                      </button>
+                    ) : null}
                     <button
                       type="submit"
                       form="student-structured-form"
@@ -1485,7 +1562,7 @@ export default function StudentManagement() {
                       disabled={isSubmitting}
                       className="rounded-md border border-[#c07a10] bg-[#fff5e8] px-5 py-2.5 text-sm font-semibold text-[#a9680d] hover:bg-[#fde8c7] disabled:opacity-70"
                     >
-                      {isSubmitting ? 'Sending...' : editStudent ? 'Update + Send To EduPay' : 'Send To EduPay For Fee'}
+                      {isSubmitting ? 'Sending...' : editStudent ? 'Send To EduPay' : 'Send To EduPay For Fee'}
                     </button>
                     {studentForm.hostelRequired ? (
                       <button

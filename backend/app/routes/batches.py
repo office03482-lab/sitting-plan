@@ -101,6 +101,18 @@ def list_batches(
         query = query.filter(BatchTable.category == category.strip().lower())
     
     batches = query.order_by(BatchTable.display_order.asc(), BatchTable.created_at.asc(), BatchTable.id.asc()).all()
+    regular_batch_names = {
+        item.name.strip().lower()
+        for item in db.query(BatchTable).filter(
+            BatchTable.school_id == school_id,
+            BatchTable.category != "class",
+        ).all()
+    }
+    if category and category.strip().lower() == "class":
+        batches = [
+            batch for batch in batches
+            if batch.name.strip().lower() not in regular_batch_names
+        ]
     
     result = []
     for batch in batches:

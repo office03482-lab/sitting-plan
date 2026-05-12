@@ -920,6 +920,7 @@ def create_multi_room_seating_export_excel(room_plans: List[Dict]) -> BytesIO:
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "All Rooms Seating"
+    summary_sheet = workbook.create_sheet(title="Room Summary")
 
     title_override = ""
     if room_plans:
@@ -927,6 +928,7 @@ def create_multi_room_seating_export_excel(room_plans: List[Dict]) -> BytesIO:
         title_override = first_room.get("exam_name") or "SITTING PLAN"
 
     _build_roomwise_seating_sheet(worksheet, room_plans, title_override=title_override)
+    _build_room_summary_sheet(summary_sheet, room_plans, title_override=title_override)
 
     output = BytesIO()
     workbook.save(output)
@@ -1044,6 +1046,91 @@ def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_overr
         "D": 26,
         "E": 30,
         "F": 14,
+    }
+    for column, width in widths.items():
+        worksheet.column_dimensions[column].width = width
+
+
+def _build_room_summary_sheet(worksheet, room_plans: List[Dict], title_override: str = "") -> None:
+    title_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    section_fill = PatternFill(start_color="EAF3FF", end_color="EAF3FF", fill_type="solid")
+    white_bold_font = Font(bold=True, color="FFFFFF")
+    title_font = Font(bold=True, size=14)
+    room_font = Font(bold=True, size=12)
+    thin_border = Border(
+        left=Side(style="thin", color="000000"),
+        right=Side(style="thin", color="000000"),
+        top=Side(style="thin", color="000000"),
+        bottom=Side(style="thin", color="000000"),
+    )
+
+    worksheet.merge_cells("A1:E1")
+    title_cell = worksheet["A1"]
+    title_cell.value = f"ROOM-WISE SUMMARY FOR {str(title_override or 'EXAM').upper()}"
+    title_cell.font = title_font
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    title_cell.fill = title_fill
+    title_cell.border = thin_border
+
+    current_row = 3
+    for room_plan in room_plans:
+        room_data = room_plan.get("room_data") or {}
+        plan_data = room_plan.get("plan_data") or {}
+        room_name = str(room_data.get("name") or "").strip() or "ROOM"
+        room_students = _normalize_room_students(plan_data)
+
+        batch_counts: Dict[str, int] = {}
+        for student in room_students:
+            batch_name = str(student.get("batch") or "").strip() or "Unassigned"
+            batch_counts[batch_name] = batch_counts.get(batch_name, 0) + 1
+
+        sorted_batches = sorted(batch_counts.items(), key=lambda item: (-item[1], item[0].lower()))
+
+        worksheet.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=5)
+        room_cell = worksheet.cell(row=current_row, column=1)
+        room_cell.value = f"ROOM NO. - {room_name} | TOTAL STUDENTS: {len(room_students)} | TOTAL BATCHES: {len(sorted_batches)}"
+        room_cell.font = room_font
+        room_cell.alignment = Alignment(horizontal="left", vertical="center")
+        room_cell.fill = section_fill
+        room_cell.border = thin_border
+        current_row += 1
+
+        headers = ["Sr.No.", "Batch Name", "Student Count", "Share %", "Room"]
+        for col_idx, header in enumerate(headers, start=1):
+            cell = worksheet.cell(row=current_row, column=col_idx)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = white_bold_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+        current_row += 1
+
+        total_students = len(room_students)
+        for index, (batch_name, count) in enumerate(sorted_batches, start=1):
+            share = round((count / total_students) * 100, 2) if total_students else 0
+            values = [index, batch_name, count, share, room_name]
+            for col_idx, value in enumerate(values, start=1):
+                cell = worksheet.cell(row=current_row, column=col_idx)
+                cell.value = value
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = thin_border
+            current_row += 1
+
+        current_row += 1
+
+    for merge_range in list(worksheet.merged_cells.ranges):
+        min_col, min_row, max_col, max_row = merge_range.bounds
+        for row in worksheet.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col):
+            for cell in row:
+                cell.border = thin_border
+
+    widths = {
+        "A": 10,
+        "B": 32,
+        "C": 16,
+        "D": 12,
+        "E": 18,
     }
     for column, width in widths.items():
         worksheet.column_dimensions[column].width = width

@@ -285,6 +285,11 @@ export interface SeatingPlan {
   exam_subject?: string;
   room_name?: string;
   batches?: string[];
+  batch_distribution?: Array<{
+    batch: string;
+    count: number;
+    percentage: number;
+  }>;
   name: string;
   plan_type: 'strict' | 'compact' | 'all_in_one';
   status: 'draft' | 'reviewed' | 'finalized' | 'archived';
@@ -317,12 +322,12 @@ export interface Teacher {
 // ==================== Timetable ====================
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
 export type TimetableSessionMode = 'offline' | 'online';
-export type TimetableSessionType = 'regular_class' | 'break_time' | 'doubt_session' | 'extra_class';
+export type TimetableSessionType = 'regular_class' | 'break_time' | 'doubt_session' | 'extra_class' | 'self_study';
 export type TimetableExtraClassScope = 'class_wise' | 'subject_wise' | 'general';
 
 export interface TimetableEntry {
   id: number;
-  teacher_id: number;
+  teacher_id?: number;
   school_id: number;
   room_id?: number;
   session_mode?: TimetableSessionMode;
@@ -350,8 +355,8 @@ export interface TimetableView {
   end_time: string;
   class_name: string;
   subject: string;
-  teacher_name: string;
-  teacher_id: number;
+  teacher_name?: string;
+  teacher_id?: number;
   room_id?: number;
   room_name?: string;
   session_mode?: TimetableSessionMode;
