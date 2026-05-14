@@ -1,13 +1,32 @@
 """
 Settings management routes
 """
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Dict, Optional
 import json
 from app.database import get_db
+from app.middleware.auth import get_authenticated_actor_context
 from app.models import Settings
+
+logger = logging.getLogger(__name__)
+
+def get_school_id_from_context(school_id: str = Query(None), actor: dict = Depends(get_authenticated_actor_context), db: Session = Depends(get_db)) -> str:
+    user_id, res_id = actor.get("user_id") or actor.get("id"), str(school_id) if school_id and str(school_id) != "1" else None
+    if not res_id:
+        try:
+            from app.models import Profile, SchoolMembership
+            p = db.query(Profile).filter(Profile.user_id == user_id).first()
+            if p:
+                m = db.query(SchoolMembership).filter(SchoolMembership.profile_id == p.id).first()
+                if m: res_id = str(m.school_id)
+        except Exception: pass
+        res_id = res_id or actor.get("school_id")
+    if not res_id or res_id == "1":
+        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+    return str(res_id)
 
 router = APIRouter()
 
@@ -30,13 +49,14 @@ class SchoolSettings(BaseModel):
 
 
 @router.get("")
-async def get_settings(db: Session = Depends(get_db)):
+async def get_settings(
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db)
+):
     """
     Get school settings
     """
-    # For now, use school_id = 1 (default school)
-    school_id = 1
-
     settings = db.query(Settings).filter(Settings.school_id == school_id).first()
 
     if not settings:
@@ -79,6 +99,7 @@ async def get_settings(db: Session = Depends(get_db)):
         except:
             batch_colors = {}
 
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return {
         "name": settings.name or "",
         "address": settings.address or "",
@@ -100,14 +121,13 @@ async def get_settings(db: Session = Depends(get_db)):
 @router.put("")
 async def update_settings(
     settings_data: SchoolSettings,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db)
 ):
     """
     Update school settings
     """
-    # For now, use school_id = 1 (default school)
-    school_id = 1
-
     settings = db.query(Settings).filter(Settings.school_id == school_id).first()
 
     if not settings:
@@ -132,6 +152,7 @@ async def update_settings(
         except:
             batch_colors = {}
 
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return {
         "message": "Settings updated successfully",
         "settings": {

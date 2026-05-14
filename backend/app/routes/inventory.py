@@ -5,6 +5,7 @@ from datetime import date, datetime
 from io import BytesIO
 import json
 from typing import Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -66,6 +67,7 @@ from app.schemas import (
     SupplierResponse,
     SupplierUpdate,
 )
+from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 from app.utils.excel import (
     create_inventory_material_template,
     parse_inventory_material_excel,
@@ -120,6 +122,25 @@ def normalize_material_unit_type(value: Optional[str]) -> str:
         "other": "other",
     }
     return mapping.get(normalized, normalized or "book")
+
+
+def normalize_supabase_inventory_unit_type(value: Optional[str]) -> str:
+    normalized = normalize_material_unit_type(value)
+    if normalized == "notebook":
+        return "copy"
+    if normalized in {"book", "copy", "set"}:
+        return normalized
+    return "unit"
+
+
+def build_inventory_code(prefix: str, *parts: Optional[str]) -> str:
+    base = "-".join(
+        "".join(char.lower() if char.isalnum() else "-" for char in (part or "").strip()).strip("-")
+        for part in parts
+        if part and str(part).strip()
+    )
+    base = "-".join(segment for segment in base.split("-") if segment)[:24]
+    return f"{prefix}-{base or prefix.lower()}-{uuid4().hex[:8]}"
 
 
 def ensure_school_context(db: Session, school_id: int = 1) -> School:
@@ -1302,12 +1323,10 @@ def download_material_import_template():
 @router.post("/materials/import", response_model=InventoryMaterialImportResponse)
 async def import_materials_from_excel(
     file: UploadFile = File(...),
-    school_id: int = Query(default=1),
+    school_id: str = Query(default="1"),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
-
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx Excel files are supported")
 
@@ -1319,144 +1338,304 @@ async def import_materials_from_excel(
     imported_count = 0
     updated_count = 0
     skipped_count = 0
-
     try:
-        for row in rows:
+        supabase = get_supabase_admin_client()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    schools = fetch_all(supabase, "schools", select="id,name", filters={"id": school_id})
+    if not schools:
+        raise HTTPException(status_code=400, detail="Supabase school not found for inventory import.")
+
+    categories = fetch_all(
+        supabase,
+        "material_categories",
+        select="id,school_id,category_code,name,parent_category_id,is_active",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+    suppliers = fetch_all(
+        supabase,
+        "suppliers",
+        select="id,name",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+    materials = fetch_all(
+        supabase,
+        "material_items",
+        select="id,category_id,name,metadata,current_stock",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+    stock_in_entries = fetch_all(
+        supabase,
+        "stock_in_entries",
+        select="id,material_item_id,supplier_id,entry_date,quantity_received,notes",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+    stock_out_entries = fetch_all(
+        supabase,
+        "stock_out_entries",
+        select="material_item_id,quantity_issued",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+    student_issue_entries = fetch_all(
+        supabase,
+        "student_issue_entries",
+        select="material_item_id,quantity_issued",
+        filters={"school_id": school_id},
+        schema="inventory",
+    )
+
+    categories_by_parent: Dict[str, List[dict]] = {}
+    for category in categories:
+        parent_key = str(category.get("parent_category_id") or "")
+        categories_by_parent.setdefault(parent_key, []).append(category)
+
+    suppliers_by_name = {
+        str(item.get("name") or "").strip().lower(): item
+        for item in suppliers
+        if item.get("name")
+    }
+
+    materials_by_signature = {}
+    for material in materials:
+        metadata = material.get("metadata") or {}
+        signature = (
+            str(material.get("name") or "").strip().lower(),
+            str(metadata.get("subject_category_id") or ""),
+            str(metadata.get("set_category_id") or ""),
+            str(metadata.get("volume_category_id") or ""),
+        )
+        materials_by_signature[signature] = material
+
+    def find_child_category(parent_id: Optional[str], name: str) -> Optional[dict]:
+        normalized = name.strip().lower()
+        for category in categories_by_parent.get(str(parent_id or ""), []):
+            if str(category.get("name") or "").strip().lower() == normalized:
+                return category
+        return None
+
+    def create_category(parent_id: Optional[str], name: str, prefix: str, is_active: bool) -> dict:
+        row = {
+            "school_id": school_id,
+            "category_code": build_inventory_code(prefix, name),
+            "name": name.strip(),
+            "parent_category_id": parent_id,
+            "is_active": is_active,
+        }
+        insert_rows(supabase, "material_categories", [row], schema="inventory")
+        created = fetch_all(
+            supabase,
+            "material_categories",
+            select="id,school_id,category_code,name,parent_category_id,is_active",
+            filters={"school_id": school_id, "category_code": row["category_code"]},
+            schema="inventory",
+        )[0]
+        categories.append(created)
+        categories_by_parent.setdefault(str(parent_id or ""), []).append(created)
+        return created
+
+    def get_or_create_hierarchy(row: dict) -> tuple[dict, dict, Optional[dict]]:
+        subject = find_child_category(None, row["subject_name"])
+        if not subject:
+            subject = create_category(None, row["subject_name"], "SUB", row.get("is_active", True))
+
+        inventory_set = find_child_category(subject["id"], row["set_name"])
+        if not inventory_set:
+            inventory_set = create_category(subject["id"], row["set_name"], "SET", row.get("is_active", True))
+
+        volume = None
+        volume_number = row.get("volume_number")
+        if volume_number:
+            volume_name = (row.get("volume_name") or f"Volume {volume_number}").strip()
+            volume = find_child_category(inventory_set["id"], volume_name)
+            if not volume:
+                volume = create_category(inventory_set["id"], volume_name, f"VOL{volume_number}", row.get("is_active", True))
+
+        return subject, inventory_set, volume
+
+    def normalize_import_date(value: object) -> str:
+        if value in (None, ""):
+            return datetime.utcnow().date().isoformat()
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            raw = value.strip()
             try:
-                subject, inventory_set, volume = get_or_create_inventory_hierarchy(
-                    db=db,
-                    school_id=school_id,
-                    subject_name=row["subject_name"],
-                    set_name=row["set_name"],
-                    volume_number=row.get("volume_number"),
-                    volume_name=row.get("volume_name"),
-                    is_active=row.get("is_active", True),
+                return datetime.fromisoformat(raw).date().isoformat()
+            except ValueError:
+                try:
+                    return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+                except ValueError as exc:
+                    raise ValueError(f"Invalid STOCK IN DATE: {value}") from exc
+        raise ValueError(f"Invalid STOCK IN DATE: {value}")
+
+    touched_material_ids: set[str] = set()
+
+    for row in rows:
+        try:
+            subject, inventory_set, volume = get_or_create_hierarchy(row)
+            signature = (
+                str(row["material_name"]).strip().lower(),
+                str(subject["id"]),
+                str(inventory_set["id"]),
+                str(volume["id"]) if volume else "",
+            )
+
+            material = materials_by_signature.get(signature)
+            normalized_unit_type = normalize_supabase_inventory_unit_type(row.get("unit_type"))
+            metadata = {
+                "subject_category_id": subject["id"],
+                "set_category_id": inventory_set["id"],
+                "volume_category_id": volume["id"] if volume else None,
+                "batch_names": normalize_batch_names(row.get("batch_names")),
+                "original_unit_type": normalize_material_unit_type(row.get("unit_type")),
+                "source": "inventory_material_import",
+            }
+
+            if material:
+                supabase.schema("inventory").table("material_items").update({
+                    "category_id": volume["id"] if volume else inventory_set["id"],
+                    "name": str(row["material_name"]).strip(),
+                    "unit_type": normalized_unit_type,
+                    "class_name": ", ".join(normalize_batch_names(row.get("batch_names"))) or None,
+                    "description": row.get("description") or None,
+                    "low_stock_threshold": int(row.get("low_stock_threshold", 10) or 10),
+                    "metadata": metadata,
+                    "is_active": bool(row.get("is_active", True)),
+                }).eq("id", material["id"]).eq("school_id", school_id).execute()
+                updated_count += 1
+            else:
+                insert_rows(
+                    supabase,
+                    "material_items",
+                    [{
+                        "school_id": school_id,
+                        "category_id": volume["id"] if volume else inventory_set["id"],
+                        "item_code": build_inventory_code("MAT", row["subject_name"], row["set_name"], row["material_name"]),
+                        "name": str(row["material_name"]).strip(),
+                        "unit_type": normalized_unit_type,
+                        "class_name": ", ".join(normalize_batch_names(row.get("batch_names"))) or None,
+                        "description": row.get("description") or None,
+                        "low_stock_threshold": int(row.get("low_stock_threshold", 10) or 10),
+                        "current_stock": 0,
+                        "unit_price": float(row.get("price", 0.0) or 0.0),
+                        "metadata": metadata,
+                        "is_active": bool(row.get("is_active", True)),
+                    }],
+                    schema="inventory",
                 )
+                material = fetch_all(
+                    supabase,
+                    "material_items",
+                    select="id,category_id,name,metadata,current_stock",
+                    filters={"school_id": school_id, "name": str(row["material_name"]).strip()},
+                    schema="inventory",
+                )[-1]
+                materials.append(material)
+                materials_by_signature[signature] = material
+                imported_count += 1
 
-                material = db.query(MaterialItem).filter(
-                    MaterialItem.school_id == school_id,
-                    MaterialItem.subject_id == subject.id,
-                    MaterialItem.set_id == inventory_set.id,
-                    (
-                        MaterialItem.volume_id == (volume.id if volume else None)
-                        if volume
-                        else MaterialItem.volume_id.is_(None)
-                    ),
-                    MaterialItem.name.ilike(row["material_name"].strip()),
-                ).first()
+            touched_material_ids.add(str(material["id"]))
 
-                is_new = material is None
-                if is_new:
-                    material = MaterialItem(
-                        school_id=school_id,
-                        name=row["material_name"].strip(),
+            supplier_name = str(row.get("supplier_name") or "").strip()
+            opening_stock = int(row.get("opening_stock", 0) or 0)
+            if supplier_name and opening_stock > 0:
+                supplier = suppliers_by_name.get(supplier_name.lower())
+                if not supplier:
+                    insert_rows(
+                        supabase,
+                        "suppliers",
+                        [{
+                            "school_id": school_id,
+                            "supplier_code": build_inventory_code("SUP", supplier_name),
+                            "name": supplier_name,
+                            "is_active": True,
+                            "metadata": {"source": "inventory_material_import"},
+                        }],
+                        schema="inventory",
                     )
-                    db.add(material)
+                    supplier = fetch_all(
+                        supabase,
+                        "suppliers",
+                        select="id,name",
+                        filters={"school_id": school_id, "name": supplier_name},
+                        schema="inventory",
+                    )[-1]
+                    suppliers_by_name[supplier_name.lower()] = supplier
 
-                material.name = row["material_name"].strip()
-                material.subject_id = subject.id
-                material.subject = subject.name
-                material.set_id = inventory_set.id
-                material.set_name = inventory_set.name
-                material.volume_id = volume.id if volume else None
-                material.volume_name = volume.name if volume else None
-                material.volume_number = volume.volume_number if volume else None
-                material.set_part_name = (
-                    f"Volume {volume.volume_number} - {volume.name}"
-                    if volume
-                    else None
+                entry_date = normalize_import_date(row.get("stock_in_date"))
+                import_note = "Imported from material template"
+                already_exists = next(
+                    (
+                        item for item in stock_in_entries
+                        if str(item.get("material_item_id")) == str(material["id"])
+                        and str(item.get("supplier_id")) == str(supplier["id"])
+                        and str(item.get("entry_date")) == entry_date
+                        and int(item.get("quantity_received") or 0) == opening_stock
+                        and str(item.get("notes") or "") == import_note
+                    ),
+                    None,
                 )
-                material.description = row.get("description") or None
-                material.unit_type = normalize_material_unit_type(row.get("unit_type"))
-                material.price = float(row.get("price", 0.0) or 0.0)
-                material.low_stock_threshold = int(row.get("low_stock_threshold", 10) or 10)
-                material.is_active = bool(row.get("is_active", True))
-                write_material_batches(material, row.get("batch_names"))
+                if not already_exists:
+                    insert_rows(
+                        supabase,
+                        "stock_in_entries",
+                        [{
+                            "school_id": school_id,
+                            "material_item_id": material["id"],
+                            "supplier_id": supplier["id"],
+                            "entry_date": entry_date,
+                            "quantity_received": opening_stock,
+                            "unit_price": float(row.get("price", 0.0) or 0.0),
+                            "entry_type": "purchase",
+                            "notes": import_note,
+                        }],
+                        schema="inventory",
+                    )
+                    stock_in_entries.append({
+                        "material_item_id": material["id"],
+                        "supplier_id": supplier["id"],
+                        "entry_date": entry_date,
+                        "quantity_received": opening_stock,
+                        "notes": import_note,
+                    })
+        except Exception as exc:
+            skipped_count += 1
+            errors.append({
+                "material_name": row.get("material_name", ""),
+                "error": str(exc),
+            })
 
-                db.flush()
+    stock_in_totals: Dict[str, int] = {}
+    stock_out_totals: Dict[str, int] = {}
+    issue_totals: Dict[str, int] = {}
+    for entry in stock_in_entries:
+        material_id = str(entry.get("material_item_id") or "")
+        stock_in_totals[material_id] = stock_in_totals.get(material_id, 0) + int(entry.get("quantity_received") or 0)
+    for entry in stock_out_entries:
+        material_id = str(entry.get("material_item_id") or "")
+        stock_out_totals[material_id] = stock_out_totals.get(material_id, 0) + int(entry.get("quantity_issued") or 0)
+    for entry in student_issue_entries:
+        material_id = str(entry.get("material_item_id") or "")
+        issue_totals[material_id] = issue_totals.get(material_id, 0) + int(entry.get("quantity_issued") or 0)
 
-                supplier_name = (row.get("supplier_name") or "").strip()
-                opening_stock = int(row.get("opening_stock", 0) or 0)
-                stock_in_date = row.get("stock_in_date")
-
-                if supplier_name and opening_stock > 0:
-                    supplier = db.query(Supplier).filter(
-                        Supplier.school_id == school_id,
-                        Supplier.name.ilike(supplier_name),
-                    ).first()
-                    if not supplier:
-                        supplier = Supplier(
-                            name=supplier_name,
-                            contact_person=None,
-                            phone=None,
-                            email=None,
-                            address=None,
-                            is_active=True,
-                            school_id=school_id,
-                        )
-                        db.add(supplier)
-                        db.flush()
-
-                    if stock_in_date in (None, ""):
-                        entry_date = datetime.utcnow()
-                    elif isinstance(stock_in_date, datetime):
-                        entry_date = stock_in_date
-                    else:
-                        parsed_date = None
-                        if isinstance(stock_in_date, date):
-                            parsed_date = stock_in_date
-                        elif isinstance(stock_in_date, str):
-                            try:
-                                parsed_date = datetime.fromisoformat(stock_in_date.strip()).date()
-                            except ValueError:
-                                try:
-                                    parsed_date = datetime.strptime(stock_in_date.strip(), "%Y-%m-%d").date()
-                                except ValueError:
-                                    raise ValueError(f"Invalid STOCK IN DATE: {stock_in_date}")
-                        if parsed_date is None:
-                            raise ValueError(f"Invalid STOCK IN DATE: {stock_in_date}")
-                        entry_date = datetime.combine(parsed_date, datetime.min.time())
-
-                    import_note = "Imported from material template"
-                    existing_stock_in = db.query(StockInEntry).filter(
-                        StockInEntry.school_id == school_id,
-                        StockInEntry.supplier_id == supplier.id,
-                        StockInEntry.material_id == material.id,
-                        StockInEntry.date == entry_date,
-                        StockInEntry.quantity_received == opening_stock,
-                        StockInEntry.notes == import_note,
-                    ).first()
-
-                    if not existing_stock_in:
-                        db.add(StockInEntry(
-                            date=entry_date,
-                            supplier_id=supplier.id,
-                            material_id=material.id,
-                            quantity_received=opening_stock,
-                            entry_type="opening_stock",
-                            added_by=actor["name"].strip(),
-                            notes=import_note,
-                            school_id=school_id,
-                        ))
-                        db.flush()
-
-                recalculate_material_stock(db, material)
-
-                if is_new:
-                    imported_count += 1
-                else:
-                    updated_count += 1
-            except Exception as exc:
-                skipped_count += 1
-                errors.append({
-                    "material_name": row.get("material_name", ""),
-                    "error": str(exc),
-                })
-
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    for material_id in touched_material_ids:
+        current_stock = max(
+            stock_in_totals.get(material_id, 0)
+            - stock_out_totals.get(material_id, 0)
+            - issue_totals.get(material_id, 0),
+            0,
+        )
+        supabase.schema("inventory").table("material_items").update({
+            "current_stock": current_stock,
+        }).eq("id", material_id).eq("school_id", school_id).execute()
 
     return InventoryMaterialImportResponse(
         imported_count=imported_count,

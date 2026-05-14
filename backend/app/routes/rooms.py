@@ -1,17 +1,36 @@
 """
 Room configuration routes
 """
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
+from app.middleware.auth import get_authenticated_actor_context
 from app.models import Room, Desk, Seat, School, User, UserRole
 from app.schemas import RoomCreate, RoomResponse, RoomUpdate
+
+logger = logging.getLogger(__name__)
+
+def get_school_id_from_context(school_id: str = Query(None), actor: dict = Depends(get_authenticated_actor_context), db: Session = Depends(get_db)) -> str:
+    user_id, res_id = actor.get("user_id") or actor.get("id"), str(school_id) if school_id and str(school_id) != "1" else None
+    if not res_id:
+        try:
+            from app.models import Profile, SchoolMembership
+            p = db.query(Profile).filter(Profile.user_id == user_id).first()
+            if p:
+                m = db.query(SchoolMembership).filter(SchoolMembership.profile_id == p.id).first()
+                if m: res_id = str(m.school_id)
+        except Exception: pass
+        res_id = res_id or actor.get("school_id")
+    if not res_id or res_id == "1":
+        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+    return str(res_id)
 
 router = APIRouter()
 
 
-def ensure_school_exists(db: Session, school_id: int) -> School:
+def ensure_school_exists(db: Session, school_id: str) -> School:
     """Bootstrap a default school/admin so room creation works on a fresh database."""
     school = db.query(School).filter(School.id == school_id).first()
     if school:
@@ -73,7 +92,8 @@ def serialize_room(room: Room) -> RoomResponse:
 @router.post("", response_model=RoomResponse)
 async def create_room(
     room_data: RoomCreate,
-    school_id: int = 1,  # TODO: Get from authenticated user
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
@@ -126,12 +146,14 @@ async def create_room(
     db.commit()
     db.refresh(room)
     
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_room(room)
 
 
 @router.get("", response_model=List[RoomResponse])
 async def list_rooms(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
@@ -144,6 +166,7 @@ async def list_rooms(
         Room.is_active == True
     ).all()
     
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(rooms)}")
     return [serialize_room(room) for room in rooms]
 
 

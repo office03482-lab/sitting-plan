@@ -3,13 +3,6 @@ import type { ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, FileSpreadsheet, UploadCloud } from 'lucide-react';
 import { apiService } from '@services/api';
-import {
-  STAFF_ADDED_INVIGILATOR_IDS_KEY,
-  STAFF_ADDED_TEACHER_IDS_KEY,
-  storeEntityId,
-  upsertStaffDirectoryRecord,
-  type StaffDirectoryRecord,
-} from '@utils/staffDirectory';
 
 type UploadRow = {
   staff_type: 'teaching' | 'non_teaching';
@@ -245,35 +238,25 @@ export default function StaffBulkUpload() {
               continue;
             }
 
-            const createdTeacher = await apiService.createTeacher({
+            await apiService.createTeacher({
               name: fullName,
               subject: row.subject,
               email: row.email || undefined,
               phone: row.primary_mobile || undefined,
-              is_active: isActive,
-            });
-            storeEntityId(STAFF_ADDED_TEACHER_IDS_KEY, createdTeacher.data.id);
-            const record: StaffDirectoryRecord = {
-              id: `teacher-${createdTeacher.data.id}-${Date.now()}-${lineIndex}`,
-              backendId: createdTeacher.data.id,
-              backendType: 'teaching',
-              staffType: 'teaching',
-              category: row.staff_category || 'Teacher',
-              firstName: row.first_name,
-              middleName: row.middle_name || undefined,
-              lastName: row.last_name,
-              fullName,
-              employeeId: row.employee_id || undefined,
-              subject: row.subject || undefined,
               designation: row.designation || row.staff_category || 'Teacher',
-              phone: row.primary_mobile || undefined,
-              email: row.email || undefined,
-              joiningDate: row.joining_date || undefined,
-              shiftTiming: row.shift_timing || undefined,
-              isActive,
-              createdAt: new Date().toISOString(),
-            };
-            upsertStaffDirectoryRecord(record);
+              joining_date: row.joining_date || undefined,
+              shift_timing: row.shift_timing || undefined,
+              is_active: isActive,
+              metadata: {
+                category: row.staff_category || 'Teacher',
+                designation: row.designation || row.staff_category || 'Teacher',
+                joining_date: row.joining_date || undefined,
+                shift_timing: row.shift_timing || undefined,
+                directory_details: {
+                  primaryMobile: row.primary_mobile || undefined,
+                },
+              },
+            });
             existingTeacherKeys.add(teacherKey);
             pendingTeacherKeys.add(teacherKey);
           } else {
@@ -284,37 +267,25 @@ export default function StaffBulkUpload() {
               continue;
             }
 
-            const createdStaff = await apiService.createInvigilator({
+            await apiService.createInvigilator({
               staff_id: row.employee_id,
               name: fullName,
               email: row.email || undefined,
               phone: row.primary_mobile || undefined,
               department: row.department || row.staff_category || 'General Staff',
               designation: row.designation || row.staff_category || 'Non-Teaching Staff',
+              joining_date: row.joining_date || undefined,
+              shift_timing: row.shift_timing || undefined,
               is_active: isActive,
+              metadata: {
+                category: row.staff_category || 'Non-Teaching Staff',
+                joining_date: row.joining_date || undefined,
+                shift_timing: row.shift_timing || undefined,
+                directory_details: {
+                  primaryMobile: row.primary_mobile || undefined,
+                },
+              },
             });
-            storeEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, createdStaff.data.id);
-            const record: StaffDirectoryRecord = {
-              id: `staff-${createdStaff.data.id}-${Date.now()}-${lineIndex}`,
-              backendId: createdStaff.data.id,
-              backendType: 'non_teaching',
-              staffType: 'non_teaching',
-              category: row.staff_category || 'Non-Teaching Staff',
-              firstName: row.first_name,
-              middleName: row.middle_name || undefined,
-              lastName: row.last_name,
-              fullName,
-              employeeId: row.employee_id || undefined,
-              department: row.department || row.staff_category || 'General Staff',
-              designation: row.designation || row.staff_category || 'Non-Teaching Staff',
-              phone: row.primary_mobile || undefined,
-              email: row.email || undefined,
-              joiningDate: row.joining_date || undefined,
-              shiftTiming: row.shift_timing || undefined,
-              isActive,
-              createdAt: new Date().toISOString(),
-            };
-            upsertStaffDirectoryRecord(record);
             existingInvigilatorIds.add(staffIdKey);
             pendingInvigilatorIds.add(staffIdKey);
           }

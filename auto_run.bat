@@ -132,12 +132,12 @@ echo [OK] Python dependencies installed
 
 echo.
 echo [6/8] Setting up database...
-python setup_db_script.py >nul 2>&1
+python -m alembic upgrade head >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] Sample database setup script failed.
-    echo [WARN] Continuing anyway - FastAPI will create the required tables on startup.
+    echo [WARN] Database migration failed.
+    echo [WARN] Continuing anyway - make sure your DATABASE_URL is correct.
 ) else (
-    echo [OK] Database setup complete
+    echo [OK] Database migration complete
 )
 
 echo.

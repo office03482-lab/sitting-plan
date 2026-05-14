@@ -1337,7 +1337,7 @@ export default function InventoryManagement() {
       for (const materialId of selectedMaterialIds) {
         await apiService.createStudentIssues({
           date: `${studentIssueForm.date}T00:00:00`,
-          batch_id: Number(studentIssueForm.batch_id),
+          batch_id: studentIssueForm.batch_id,
           student_ids: selectedStudentIssueStudents.map((student) => student.id),
           material_id: materialId,
           quantity_issued: Number(studentIssueForm.quantity_issued),
@@ -1392,7 +1392,7 @@ export default function InventoryManagement() {
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
         supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,
-        batch_id: reportFilters.batch_id ? Number(reportFilters.batch_id) : undefined,
+        batch_id: reportFilters.batch_id || undefined,
         student_id: reportFilters.student_id ? Number(reportFilters.student_id) : undefined,
         material_id: reportFilters.material_id ? Number(reportFilters.material_id) : undefined,
       });
@@ -1411,7 +1411,7 @@ export default function InventoryManagement() {
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
         supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,
-        batch_id: reportFilters.batch_id ? Number(reportFilters.batch_id) : undefined,
+        batch_id: reportFilters.batch_id || undefined,
         student_id: reportFilters.student_id ? Number(reportFilters.student_id) : undefined,
         material_id: reportFilters.material_id ? Number(reportFilters.material_id) : undefined,
       });

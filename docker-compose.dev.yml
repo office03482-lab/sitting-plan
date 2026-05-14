@@ -4,7 +4,7 @@ services:
   backend:
     environment:
       ENVIRONMENT: development
-      DATABASE_URL: sqlite:///seating_planner.db
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/postgres}
       DEBUG: "true"
       RELOAD: "true"
     volumes:

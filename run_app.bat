@@ -123,11 +123,11 @@ if not exist ".env" (
 
 REM Setup database and sample data
 echo Setting up database and sample data...
-call ..\setup_database.bat
+"%VENV_PY%" -m alembic upgrade head
 
 if errorlevel 1 (
-    echo [WARN] Sample database setup script failed.
-    echo [WARN] Continuing anyway - FastAPI will create the required tables on startup.
+    echo [WARN] Database migration failed.
+    echo [WARN] Continuing anyway - make sure your DATABASE_URL is correct.
 ) else (
     echo [OK] Backend setup complete
 )

@@ -18,6 +18,8 @@ import { useAuthStore } from '@store/auth';
 const MAX_GET_RETRIES = 2;
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const API_TIMEOUT_MS = 60000;
+const STUDENT_PHOTO_BUCKET = 'student-photos';
+const STAFF_PHOTO_BUCKET = 'staff-photos';
 const DIRECT_API_FALLBACKS = [
   'http://127.0.0.1:8000/api',
   'http://127.0.0.1:8010/api',
@@ -33,6 +35,22 @@ class ApiService {
   private teacherReverseIdMap = new Map<string, number>();
   private invigilatorIdMap = new Map<number, string>();
   private invigilatorReverseIdMap = new Map<string, number>();
+  private supplierIdMap = new Map<number, string>();
+  private supplierReverseIdMap = new Map<string, number>();
+  private inventorySubjectIdMap = new Map<number, string>();
+  private inventorySubjectReverseIdMap = new Map<string, number>();
+  private inventorySetIdMap = new Map<number, string>();
+  private inventorySetReverseIdMap = new Map<string, number>();
+  private inventoryVolumeIdMap = new Map<number, string>();
+  private inventoryVolumeReverseIdMap = new Map<string, number>();
+  private materialIdMap = new Map<number, string>();
+  private materialReverseIdMap = new Map<string, number>();
+  private stockInIdMap = new Map<number, string>();
+  private stockInReverseIdMap = new Map<string, number>();
+  private stockOutIdMap = new Map<number, string>();
+  private stockOutReverseIdMap = new Map<string, number>();
+  private studentIssueIdMap = new Map<number, string>();
+  private studentIssueReverseIdMap = new Map<string, number>();
 
   private getAccessToken() {
     return typeof window === 'undefined' ? null : localStorage.getItem('auth_token');
@@ -152,10 +170,228 @@ class ApiService {
     return forwardMap.get(Number(id)) || String(id);
   }
 
+  private getLegacyInventoryId(
+    forwardMap: Map<number, string>,
+    reverseMap: Map<string, number>,
+    seedPrefix: string,
+    actualId?: string | null,
+  ) {
+    if (!actualId) return 0;
+
+    const existing = reverseMap.get(actualId);
+    if (existing) return existing;
+
+    const seed = `${seedPrefix}:${actualId}`;
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
+    }
+
+    let legacyId = Math.abs(hash) || 1;
+    while (forwardMap.has(legacyId) && forwardMap.get(legacyId) !== actualId) {
+      legacyId += 1;
+    }
+
+    forwardMap.set(legacyId, actualId);
+    reverseMap.set(actualId, legacyId);
+    return legacyId;
+  }
+
+  private resolveLegacyInventoryId(
+    forwardMap: Map<number, string>,
+    id: string | number,
+  ) {
+    if (typeof id === 'string' && this.isUuidLike(id)) {
+      return id;
+    }
+    return forwardMap.get(Number(id)) || String(id);
+  }
+
   private compactObject<T extends Record<string, unknown>>(value: T) {
     return Object.fromEntries(
       Object.entries(value).filter(([, entry]) => entry !== undefined)
     ) as T;
+  }
+
+  private dataUrlToBlob(dataUrl: string) {
+    const matches = dataUrl.match(/^data:(.+?);base64,(.+)$/);
+    if (!matches) {
+      throw new Error('Invalid photo data format');
+    }
+
+    const [, mimeType, base64Data] = matches;
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return {
+      blob: new Blob([bytes], { type: mimeType }),
+      mimeType,
+    };
+  }
+
+  private getFileExtensionFromMimeType(mimeType: string) {
+    if (mimeType.includes('png')) return 'png';
+    if (mimeType.includes('webp')) return 'webp';
+    if (mimeType.includes('gif')) return 'gif';
+    return 'jpg';
+  }
+
+  private async removeStudentPhotoAsset(photoPath?: string | null) {
+    if (!photoPath) return;
+    const { error } = await supabase.storage.from(STUDENT_PHOTO_BUCKET).remove([photoPath]);
+    if (error) {
+      console.warn('[Supabase] removeStudentPhotoAsset failed', {
+        message: error.message,
+        path: photoPath,
+      });
+    }
+  }
+
+  private async persistStudentPhoto(
+    schoolId: string,
+    rollNumber: string,
+    photoDataUrl?: string | null,
+    existingPhotoPath?: string | null,
+  ) {
+    const normalizedPhoto = String(photoDataUrl || '').trim();
+    if (!normalizedPhoto) {
+      if (existingPhotoPath) {
+        await this.removeStudentPhotoAsset(existingPhotoPath);
+      }
+      return {
+        photoUrl: null,
+        photoPath: null,
+        photoDataUrl: null,
+      };
+    }
+
+    if (!normalizedPhoto.startsWith('data:')) {
+      return {
+        photoUrl: normalizedPhoto,
+        photoPath: existingPhotoPath || null,
+        photoDataUrl: null,
+      };
+    }
+
+    try {
+      const { blob, mimeType } = this.dataUrlToBlob(normalizedPhoto);
+      const extension = this.getFileExtensionFromMimeType(mimeType);
+      const safeRollNumber = String(rollNumber || 'student')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const nextPhotoPath = `${schoolId}/${safeRollNumber || 'student'}/${Date.now()}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(STUDENT_PHOTO_BUCKET)
+        .upload(nextPhotoPath, blob, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new Error(
+          `Student photo upload failed. Check Supabase Storage bucket "${STUDENT_PHOTO_BUCKET}" and its policies.`
+        );
+      }
+
+      if (existingPhotoPath && existingPhotoPath !== nextPhotoPath) {
+        await this.removeStudentPhotoAsset(existingPhotoPath);
+      }
+
+      const { data } = supabase.storage.from(STUDENT_PHOTO_BUCKET).getPublicUrl(nextPhotoPath);
+      return {
+        photoUrl: data.publicUrl,
+        photoPath: nextPhotoPath,
+        photoDataUrl: null,
+      };
+    } catch (error: any) {
+      console.warn('[Supabase] student photo persistence failed', {
+        message: error?.message,
+      });
+      throw error;
+    }
+  }
+
+  private async removeStaffPhotoAsset(photoPath?: string | null) {
+    if (!photoPath) return;
+    const { error } = await supabase.storage.from(STAFF_PHOTO_BUCKET).remove([photoPath]);
+    if (error) {
+      console.warn('[Supabase] removeStaffPhotoAsset failed', {
+        message: error.message,
+        path: photoPath,
+      });
+    }
+  }
+
+  private async persistStaffPhoto(
+    schoolId: string,
+    staffSeed: string,
+    photoDataUrl?: string | null,
+    existingPhotoPath?: string | null,
+  ) {
+    const normalizedPhoto = String(photoDataUrl || '').trim();
+    if (!normalizedPhoto) {
+      if (existingPhotoPath) {
+        await this.removeStaffPhotoAsset(existingPhotoPath);
+      }
+      return {
+        photoUrl: null,
+        photoPath: null,
+        photoDataUrl: null,
+      };
+    }
+
+    if (!normalizedPhoto.startsWith('data:')) {
+      return {
+        photoUrl: normalizedPhoto,
+        photoPath: existingPhotoPath || null,
+        photoDataUrl: null,
+      };
+    }
+
+    try {
+      const { blob, mimeType } = this.dataUrlToBlob(normalizedPhoto);
+      const extension = this.getFileExtensionFromMimeType(mimeType);
+      const safeSeed = String(staffSeed || 'staff')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const nextPhotoPath = `${schoolId}/${safeSeed || 'staff'}/${Date.now()}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(STAFF_PHOTO_BUCKET)
+        .upload(nextPhotoPath, blob, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new Error(
+          `Staff photo upload failed. Check Supabase Storage bucket "${STAFF_PHOTO_BUCKET}" and its policies.`
+        );
+      }
+
+      if (existingPhotoPath && existingPhotoPath !== nextPhotoPath) {
+        await this.removeStaffPhotoAsset(existingPhotoPath);
+      }
+
+      const { data } = supabase.storage.from(STAFF_PHOTO_BUCKET).getPublicUrl(nextPhotoPath);
+      return {
+        photoUrl: data.publicUrl,
+        photoPath: nextPhotoPath,
+        photoDataUrl: null,
+      };
+    } catch (error: any) {
+      console.warn('[Supabase] staff photo persistence failed', {
+        message: error?.message,
+      });
+      throw error;
+    }
   }
 
   private logSupabaseQueryError(context: string, error: any, details?: Record<string, unknown>) {
@@ -242,6 +478,7 @@ class ApiService {
       id: this.getLegacyMappedId('student', student.id),
       roll_number: student.roll_number || '',
       name: student.full_name || '',
+      photoDataUrl: metadata.photo_url || metadata.photo_data_url || undefined,
       father_name: student.father_name || undefined,
       batch: student.batches?.name || metadata.managed_batch || '',
       class_name: student.class_name || undefined,
@@ -280,14 +517,21 @@ class ApiService {
     return {
       id: this.getLegacyMappedId('teacher', staffMember.id),
       name: staffMember.full_name || '',
+      photoDataUrl: staffMember.metadata?.photo_url || staffMember.metadata?.photo_data_url || undefined,
       subject: staffMember.metadata?.subject || staffMember.department || '',
       school_id: 1,
       email: staffMember.email || undefined,
       phone: staffMember.phone || undefined,
+      employee_code: staffMember.employee_code || undefined,
+      department: staffMember.department || undefined,
+      designation: staffMember.designation || undefined,
+      joining_date: staffMember.metadata?.joining_date || undefined,
+      shift_timing: staffMember.metadata?.shift_timing || undefined,
+      metadata: staffMember.metadata || undefined,
       is_active: Boolean(staffMember.is_active),
       created_at: staffMember.created_at,
       updated_at: staffMember.updated_at,
-    };
+    } as Teacher;
   }
 
   private mapSupabaseInvigilatorToLegacy(staffMember: any): Invigilator {
@@ -295,15 +539,19 @@ class ApiService {
       id: this.getLegacyMappedId('invigilator', staffMember.id),
       staff_id: staffMember.employee_code || '',
       name: staffMember.full_name || '',
+      photoDataUrl: staffMember.metadata?.photo_url || staffMember.metadata?.photo_data_url || undefined,
       school_id: 1,
       email: staffMember.email || undefined,
       phone: staffMember.phone || undefined,
       department: staffMember.department || undefined,
       designation: staffMember.designation || undefined,
+      joining_date: staffMember.metadata?.joining_date || undefined,
+      shift_timing: staffMember.metadata?.shift_timing || undefined,
+      metadata: staffMember.metadata || undefined,
       is_active: Boolean(staffMember.is_active),
       created_at: staffMember.created_at,
       updated_at: staffMember.updated_at,
-    };
+    } as Invigilator;
   }
 
   private mapSupabaseHostelToLegacy(hostel: any, rooms: any[] = []): Hostel {
@@ -408,6 +656,359 @@ class ApiService {
     }
 
     return { batchCounts, classCounts };
+  }
+
+  private slugifyInventoryValue(value?: string | null) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 24);
+  }
+
+  private createInventoryCode(prefix: string, name?: string | null) {
+    const slug = this.slugifyInventoryValue(name) || prefix.toLowerCase();
+    const random =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 8)
+        : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    return `${prefix}-${slug}-${random}`.slice(0, 60);
+  }
+
+  private normalizeInventoryUnitType(value?: string | null) {
+    const normalized = String(value || 'book').trim().toLowerCase();
+    if (normalized === 'book') return { dbValue: 'book', uiValue: 'book' };
+    if (normalized === 'set') return { dbValue: 'set', uiValue: 'set' };
+    if (normalized === 'copy' || normalized === 'notebook') {
+      return { dbValue: 'copy', uiValue: 'notebook' };
+    }
+    return { dbValue: 'unit', uiValue: normalized as MaterialItem['unit_type'] };
+  }
+
+  private deriveInventoryVolumeNumber(category: any) {
+    const metadataNumber = category?.metadata?.volume_number;
+    if (metadataNumber !== undefined && metadataNumber !== null && metadataNumber !== '') {
+      return String(metadataNumber);
+    }
+
+    const categoryCode = String(category?.category_code || '');
+    const categoryCodeMatch = categoryCode.match(/(?:vol|volume)[-_]?(\d+)/i);
+    if (categoryCodeMatch?.[1]) {
+      return categoryCodeMatch[1];
+    }
+
+    const name = String(category?.name || '');
+    const nameMatch = name.match(/(\d+)/);
+    if (nameMatch?.[1]) {
+      return nameMatch[1];
+    }
+
+    return '';
+  }
+
+  private getInventoryCategoryAncestors(categoryId: string | null | undefined, categoriesById: Map<string, any>) {
+    const lineage: any[] = [];
+    let currentId = categoryId ? String(categoryId) : null;
+    while (currentId) {
+      const current = categoriesById.get(currentId);
+      if (!current) break;
+      lineage.unshift(current);
+      currentId = current.parent_category_id ? String(current.parent_category_id) : null;
+    }
+    return lineage;
+  }
+
+  private parseInventoryBatchNames(item: any) {
+    const metadataBatchNames = item?.metadata?.batch_names;
+    if (Array.isArray(metadataBatchNames)) {
+      return metadataBatchNames
+        .map((entry: unknown) => String(entry || '').trim())
+        .filter(Boolean);
+    }
+
+    if (typeof item?.class_name === 'string' && item.class_name.trim()) {
+      return item.class_name
+        .split(',')
+        .map((entry: string) => entry.trim())
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
+  private mapInventorySupplierToLegacy(supplier: any): Supplier {
+    return {
+      id: this.getLegacyInventoryId(this.supplierIdMap, this.supplierReverseIdMap, 'inventory-supplier', supplier.id),
+      name: supplier.name || '',
+      contact_person: supplier.contact_person || undefined,
+      phone: supplier.phone || undefined,
+      email: supplier.email || undefined,
+      address: supplier.address || undefined,
+      is_active: Boolean(supplier.is_active),
+      created_at: supplier.created_at,
+      updated_at: supplier.updated_at,
+    };
+  }
+
+  private mapInventorySubjectToLegacy(subject: any): InventorySubject {
+    return {
+      id: this.getLegacyInventoryId(
+        this.inventorySubjectIdMap,
+        this.inventorySubjectReverseIdMap,
+        'inventory-subject',
+        subject.id,
+      ),
+      name: subject.name || '',
+      is_active: Boolean(subject.is_active),
+    };
+  }
+
+  private mapInventorySetToLegacy(inventorySet: any): InventorySet {
+    return {
+      id: this.getLegacyInventoryId(this.inventorySetIdMap, this.inventorySetReverseIdMap, 'inventory-set', inventorySet.id),
+      subject_id: this.getLegacyInventoryId(
+        this.inventorySubjectIdMap,
+        this.inventorySubjectReverseIdMap,
+        'inventory-subject',
+        inventorySet.parent_category_id,
+      ),
+      name: inventorySet.name || '',
+      is_active: Boolean(inventorySet.is_active),
+    };
+  }
+
+  private mapInventoryVolumeToLegacy(volume: any, categoriesById: Map<string, any>): InventoryVolume {
+    const inventorySet = volume.parent_category_id ? categoriesById.get(String(volume.parent_category_id)) : null;
+    const subject = inventorySet?.parent_category_id
+      ? categoriesById.get(String(inventorySet.parent_category_id))
+      : null;
+
+    return {
+      id: this.getLegacyInventoryId(
+        this.inventoryVolumeIdMap,
+        this.inventoryVolumeReverseIdMap,
+        'inventory-volume',
+        volume.id,
+      ),
+      subject_id: this.getLegacyInventoryId(
+        this.inventorySubjectIdMap,
+        this.inventorySubjectReverseIdMap,
+        'inventory-subject',
+        subject?.id,
+      ),
+      set_id: this.getLegacyInventoryId(
+        this.inventorySetIdMap,
+        this.inventorySetReverseIdMap,
+        'inventory-set',
+        inventorySet?.id,
+      ),
+      volume_number: this.deriveInventoryVolumeNumber(volume),
+      name: volume.name || '',
+      is_active: Boolean(volume.is_active),
+    };
+  }
+
+  private mapInventoryMaterialToLegacy(material: any, categoriesById: Map<string, any>): MaterialItem {
+    const metadata = material.metadata || {};
+    const lineage = this.getInventoryCategoryAncestors(material.category_id, categoriesById);
+    const subjectCategory =
+      (metadata.subject_category_id && categoriesById.get(String(metadata.subject_category_id))) ||
+      lineage[0] ||
+      null;
+    const setCategory =
+      (metadata.set_category_id && categoriesById.get(String(metadata.set_category_id))) ||
+      (lineage.length >= 2 ? lineage[1] : null) ||
+      null;
+    const volumeCategory =
+      (metadata.volume_category_id && categoriesById.get(String(metadata.volume_category_id))) ||
+      (lineage.length >= 3 ? lineage[2] : null) ||
+      null;
+    const normalizedUnitType = this.normalizeInventoryUnitType(metadata.original_unit_type || material.unit_type);
+
+    return {
+      id: this.getLegacyInventoryId(this.materialIdMap, this.materialReverseIdMap, 'inventory-material', material.id),
+      name: material.name || '',
+      subject_id: this.getLegacyInventoryId(
+        this.inventorySubjectIdMap,
+        this.inventorySubjectReverseIdMap,
+        'inventory-subject',
+        subjectCategory?.id,
+      ),
+      set_id: this.getLegacyInventoryId(
+        this.inventorySetIdMap,
+        this.inventorySetReverseIdMap,
+        'inventory-set',
+        setCategory?.id,
+      ),
+      volume_id: this.getLegacyInventoryId(
+        this.inventoryVolumeIdMap,
+        this.inventoryVolumeReverseIdMap,
+        'inventory-volume',
+        volumeCategory?.id,
+      ),
+      subject: subjectCategory?.name || undefined,
+      set_name: setCategory?.name || undefined,
+      volume_name: volumeCategory?.name || undefined,
+      volume_number: volumeCategory ? this.deriveInventoryVolumeNumber(volumeCategory) : undefined,
+      batch_names: this.parseInventoryBatchNames(material),
+      description: material.description || undefined,
+      unit_type: normalizedUnitType.uiValue as MaterialItem['unit_type'],
+      current_stock: Number(material.current_stock ?? 0),
+      low_stock_threshold: Number(material.low_stock_threshold ?? 0),
+      is_active: Boolean(material.is_active),
+      created_at: material.created_at,
+      updated_at: material.updated_at,
+    };
+  }
+
+  private mapStockInEntryToLegacy(entry: any, materialsById: Map<string, any>, suppliersById: Map<string, any>): StockInEntry {
+    const material = entry.material_item_id ? materialsById.get(String(entry.material_item_id)) : null;
+    const supplier = entry.supplier_id ? suppliersById.get(String(entry.supplier_id)) : null;
+    return {
+      id: this.getLegacyInventoryId(this.stockInIdMap, this.stockInReverseIdMap, 'inventory-stock-in', entry.id),
+      date: entry.entry_date || entry.created_at || undefined,
+      supplier_id: this.getLegacyInventoryId(this.supplierIdMap, this.supplierReverseIdMap, 'inventory-supplier', supplier?.id),
+      supplier_name: supplier?.name || undefined,
+      material_id: this.getLegacyInventoryId(this.materialIdMap, this.materialReverseIdMap, 'inventory-material', material?.id),
+      material_name: material?.name || undefined,
+      quantity_received: Number(entry.quantity_received ?? 0),
+      entry_type: entry.entry_type || 'purchase',
+      added_by: entry.notes?.added_by || undefined,
+      notes: entry.notes || undefined,
+      created_at: entry.created_at,
+    };
+  }
+
+  private mapStockOutEntryToLegacy(entry: any, materialsById: Map<string, any>, batchesById: Map<string, any>): StockOutEntry {
+    const material = entry.material_item_id ? materialsById.get(String(entry.material_item_id)) : null;
+    const batch = entry.batch_id ? batchesById.get(String(entry.batch_id)) : null;
+    return {
+      id: this.getLegacyInventoryId(this.stockOutIdMap, this.stockOutReverseIdMap, 'inventory-stock-out', entry.id),
+      date: entry.entry_date || entry.created_at || undefined,
+      batch_id: batch?.id,
+      batch_name: batch?.name || undefined,
+      material_id: this.getLegacyInventoryId(this.materialIdMap, this.materialReverseIdMap, 'inventory-material', material?.id),
+      material_name: material?.name || undefined,
+      quantity_issued: Number(entry.quantity_issued ?? 0),
+      issued_by: entry.remarks?.issued_by || undefined,
+      remarks: entry.remarks || undefined,
+      created_at: entry.created_at,
+    };
+  }
+
+  private mapStudentIssueEntryToLegacy(
+    entry: any,
+    materialsById: Map<string, any>,
+    batchesById: Map<string, any>,
+    studentsById: Map<string, any>,
+  ): StudentIssueEntry {
+    const material = entry.material_item_id ? materialsById.get(String(entry.material_item_id)) : null;
+    const batch = entry.batch_id ? batchesById.get(String(entry.batch_id)) : null;
+    const student = entry.student_id ? studentsById.get(String(entry.student_id)) : null;
+    return {
+      id: this.getLegacyInventoryId(
+        this.studentIssueIdMap,
+        this.studentIssueReverseIdMap,
+        'inventory-student-issue',
+        entry.id,
+      ),
+      date: entry.issue_date || entry.created_at || undefined,
+      batch_id: batch?.id,
+      batch_name: batch?.name || undefined,
+      student_id: this.getLegacyMappedId('student', student?.id),
+      student_name: student?.full_name || '',
+      material_id: this.getLegacyInventoryId(this.materialIdMap, this.materialReverseIdMap, 'inventory-material', material?.id),
+      material_name: material?.name || undefined,
+      quantity_issued: Number(entry.quantity_issued ?? 0),
+      issued_by: entry.remarks?.issued_by || undefined,
+      remarks: entry.remarks || undefined,
+      created_at: entry.created_at,
+    };
+  }
+
+  private async fetchInventoryCategories(schoolId: string, includeInactive: boolean = true) {
+    let query = supabase
+      .schema('inventory')
+      .from('material_categories')
+      .select('id, school_id, category_code, name, parent_category_id, is_active, created_at, updated_at')
+      .eq('school_id', schoolId)
+      .order('name', { ascending: true });
+
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      this.logSupabaseQueryError('fetchInventoryCategories', error, { schoolId });
+      throw error;
+    }
+    return data || [];
+  }
+
+  private async recalculateInventoryStocks(schoolId: string, materialIds?: string[]) {
+    const uniqueMaterialIds = Array.from(new Set((materialIds || []).filter(Boolean)));
+    if (!uniqueMaterialIds.length) {
+      return;
+    }
+
+    const stockInQuery = supabase
+      .schema('inventory')
+      .from('stock_in_entries')
+      .select('material_item_id, quantity_received')
+      .eq('school_id', schoolId)
+      .in('material_item_id', uniqueMaterialIds);
+    const stockOutQuery = supabase
+      .schema('inventory')
+      .from('stock_out_entries')
+      .select('material_item_id, quantity_issued')
+      .eq('school_id', schoolId)
+      .in('material_item_id', uniqueMaterialIds);
+    const studentIssueQuery = supabase
+      .schema('inventory')
+      .from('student_issue_entries')
+      .select('material_item_id, quantity_issued')
+      .eq('school_id', schoolId)
+      .in('material_item_id', uniqueMaterialIds);
+
+    const [{ data: stockInRows, error: stockInError }, { data: stockOutRows, error: stockOutError }, { data: issueRows, error: issueError }] =
+      await Promise.all([stockInQuery, stockOutQuery, studentIssueQuery]);
+
+    if (stockInError) throw stockInError;
+    if (stockOutError) throw stockOutError;
+    if (issueError) throw issueError;
+
+    const totals = new Map<string, number>();
+    for (const materialId of uniqueMaterialIds) {
+      totals.set(materialId, 0);
+    }
+
+    for (const row of stockInRows || []) {
+      const key = String(row.material_item_id);
+      totals.set(key, (totals.get(key) || 0) + Number(row.quantity_received ?? 0));
+    }
+    for (const row of stockOutRows || []) {
+      const key = String(row.material_item_id);
+      totals.set(key, (totals.get(key) || 0) - Number(row.quantity_issued ?? 0));
+    }
+    for (const row of issueRows || []) {
+      const key = String(row.material_item_id);
+      totals.set(key, (totals.get(key) || 0) - Number(row.quantity_issued ?? 0));
+    }
+
+    for (const [materialId, currentStock] of totals.entries()) {
+      const { error } = await supabase
+        .schema('inventory')
+        .from('material_items')
+        .update({ current_stock: Math.max(currentStock, 0) })
+        .eq('id', materialId)
+        .eq('school_id', schoolId);
+      if (error) {
+        this.logSupabaseQueryError('recalculateInventoryStocks.update', error, { schoolId, materialId });
+        throw error;
+      }
+    }
   }
 
   private async listSupabaseBatches(category?: string, includeInactive: boolean = true, schoolId?: string) {
@@ -713,9 +1314,14 @@ class ApiService {
 
   // ==================== Students ====================
 
-  async importStudents(formData: FormData, schoolId: number = 1) {
+  async importStudents(formData: FormData, schoolId?: number | string) {
+    const scopedSchoolId = typeof schoolId === 'string'
+      ? schoolId
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
     return this.api.post('/students/import', formData, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -725,6 +1331,12 @@ class ApiService {
 
     const requestedBatchName = String((studentData as any).batch || '').trim();
     const matchedBatch = await this.findSupabaseBatchByName(requestedBatchName, scopedSchoolId);
+    const persistedPhoto = await this.persistStudentPhoto(
+      scopedSchoolId,
+      String(studentData.roll_number || ''),
+      (studentData as any).photoDataUrl,
+      null,
+    );
     const metadata = this.compactObject({
       ...(typeof (studentData as any).metadata === 'object' && (studentData as any).metadata ? (studentData as any).metadata : {}),
       managed_batch: requestedBatchName || undefined,
@@ -733,6 +1345,9 @@ class ApiService {
       reference_remark: (studentData as any).reference_remark || undefined,
       preferred_hostel_id: (studentData as any).preferred_hostel_id || undefined,
       hostel_notes: (studentData as any).hostel_notes || undefined,
+      photo_url: persistedPhoto.photoUrl || undefined,
+      photo_path: persistedPhoto.photoPath || undefined,
+      photo_data_url: persistedPhoto.photoDataUrl || undefined,
     });
 
     const { data, error } = await supabase
@@ -915,6 +1530,13 @@ class ApiService {
 
     const requestedBatchName = String((data as any).batch || '').trim();
     const matchedBatch = requestedBatchName ? await this.findSupabaseBatchByName(requestedBatchName, scopedSchoolId) : null;
+    const nextRollNumber = String(data.roll_number || '').trim() || String((data as any).rollNumber || '').trim() || '';
+    const persistedPhoto = await this.persistStudentPhoto(
+      scopedSchoolId,
+      nextRollNumber || String(existing?.metadata?.managed_batch || 'student'),
+      Object.prototype.hasOwnProperty.call(data, 'photoDataUrl') ? (data as any).photoDataUrl : existing?.metadata?.photo_url || existing?.metadata?.photo_data_url || null,
+      existing?.metadata?.photo_path || null,
+    );
     const metadata = this.compactObject({
       ...(existing?.metadata || {}),
       ...(typeof (data as any).metadata === 'object' && (data as any).metadata ? (data as any).metadata : {}),
@@ -924,6 +1546,9 @@ class ApiService {
       reference_remark: (data as any).reference_remark ?? existing?.metadata?.reference_remark,
       preferred_hostel_id: (data as any).preferred_hostel_id ?? existing?.metadata?.preferred_hostel_id,
       hostel_notes: (data as any).hostel_notes ?? existing?.metadata?.hostel_notes,
+      photo_url: persistedPhoto.photoUrl || undefined,
+      photo_path: persistedPhoto.photoPath || undefined,
+      photo_data_url: persistedPhoto.photoDataUrl || undefined,
     });
 
     const payload = this.compactObject({
@@ -992,16 +1617,38 @@ class ApiService {
 
   async deleteStudent(studentId: number) {
     const resolvedId = this.resolveMappedId('student', studentId);
+    const { data: existing, error: fetchError } = await supabase
+      .from('students')
+      .select('metadata')
+      .eq('id', resolvedId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+
     const { error } = await supabase.from('students').delete().eq('id', resolvedId);
     if (error) throw error;
+    await this.removeStudentPhotoAsset(existing?.metadata?.photo_path || null);
     return { data: { message: 'Student deleted successfully' } } as { data: { message: string } };
   }
 
   async deleteAllStudents(isAdmin: boolean = false, _schoolId: number = 1) {
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     if (!scopedSchoolId) throw new Error('No active school membership found.');
+    const { data: existingRows, error: existingError } = await supabase
+      .from('students')
+      .select('metadata')
+      .eq('school_id', scopedSchoolId);
+    if (existingError) throw existingError;
     const { error } = await supabase.from('students').delete().eq('school_id', scopedSchoolId);
     if (error) throw error;
+    const photoPaths = (existingRows || [])
+      .map((item: any) => item?.metadata?.photo_path)
+      .filter(Boolean);
+    if (photoPaths.length > 0) {
+      const { error: removeError } = await supabase.storage.from(STUDENT_PHOTO_BUCKET).remove(photoPaths);
+      if (removeError) {
+        console.warn('[Supabase] bulk student photo cleanup failed', { message: removeError.message });
+      }
+    }
     return { data: { success: true, is_admin: isAdmin } } as { data: { success: boolean; is_admin: boolean } };
   }
 
@@ -1445,6 +2092,16 @@ class ApiService {
     if (!scopedSchoolId) throw new Error('No active school membership found.');
 
     const employeeCode = `TCH-${Date.now().toString().slice(-8)}`;
+    const persistedPhoto = await this.persistStaffPhoto(
+      scopedSchoolId,
+      teacherData.name || employeeCode,
+      (teacherData as any).photoDataUrl,
+      null,
+    );
+    const incomingMetadata =
+      typeof (teacherData as any).metadata === 'object' && (teacherData as any).metadata
+        ? { ...((teacherData as any).metadata as Record<string, unknown>) }
+        : {};
     const { data, error } = await supabase
       .from('staff_members')
       .insert({
@@ -1455,11 +2112,17 @@ class ApiService {
         phone: teacherData.phone || null,
         staff_type: 'teaching',
         department: teacherData.subject || null,
-        designation: 'Teacher',
+        designation: (teacherData as any).designation || 'Teacher',
         employment_status: teacherData.is_active === false ? 'inactive' : 'active',
         is_active: teacherData.is_active ?? true,
         metadata: {
+          ...incomingMetadata,
           subject: teacherData.subject || null,
+          joining_date: (teacherData as any).joining_date || incomingMetadata.joining_date || null,
+          shift_timing: (teacherData as any).shift_timing || incomingMetadata.shift_timing || null,
+          photo_url: persistedPhoto.photoUrl || undefined,
+          photo_path: persistedPhoto.photoPath || undefined,
+          photo_data_url: persistedPhoto.photoDataUrl || undefined,
         },
       })
       .select('*')
@@ -1496,21 +2159,52 @@ class ApiService {
 
   async updateTeacher(teacherId: number, data: Partial<Teacher>) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { data: existing, error: existingError } = await supabase
+      .from('staff_members')
+      .select('employee_code, metadata, full_name, email, phone, department, designation, is_active')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+    if (existingError) throw existingError;
+    const persistedPhoto = await this.persistStaffPhoto(
+      scopedSchoolId,
+      data.name || existing.employee_code || String(teacherId),
+      Object.prototype.hasOwnProperty.call(data, 'photoDataUrl')
+        ? (data as any).photoDataUrl
+        : existing?.metadata?.photo_url || existing?.metadata?.photo_data_url || null,
+      existing?.metadata?.photo_path || null,
+    );
+    const incomingMetadata =
+      typeof (data as any).metadata === 'object' && (data as any).metadata
+        ? { ...((data as any).metadata as Record<string, unknown>) }
+        : {};
+    const payload = this.compactObject({
+      full_name: data.name ?? existing.full_name,
+      email: data.email ?? existing.email ?? null,
+      phone: data.phone ?? existing.phone ?? null,
+      department: data.subject ?? existing.department ?? null,
+      designation: (data as any).designation ?? existing.designation ?? 'Teacher',
+      employment_status: data.is_active === false ? 'inactive' : 'active',
+      is_active: data.is_active ?? existing.is_active,
+      metadata: {
+        ...existing?.metadata,
+        ...incomingMetadata,
+        subject: data.subject ?? existing?.metadata?.subject ?? existing.department ?? null,
+        joining_date: (data as any).joining_date ?? incomingMetadata.joining_date ?? existing?.metadata?.joining_date,
+        shift_timing: (data as any).shift_timing ?? incomingMetadata.shift_timing ?? existing?.metadata?.shift_timing,
+        photo_url: persistedPhoto.photoUrl || undefined,
+        photo_path: persistedPhoto.photoPath || undefined,
+        photo_data_url: persistedPhoto.photoDataUrl || undefined,
+      },
+    });
     const { data: updated, error } = await supabase
       .from('staff_members')
-      .update({
-        full_name: data.name,
-        email: data.email ?? null,
-        phone: data.phone ?? null,
-        department: data.subject ?? null,
-        designation: 'Teacher',
-        employment_status: data.is_active === false ? 'inactive' : 'active',
-        is_active: data.is_active,
-        metadata: {
-          subject: data.subject ?? null,
-        },
-      })
+      .update(payload)
       .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
       .select('*')
       .single();
 
@@ -1520,8 +2214,15 @@ class ApiService {
 
   async deleteTeacher(teacherId: number) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
+    const { data: existing, error: existingError } = await supabase
+      .from('staff_members')
+      .select('metadata')
+      .eq('id', resolvedId)
+      .maybeSingle();
+    if (existingError) throw existingError;
     const { error } = await supabase.from('staff_members').delete().eq('id', resolvedId);
     if (error) throw error;
+    await this.removeStaffPhotoAsset(existing?.metadata?.photo_path || null);
     return { data: { message: 'Teacher deleted successfully' } } as { data: { message: string } };
   }
 
@@ -1722,11 +2423,22 @@ class ApiService {
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     if (!scopedSchoolId) throw new Error('No active school membership found.');
 
+    const employeeCode = invigilatorData.staff_id || `STF-${Date.now().toString().slice(-8)}`;
+    const persistedPhoto = await this.persistStaffPhoto(
+      scopedSchoolId,
+      invigilatorData.name || employeeCode,
+      invigilatorData.photoDataUrl,
+      null,
+    );
+    const incomingMetadata =
+      typeof invigilatorData?.metadata === 'object' && invigilatorData?.metadata
+        ? { ...(invigilatorData.metadata as Record<string, unknown>) }
+        : {};
     const { data, error } = await supabase
       .from('staff_members')
       .insert({
         school_id: scopedSchoolId,
-        employee_code: invigilatorData.staff_id || `STF-${Date.now().toString().slice(-8)}`,
+        employee_code: employeeCode,
         full_name: invigilatorData.name,
         email: invigilatorData.email || null,
         phone: invigilatorData.phone || null,
@@ -1736,7 +2448,13 @@ class ApiService {
         employment_status: invigilatorData.is_active === false ? 'inactive' : 'active',
         is_active: invigilatorData.is_active ?? true,
         metadata: {
+          ...incomingMetadata,
           source: 'invigilator',
+          joining_date: invigilatorData.joining_date || incomingMetadata.joining_date || null,
+          shift_timing: invigilatorData.shift_timing || incomingMetadata.shift_timing || null,
+          photo_url: persistedPhoto.photoUrl || undefined,
+          photo_path: persistedPhoto.photoPath || undefined,
+          photo_data_url: persistedPhoto.photoDataUrl || undefined,
         },
       })
       .select('*')
@@ -1783,19 +2501,52 @@ class ApiService {
 
   async updateInvigilator(invigilatorId: number, data: Partial<Invigilator>) {
     const resolvedId = this.resolveMappedId('invigilator', invigilatorId);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { data: existing, error: existingError } = await supabase
+      .from('staff_members')
+      .select('employee_code, metadata, full_name, email, phone, department, designation, is_active')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+    if (existingError) throw existingError;
+    const persistedPhoto = await this.persistStaffPhoto(
+      scopedSchoolId,
+      data.name || existing.employee_code || String(invigilatorId),
+      Object.prototype.hasOwnProperty.call(data, 'photoDataUrl')
+        ? (data as any).photoDataUrl
+        : existing?.metadata?.photo_url || existing?.metadata?.photo_data_url || null,
+      existing?.metadata?.photo_path || null,
+    );
+    const incomingMetadata =
+      typeof (data as any).metadata === 'object' && (data as any).metadata
+        ? { ...((data as any).metadata as Record<string, unknown>) }
+        : {};
+    const payload = this.compactObject({
+      employee_code: data.staff_id ?? existing.employee_code,
+      full_name: data.name ?? existing.full_name,
+      email: data.email ?? existing.email ?? null,
+      phone: data.phone ?? existing.phone ?? null,
+      department: data.department ?? existing.department ?? null,
+      designation: data.designation ?? existing.designation ?? null,
+      employment_status: data.is_active === false ? 'inactive' : 'active',
+      is_active: data.is_active ?? existing.is_active,
+      metadata: {
+        ...existing?.metadata,
+        ...incomingMetadata,
+        joining_date: (data as any).joining_date ?? incomingMetadata.joining_date ?? existing?.metadata?.joining_date,
+        shift_timing: (data as any).shift_timing ?? incomingMetadata.shift_timing ?? existing?.metadata?.shift_timing,
+        photo_url: persistedPhoto.photoUrl || undefined,
+        photo_path: persistedPhoto.photoPath || undefined,
+        photo_data_url: persistedPhoto.photoDataUrl || undefined,
+      },
+    });
     const { data: updated, error } = await supabase
       .from('staff_members')
-      .update({
-        employee_code: data.staff_id,
-        full_name: data.name,
-        email: data.email ?? null,
-        phone: data.phone ?? null,
-        department: data.department ?? null,
-        designation: data.designation ?? null,
-        employment_status: data.is_active === false ? 'inactive' : 'active',
-        is_active: data.is_active,
-      })
+      .update(payload)
       .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
       .select('*')
       .single();
 
@@ -1805,8 +2556,15 @@ class ApiService {
 
   async deleteInvigilator(invigilatorId: number) {
     const resolvedId = this.resolveMappedId('invigilator', invigilatorId);
+    const { data: existing, error: existingError } = await supabase
+      .from('staff_members')
+      .select('metadata')
+      .eq('id', resolvedId)
+      .maybeSingle();
+    if (existingError) throw existingError;
     const { error } = await supabase.from('staff_members').delete().eq('id', resolvedId);
     if (error) throw error;
+    await this.removeStaffPhotoAsset(existing?.metadata?.photo_path || null);
     return { data: { message: 'Staff member deleted successfully' } } as { data: { message: string } };
   }
 
@@ -1843,87 +2601,603 @@ class ApiService {
   // ==================== Inventory ====================
 
   async listSuppliers(params?: { school_id?: number; search?: string; is_active?: boolean }) {
-    return this.api.get<Supplier[]>('/inventory/suppliers', { params });
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as Supplier[] };
+
+    let query = supabase
+      .schema('inventory')
+      .from('suppliers')
+      .select('id, name, contact_person, phone, email, address, is_active, created_at, updated_at')
+      .eq('school_id', schoolId)
+      .order('name', { ascending: true });
+
+    if (params?.is_active !== undefined) {
+      query = query.eq('is_active', params.is_active);
+    }
+    if (params?.search) {
+      query = query.ilike('name', `%${params.search.trim()}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      this.logSupabaseQueryError('listSuppliers', error, { schoolId, params });
+      throw error;
+    }
+
+    return { data: (data || []).map((item: any) => this.mapInventorySupplierToLegacy(item)) } as { data: Supplier[] };
   }
 
-  async createSupplier(data: Partial<Supplier>, schoolId: number = 1) {
-    return this.api.post<Supplier>('/inventory/suppliers', data, { params: { school_id: schoolId } });
+  async createSupplier(data: Partial<Supplier>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+
+    const payload = {
+      school_id: scopedSchoolId,
+      supplier_code: this.createInventoryCode('SUP', data.name),
+      name: String(data.name || '').trim(),
+      contact_person: data.contact_person || null,
+      phone: data.phone || null,
+      email: data.email || null,
+      address: data.address || null,
+      is_active: data.is_active ?? true,
+      metadata: { source: 'frontend_inventory_module' },
+    };
+
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('suppliers')
+      .insert(payload)
+      .select('id, name, contact_person, phone, email, address, is_active, created_at, updated_at')
+      .single();
+
+    if (error) {
+      this.logSupabaseQueryError('createSupplier', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+
+    return { data: this.mapInventorySupplierToLegacy(created) } as { data: Supplier };
   }
 
-  async updateSupplier(supplierId: number, data: Partial<Supplier>, schoolId: number = 1) {
-    return this.api.put<Supplier>(`/inventory/suppliers/${supplierId}`, data, { params: { school_id: schoolId } });
+  async updateSupplier(supplierId: string | number, data: Partial<Supplier>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.supplierIdMap, supplierId);
+
+    const payload = this.compactObject({
+      name: data.name ? String(data.name).trim() : undefined,
+      contact_person: data.contact_person ?? undefined,
+      phone: data.phone ?? undefined,
+      email: data.email ?? undefined,
+      address: data.address ?? undefined,
+      is_active: data.is_active,
+    });
+
+    const { data: updated, error } = await supabase
+      .schema('inventory')
+      .from('suppliers')
+      .update(payload)
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .select('id, name, contact_person, phone, email, address, is_active, created_at, updated_at')
+      .single();
+
+    if (error) {
+      this.logSupabaseQueryError('updateSupplier', error, { schoolId: scopedSchoolId, supplierId: resolvedId, payload });
+      throw error;
+    }
+
+    return { data: this.mapInventorySupplierToLegacy(updated) } as { data: Supplier };
   }
 
-  async deleteSupplier(supplierId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/suppliers/${supplierId}`, { params: { school_id: schoolId } });
+  async deleteSupplier(supplierId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.supplierIdMap, supplierId);
+    const { error } = await supabase
+      .schema('inventory')
+      .from('suppliers')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteSupplier', error, { schoolId: scopedSchoolId, supplierId: resolvedId });
+      throw error;
+    }
+    return { data: { message: 'Supplier deleted successfully' } } as { data: { message: string } };
   }
 
   async listInventorySubjects(params?: { school_id?: number; is_active?: boolean }) {
-    return this.api.get<InventorySubject[]>('/inventory/subjects', { params });
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as InventorySubject[] };
+    let categories = await this.fetchInventoryCategories(schoolId, params?.is_active !== false);
+    categories = categories.filter((item: any) => !item.parent_category_id);
+    if (params?.is_active !== undefined) {
+      categories = categories.filter((item: any) => Boolean(item.is_active) === params.is_active);
+    }
+    return { data: categories.map((item: any) => this.mapInventorySubjectToLegacy(item)) } as { data: InventorySubject[] };
   }
 
-  async createInventorySubject(data: Partial<InventorySubject>, schoolId: number = 1) {
-    return this.api.post<InventorySubject>('/inventory/subjects', data, { params: { school_id: schoolId } });
+  async createInventorySubject(data: Partial<InventorySubject>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const payload = {
+      school_id: scopedSchoolId,
+      category_code: this.createInventoryCode('SUB', data.name),
+      name: String(data.name || '').trim(),
+      parent_category_id: null,
+      is_active: data.is_active ?? true,
+    };
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .insert(payload)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('createInventorySubject', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+    return { data: this.mapInventorySubjectToLegacy(created) } as { data: InventorySubject };
   }
 
-  async updateInventorySubject(subjectId: number, data: Partial<InventorySubject>, schoolId: number = 1) {
-    return this.api.put<InventorySubject>(`/inventory/subjects/${subjectId}`, data, { params: { school_id: schoolId } });
+  async updateInventorySubject(subjectId: string | number, data: Partial<InventorySubject>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventorySubjectIdMap, subjectId);
+    const { data: updated, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .update(this.compactObject({ name: data.name ? String(data.name).trim() : undefined, is_active: data.is_active }))
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('updateInventorySubject', error, { schoolId: scopedSchoolId, subjectId: resolvedId });
+      throw error;
+    }
+    return { data: this.mapInventorySubjectToLegacy(updated) } as { data: InventorySubject };
   }
 
-  async deleteInventorySubject(subjectId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/subjects/${subjectId}`, { params: { school_id: schoolId } });
+  async deleteInventorySubject(subjectId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventorySubjectIdMap, subjectId);
+    const { data: childCategories, error: childError } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .select('id')
+      .eq('school_id', scopedSchoolId)
+      .eq('parent_category_id', resolvedId)
+      .limit(1);
+    if (childError) throw childError;
+    if ((childCategories || []).length > 0) {
+      throw new Error('Delete linked sets first');
+    }
+    const { error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteInventorySubject', error, { schoolId: scopedSchoolId, subjectId: resolvedId });
+      throw error;
+    }
+    return { data: { message: 'Subject deleted successfully' } } as { data: { message: string } };
   }
 
-  async listInventorySets(params?: { school_id?: number; subject_id?: number; is_active?: boolean }) {
-    return this.api.get<InventorySet[]>('/inventory/sets', { params });
+  async listInventorySets(params?: { school_id?: number; subject_id?: string | number; is_active?: boolean }) {
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as InventorySet[] };
+    const categories = await this.fetchInventoryCategories(schoolId, params?.is_active !== false);
+    const requestedSubjectId = params?.subject_id
+      ? this.resolveLegacyInventoryId(this.inventorySubjectIdMap, params.subject_id)
+      : null;
+    const rootIds = new Set(
+      categories.filter((item: any) => !item.parent_category_id).map((item: any) => String(item.id))
+    );
+    let sets = categories.filter((item: any) => item.parent_category_id && rootIds.has(String(item.parent_category_id)));
+    if (requestedSubjectId) {
+      sets = sets.filter((item: any) => String(item.parent_category_id) === requestedSubjectId);
+    }
+    if (params?.is_active !== undefined) {
+      sets = sets.filter((item: any) => Boolean(item.is_active) === params.is_active);
+    }
+    return { data: sets.map((item: any) => this.mapInventorySetToLegacy(item)) } as { data: InventorySet[] };
   }
 
-  async createInventorySet(data: Partial<InventorySet>, schoolId: number = 1) {
-    return this.api.post<InventorySet>('/inventory/sets', data, { params: { school_id: schoolId } });
+  async createInventorySet(data: Partial<InventorySet>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const subjectId = data.subject_id
+      ? this.resolveLegacyInventoryId(this.inventorySubjectIdMap, data.subject_id)
+      : null;
+    if (!subjectId) throw new Error('Subject is required');
+    const payload = {
+      school_id: scopedSchoolId,
+      category_code: this.createInventoryCode('SET', data.name),
+      name: String(data.name || '').trim(),
+      parent_category_id: subjectId,
+      is_active: data.is_active ?? true,
+    };
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .insert(payload)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('createInventorySet', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+    return { data: this.mapInventorySetToLegacy(created) } as { data: InventorySet };
   }
 
-  async updateInventorySet(setId: number, data: Partial<InventorySet>, schoolId: number = 1) {
-    return this.api.put<InventorySet>(`/inventory/sets/${setId}`, data, { params: { school_id: schoolId } });
+  async updateInventorySet(setId: string | number, data: Partial<InventorySet>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventorySetIdMap, setId);
+    const payload = this.compactObject({
+      name: data.name ? String(data.name).trim() : undefined,
+      parent_category_id: data.subject_id ? this.resolveLegacyInventoryId(this.inventorySubjectIdMap, data.subject_id) : undefined,
+      is_active: data.is_active,
+    });
+    const { data: updated, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .update(payload)
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('updateInventorySet', error, { schoolId: scopedSchoolId, setId: resolvedId, payload });
+      throw error;
+    }
+    return { data: this.mapInventorySetToLegacy(updated) } as { data: InventorySet };
   }
 
-  async deleteInventorySet(setId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/sets/${setId}`, { params: { school_id: schoolId } });
+  async deleteInventorySet(setId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventorySetIdMap, setId);
+    const { data: childCategories, error: childError } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .select('id')
+      .eq('school_id', scopedSchoolId)
+      .eq('parent_category_id', resolvedId)
+      .limit(1);
+    if (childError) throw childError;
+    if ((childCategories || []).length > 0) {
+      throw new Error('Delete linked volumes first');
+    }
+    const { error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteInventorySet', error, { schoolId: scopedSchoolId, setId: resolvedId });
+      throw error;
+    }
+    return { data: { message: 'Set deleted successfully' } } as { data: { message: string } };
   }
 
-  async listInventoryVolumes(params?: { school_id?: number; subject_id?: number; set_id?: number; is_active?: boolean }) {
-    return this.api.get<InventoryVolume[]>('/inventory/volumes', { params });
+  async listInventoryVolumes(params?: { school_id?: number; subject_id?: string | number; set_id?: string | number; is_active?: boolean }) {
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as InventoryVolume[] };
+    const categories = await this.fetchInventoryCategories(schoolId, params?.is_active !== false);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    const setIds = new Set(
+      categories
+        .filter((item: any) => item.parent_category_id && categoriesById.get(String(item.parent_category_id))?.parent_category_id == null)
+        .map((item: any) => String(item.id))
+    );
+    let volumes = categories.filter((item: any) => item.parent_category_id && setIds.has(String(item.parent_category_id)));
+    if (params?.set_id) {
+      const resolvedSetId = this.resolveLegacyInventoryId(this.inventorySetIdMap, params.set_id);
+      volumes = volumes.filter((item: any) => String(item.parent_category_id) === resolvedSetId);
+    }
+    if (params?.subject_id) {
+      const resolvedSubjectId = this.resolveLegacyInventoryId(this.inventorySubjectIdMap, params.subject_id);
+      volumes = volumes.filter((item: any) => {
+        const inventorySet = categoriesById.get(String(item.parent_category_id));
+        return inventorySet && String(inventorySet.parent_category_id) === resolvedSubjectId;
+      });
+    }
+    if (params?.is_active !== undefined) {
+      volumes = volumes.filter((item: any) => Boolean(item.is_active) === params.is_active);
+    }
+    return {
+      data: volumes.map((item: any) => this.mapInventoryVolumeToLegacy(item, categoriesById)),
+    } as { data: InventoryVolume[] };
   }
 
-  async createInventoryVolume(data: Partial<InventoryVolume>, schoolId: number = 1) {
-    return this.api.post<InventoryVolume>('/inventory/volumes', data, { params: { school_id: schoolId } });
+  async createInventoryVolume(data: Partial<InventoryVolume>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const setId = data.set_id ? this.resolveLegacyInventoryId(this.inventorySetIdMap, data.set_id) : null;
+    if (!setId) throw new Error('Set is required');
+    const volumeNumber = String((data as any).volume_number || '').trim();
+    const name = String(data.name || `Volume ${volumeNumber}`).trim();
+    const payload = {
+      school_id: scopedSchoolId,
+      category_code: this.createInventoryCode(`VOL${volumeNumber || '1'}`, name),
+      name,
+      parent_category_id: setId,
+      is_active: data.is_active ?? true,
+    };
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .insert(payload)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('createInventoryVolume', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+    const categories = await this.fetchInventoryCategories(scopedSchoolId, true);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    return { data: this.mapInventoryVolumeToLegacy(created, categoriesById) } as { data: InventoryVolume };
   }
 
-  async updateInventoryVolume(volumeId: number, data: Partial<InventoryVolume>, schoolId: number = 1) {
-    return this.api.put<InventoryVolume>(`/inventory/volumes/${volumeId}`, data, { params: { school_id: schoolId } });
+  async updateInventoryVolume(volumeId: string | number, data: Partial<InventoryVolume>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventoryVolumeIdMap, volumeId);
+    const payload = this.compactObject({
+      name: data.name ? String(data.name).trim() : undefined,
+      parent_category_id: data.set_id ? this.resolveLegacyInventoryId(this.inventorySetIdMap, data.set_id) : undefined,
+      is_active: data.is_active,
+    });
+    const { data: updated, error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .update(payload)
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .select('id, category_code, name, parent_category_id, is_active')
+      .single();
+    if (error) {
+      this.logSupabaseQueryError('updateInventoryVolume', error, { schoolId: scopedSchoolId, volumeId: resolvedId, payload });
+      throw error;
+    }
+    const categories = await this.fetchInventoryCategories(scopedSchoolId, true);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    categoriesById.set(String(updated.id), updated);
+    return { data: this.mapInventoryVolumeToLegacy(updated, categoriesById) } as { data: InventoryVolume };
   }
 
-  async deleteInventoryVolume(volumeId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/volumes/${volumeId}`, { params: { school_id: schoolId } });
+  async deleteInventoryVolume(volumeId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.inventoryVolumeIdMap, volumeId);
+    const { error } = await supabase
+      .schema('inventory')
+      .from('material_categories')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteInventoryVolume', error, { schoolId: scopedSchoolId, volumeId: resolvedId });
+      throw error;
+    }
+    return { data: { message: 'Volume deleted successfully' } } as { data: { message: string } };
   }
 
   async getInventoryCatalog(params?: { school_id?: number; include_inactive?: boolean }) {
-    return this.api.get<InventoryCatalogSubject[]>('/inventory/catalog', { params });
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as InventoryCatalogSubject[] };
+    const includeInactive = params?.include_inactive ?? false;
+    const categories = await this.fetchInventoryCategories(schoolId, includeInactive);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    const subjects = categories.filter((item: any) => !item.parent_category_id);
+    const sets = categories.filter((item: any) => item.parent_category_id && categoriesById.get(String(item.parent_category_id))?.parent_category_id == null);
+    const volumes = categories.filter((item: any) => item.parent_category_id && categoriesById.get(String(item.parent_category_id))?.parent_category_id);
+
+    const data = subjects.map((subject: any) => {
+      const subjectSets = sets.filter((item: any) => String(item.parent_category_id) === String(subject.id));
+      const legacySets = subjectSets.map((item: any) => this.mapInventorySetToLegacy(item));
+      const legacyVolumes = volumes
+        .filter((volume: any) => {
+          const inventorySet = categoriesById.get(String(volume.parent_category_id));
+          return inventorySet && String(inventorySet.parent_category_id) === String(subject.id);
+        })
+        .map((item: any) => this.mapInventoryVolumeToLegacy(item, categoriesById));
+
+      return {
+        subject: this.mapInventorySubjectToLegacy(subject),
+        sets: legacySets,
+        volumes: legacyVolumes,
+      };
+    });
+
+    return { data } as { data: InventoryCatalogSubject[] };
   }
 
   async listMaterials(params?: { school_id?: number; search?: string; subject?: string; batch_name?: string; is_active?: boolean }) {
-    return this.api.get<MaterialItem[]>('/inventory/materials', { params });
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as MaterialItem[] };
+
+    let query = supabase
+      .schema('inventory')
+      .from('material_items')
+      .select('id, category_id, name, unit_type, class_name, description, low_stock_threshold, current_stock, metadata, is_active, created_at, updated_at')
+      .eq('school_id', schoolId)
+      .order('name', { ascending: true });
+
+    if (params?.is_active !== undefined) {
+      query = query.eq('is_active', params.is_active);
+    }
+
+    const [{ data: materials, error: materialsError }, categories] = await Promise.all([
+      query,
+      this.fetchInventoryCategories(schoolId, true),
+    ]);
+
+    if (materialsError) {
+      this.logSupabaseQueryError('listMaterials', materialsError, { schoolId, params });
+      throw materialsError;
+    }
+
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    let normalized = (materials || []).map((item: any) => this.mapInventoryMaterialToLegacy(item, categoriesById));
+
+    if (params?.search) {
+      const search = params.search.trim().toLowerCase();
+      normalized = normalized.filter((item) =>
+        [item.name, item.subject, item.set_name, item.volume_name, item.description]
+          .some((value) => String(value || '').toLowerCase().includes(search))
+      );
+    }
+    if (params?.subject) {
+      const subject = params.subject.trim().toLowerCase();
+      normalized = normalized.filter((item) => String(item.subject || '').toLowerCase() === subject);
+    }
+    if (params?.batch_name) {
+      const batchName = params.batch_name.trim().toLowerCase();
+      normalized = normalized.filter((item) =>
+        (item.batch_names || []).some((name) => String(name).toLowerCase() === batchName)
+      );
+    }
+
+    return { data: normalized } as { data: MaterialItem[] };
   }
 
-  async createMaterial(data: Partial<MaterialItem>, schoolId: number = 1) {
-    return this.api.post<MaterialItem>('/inventory/materials', data, { params: { school_id: schoolId } });
+  async createMaterial(data: Partial<MaterialItem>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+
+    const subjectCategoryId = data.subject_id
+      ? this.resolveLegacyInventoryId(this.inventorySubjectIdMap, data.subject_id)
+      : null;
+    const setCategoryId = data.set_id
+      ? this.resolveLegacyInventoryId(this.inventorySetIdMap, data.set_id)
+      : null;
+    const volumeCategoryId = data.volume_id
+      ? this.resolveLegacyInventoryId(this.inventoryVolumeIdMap, data.volume_id)
+      : null;
+    const normalizedUnitType = this.normalizeInventoryUnitType(data.unit_type);
+
+    const payload = {
+      school_id: scopedSchoolId,
+      category_id: volumeCategoryId || setCategoryId || subjectCategoryId,
+      item_code: this.createInventoryCode('MAT', data.name),
+      name: String(data.name || '').trim(),
+      unit_type: normalizedUnitType.dbValue,
+      class_name: (data.batch_names || []).join(', ') || null,
+      description: data.description || null,
+      low_stock_threshold: Number(data.low_stock_threshold ?? 10),
+      current_stock: 0,
+      unit_price: 0,
+      metadata: {
+        subject_category_id: subjectCategoryId,
+        set_category_id: setCategoryId,
+        volume_category_id: volumeCategoryId,
+        batch_names: data.batch_names || [],
+        original_unit_type: data.unit_type,
+        source: 'frontend_inventory_module',
+      },
+      is_active: data.is_active ?? true,
+    };
+
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('material_items')
+      .insert(payload)
+      .select('id, category_id, name, unit_type, class_name, description, low_stock_threshold, current_stock, metadata, is_active, created_at, updated_at')
+      .single();
+
+    if (error) {
+      this.logSupabaseQueryError('createMaterial', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+
+    const categories = await this.fetchInventoryCategories(scopedSchoolId, true);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    return { data: this.mapInventoryMaterialToLegacy(created, categoriesById) } as { data: MaterialItem };
   }
 
-  async updateMaterial(materialId: number, data: Partial<MaterialItem>, schoolId: number = 1) {
-    return this.api.put<MaterialItem>(`/inventory/materials/${materialId}`, data, { params: { school_id: schoolId } });
+  async updateMaterial(materialId: string | number, data: Partial<MaterialItem>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.materialIdMap, materialId);
+    const existing = await supabase
+      .schema('inventory')
+      .from('material_items')
+      .select('metadata')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    const existingMetadata = existing.data?.metadata || {};
+    const subjectCategoryId = data.subject_id
+      ? this.resolveLegacyInventoryId(this.inventorySubjectIdMap, data.subject_id)
+      : existingMetadata.subject_category_id || null;
+    const setCategoryId = data.set_id
+      ? this.resolveLegacyInventoryId(this.inventorySetIdMap, data.set_id)
+      : existingMetadata.set_category_id || null;
+    const volumeCategoryId = data.volume_id
+      ? this.resolveLegacyInventoryId(this.inventoryVolumeIdMap, data.volume_id)
+      : existingMetadata.volume_category_id || null;
+    const normalizedUnitType = this.normalizeInventoryUnitType(data.unit_type || existingMetadata.original_unit_type);
+
+    const payload = this.compactObject({
+      category_id: volumeCategoryId || setCategoryId || subjectCategoryId || undefined,
+      name: data.name ? String(data.name).trim() : undefined,
+      unit_type: normalizedUnitType.dbValue,
+      class_name: data.batch_names ? data.batch_names.join(', ') : undefined,
+      description: data.description ?? undefined,
+      low_stock_threshold: data.low_stock_threshold !== undefined ? Number(data.low_stock_threshold) : undefined,
+      metadata: {
+        ...existingMetadata,
+        subject_category_id: subjectCategoryId,
+        set_category_id: setCategoryId,
+        volume_category_id: volumeCategoryId,
+        batch_names: data.batch_names ?? existingMetadata.batch_names ?? [],
+        original_unit_type: data.unit_type || existingMetadata.original_unit_type || normalizedUnitType.uiValue,
+      },
+      is_active: data.is_active,
+    });
+
+    const { data: updated, error } = await supabase
+      .schema('inventory')
+      .from('material_items')
+      .update(payload)
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .select('id, category_id, name, unit_type, class_name, description, low_stock_threshold, current_stock, metadata, is_active, created_at, updated_at')
+      .single();
+
+    if (error) {
+      this.logSupabaseQueryError('updateMaterial', error, { schoolId: scopedSchoolId, materialId: resolvedId, payload });
+      throw error;
+    }
+
+    const categories = await this.fetchInventoryCategories(scopedSchoolId, true);
+    const categoriesById = new Map((categories || []).map((item: any) => [String(item.id), item]));
+    return { data: this.mapInventoryMaterialToLegacy(updated, categoriesById) } as { data: MaterialItem };
   }
 
-  async deleteMaterial(materialId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/materials/${materialId}`, { params: { school_id: schoolId } });
+  async deleteMaterial(materialId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.materialIdMap, materialId);
+    const { error } = await supabase
+      .schema('inventory')
+      .from('material_items')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteMaterial', error, { schoolId: scopedSchoolId, materialId: resolvedId });
+      throw error;
+    }
+    return { data: { message: 'Material deleted successfully' } } as { data: { message: string } };
   }
 
   async downloadInventoryMaterialTemplate() {
@@ -1933,61 +3207,462 @@ class ApiService {
   }
 
   async importInventoryMaterials(formData: FormData, schoolId: number = 1) {
+    const resolvedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     return this.api.post<InventoryMaterialImportResponse>('/inventory/materials/import', formData, {
-      params: { school_id: schoolId },
+      params: { school_id: resolvedSchoolId || schoolId },
     });
   }
 
-  async listStockIn(params?: { school_id?: number; supplier_id?: number; material_id?: number }) {
-    return this.api.get<StockInEntry[]>('/inventory/stock-in', { params });
+  async listStockIn(params?: { school_id?: number; supplier_id?: string | number; material_id?: string | number }) {
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as StockInEntry[] };
+
+    let query = supabase
+      .schema('inventory')
+      .from('stock_in_entries')
+      .select('id, material_item_id, supplier_id, entry_date, quantity_received, entry_type, notes, created_at')
+      .eq('school_id', schoolId)
+      .order('entry_date', { ascending: false });
+
+    if (params?.supplier_id) {
+      query = query.eq('supplier_id', this.resolveLegacyInventoryId(this.supplierIdMap, params.supplier_id));
+    }
+    if (params?.material_id) {
+      query = query.eq('material_item_id', this.resolveLegacyInventoryId(this.materialIdMap, params.material_id));
+    }
+
+    const [{ data: rows, error }, materialsResponse, suppliersResponse] = await Promise.all([
+      query,
+      this.listMaterials({ is_active: undefined }),
+      this.listSuppliers({ is_active: undefined }),
+    ]);
+
+    if (error) {
+      this.logSupabaseQueryError('listStockIn', error, { schoolId, params });
+      throw error;
+    }
+
+    const normalizedMaterialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      normalizedMaterialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const normalizedSuppliersByUuid = new Map<string, any>();
+    for (const item of suppliersResponse.data || []) {
+      normalizedSuppliersByUuid.set(String(this.resolveLegacyInventoryId(this.supplierIdMap, item.id)), item);
+    }
+
+    return {
+      data: (rows || []).map((item: any) => this.mapStockInEntryToLegacy(item, normalizedMaterialsByUuid, normalizedSuppliersByUuid)),
+    } as { data: StockInEntry[] };
   }
 
-  async createStockIn(data: Partial<StockInEntry>, schoolId: number = 1) {
-    return this.api.post<StockInEntry>('/inventory/stock-in', data, { params: { school_id: schoolId } });
+  async createStockIn(data: Partial<StockInEntry>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const materialId = data.material_id
+      ? this.resolveLegacyInventoryId(this.materialIdMap, data.material_id)
+      : null;
+    if (!materialId) throw new Error('Material is required');
+
+    const payload = {
+      school_id: scopedSchoolId,
+      material_item_id: materialId,
+      supplier_id: data.supplier_id ? this.resolveLegacyInventoryId(this.supplierIdMap, data.supplier_id) : null,
+      entry_date: String(data.date || '').slice(0, 10),
+      quantity_received: Number(data.quantity_received ?? 0),
+      unit_price: 0,
+      entry_type: data.entry_type || 'purchase',
+      notes: data.notes || null,
+    };
+
+    const { data: created, error } = await supabase
+      .schema('inventory')
+      .from('stock_in_entries')
+      .insert(payload)
+      .select('id, material_item_id, supplier_id, entry_date, quantity_received, entry_type, notes, created_at')
+      .single();
+
+    if (error) {
+      this.logSupabaseQueryError('createStockIn', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+
+    await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    const [materialsResponse, suppliersResponse] = await Promise.all([
+      this.listMaterials({ is_active: undefined }),
+      this.listSuppliers({ is_active: undefined }),
+    ]);
+    const materialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      materialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const suppliersByUuid = new Map<string, any>();
+    for (const item of suppliersResponse.data || []) {
+      suppliersByUuid.set(String(this.resolveLegacyInventoryId(this.supplierIdMap, item.id)), item);
+    }
+    return { data: this.mapStockInEntryToLegacy(created, materialsByUuid, suppliersByUuid) } as { data: StockInEntry };
   }
 
-  async deleteStockIn(entryId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/stock-in/${entryId}`, { params: { school_id: schoolId } });
+  async deleteStockIn(entryId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.stockInIdMap, entryId);
+    const existing = await supabase
+      .schema('inventory')
+      .from('stock_in_entries')
+      .select('material_item_id')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    const materialId = existing.data?.material_item_id ? String(existing.data.material_item_id) : null;
+    const { error } = await supabase
+      .schema('inventory')
+      .from('stock_in_entries')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteStockIn', error, { schoolId: scopedSchoolId, entryId: resolvedId });
+      throw error;
+    }
+    if (materialId) {
+      await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    }
+    return { data: { message: 'Stock-in entry deleted successfully' } } as { data: { message: string } };
   }
 
-  async listStockOut(params?: { school_id?: number; batch_id?: number; material_id?: number }) {
-    return this.api.get<StockOutEntry[]>('/inventory/stock-out', { params });
+  async listStockOut(params?: { school_id?: number; batch_id?: string | number; material_id?: string | number }) {
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as StockOutEntry[] };
+
+    let query = supabase
+      .schema('inventory')
+      .from('stock_out_entries')
+      .select('id, material_item_id, batch_id, entry_date, quantity_issued, remarks, created_at')
+      .eq('school_id', schoolId)
+      .order('entry_date', { ascending: false });
+
+    if (params?.batch_id) {
+      query = query.eq('batch_id', params.batch_id);
+    }
+    if (params?.material_id) {
+      query = query.eq('material_item_id', this.resolveLegacyInventoryId(this.materialIdMap, params.material_id));
+    }
+
+    const [{ data: rows, error }, materialsResponse, batchesResponse] = await Promise.all([
+      query,
+      this.listMaterials({ is_active: undefined }),
+      this.listBatches(),
+    ]);
+
+    if (error) {
+      this.logSupabaseQueryError('listStockOut', error, { schoolId, params });
+      throw error;
+    }
+
+    const materialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      materialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const batchesById = new Map((batchesResponse.data || []).map((item: any) => [String(item.id), item]));
+
+    return {
+      data: (rows || []).map((item: any) => this.mapStockOutEntryToLegacy(item, materialsByUuid, batchesById)),
+    } as { data: StockOutEntry[] };
   }
 
-  async createStockOut(data: Partial<StockOutEntry>, schoolId: number = 1) {
-    return this.api.post<StockOutEntry>('/inventory/stock-out', data, { params: { school_id: schoolId } });
+  async createStockOut(data: any, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const materialId = data.material_id ? this.resolveLegacyInventoryId(this.materialIdMap, data.material_id) : null;
+    if (!materialId) throw new Error('Material is required');
+    const batchIds = Array.isArray(data.batch_ids) ? data.batch_ids.filter(Boolean).map(String) : [];
+    if (!batchIds.length) throw new Error('At least one batch is required');
+
+    const payload = batchIds.map((batchId: string) => ({
+      school_id: scopedSchoolId,
+      material_item_id: materialId,
+      batch_id: batchId,
+      entry_date: String(data.date || '').slice(0, 10),
+      quantity_issued: Number(data.quantity_issued ?? 0),
+      remarks: data.remarks || null,
+    }));
+
+    const { data: createdRows, error } = await supabase
+      .schema('inventory')
+      .from('stock_out_entries')
+      .insert(payload)
+      .select('id, material_item_id, batch_id, entry_date, quantity_issued, remarks, created_at');
+
+    if (error) {
+      this.logSupabaseQueryError('createStockOut', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+
+    await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    const [materialsResponse, batchesResponse] = await Promise.all([
+      this.listMaterials({ is_active: undefined }),
+      this.listBatches(),
+    ]);
+    const materialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      materialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const batchesById = new Map((batchesResponse.data || []).map((item: any) => [String(item.id), item]));
+    const firstRow = (createdRows || [])[0];
+    return { data: this.mapStockOutEntryToLegacy(firstRow, materialsByUuid, batchesById) } as { data: StockOutEntry };
   }
 
-  async deleteStockOut(entryId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/stock-out/${entryId}`, { params: { school_id: schoolId } });
+  async deleteStockOut(entryId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.stockOutIdMap, entryId);
+    const existing = await supabase
+      .schema('inventory')
+      .from('stock_out_entries')
+      .select('material_item_id')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    const materialId = existing.data?.material_item_id ? String(existing.data.material_item_id) : null;
+    const { error } = await supabase
+      .schema('inventory')
+      .from('stock_out_entries')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteStockOut', error, { schoolId: scopedSchoolId, entryId: resolvedId });
+      throw error;
+    }
+    if (materialId) {
+      await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    }
+    return { data: { message: 'Distribution entry deleted successfully' } } as { data: { message: string } };
   }
 
-  async listStudentIssues(params?: { school_id?: number; batch_id?: number; student_id?: number; material_id?: number }) {
-    return this.api.get<StudentIssueEntry[]>('/inventory/student-issues', { params });
+  async listStudentIssues(params?: { school_id?: number; batch_id?: string | number; student_id?: string | number; material_id?: string | number }) {
+    const schoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!schoolId) return { data: [] as StudentIssueEntry[] };
+
+    let query = supabase
+      .schema('inventory')
+      .from('student_issue_entries')
+      .select('id, material_item_id, student_id, batch_id, issue_date, quantity_issued, remarks, created_at')
+      .eq('school_id', schoolId)
+      .order('issue_date', { ascending: false });
+
+    if (params?.batch_id) {
+      query = query.eq('batch_id', params.batch_id);
+    }
+    if (params?.student_id) {
+      query = query.eq('student_id', this.resolveMappedId('student', params.student_id));
+    }
+    if (params?.material_id) {
+      query = query.eq('material_item_id', this.resolveLegacyInventoryId(this.materialIdMap, params.material_id));
+    }
+
+    const [{ data: rows, error }, materialsResponse, batchesResponse, studentsResponse] = await Promise.all([
+      query,
+      this.listMaterials({ is_active: undefined }),
+      this.listBatches(),
+      this.listStudents(),
+    ]);
+
+    if (error) {
+      this.logSupabaseQueryError('listStudentIssues', error, { schoolId, params });
+      throw error;
+    }
+
+    const materialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      materialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const batchesById = new Map((batchesResponse.data || []).map((item: any) => [String(item.id), item]));
+    const studentsByUuid = new Map<string, any>();
+    for (const item of studentsResponse.data || []) {
+      studentsByUuid.set(String(this.resolveMappedId('student', item.id)), item);
+    }
+
+    return {
+      data: (rows || []).map((item: any) => this.mapStudentIssueEntryToLegacy(item, materialsByUuid, batchesById, studentsByUuid)),
+    } as { data: StudentIssueEntry[] };
   }
 
   async createStudentIssues(data: {
     date: string;
-    batch_id?: number;
+    batch_id?: string | number;
     student_ids: number[];
-    material_id: number;
+    material_id: string | number;
     quantity_issued: number;
     issued_by?: string;
     remarks?: string;
-  }, schoolId: number = 1) {
-    return this.api.post<StudentIssueEntry>('/inventory/student-issues', data, { params: { school_id: schoolId } });
+  }, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const materialId = this.resolveLegacyInventoryId(this.materialIdMap, data.material_id);
+    const batchId = data.batch_id ? String(data.batch_id) : null;
+    const studentIds = (data.student_ids || []).map((studentId) => this.resolveMappedId('student', studentId));
+    const payload = studentIds.map((studentId) => ({
+      school_id: scopedSchoolId,
+      material_item_id: materialId,
+      student_id: studentId,
+      batch_id: batchId,
+      issue_date: String(data.date || '').slice(0, 10),
+      quantity_issued: Number(data.quantity_issued ?? 0),
+      remarks: data.remarks || null,
+    }));
+
+    const { data: createdRows, error } = await supabase
+      .schema('inventory')
+      .from('student_issue_entries')
+      .insert(payload)
+      .select('id, material_item_id, student_id, batch_id, issue_date, quantity_issued, remarks, created_at');
+
+    if (error) {
+      this.logSupabaseQueryError('createStudentIssues', error, { schoolId: scopedSchoolId, payload });
+      throw error;
+    }
+
+    await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    const [materialsResponse, batchesResponse, studentsResponse] = await Promise.all([
+      this.listMaterials({ is_active: undefined }),
+      this.listBatches(),
+      this.listStudents(),
+    ]);
+    const materialsByUuid = new Map<string, any>();
+    for (const item of materialsResponse.data || []) {
+      materialsByUuid.set(String(this.resolveLegacyInventoryId(this.materialIdMap, item.id)), item);
+    }
+    const batchesById = new Map((batchesResponse.data || []).map((item: any) => [String(item.id), item]));
+    const studentsByUuid = new Map<string, any>();
+    for (const item of studentsResponse.data || []) {
+      studentsByUuid.set(String(this.resolveMappedId('student', item.id)), item);
+    }
+    const firstRow = (createdRows || [])[0];
+    return { data: this.mapStudentIssueEntryToLegacy(firstRow, materialsByUuid, batchesById, studentsByUuid) } as { data: StudentIssueEntry };
   }
 
-  async deleteStudentIssue(entryId: number, schoolId: number = 1) {
-    return this.api.delete(`/inventory/student-issues/${entryId}`, { params: { school_id: schoolId } });
+  async deleteStudentIssue(entryId: string | number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('Active school not found');
+    const resolvedId = this.resolveLegacyInventoryId(this.studentIssueIdMap, entryId);
+    const existing = await supabase
+      .schema('inventory')
+      .from('student_issue_entries')
+      .select('material_item_id')
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    const materialId = existing.data?.material_item_id ? String(existing.data.material_item_id) : null;
+    const { error } = await supabase
+      .schema('inventory')
+      .from('student_issue_entries')
+      .delete()
+      .eq('id', resolvedId)
+      .eq('school_id', scopedSchoolId);
+    if (error) {
+      this.logSupabaseQueryError('deleteStudentIssue', error, { schoolId: scopedSchoolId, entryId: resolvedId });
+      throw error;
+    }
+    if (materialId) {
+      await this.recalculateInventoryStocks(scopedSchoolId, [materialId]);
+    }
+    return { data: { message: 'Student issue entry deleted successfully' } } as { data: { message: string } };
   }
 
-  async getInventoryDashboard(schoolId: number = 1) {
-    return this.api.get<InventoryDashboard>('/inventory/dashboard', { params: { school_id: schoolId } });
+  async getInventoryDashboard(_schoolId: number = 1) {
+    const [materials, suppliers, stockIn, stockOut, studentIssues] = await Promise.all([
+      this.listMaterials({ is_active: undefined }),
+      this.listSuppliers({ is_active: undefined }),
+      this.listStockIn(),
+      this.listStockOut(),
+      this.listStudentIssues(),
+    ]);
+
+    const recentActivity: InventoryHistoryEntry[] = [
+      ...stockIn.data.slice(0, 10).map((item) => ({
+        id: item.id,
+        action: 'stock_in',
+        quantity: item.quantity_received,
+        date: item.date,
+        actor: item.added_by,
+        notes: item.notes || item.material_name,
+      })),
+      ...stockOut.data.slice(0, 10).map((item) => ({
+        id: item.id,
+        action: 'stock_out',
+        quantity: item.quantity_issued,
+        date: item.date,
+        actor: item.issued_by,
+        notes: item.remarks || item.material_name,
+      })),
+      ...studentIssues.data.slice(0, 10).map((item) => ({
+        id: item.id,
+        action: 'student_issue',
+        quantity: item.quantity_issued,
+        date: item.date,
+        actor: item.issued_by,
+        notes: `${item.student_name} - ${item.material_name || ''}`.trim(),
+      })),
+    ]
+      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+      .slice(0, 12);
+
+    return {
+      data: {
+        total_materials: materials.data.length,
+        total_suppliers: suppliers.data.length,
+        total_stock_in: stockIn.data.reduce((sum, item) => sum + Number(item.quantity_received || 0), 0),
+        total_stock_out:
+          stockOut.data.reduce((sum, item) => sum + Number(item.quantity_issued || 0), 0) +
+          studentIssues.data.reduce((sum, item) => sum + Number(item.quantity_issued || 0), 0),
+        low_stock_items: materials.data.filter(
+          (item) => Number(item.current_stock || 0) <= Number(item.low_stock_threshold || 0)
+        ),
+        recent_activity: recentActivity,
+      } as InventoryDashboard,
+    } as { data: InventoryDashboard };
   }
 
-  async getMaterialHistory(materialId: number, schoolId: number = 1) {
-    return this.api.get<InventoryHistoryEntry[]>(`/inventory/history/material/${materialId}`, { params: { school_id: schoolId } });
+  async getMaterialHistory(materialId: string | number, _schoolId: number = 1) {
+    const [stockIn, stockOut, studentIssues] = await Promise.all([
+      this.listStockIn({ material_id: materialId }),
+      this.listStockOut({ material_id: materialId }),
+      this.listStudentIssues({ material_id: materialId }),
+    ]);
+
+    const rows: InventoryHistoryEntry[] = [
+      ...stockIn.data.map((item) => ({
+        id: item.id,
+        action: 'stock_in',
+        quantity: item.quantity_received,
+        date: item.date,
+        actor: item.added_by,
+        notes: item.notes || item.supplier_name,
+      })),
+      ...stockOut.data.map((item) => ({
+        id: item.id,
+        action: 'stock_out',
+        quantity: item.quantity_issued,
+        date: item.date,
+        actor: item.issued_by,
+        notes: item.remarks || item.batch_name,
+      })),
+      ...studentIssues.data.map((item) => ({
+        id: item.id,
+        action: 'student_issue',
+        quantity: item.quantity_issued,
+        date: item.date,
+        actor: item.issued_by,
+        notes: item.student_name,
+      })),
+    ].sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+    return { data: rows } as { data: InventoryHistoryEntry[] };
   }
 
   async getInventoryReport(params: {
@@ -1995,12 +3670,95 @@ class ApiService {
     school_id?: number;
     date_from?: string;
     date_to?: string;
-    supplier_id?: number;
-    batch_id?: number;
-    student_id?: number;
-    material_id?: number;
+    supplier_id?: string | number;
+    batch_id?: string | number;
+    student_id?: string | number;
+    material_id?: string | number;
   }) {
-    return this.api.get<InventoryReportResponse>('/inventory/reports/data', { params });
+    const [materials, stockIn, stockOut, studentIssues] = await Promise.all([
+      this.listMaterials({ is_active: undefined }),
+      this.listStockIn({ supplier_id: params.supplier_id, material_id: params.material_id }),
+      this.listStockOut({ batch_id: params.batch_id, material_id: params.material_id }),
+      this.listStudentIssues({ batch_id: params.batch_id, student_id: params.student_id, material_id: params.material_id }),
+    ]);
+
+    const dateFrom = params.date_from ? new Date(params.date_from).getTime() : null;
+    const dateTo = params.date_to ? new Date(params.date_to).getTime() : null;
+    const inRange = (value?: string) => {
+      if (!value) return true;
+      const time = new Date(value).getTime();
+      if (Number.isNaN(time)) return true;
+      if (dateFrom && time < dateFrom) return false;
+      if (dateTo && time > dateTo) return false;
+      return true;
+    };
+
+    let rows: Array<Record<string, string | number | null>> = [];
+    if (params.report_type === 'stock_in') {
+      rows = stockIn.data
+        .filter((item) => inRange(item.date))
+        .map((item) => ({
+          date: item.date || '',
+          supplier: item.supplier_name || '',
+          material: item.material_name || '',
+          quantity_received: item.quantity_received,
+          entry_type: item.entry_type,
+          notes: item.notes || '',
+        }));
+    } else if (params.report_type === 'batch_distribution') {
+      rows = stockOut.data
+        .filter((item) => inRange(item.date))
+        .map((item) => ({
+          date: item.date || '',
+          batch: item.batch_name || '',
+          material: item.material_name || '',
+          quantity_issued: item.quantity_issued,
+          issued_by: item.issued_by || '',
+          remarks: item.remarks || '',
+        }));
+    } else if (params.report_type === 'low_stock') {
+      rows = materials.data
+        .filter((item) => Number(item.current_stock || 0) <= Number(item.low_stock_threshold || 0))
+        .map((item) => ({
+          material: item.name,
+          subject: item.subject || '',
+          set_name: item.set_name || '',
+          current_stock: Number(item.current_stock || 0),
+          low_stock_threshold: Number(item.low_stock_threshold || 0),
+        }));
+    } else {
+      rows = materials.data.map((item) => ({
+        material: item.name,
+        subject: item.subject || '',
+        set_name: item.set_name || '',
+        volume: item.volume_name || item.volume_number || '',
+        current_stock: Number(item.current_stock || 0),
+        low_stock_threshold: Number(item.low_stock_threshold || 0),
+        unit_type: item.unit_type,
+      }));
+    }
+
+    return {
+      data: {
+        title:
+          params.report_type === 'stock_in'
+            ? 'Stock In Report'
+            : params.report_type === 'batch_distribution'
+              ? 'Batch Distribution Report'
+              : params.report_type === 'low_stock'
+                ? 'Low Stock Report'
+                : 'Current Inventory Report',
+        generated_at: new Date().toISOString(),
+        rows: rows.map((values) => ({ values })),
+        summary: {
+          total_records: rows.length,
+          stock_in_count: stockIn.data.length,
+          stock_out_count: stockOut.data.length,
+          student_issue_count: studentIssues.data.length,
+        },
+        total_records: rows.length,
+      } as InventoryReportResponse & { total_records: number },
+    } as { data: InventoryReportResponse & { total_records: number } };
   }
 
   async exportInventoryReport(params: {

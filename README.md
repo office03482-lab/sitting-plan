@@ -78,8 +78,7 @@ This will automatically:
 
 ### Backend
 - **FastAPI** (Python async framework)
-- **SQLAlchemy** ORM with SQLite database
-- **Pydantic** for data validation
+- **SQLAlchemy** ORM with lidation
 - **JWT** authentication
 - **OpenPyXL** for Excel processing
 - **ReportLab** for PDF generation
@@ -212,8 +211,7 @@ The intelligent seating system uses advanced algorithms:
 - **API Documentation**: http://localhost:8000/docs
 - **Frontend**: http://localhost:5173
 - **Logs**: Check backend terminal for errors
-- **Database**: SQLite file in `backend/` directory
-
+- **Database**: PostgreSQL database (via Doc
 ## 🔄 Development
 
 ### Backend

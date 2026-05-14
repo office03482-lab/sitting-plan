@@ -7,21 +7,8 @@ import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 type StaffType = 'teaching' | 'non_teaching';
 
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
-const STAFF_ADDED_TEACHER_IDS_KEY = 'staff_add_teacher_ids';
-const STAFF_ADDED_INVIGILATOR_IDS_KEY = 'staff_add_invigilator_ids';
 const isTeachingMirrorInvigilator = (staff: Invigilator) =>
   /^TCH-\d+$/i.test((staff.staff_id || '').trim()) || (staff.designation || '').trim().toLowerCase() === 'teacher';
-const readStoredIds = (storageKey: string) => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((item) => Number(item)).filter((item) => Number.isFinite(item)) : [];
-  } catch {
-    return [];
-  }
-};
 const teacherIdFromStaffCode = (staffId?: string) => {
   const match = (staffId || '').trim().match(/^TCH-(\d+)$/i);
   return match ? Number(match[1]) : null;
@@ -39,8 +26,6 @@ export default function InvigilatorManagement() {
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
   const [showAssignmentForm, setShowAssignmentForm] = useState(false);
   const [deletingAllAssignments, setDeletingAllAssignments] = useState(false);
-  const [registeredTeacherIds, setRegisteredTeacherIds] = useState<number[]>([]);
-  const [registeredInvigilatorIds, setRegisteredInvigilatorIds] = useState<number[]>([]);
 
   const [assignmentData, setAssignmentData] = useState({
     room_id: '',
@@ -60,9 +45,7 @@ export default function InvigilatorManagement() {
   };
 
   useEffect(() => {
-    setRegisteredTeacherIds(readStoredIds(STAFF_ADDED_TEACHER_IDS_KEY));
-    setRegisteredInvigilatorIds(readStoredIds(STAFF_ADDED_INVIGILATOR_IDS_KEY));
-    loadData();
+    void loadData();
   }, []);
 
   const teacherStaffCode = (teacher: Teacher) => `TCH-${teacher.id}`;
@@ -131,22 +114,18 @@ export default function InvigilatorManagement() {
     setTimeout(() => setMessage(''), 3000);
   };
 
-  const hasRegisteredTeachers = registeredTeacherIds.length > 0;
-  const hasRegisteredInvigilators = registeredInvigilatorIds.length > 0;
-
   const nonTeachingOptions = useMemo(
     () =>
       invigilators.filter(
         (item) =>
           item.is_active &&
-          !isTeachingMirrorInvigilator(item) &&
-          (!hasRegisteredInvigilators || registeredInvigilatorIds.includes(item.id))
+          !isTeachingMirrorInvigilator(item)
       ),
-    [hasRegisteredInvigilators, invigilators, registeredInvigilatorIds]
+    [invigilators]
   );
   const teachingOptions = useMemo(
-    () => teachingStaff.filter((item) => item.is_active && (!hasRegisteredTeachers || registeredTeacherIds.includes(item.id))),
-    [hasRegisteredTeachers, teachingStaff, registeredTeacherIds]
+    () => teachingStaff.filter((item) => item.is_active),
+    [teachingStaff]
   );
   const enrichedAssignments = useMemo(
     () =>
@@ -161,17 +140,10 @@ export default function InvigilatorManagement() {
     () =>
       new Set(
         invigilators
-          .filter((item) => {
-            if (!item.is_active) return false;
-            if (!isTeachingMirrorInvigilator(item)) {
-              return !hasRegisteredInvigilators || registeredInvigilatorIds.includes(item.id);
-            }
-            const teacherId = teacherIdFromStaffCode(item.staff_id);
-            return teacherId !== null && (!hasRegisteredTeachers || registeredTeacherIds.includes(teacherId));
-          })
+          .filter((item) => item.is_active && (isTeachingMirrorInvigilator(item) ? teacherIdFromStaffCode(item.staff_id) !== null : true))
           .map((item) => item.id)
       ),
-    [hasRegisteredInvigilators, hasRegisteredTeachers, invigilators, registeredInvigilatorIds, registeredTeacherIds]
+    [invigilators]
   );
   const activeAssignments = useMemo(
     () =>

@@ -97,6 +97,7 @@ export interface Student {
   id: number;
   roll_number: string;
   name: string;
+  photoDataUrl?: string;
   father_name?: string;
   batch: string;
   class_name?: string;
@@ -314,10 +315,17 @@ export interface PlanComparison {
 export interface Teacher {
   id: number;
   name: string;
+  photoDataUrl?: string;
   subject: string;
   school_id: number;
   email?: string;
   phone?: string;
+  employee_code?: string;
+  department?: string;
+  designation?: string;
+  joining_date?: string;
+  shift_timing?: string;
+  metadata?: Record<string, unknown>;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -376,11 +384,15 @@ export interface Invigilator {
   id: number;
   staff_id: string;
   name: string;
+  photoDataUrl?: string;
   school_id: number;
   email?: string;
   phone?: string;
   department?: string;
   designation?: string;
+  joining_date?: string;
+  shift_timing?: string;
+  metadata?: Record<string, unknown>;
   is_active: boolean;
   created_at: string;
   updated_at: string;

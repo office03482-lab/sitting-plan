@@ -10,20 +10,12 @@ import {
   upsertEduPayAdmissionRequest,
   type EduPayAdmissionSnapshot,
 } from '@utils/eduPayAdmissions';
-import {
-  getStudentPhoto,
-  getStudentSession,
-  readStudentSessionOptions,
-  removeStudentPhoto,
-  removeStudentSession,
-  setStudentSession,
-  setStudentPhoto,
-} from '@utils/studentDirectory';
 
 const inputClass =
   'w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-200/70';
 const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500';
 const detailLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400';
+const DEFAULT_SESSION_OPTIONS = ['Apr 2026 - Mar 2027', 'Apr 2027 - Mar 2028'];
 
 type EditFormState = {
   name: string;
@@ -84,6 +76,7 @@ const normalizeStudent = (student: any): Student => ({
   id: Number(student?.id ?? 0),
   roll_number: safeText(student?.roll_number || student?.rollNo || student?.roll_no),
   name: safeText(student?.name),
+  photoDataUrl: safeText(student?.photoDataUrl || student?.photo_data_url) || undefined,
   father_name: safeText(student?.father_name || student?.fatherName) || undefined,
   batch: safeText(student?.batch),
   class_name: getSafeStudentClassName({
@@ -105,16 +98,16 @@ const toEditForm = (student: Student): EditFormState => ({
   batch: student.batch,
   className: student.class_name || '',
   section: student.section || '',
-  academicSession: student.academic_session || getStudentSession(student.id, student.roll_number) || '',
+  academicSession: student.academic_session || '',
   email: student.email || '',
   phone: student.phone || '',
   specialNeeds: student.special_needs || '',
   isActive: student.is_active,
-  photoDataUrl: getStudentPhoto(student.id, student.roll_number),
+  photoDataUrl: student.photoDataUrl || '',
 });
 
 function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student; className?: string }) {
-  const photo = getStudentPhoto(student.id, student.roll_number);
+  const photo = student.photoDataUrl;
   if (photo) {
     return <img src={photo} alt={student.name} className={`${className} rounded-full object-cover`} />;
   }
@@ -193,9 +186,9 @@ export default function StudentDirectory() {
   );
   const sessionOptions = useMemo(() => {
     const mappedSessions = students
-      .map((student) => safeText(student.academic_session || getStudentSession(student.id, student.roll_number)))
+      .map((student) => safeText(student.academic_session))
       .filter(Boolean);
-    return Array.from(new Set([...readStudentSessionOptions(), ...mappedSessions])).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set([...DEFAULT_SESSION_OPTIONS, ...mappedSessions])).sort((a, b) => a.localeCompare(b));
   }, [students]);
 
   const filteredStudents = useMemo(() => {
@@ -211,7 +204,7 @@ export default function StudentDirectory() {
       const className = getSafeStudentClassName(student);
       const classLabel = getStudentClassLabel(student);
       const matchesClass = classFilter === 'all' || className === classFilter;
-      const studentSession = safeText(student.academic_session || getStudentSession(student.id, student.roll_number));
+      const studentSession = safeText(student.academic_session);
       const matchesSession = sessionFilter === 'all' || studentSession === sessionFilter;
       const matchesSearch =
         !query ||
@@ -313,25 +306,8 @@ export default function StudentDirectory() {
         phone: (trimmedPhone || null) as unknown as string | undefined,
         special_needs: (trimmedSpecialNeeds || null) as unknown as string | undefined,
         is_active: editForm.isActive,
+        photoDataUrl: editForm.photoDataUrl.trim(),
       });
-      if (editForm.photoDataUrl.trim()) {
-        if (editingStudent.roll_number !== trimmedRollNumber) {
-          removeStudentPhoto(editingStudent.id, editingStudent.roll_number);
-        }
-        setStudentPhoto(editForm.photoDataUrl, editingStudent.id, trimmedRollNumber);
-      } else {
-        removeStudentPhoto(editingStudent.id, editingStudent.roll_number);
-        removeStudentPhoto(editingStudent.id, trimmedRollNumber);
-      }
-      if (trimmedSession) {
-        if (editingStudent.roll_number !== trimmedRollNumber) {
-          removeStudentSession(editingStudent.id, editingStudent.roll_number);
-        }
-        setStudentSession(trimmedSession, editingStudent.id, trimmedRollNumber);
-      } else {
-        removeStudentSession(editingStudent.id, editingStudent.roll_number);
-        removeStudentSession(editingStudent.id, trimmedRollNumber);
-      }
       const existingRequest = readEduPayAdmissionRequests().find(
         (item) => item.linkedStudentId === editingStudent.id || item.linkedStudentRollNumber === editingStudent.roll_number,
       );
@@ -384,8 +360,6 @@ export default function StudentDirectory() {
     if (!window.confirm(`${student.name} ko delete karna hai?`)) return;
     try {
       await apiService.deleteStudent(student.id);
-      removeStudentPhoto(student.id, student.roll_number);
-      removeStudentSession(student.id, student.roll_number);
       await loadStudents();
       showMessage('Student deleted successfully.');
     } catch (error: any) {
@@ -401,8 +375,6 @@ export default function StudentDirectory() {
       setSaving(true);
       for (const student of filteredStudents) {
         await apiService.deleteStudent(student.id);
-        removeStudentPhoto(student.id, student.roll_number);
-        removeStudentSession(student.id, student.roll_number);
       }
       await loadStudents();
       showMessage('Selected students deleted successfully.');
@@ -539,7 +511,7 @@ export default function StudentDirectory() {
               {filteredStudents.map((student) => (
                 <article key={student.id} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
                   {(() => {
-                    const session = student.academic_session || getStudentSession(student.id, student.roll_number);
+                    const session = student.academic_session;
                     return (
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex min-w-0 items-start gap-3">
@@ -610,7 +582,7 @@ export default function StudentDirectory() {
                     <span>{student.roll_number}</span>
                     <span>{student.batch}</span>
                     <span>{getStudentClassLabel(student) || '-'}</span>
-                    <span>{student.academic_session || getStudentSession(student.id, student.roll_number) || '-'}</span>
+                    <span>{student.academic_session || '-'}</span>
                     <div>
                       <p>{student.father_name || '-'}</p>
                       <p className="mt-1 text-xs text-slate-500">{student.phone || '-'}</p>

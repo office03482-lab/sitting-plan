@@ -5,16 +5,6 @@ import { useAppStore } from '@store/app';
 import { apiService } from '@services/api';
 import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
 import {
-  ensureStudentSessionOption,
-  getStudentPhoto,
-  getStudentSession,
-  readStudentSessionOptions,
-  removeStudentPhoto,
-  removeStudentSession,
-  setStudentPhoto,
-  setStudentSession,
-} from '@utils/studentDirectory';
-import {
   readEduPayAdmissionRequests,
   upsertEduPayAdmissionRequest,
   type EduPayAdmissionSnapshot,
@@ -170,6 +160,7 @@ const studentInitialForm: StudentFormState = {
 const studentInputClass =
   'w-full rounded-lg border border-[#d8e2ec] bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#d58a17] focus:ring-2 focus:ring-[#f7d9a8]';
 const studentLabelClass = 'mb-1.5 block text-[12px] font-semibold text-slate-700';
+const DEFAULT_SESSION_OPTIONS = ['Apr 2026 - Mar 2027', 'Apr 2027 - Mar 2028'];
 
 const normalizeBatchText = (value: string): string =>
   value
@@ -316,7 +307,7 @@ export default function StudentManagement() {
   const [studentDocuments, setStudentDocuments] = useState<StudentDocument[]>([]);
   const [studentCameraOpen, setStudentCameraOpen] = useState(false);
   const [studentCameraError, setStudentCameraError] = useState('');
-  const [sessionOptions, setSessionOptions] = useState<string[]>(() => readStudentSessionOptions());
+  const [sessionOptions, setSessionOptions] = useState<string[]>(DEFAULT_SESSION_OPTIONS);
   const [newSessionValue, setNewSessionValue] = useState('');
   const studentPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const studentDocumentInputRef = useRef<HTMLInputElement | null>(null);
@@ -414,13 +405,10 @@ export default function StudentManagement() {
     try {
       const response = await apiService.listStudents();
       setStudents(response.data);
-      response.data.forEach((student) => {
-        const academicSession = typeof student?.academic_session === 'string' ? student.academic_session.trim() : '';
-        if (academicSession) {
-          ensureStudentSessionOption(academicSession);
-        }
-      });
-      setSessionOptions(readStudentSessionOptions());
+      const sessions = response.data
+        .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
+        .filter(Boolean);
+      setSessionOptions(Array.from(new Set([...DEFAULT_SESSION_OPTIONS, ...sessions])).sort((a, b) => a.localeCompare(b)));
     } catch (error) {
       console.error('Failed to load students:', error);
     }
@@ -508,10 +496,6 @@ export default function StudentManagement() {
     setDeletingAll(true);
     try {
       await apiService.deleteAllStudents(true); // is_admin=true
-      students.forEach((student) => {
-        removeStudentPhoto(student.id, student.roll_number);
-        removeStudentSession(student.id, student.roll_number);
-      });
       setStudents([]);
       setDeleteAllConfirm(false);
       setMessage('All students deleted successfully');
@@ -538,7 +522,7 @@ export default function StudentManagement() {
   const resetStudentForm = () => {
     stopStudentCamera();
     setStudentForm(studentInitialForm);
-    setSessionOptions(readStudentSessionOptions());
+    setSessionOptions(DEFAULT_SESSION_OPTIONS);
     setNewSessionValue('');
     if (studentPhotoPreviewUrl) {
       URL.revokeObjectURL(studentPhotoPreviewUrl);
@@ -592,8 +576,7 @@ export default function StudentManagement() {
   const handleAddSessionOption = () => {
     const cleanedSession = newSessionValue.trim();
     if (!cleanedSession) return;
-    ensureStudentSessionOption(cleanedSession);
-    setSessionOptions(readStudentSessionOptions());
+    setSessionOptions((current) => Array.from(new Set([...current, cleanedSession])).sort((a, b) => a.localeCompare(b)));
     updateStudentField('academicYear', cleanedSession);
     setNewSessionValue('');
   };
@@ -716,8 +699,8 @@ export default function StudentManagement() {
     const inferredCourse = inferStudentCourseFromBatch(matchedBatchRecord || currentBatchName);
     const inferredProgram =
       detectStudentProgramFromBatch(matchedBatchRecord || currentBatchName) || deriveProgramFromCourse(inferredCourse);
-    const savedPhoto = getStudentPhoto(student.id, student.roll_number);
-    const savedSession = student.academic_session || getStudentSession(student.id, student.roll_number);
+    const savedPhoto = (student.photoDataUrl as string) || '';
+    const savedSession = student.academic_session || '';
     setStudentForm({
       ...studentInitialForm,
       admissionId: details?.admissionId || '',
@@ -787,8 +770,7 @@ export default function StudentManagement() {
       hostelRequestNote: (student.hostel_notes as string) || '',
     });
     if (savedSession) {
-      ensureStudentSessionOption(savedSession);
-      setSessionOptions(readStudentSessionOptions());
+      setSessionOptions((current) => Array.from(new Set([...current, savedSession])).sort((a, b) => a.localeCompare(b)));
     }
     setStudentPhotoPreviewUrl(savedPhoto);
     setStudentPhotoDataUrl(savedPhoto);
@@ -815,11 +797,6 @@ export default function StudentManagement() {
     if (!confirm('Are you sure you want to delete this student?')) return;
     try {
       await apiService.deleteStudent(id);
-      const deletedStudent = students.find((student) => student.id === id);
-      if (deletedStudent) {
-        removeStudentPhoto(deletedStudent.id, deletedStudent.roll_number);
-        removeStudentSession(deletedStudent.id, deletedStudent.roll_number);
-      }
       setMessage('Student deleted successfully');
       loadStudents();
     } catch (error: any) {
@@ -1009,6 +986,7 @@ export default function StudentManagement() {
         hostel_notes: studentForm.hostelRequired
           ? (toNullableString(studentForm.hostelRequestNote) as unknown as string | undefined)
           : (null as unknown as string | undefined),
+        photoDataUrl: studentPhotoDataUrl || '',
       };
 
       if (studentForm.course === 'ssb' && !studentForm.program) {
@@ -1034,19 +1012,6 @@ export default function StudentManagement() {
             requested_notes: studentForm.hostelRequestNote.trim() || undefined,
           });
         }
-        if (studentPhotoDataUrl) {
-          if (editStudent.roll_number !== payload.roll_number) {
-            removeStudentPhoto(response.data.id, editStudent.roll_number);
-          }
-          setStudentPhoto(studentPhotoDataUrl, response.data.id, payload.roll_number);
-        } else {
-          removeStudentPhoto(response.data.id, editStudent.roll_number);
-          removeStudentPhoto(response.data.id, payload.roll_number);
-        }
-        if (editStudent.roll_number !== payload.roll_number) {
-          removeStudentSession(response.data.id, editStudent.roll_number);
-        }
-        setStudentSession(studentForm.academicYear, response.data.id, payload.roll_number);
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired
@@ -1063,10 +1028,6 @@ export default function StudentManagement() {
             requested_notes: studentForm.hostelRequestNote.trim() || undefined,
           });
         }
-        if (studentPhotoDataUrl) {
-          setStudentPhoto(studentPhotoDataUrl, response.data.id, payload.roll_number);
-        }
-        setStudentSession(studentForm.academicYear, response.data.id, payload.roll_number);
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired

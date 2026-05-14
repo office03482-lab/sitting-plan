@@ -603,8 +603,8 @@ export default function Dashboard() {
                 { label: 'Apply', value: 3, color: 'bg-teal-500' },
                 { label: 'Eval', value: 2, color: 'bg-amber-500' },
                 { label: 'Done', value: 2, color: 'bg-violet-600' },
-              ].map((item) => (
-                <div key={item.label} className="text-center">
+              ].map((item, index) => (
+                <div key={`${item.label}-${index}`} className="text-center">
                   <div className="mx-auto flex h-16 items-end justify-center">
                     <div className={`w-full max-w-[42px] rounded-t-lg ${item.color}`} style={{ height: `${24 + item.value * 10}px` }} />
                   </div>
@@ -624,7 +624,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-3 grid h-[110px] grid-cols-12 items-end gap-1">
               {trendValues.map((value, index) => (
-                <div key={monthNames[index]} className="flex h-full flex-col items-center justify-end gap-1">
+                <div key={`${monthNames[index]}-${index}`} className="flex h-full flex-col items-center justify-end gap-1">
                   <div className="flex h-full w-full items-end justify-center gap-0.5">
                     <div className="w-2 rounded-full bg-amber-400" style={{ height: `${(value / trendMax) * 100}%` }} />
                     <div className="w-2 rounded-full bg-slate-300" style={{ height: `${Math.max(12, ((value * 0.58) / trendMax) * 100)}%` }} />
@@ -662,8 +662,8 @@ export default function Dashboard() {
           <SectionCard title="Updates & Calendar">
             <div className="space-y-2">
               <div className="grid gap-2">
-                {stats.recentActivity.slice(0, 2).map((activity) => (
-                  <div key={activity} className="flex items-start gap-2 rounded-xl bg-slate-50 p-2.5">
+                {stats.recentActivity.slice(0, 2).map((activity, index) => (
+                  <div key={`${activity}-${index}`} className="flex items-start gap-2 rounded-xl bg-slate-50 p-2.5">
                     <div className="rounded-lg bg-indigo-100 p-1.5 text-indigo-700">
                       <Bell className="h-3 w-3" />
                     </div>
@@ -677,12 +677,12 @@ export default function Dashboard() {
                   <span>Birthdays On</span>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-slate-400">
-                  {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day) => (
-                    <span key={day}>{day}</span>
+                  {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => (
+                    <span key={`${day}-${index}`}>{day}</span>
                   ))}
-                  {calendarDays.slice(0, 28).map((day) => (
+                  {calendarDays.slice(0, 28).map((day, index) => (
                     <div
-                      key={day}
+                      key={`calendar-day-${day}-${index}`}
                       className={`mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[9px] ${
                         day === 27 ? 'bg-amber-500 text-white' : 'text-slate-700'
                       }`}
