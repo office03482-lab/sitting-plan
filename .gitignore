@@ -62,6 +62,7 @@ build/
 out/
 .cache/
 .vite/
+frontend/.npm-cache/
 
 # Test coverage
 coverage/
