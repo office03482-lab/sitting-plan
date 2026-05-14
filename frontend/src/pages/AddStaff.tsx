@@ -5,11 +5,6 @@ import { Upload, Camera, Plus, FileText, Trash2, ExternalLink, X } from 'lucide-
 import { apiService } from '@services/api';
 import {
   findStaffDirectoryNameMatches,
-  readStaffDirectoryRecords,
-  STAFF_ADDED_INVIGILATOR_IDS_KEY,
-  STAFF_ADDED_TEACHER_IDS_KEY,
-  storeEntityId,
-  upsertStaffDirectoryRecord,
   type StaffDirectoryRecord,
 } from '@utils/staffDirectory';
 
@@ -234,6 +229,38 @@ export default function AddStaff() {
   );
   const categoryOptions = formData.staffType === 'teaching' ? teachingCategoryOptions : nonTeachingCategoryOptions;
 
+  const loadLiveDirectoryRecords = async (): Promise<StaffDirectoryRecord[]> => {
+    const [teachersRes, invigilatorsRes] = await Promise.all([
+      apiService.listTeachers(1, 0, 1000),
+      apiService.listInvigilators(1, undefined, 0, 1000),
+    ]);
+
+    const teacherRecords = (teachersRes.data || []).map((teacher: any) => ({
+      id: `teaching:${teacher.id}`,
+      backendId: teacher.id,
+      backendType: 'teaching' as const,
+      staffType: 'teaching' as const,
+      category: '',
+      firstName: '',
+      isActive: true,
+      createdAt: '',
+      fullName: String(teacher.name || '').trim(),
+    }));
+    const invigilatorRecords = (invigilatorsRes.data || []).map((staff: any) => ({
+      id: `non_teaching:${staff.id}`,
+      backendId: staff.id,
+      backendType: 'non_teaching' as const,
+      staffType: 'non_teaching' as const,
+      category: '',
+      firstName: '',
+      isActive: true,
+      createdAt: '',
+      fullName: String(staff.name || '').trim(),
+    }));
+
+    return [...teacherRecords, ...invigilatorRecords];
+  };
+
   const syncCategoryForType = (staffType: StaffType) => {
     const defaultCategory = staffType === 'teaching' ? teachingCategoryOptions[0] : nonTeachingCategoryOptions[0];
     updateField('staffCategory', defaultCategory);
@@ -410,7 +437,7 @@ export default function AddStaff() {
     }
 
     const duplicateNameMatches = findStaffDirectoryNameMatches(
-      readStaffDirectoryRecords(),
+      await loadLiveDirectoryRecords(),
       fullName,
       editingRecord?.id
     );
@@ -428,8 +455,6 @@ export default function AddStaff() {
 
     try {
       setSaving(true);
-      let backendId = editingRecord?.backendId;
-      let backendType = editingRecord?.backendType || formData.staffType;
 
       if (formData.staffType === 'teaching') {
         if (editingRecord?.backendId && editingRecord.backendType === 'teaching') {
@@ -438,19 +463,96 @@ export default function AddStaff() {
             subject: formData.subject.trim(),
             email: formData.email.trim() || undefined,
             phone: formData.primaryMobile.trim() || undefined,
+            designation: formData.designation.trim() || formData.staffCategory || 'Teacher',
+            joining_date: formData.joiningDate || undefined,
+            shift_timing: formData.shiftTiming.trim() || undefined,
             is_active: formData.isActive,
+            photoDataUrl: photoDataUrl || undefined,
+            metadata: {
+              category: formData.staffCategory,
+              designation: formData.designation.trim() || formData.staffCategory || 'Teacher',
+              joining_date: formData.joiningDate || undefined,
+              shift_timing: formData.shiftTiming.trim() || undefined,
+              directory_details: {
+                dob: formData.dob || undefined,
+                primaryMobile: formData.primaryMobile.trim() || undefined,
+                whatsappNumber: formData.whatsappNumber.trim() || undefined,
+                gender: formData.gender || undefined,
+                maritalStatus: formData.maritalStatus || undefined,
+                schoolName: formData.schoolName.trim() || undefined,
+                fatherName: formData.fatherName.trim() || undefined,
+                fatherContact: formData.fatherContact.trim() || undefined,
+                motherName: formData.motherName.trim() || undefined,
+                motherContact: formData.motherContact.trim() || undefined,
+                spouseName: formData.spouseName.trim() || undefined,
+                addressLine1: formData.addressLine1.trim() || undefined,
+                addressLine2: formData.addressLine2.trim() || undefined,
+                city: formData.city.trim() || undefined,
+                state: formData.state.trim() || undefined,
+                country: formData.country.trim() || undefined,
+                pinCode: formData.pinCode.trim() || undefined,
+                aadhaarNumber: formData.aadhaarNumber.trim() || undefined,
+                panNumber: formData.panNumber.trim() || undefined,
+                bloodGroup: formData.bloodGroup.trim() || undefined,
+                emergencyContactName: formData.emergencyContactName.trim() || undefined,
+                emergencyContactNumber: formData.emergencyContactNumber.trim() || undefined,
+                emergencyRelation: formData.emergencyRelation.trim() || undefined,
+                monthlySalary: formData.monthlySalary.trim() || undefined,
+                accountNumber: formData.accountNumber.trim() || undefined,
+                ifscCode: formData.ifscCode.trim() || undefined,
+                bankName: formData.bankName.trim() || undefined,
+                notes: formData.notes.trim() || undefined,
+              },
+            },
           });
         } else {
-          const createdTeacher = await apiService.createTeacher({
+          await apiService.createTeacher({
             name: fullName,
             subject: formData.subject.trim(),
             email: formData.email.trim() || undefined,
             phone: formData.primaryMobile.trim() || undefined,
+            designation: formData.designation.trim() || formData.staffCategory || 'Teacher',
+            joining_date: formData.joiningDate || undefined,
+            shift_timing: formData.shiftTiming.trim() || undefined,
             is_active: formData.isActive,
+            photoDataUrl: photoDataUrl || undefined,
+            metadata: {
+              category: formData.staffCategory,
+              designation: formData.designation.trim() || formData.staffCategory || 'Teacher',
+              joining_date: formData.joiningDate || undefined,
+              shift_timing: formData.shiftTiming.trim() || undefined,
+              directory_details: {
+                dob: formData.dob || undefined,
+                primaryMobile: formData.primaryMobile.trim() || undefined,
+                whatsappNumber: formData.whatsappNumber.trim() || undefined,
+                gender: formData.gender || undefined,
+                maritalStatus: formData.maritalStatus || undefined,
+                schoolName: formData.schoolName.trim() || undefined,
+                fatherName: formData.fatherName.trim() || undefined,
+                fatherContact: formData.fatherContact.trim() || undefined,
+                motherName: formData.motherName.trim() || undefined,
+                motherContact: formData.motherContact.trim() || undefined,
+                spouseName: formData.spouseName.trim() || undefined,
+                addressLine1: formData.addressLine1.trim() || undefined,
+                addressLine2: formData.addressLine2.trim() || undefined,
+                city: formData.city.trim() || undefined,
+                state: formData.state.trim() || undefined,
+                country: formData.country.trim() || undefined,
+                pinCode: formData.pinCode.trim() || undefined,
+                aadhaarNumber: formData.aadhaarNumber.trim() || undefined,
+                panNumber: formData.panNumber.trim() || undefined,
+                bloodGroup: formData.bloodGroup.trim() || undefined,
+                emergencyContactName: formData.emergencyContactName.trim() || undefined,
+                emergencyContactNumber: formData.emergencyContactNumber.trim() || undefined,
+                emergencyRelation: formData.emergencyRelation.trim() || undefined,
+                monthlySalary: formData.monthlySalary.trim() || undefined,
+                accountNumber: formData.accountNumber.trim() || undefined,
+                ifscCode: formData.ifscCode.trim() || undefined,
+                bankName: formData.bankName.trim() || undefined,
+                notes: formData.notes.trim() || undefined,
+              },
+            },
           });
-          backendId = createdTeacher.data.id;
-          backendType = 'teaching';
-          storeEntityId(STAFF_ADDED_TEACHER_IDS_KEY, createdTeacher.data.id);
         }
       } else {
         if (editingRecord?.backendId && editingRecord.backendType === 'non_teaching') {
@@ -461,77 +563,96 @@ export default function AddStaff() {
             phone: formData.primaryMobile.trim() || undefined,
             department: formData.department.trim() || formData.staffCategory,
             designation: formData.designation.trim() || formData.staffCategory,
+            joining_date: formData.joiningDate || undefined,
+            shift_timing: formData.shiftTiming.trim() || undefined,
             is_active: formData.isActive,
+            photoDataUrl: photoDataUrl || undefined,
+            metadata: {
+              category: formData.staffCategory,
+              joining_date: formData.joiningDate || undefined,
+              shift_timing: formData.shiftTiming.trim() || undefined,
+              directory_details: {
+                dob: formData.dob || undefined,
+                primaryMobile: formData.primaryMobile.trim() || undefined,
+                whatsappNumber: formData.whatsappNumber.trim() || undefined,
+                gender: formData.gender || undefined,
+                maritalStatus: formData.maritalStatus || undefined,
+                schoolName: formData.schoolName.trim() || undefined,
+                fatherName: formData.fatherName.trim() || undefined,
+                fatherContact: formData.fatherContact.trim() || undefined,
+                motherName: formData.motherName.trim() || undefined,
+                motherContact: formData.motherContact.trim() || undefined,
+                spouseName: formData.spouseName.trim() || undefined,
+                addressLine1: formData.addressLine1.trim() || undefined,
+                addressLine2: formData.addressLine2.trim() || undefined,
+                city: formData.city.trim() || undefined,
+                state: formData.state.trim() || undefined,
+                country: formData.country.trim() || undefined,
+                pinCode: formData.pinCode.trim() || undefined,
+                aadhaarNumber: formData.aadhaarNumber.trim() || undefined,
+                panNumber: formData.panNumber.trim() || undefined,
+                bloodGroup: formData.bloodGroup.trim() || undefined,
+                emergencyContactName: formData.emergencyContactName.trim() || undefined,
+                emergencyContactNumber: formData.emergencyContactNumber.trim() || undefined,
+                emergencyRelation: formData.emergencyRelation.trim() || undefined,
+                monthlySalary: formData.monthlySalary.trim() || undefined,
+                accountNumber: formData.accountNumber.trim() || undefined,
+                ifscCode: formData.ifscCode.trim() || undefined,
+                bankName: formData.bankName.trim() || undefined,
+                notes: formData.notes.trim() || undefined,
+              },
+            },
           });
         } else {
-          const createdInvigilator = await apiService.createInvigilator({
+          await apiService.createInvigilator({
             staff_id: formData.employeeId.trim(),
             name: fullName,
             email: formData.email.trim() || undefined,
             phone: formData.primaryMobile.trim() || undefined,
             department: formData.department.trim() || formData.staffCategory,
             designation: formData.designation.trim() || formData.staffCategory,
+            joining_date: formData.joiningDate || undefined,
+            shift_timing: formData.shiftTiming.trim() || undefined,
             is_active: formData.isActive,
+            photoDataUrl: photoDataUrl || undefined,
+            metadata: {
+              category: formData.staffCategory,
+              joining_date: formData.joiningDate || undefined,
+              shift_timing: formData.shiftTiming.trim() || undefined,
+              directory_details: {
+                dob: formData.dob || undefined,
+                primaryMobile: formData.primaryMobile.trim() || undefined,
+                whatsappNumber: formData.whatsappNumber.trim() || undefined,
+                gender: formData.gender || undefined,
+                maritalStatus: formData.maritalStatus || undefined,
+                schoolName: formData.schoolName.trim() || undefined,
+                fatherName: formData.fatherName.trim() || undefined,
+                fatherContact: formData.fatherContact.trim() || undefined,
+                motherName: formData.motherName.trim() || undefined,
+                motherContact: formData.motherContact.trim() || undefined,
+                spouseName: formData.spouseName.trim() || undefined,
+                addressLine1: formData.addressLine1.trim() || undefined,
+                addressLine2: formData.addressLine2.trim() || undefined,
+                city: formData.city.trim() || undefined,
+                state: formData.state.trim() || undefined,
+                country: formData.country.trim() || undefined,
+                pinCode: formData.pinCode.trim() || undefined,
+                aadhaarNumber: formData.aadhaarNumber.trim() || undefined,
+                panNumber: formData.panNumber.trim() || undefined,
+                bloodGroup: formData.bloodGroup.trim() || undefined,
+                emergencyContactName: formData.emergencyContactName.trim() || undefined,
+                emergencyContactNumber: formData.emergencyContactNumber.trim() || undefined,
+                emergencyRelation: formData.emergencyRelation.trim() || undefined,
+                monthlySalary: formData.monthlySalary.trim() || undefined,
+                accountNumber: formData.accountNumber.trim() || undefined,
+                ifscCode: formData.ifscCode.trim() || undefined,
+                bankName: formData.bankName.trim() || undefined,
+                notes: formData.notes.trim() || undefined,
+              },
+            },
           });
-          backendId = createdInvigilator.data.id;
-          backendType = 'non_teaching';
-          storeEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, createdInvigilator.data.id);
         }
       }
-
-      const record: StaffDirectoryRecord = {
-        id: editingRecord?.id || `${formData.staffType === 'teaching' ? 'teacher' : 'staff'}-${backendId || Date.now()}-${Date.now()}`,
-        backendId,
-        backendType,
-        staffType: formData.staffType,
-        photoDataUrl: photoDataUrl || undefined,
-        category: formData.staffCategory,
-        firstName: formData.firstName.trim(),
-        middleName: formData.middleName.trim() || undefined,
-        lastName: formData.lastName.trim() || undefined,
-        fullName,
-        employeeId: formData.employeeId.trim() || undefined,
-        subject: formData.staffType === 'teaching' ? formData.subject.trim() || undefined : undefined,
-        department: formData.staffType === 'non_teaching' ? formData.department.trim() || formData.staffCategory : formData.subject.trim() || undefined,
-        designation: formData.designation.trim() || formData.staffCategory,
-        phone: formData.primaryMobile.trim() || undefined,
-        email: formData.email.trim() || undefined,
-        joiningDate: formData.joiningDate || undefined,
-        shiftTiming: formData.shiftTiming.trim() || undefined,
-        isActive: formData.isActive,
-        createdAt: editingRecord?.createdAt || new Date().toISOString(),
-        details: {
-          dob: formData.dob || undefined,
-          primaryMobile: formData.primaryMobile.trim() || undefined,
-          whatsappNumber: formData.whatsappNumber.trim() || undefined,
-          gender: formData.gender || undefined,
-          maritalStatus: formData.maritalStatus || undefined,
-          schoolName: formData.schoolName.trim() || undefined,
-          fatherName: formData.fatherName.trim() || undefined,
-          fatherContact: formData.fatherContact.trim() || undefined,
-          motherName: formData.motherName.trim() || undefined,
-          motherContact: formData.motherContact.trim() || undefined,
-          spouseName: formData.spouseName.trim() || undefined,
-          addressLine1: formData.addressLine1.trim() || undefined,
-          addressLine2: formData.addressLine2.trim() || undefined,
-          city: formData.city.trim() || undefined,
-          state: formData.state.trim() || undefined,
-          country: formData.country.trim() || undefined,
-          pinCode: formData.pinCode.trim() || undefined,
-          aadhaarNumber: formData.aadhaarNumber.trim() || undefined,
-          panNumber: formData.panNumber.trim() || undefined,
-          bloodGroup: formData.bloodGroup.trim() || undefined,
-          emergencyContactName: formData.emergencyContactName.trim() || undefined,
-          emergencyContactNumber: formData.emergencyContactNumber.trim() || undefined,
-          emergencyRelation: formData.emergencyRelation.trim() || undefined,
-          monthlySalary: formData.monthlySalary.trim() || undefined,
-          accountNumber: formData.accountNumber.trim() || undefined,
-          ifscCode: formData.ifscCode.trim() || undefined,
-          bankName: formData.bankName.trim() || undefined,
-          notes: formData.notes.trim() || undefined,
-        },
-      };
-      upsertStaffDirectoryRecord(record);
 
       setMessageType('success');
       setMessage(

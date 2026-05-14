@@ -43,6 +43,7 @@ from supabase import Client, create_client
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_SQLITE_PATH = ROOT_DIR / "backend" / "seating_planner.db"
 PUBLIC_SCHEMA = "public"
+SYSTEM_TEACHER_NAMES = {"__BREAK_SESSION__", "__SELF_STUDY_SESSION__"}
 
 
 def normalize_code(value: str, prefix: str, fallback: str) -> str:
@@ -349,8 +350,12 @@ def build_staff_rows(cursor: sqlite3.Cursor, target_school_id: str) -> list[dict
     seen_codes: set[str] = set()
 
     for teacher in teachers:
+        teacher_name = (teacher["name"] or "").strip()
+        teacher_subject = (teacher["subject"] or "").strip().lower()
+        if teacher_name in SYSTEM_TEACHER_NAMES or teacher_subject == "system":
+            continue
         legacy_id = int(teacher["id"])
-        employee_code = normalize_code(teacher["email"] or teacher["name"], "tchr", str(legacy_id))
+        employee_code = normalize_code(teacher["email"] or teacher_name, "tchr", str(legacy_id))
         if employee_code.lower() in seen_codes:
             employee_code = f"tchr-{legacy_id}"
         seen_codes.add(employee_code.lower())
@@ -358,7 +363,7 @@ def build_staff_rows(cursor: sqlite3.Cursor, target_school_id: str) -> list[dict
             {
                 "school_id": target_school_id,
                 "employee_code": employee_code,
-                "full_name": teacher["name"],
+                "full_name": teacher_name,
                 "email": teacher["email"],
                 "phone": teacher["phone"],
                 "staff_type": "teaching",

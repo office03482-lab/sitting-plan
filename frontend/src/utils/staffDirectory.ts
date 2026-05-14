@@ -61,50 +61,6 @@ export type StaffDirectoryDuplicateGroup = {
   records: StaffDirectoryRecord[];
 };
 
-export const STAFF_ADDED_TEACHER_IDS_KEY = 'staff_add_teacher_ids';
-export const STAFF_ADDED_INVIGILATOR_IDS_KEY = 'staff_add_invigilator_ids';
-export const STAFF_DIRECTORY_RECORDS_KEY = 'staff_directory_records';
-
-const parseJson = <T,>(value: string | null, fallback: T): T => {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-};
-
-export const readStoredIds = (storageKey: string) => {
-  if (typeof window === 'undefined') return [] as number[];
-  const parsed = parseJson<unknown>(window.localStorage.getItem(storageKey), []);
-  return Array.isArray(parsed)
-    ? parsed.map((item) => Number(item)).filter((item) => Number.isFinite(item))
-    : [];
-};
-
-export const storeEntityId = (storageKey: string, id: number) => {
-  if (typeof window === 'undefined' || !Number.isFinite(id)) return;
-  const nextIds = Array.from(new Set([...readStoredIds(storageKey), id]));
-  window.localStorage.setItem(storageKey, JSON.stringify(nextIds));
-};
-
-export const removeStoredEntityId = (storageKey: string, id?: number) => {
-  if (typeof window === 'undefined' || !Number.isFinite(id)) return;
-  const nextIds = readStoredIds(storageKey).filter((item) => item !== id);
-  window.localStorage.setItem(storageKey, JSON.stringify(nextIds));
-};
-
-export const readStaffDirectoryRecords = () => {
-  if (typeof window === 'undefined') return [] as StaffDirectoryRecord[];
-  const parsed = parseJson<unknown>(window.localStorage.getItem(STAFF_DIRECTORY_RECORDS_KEY), []);
-  return Array.isArray(parsed) ? (parsed as StaffDirectoryRecord[]) : [];
-};
-
-export const writeStaffDirectoryRecords = (records: StaffDirectoryRecord[]) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STAFF_DIRECTORY_RECORDS_KEY, JSON.stringify(records));
-};
-
 export const normalizeStaffDirectoryName = (value: string) =>
   value.trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -140,31 +96,4 @@ export const getStaffDirectoryDuplicateGroups = (records: StaffDirectoryRecord[]
       fullName: groupRecords[0]?.fullName || normalizedName,
       records: groupRecords.sort((a, b) => a.staffType.localeCompare(b.staffType) || a.fullName.localeCompare(b.fullName)),
     })) as StaffDirectoryDuplicateGroup[];
-};
-
-export const upsertStaffDirectoryRecord = (record: StaffDirectoryRecord) => {
-  const current = readStaffDirectoryRecords();
-  const index = current.findIndex((item) =>
-    record.backendId && item.backendId
-      ? item.backendId === record.backendId && item.backendType === record.backendType
-      : item.id === record.id
-  );
-
-  if (index >= 0) {
-    const next = [...current];
-    next[index] = record;
-    writeStaffDirectoryRecords(next);
-    return;
-  }
-
-  writeStaffDirectoryRecords([record, ...current]);
-};
-
-export const removeStaffDirectoryRecord = (recordId: string) => {
-  const current = readStaffDirectoryRecords();
-  writeStaffDirectoryRecords(current.filter((item) => item.id !== recordId));
-};
-
-export const clearStaffDirectoryRecords = () => {
-  writeStaffDirectoryRecords([]);
 };

@@ -2,12 +2,14 @@
 Student management routes
 """
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import logging
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from typing import List
 from app.database import get_db
+from app.middleware.auth import get_authenticated_actor_context
 from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest
 from app.schemas import (
     HostelCreate,
@@ -26,10 +28,43 @@ from app.schemas import (
     StudentUpdate,
 )
 from app.utils.excel import parse_student_excel, create_student_excel_template
+from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 import tempfile
 import os
+import re
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def get_school_id_from_context(
+    school_id: str = Query(None),
+    actor: dict = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db),
+) -> str:
+    user_id = actor.get("user_id") or actor.get("id")
+    resolved_school_id = str(school_id) if school_id and str(school_id) != "1" else None
+    if not resolved_school_id:
+        try:
+            from app.models import Profile, SchoolMembership
+
+            profile = db.query(Profile).filter(Profile.user_id == user_id).first()
+            if profile:
+                membership = db.query(SchoolMembership).filter(SchoolMembership.profile_id == profile.id).first()
+                if membership:
+                    resolved_school_id = str(membership.school_id)
+        except Exception:
+            pass
+        resolved_school_id = resolved_school_id or actor.get("school_id")
+    if not resolved_school_id or resolved_school_id == "1":
+        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+    return str(resolved_school_id)
+
+
+def build_batch_code(batch_name: str, fallback_index: int) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (batch_name or "").strip().upper()).strip("_")
+    normalized = normalized[:32] if normalized else ""
+    return normalized or f"BATCH_{fallback_index}"
 
 
 def looks_like_academic_batch_name(value: str | None) -> bool:
@@ -336,42 +371,13 @@ async def download_student_template():
 @router.post("/import", response_model=StudentImportResponse)
 async def import_students(
     file: UploadFile = File(...),
-    school_id: int = 1,  # TODO: Get from authenticated user
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
     Import students from Excel file
     """
-    # Ensure school exists
-    from app.models import School, User, UserRole
-    school = db.query(School).filter(School.id == school_id).first()
-    if not school:
-        # Ensure admin user exists
-        admin = db.query(User).filter(User.id == 1).first()
-        if not admin:
-            admin = User(
-                id=1,
-                email="admin@school.edu",
-                full_name="System Administrator",
-                password_hash="dummy_hash",  # TODO: Proper password hashing
-                role=UserRole.ADMIN,
-                is_active=True,
-                is_verified=True
-            )
-            db.add(admin)
-            db.commit()
-        
-        # Create default school
-        school = School(
-            id=school_id,
-            name="Default School",
-            admin_id=1,
-            is_active=True
-        )
-        db.add(school)
-        db.commit()
-        db.refresh(school)
-
     # Validate file type
     if not file.filename.lower().endswith('.xlsx'):
         raise HTTPException(
@@ -395,58 +401,133 @@ async def import_students(
 
     imported_count = 0
     skipped_count = 0
+    try:
+        supabase = get_supabase_admin_client()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    # Check for duplicates and save
+    schools = fetch_all(supabase, "schools", select="id,name", filters={"id": school_id})
+    if not schools:
+        raise HTTPException(status_code=400, detail="Supabase school not found for import.")
+
+    existing_batches = fetch_all(
+        supabase,
+        "batches",
+        select="id,name,batch_code,class_name,section,category",
+        filters={"school_id": school_id},
+    )
+    existing_students = fetch_all(
+        supabase,
+        "students",
+        select="id,roll_number",
+        filters={"school_id": school_id},
+    )
+
+    batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches}
+    existing_roll_numbers = {
+        str(student["roll_number"]).strip().lower()
+        for student in existing_students
+        if student.get("roll_number")
+    }
+
+    pending_batch_names: list[str] = []
+    pending_batch_rows: list[dict] = []
+
     for student_data in valid_students:
-        # Check if roll number already exists
-        existing = db.query(Student).filter(
-            Student.roll_number == student_data['roll_no'],
-            Student.school_id == school_id,
-        ).first()
+        batch_name = str(student_data.get("batch") or "").strip()
+        normalized_batch_name = batch_name.lower()
+        if not batch_name or normalized_batch_name in batch_by_name or normalized_batch_name in pending_batch_names:
+            continue
 
-        if existing:
+        class_name, section = split_batch_to_class_section(batch_name)
+        pending_batch_names.append(normalized_batch_name)
+        pending_batch_rows.append(
+            {
+                "school_id": school_id,
+                "batch_code": build_batch_code(batch_name, len(pending_batch_rows) + 1),
+                "name": batch_name,
+                "category": "batch",
+                "class_name": class_name,
+                "section": section,
+                "academic_session": student_data.get("academic_session") or None,
+                "stream": (student_data.get("course") or "").strip() or None,
+                "syllabus": " | ".join(
+                    [part for part in [student_data.get("program"), student_data.get("course")] if part]
+                ) or None,
+                "display_order": len(existing_batches) + len(pending_batch_rows),
+                "metadata": {
+                    "source": "student_bulk_upload",
+                },
+                "is_active": True,
+            }
+        )
+
+    if pending_batch_rows:
+        try:
+            insert_rows(supabase, "batches", pending_batch_rows)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to create batches in Supabase: {exc}") from exc
+        existing_batches = fetch_all(
+            supabase,
+            "batches",
+            select="id,name,batch_code,class_name,section,category",
+            filters={"school_id": school_id},
+        )
+        batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches}
+
+    pending_students: list[dict] = []
+
+    for student_data in valid_students:
+        roll_number = str(student_data["roll_no"]).strip()
+        normalized_roll_number = roll_number.lower()
+        if normalized_roll_number in existing_roll_numbers:
             skipped_count += 1
             errors.append({
-                'roll_no': student_data['roll_no'],
-                'error': 'Student already exists'
+                "roll_no": roll_number,
+                "error": "Student already exists"
             })
             continue
 
-        batch = get_or_create_batch(
-            db,
-            school_id,
-            student_data['batch'],
-            category="batch",
-            course=student_data.get('course'),
-            program=student_data.get('program'),
+        batch_name = str(student_data.get("batch") or "").strip()
+        matched_batch = batch_by_name.get(batch_name.lower())
+        class_name, section = split_batch_to_class_section(batch_name)
+
+        pending_students.append(
+            {
+                "school_id": school_id,
+                "batch_id": matched_batch["id"] if matched_batch else None,
+                "admission_no": (student_data.get("admission_id") or "").strip() or None,
+                "roll_number": roll_number,
+                "full_name": str(student_data["candidate_name"]).strip(),
+                "father_name": (student_data.get("father_name") or "").strip() or None,
+                "email": (student_data.get("email") or "").strip() or None,
+                "phone": (student_data.get("phone") or "").strip() or None,
+                "guardian_name": (student_data.get("father_name") or "").strip() or None,
+                "class_name": class_name,
+                "section": section,
+                "academic_session": (student_data.get("academic_session") or "").strip() or None,
+                "special_needs": (student_data.get("special_needs") or "").strip() or None,
+                "hostel_required": False,
+                "metadata": {
+                    "managed_batch": batch_name,
+                    "source": "student_bulk_upload",
+                    "legacy_room_no": (student_data.get("room_no") or "").strip() or None,
+                    "course": (student_data.get("course") or "").strip() or None,
+                    "program": (student_data.get("program") or "").strip() or None,
+                },
+                "is_active": True,
+            }
         )
-        class_name, section = split_batch_to_class_section(student_data.get('batch'))
-        if class_name:
-            get_or_create_batch(db, school_id, class_name, category="class")
+        existing_roll_numbers.add(normalized_roll_number)
 
-        # Create student
-        student = Student(
-            roll_number=student_data['roll_no'],
-            name=student_data['candidate_name'],
-            father_name=student_data.get('father_name') or None,
-            batch=batch.name,
-            batch_id=batch.id,
-            class_name=class_name,
-            section=section,
-            academic_session=student_data.get('academic_session') or None,
-            email=student_data.get('email') or None,
-            phone=student_data.get('phone') or None,
-            special_needs=student_data.get('special_needs') or None,
-            hostel_required=False,
-            hostel_request_status="not_requested",
-            school_id=school_id,
-            is_active=True,
-        )
-        db.add(student)
-        imported_count += 1
+    if pending_students:
+        try:
+            insert_rows(supabase, "students", pending_students)
+            imported_count = len(pending_students)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to import students into Supabase: {exc}") from exc
 
-    db.commit()
-
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {imported_count}")
     return StudentImportResponse(
         imported_count=imported_count,
         skipped_count=skipped_count,
@@ -458,7 +539,8 @@ async def import_students(
 @router.post("", response_model=StudentResponse)
 async def create_student(
     student: StudentCreate,
-    school_id: int = 1,  # TODO: Get from authenticated user
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
@@ -520,12 +602,14 @@ async def create_student(
         db.commit()
         db.refresh(db_student)
 
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_student(db_student)
 
 
 @router.get("", response_model=List[StudentResponse])
 async def list_students(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     skip: int = 0,
     limit: int = 100,
     batch: str = None,
@@ -541,11 +625,13 @@ async def list_students(
     
     students = query.offset(skip).limit(limit).all()
     
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(students)}")
     return [serialize_student(student) for student in students]
 
 @router.get("/hostels", response_model=List[HostelResponse])
 async def list_hostels(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     try:
@@ -556,6 +642,7 @@ async def list_hostels(
             .order_by(Hostel.name.asc())
             .all()
         )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(hostels)}")
         return [serialize_hostel(hostel) for hostel in hostels]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load hostels: {exc}") from exc
@@ -564,7 +651,8 @@ async def list_hostels(
 @router.post("/hostels", response_model=HostelResponse)
 async def create_hostel(
     payload: HostelCreate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     try:
@@ -606,6 +694,7 @@ async def create_hostel(
 
         db.commit()
         db.refresh(hostel)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
         return serialize_hostel(hostel)
     except Exception as exc:
         db.rollback()
@@ -616,7 +705,8 @@ async def create_hostel(
 async def update_hostel(
     hostel_id: int,
     payload: HostelUpdate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
@@ -628,13 +718,15 @@ async def update_hostel(
 
     db.commit()
     db.refresh(hostel)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel(hostel)
 
 
 @router.delete("/hostels/{hostel_id}")
 async def delete_hostel(
     hostel_id: int,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
@@ -667,6 +759,7 @@ async def delete_hostel(
 
         db.delete(hostel)
         db.commit()
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
         return {"message": "Hostel deleted successfully"}
     except Exception as exc:
         db.rollback()
@@ -677,7 +770,8 @@ async def delete_hostel(
 async def add_hostel_room(
     hostel_id: int,
     payload: HostelRoomCreate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
@@ -694,12 +788,14 @@ async def add_hostel_room(
     db.add(room)
     db.commit()
     db.refresh(room)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_room(room)
 
 
 @router.get("/hostel-requests", response_model=List[StudentHostelRequestResponse])
 async def list_hostel_requests(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     status_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
@@ -716,6 +812,7 @@ async def list_hostel_requests(
         if status_filter:
             query = query.filter(StudentHostelRequest.status == status_filter)
         requests = query.order_by(StudentHostelRequest.requested_at.desc(), StudentHostelRequest.id.desc()).all()
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(requests)}")
         return [serialize_hostel_request(item) for item in requests]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load hostel requests: {exc}") from exc
@@ -725,7 +822,8 @@ async def list_hostel_requests(
 async def create_or_update_hostel_request(
     student_id: int,
     payload: StudentHostelRequestCreate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
@@ -772,6 +870,7 @@ async def create_or_update_hostel_request(
     student.assigned_bed_label = None
     db.commit()
     db.refresh(request)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
 
 
@@ -779,7 +878,8 @@ async def create_or_update_hostel_request(
 async def approve_hostel_request(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     request = db.query(StudentHostelRequest).filter(
@@ -837,6 +937,7 @@ async def approve_hostel_request(
     student.hostel_notes = request.requested_notes
     db.commit()
     db.refresh(request)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
 
 
@@ -844,7 +945,8 @@ async def approve_hostel_request(
 async def move_hostel_allocation(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     request = db.query(StudentHostelRequest).filter(
@@ -900,6 +1002,7 @@ async def move_hostel_allocation(
     sync_hostel_room_occupancy(db, room.id)
     db.commit()
     db.refresh(request)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
 
 
@@ -907,7 +1010,8 @@ async def move_hostel_allocation(
 async def reject_hostel_request(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     request = db.query(StudentHostelRequest).filter(
@@ -931,13 +1035,15 @@ async def reject_hostel_request(
 
     db.commit()
     db.refresh(request)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
 
 
 @router.post("/transfer", response_model=StudentBatchTransferResponse)
 async def transfer_students_to_batch(
     transfer_data: StudentBatchTransferRequest,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
@@ -1000,6 +1106,7 @@ async def transfer_students_to_batch(
         student.batch_id = target_batch.id
 
     db.commit()
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(students_to_transfer)}")
 
     source_batch_label = normalized_source_batch
     if not source_batch_label and len(source_batches_before_transfer) == 1:
@@ -1016,16 +1123,19 @@ async def transfer_students_to_batch(
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: int,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
     Get student by ID
     """
-    student = db.query(Student).filter(Student.id == student_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_student(student)
 
 
@@ -1033,12 +1143,14 @@ async def get_student(
 async def update_student(
     student_id: int,
     update_data: StudentUpdate,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
     Update student information
     """
-    student = db.query(Student).filter(Student.id == student_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -1106,18 +1218,21 @@ async def update_student(
         db.commit()
         db.refresh(student)
 
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_student(student)
 
 
 @router.delete("/{student_id}")
 async def delete_student(
     student_id: int,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """
     Delete student
     """
-    student = db.query(Student).filter(Student.id == student_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -1128,13 +1243,15 @@ async def delete_student(
     db.commit()
     sync_hostel_room_occupancy(db, assigned_room_id)
     db.commit()
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     
     return {"message": "Student deleted"}
 
 
 @router.delete("")
 async def delete_all_students(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
+    actor: dict = Depends(get_authenticated_actor_context),
     is_admin: bool = False,
     db: Session = Depends(get_db),
 ):
@@ -1159,12 +1276,13 @@ async def delete_all_students(
     deleted_batches = delete_school_batches(db, school_id)
 
     # Generated seating plans become stale once all students are removed.
-    seating_plans = db.query(SeatingPlan).all()
+    seating_plans = db.query(SeatingPlan).filter(SeatingPlan.school_id == school_id).all()
     deleted_plans = len(seating_plans)
     for plan in seating_plans:
         db.delete(plan)
 
     db.commit()
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {deleted_count}")
 
     return {
         "message": f"All {deleted_count} students, {deleted_batches} batches, and {deleted_plans} seating plans deleted successfully",

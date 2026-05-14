@@ -4,18 +4,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, Pencil, Search, Trash2, Upload, UserPlus2, Users, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import {
-  clearStaffDirectoryRecords,
   findStaffDirectoryNameMatches,
   getStaffDirectoryDuplicateGroups,
-  readStaffDirectoryRecords,
-  removeStaffDirectoryRecord,
-  removeStoredEntityId,
-  STAFF_ADDED_INVIGILATOR_IDS_KEY,
-  STAFF_ADDED_TEACHER_IDS_KEY,
-  storeEntityId,
   type StaffDirectoryRecord,
-  upsertStaffDirectoryRecord,
-  writeStaffDirectoryRecords,
 } from '@utils/staffDirectory';
 
 const inputClass =
@@ -120,26 +111,30 @@ const mergeDirectoryRecords = (primary: StaffDirectoryRecord, secondary: StaffDi
 const mapTeacherToDirectoryRecord = (teacher: any): StaffDirectoryRecord => {
   const fullName = String(teacher?.name || '').trim();
   const nameParts = splitNameParts(fullName);
+  const metadata = teacher?.metadata || {};
+  const directoryDetails = metadata.directory_details || {};
   return {
     id: buildDirectoryId('teaching', Number(teacher?.id)),
     backendId: Number(teacher?.id),
     backendType: 'teaching',
     staffType: 'teaching',
-    category: String(teacher?.subject || 'Teaching').trim() || 'Teaching',
+    photoDataUrl: teacher?.photoDataUrl || undefined,
+    category: String(metadata.category || teacher?.subject || 'Teaching').trim() || 'Teaching',
     fullName,
     firstName: nameParts.firstName,
     middleName: nameParts.middleName || undefined,
     lastName: nameParts.lastName || undefined,
-    employeeId: undefined,
+    employeeId: String(teacher?.employee_code || '').trim() || undefined,
     subject: String(teacher?.subject || '').trim() || undefined,
-    department: String(teacher?.subject || '').trim() || undefined,
-    designation: 'Teacher',
+    department: String(teacher?.department || teacher?.subject || '').trim() || undefined,
+    designation: String(teacher?.designation || metadata.designation || 'Teacher').trim() || 'Teacher',
     phone: String(teacher?.phone || '').trim() || undefined,
     email: String(teacher?.email || '').trim() || undefined,
-    joiningDate: undefined,
-    shiftTiming: undefined,
+    joiningDate: String(teacher?.joining_date || metadata.joining_date || '').trim() || undefined,
+    shiftTiming: String(teacher?.shift_timing || metadata.shift_timing || '').trim() || undefined,
     isActive: Boolean(teacher?.is_active ?? true),
     createdAt: String(teacher?.created_at || new Date().toISOString()),
+    details: directoryDetails,
   };
 };
 
@@ -148,12 +143,15 @@ const mapInvigilatorToDirectoryRecord = (invigilator: any): StaffDirectoryRecord
   const nameParts = splitNameParts(fullName);
   const department = String(invigilator?.department || '').trim();
   const designation = String(invigilator?.designation || '').trim();
+  const metadata = invigilator?.metadata || {};
+  const directoryDetails = metadata.directory_details || {};
   return {
     id: buildDirectoryId('non_teaching', Number(invigilator?.id)),
     backendId: Number(invigilator?.id),
     backendType: 'non_teaching',
     staffType: 'non_teaching',
-    category: department || designation || 'Non-Teaching',
+    photoDataUrl: invigilator?.photoDataUrl || undefined,
+    category: String(metadata.category || department || designation || 'Non-Teaching').trim() || 'Non-Teaching',
     fullName,
     firstName: nameParts.firstName,
     middleName: nameParts.middleName || undefined,
@@ -164,10 +162,11 @@ const mapInvigilatorToDirectoryRecord = (invigilator: any): StaffDirectoryRecord
     designation: designation || undefined,
     phone: String(invigilator?.phone || '').trim() || undefined,
     email: String(invigilator?.email || '').trim() || undefined,
-    joiningDate: undefined,
-    shiftTiming: undefined,
+    joiningDate: String(invigilator?.joining_date || metadata.joining_date || '').trim() || undefined,
+    shiftTiming: String(invigilator?.shift_timing || metadata.shift_timing || '').trim() || undefined,
     isActive: Boolean(invigilator?.is_active ?? true),
     createdAt: String(invigilator?.created_at || new Date().toISOString()),
+    details: directoryDetails,
   };
 };
 
@@ -187,7 +186,6 @@ export default function StaffDirectory() {
   const [viewMode, setViewMode] = useState<'card' | 'row'>('card');
 
   const loadRecords = async () => {
-    const localRecords = readStaffDirectoryRecords().map(normalizeDirectoryRecord);
     try {
       const [teachersRes, invigilatorsRes] = await Promise.all([
         apiService.listTeachers(1, 0, 1000),
@@ -201,30 +199,6 @@ export default function StaffDirectory() {
 
       const merged = new Map<string, StaffDirectoryRecord>();
       backendRecords.forEach((record) => merged.set(record.id, normalizeDirectoryRecord(record)));
-      localRecords.forEach((record) => {
-        const key =
-          record.backendId && record.backendType
-            ? buildDirectoryId(record.backendType, record.backendId)
-            : record.id;
-
-        const backendRecord = merged.get(key);
-        if (backendRecord) {
-          merged.set(
-            key,
-            normalizeDirectoryRecord({
-              ...backendRecord,
-              ...record,
-              id: backendRecord.id,
-              backendId: backendRecord.backendId,
-              backendType: backendRecord.backendType,
-              staffType: backendRecord.staffType,
-            })
-          );
-          return;
-        }
-
-        merged.set(key, normalizeDirectoryRecord(record));
-      });
 
       const deduped = new Map<string, StaffDirectoryRecord>();
       Array.from(merged.values())
@@ -238,9 +212,10 @@ export default function StaffDirectory() {
       const nextRecords = Array.from(deduped.values())
         .sort((a, b) => a.fullName.localeCompare(b.fullName));
       setRecords(nextRecords);
-      writeStaffDirectoryRecords(nextRecords);
-    } catch {
-      setRecords(localRecords);
+    } catch (error) {
+      console.error('Failed to load staff directory from Supabase', error);
+      setRecords([]);
+      showMessage('Staff directory Supabase se load nahi ho paayi.', 'error');
     }
   };
 
@@ -355,8 +330,6 @@ export default function StaffDirectory() {
     try {
       setSaving(true);
       const isTypeChanged = editForm.staffType !== editingRecord.staffType;
-      let nextBackendId = editingRecord.backendId;
-      let nextBackendType = isTypeChanged ? editForm.staffType : editingRecord.backendType;
 
       if (editingRecord.backendId && !isTypeChanged) {
         if (editForm.staffType === 'teaching') {
@@ -365,7 +338,21 @@ export default function StaffDirectory() {
             subject: editForm.subject.trim(),
             email: editForm.email.trim() || undefined,
             phone: editForm.phone.trim() || undefined,
+            designation: editForm.designation.trim() || 'Teacher',
+            joining_date: editForm.joiningDate || undefined,
+            shift_timing: editForm.shiftTiming.trim() || undefined,
             is_active: editForm.isActive,
+            photoDataUrl: editForm.photoDataUrl || undefined,
+            metadata: {
+              category: editForm.category.trim() || 'Teaching',
+              designation: editForm.designation.trim() || 'Teacher',
+              joining_date: editForm.joiningDate || undefined,
+              shift_timing: editForm.shiftTiming.trim() || undefined,
+              directory_details: {
+                ...(editingRecord.details || {}),
+                primaryMobile: editForm.phone.trim() || undefined,
+              },
+            },
           });
         } else {
           await apiService.updateInvigilator(editingRecord.backendId, {
@@ -375,25 +362,47 @@ export default function StaffDirectory() {
             phone: editForm.phone.trim() || undefined,
             department: editForm.department.trim() || undefined,
             designation: editForm.designation.trim() || undefined,
+            joining_date: editForm.joiningDate || undefined,
+            shift_timing: editForm.shiftTiming.trim() || undefined,
             is_active: editForm.isActive,
+            photoDataUrl: editForm.photoDataUrl || undefined,
+            metadata: {
+              category: editForm.category.trim() || 'Non-Teaching',
+              joining_date: editForm.joiningDate || undefined,
+              shift_timing: editForm.shiftTiming.trim() || undefined,
+              directory_details: {
+                ...(editingRecord.details || {}),
+                primaryMobile: editForm.phone.trim() || undefined,
+              },
+            },
           });
         }
       } else if (editingRecord.backendId && isTypeChanged) {
         if (editForm.staffType === 'teaching') {
-          const createdTeacher = await apiService.createTeacher({
+          await apiService.createTeacher({
             name: editForm.fullName.trim(),
             subject: editForm.subject.trim(),
             email: editForm.email.trim() || undefined,
             phone: editForm.phone.trim() || undefined,
+            designation: editForm.designation.trim() || 'Teacher',
+            joining_date: editForm.joiningDate || undefined,
+            shift_timing: editForm.shiftTiming.trim() || undefined,
             is_active: editForm.isActive,
+            photoDataUrl: editForm.photoDataUrl || undefined,
+            metadata: {
+              category: editForm.category.trim() || 'Teaching',
+              designation: editForm.designation.trim() || 'Teacher',
+              joining_date: editForm.joiningDate || undefined,
+              shift_timing: editForm.shiftTiming.trim() || undefined,
+              directory_details: {
+                ...(editingRecord.details || {}),
+                primaryMobile: editForm.phone.trim() || undefined,
+              },
+            },
           });
           await apiService.deleteInvigilator(editingRecord.backendId);
-          removeStoredEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, editingRecord.backendId);
-          nextBackendId = createdTeacher.data.id;
-          nextBackendType = 'teaching';
-          storeEntityId(STAFF_ADDED_TEACHER_IDS_KEY, createdTeacher.data.id);
         } else {
-          const createdInvigilator = await apiService.createInvigilator(
+          await apiService.createInvigilator(
             {
               staff_id: editForm.employeeId.trim(),
               name: editForm.fullName.trim(),
@@ -401,57 +410,25 @@ export default function StaffDirectory() {
               phone: editForm.phone.trim() || undefined,
               department: editForm.department.trim() || editForm.category.trim() || undefined,
               designation: editForm.designation.trim() || editForm.category.trim() || undefined,
+              joining_date: editForm.joiningDate || undefined,
+              shift_timing: editForm.shiftTiming.trim() || undefined,
               is_active: editForm.isActive,
+              photoDataUrl: editForm.photoDataUrl || undefined,
+              metadata: {
+                category: editForm.category.trim() || 'Non-Teaching',
+                joining_date: editForm.joiningDate || undefined,
+                shift_timing: editForm.shiftTiming.trim() || undefined,
+                directory_details: {
+                  ...(editingRecord.details || {}),
+                  primaryMobile: editForm.phone.trim() || undefined,
+                },
+              },
             },
             1
           );
           await apiService.deleteTeacher(editingRecord.backendId);
-          removeStoredEntityId(STAFF_ADDED_TEACHER_IDS_KEY, editingRecord.backendId);
-          nextBackendId = createdInvigilator.data.id;
-          nextBackendType = 'non_teaching';
-          storeEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, createdInvigilator.data.id);
         }
       }
-
-      const nameParts = splitNameParts(editForm.fullName);
-      if (isTypeChanged) {
-        removeStaffDirectoryRecord(editingRecord.id);
-      }
-      const nextRecord = {
-        ...editingRecord,
-        id:
-          nextBackendId && nextBackendType
-            ? buildDirectoryId(nextBackendType, nextBackendId)
-            : editingRecord.id,
-        backendId: nextBackendId,
-        backendType: nextBackendType,
-        staffType: editForm.staffType,
-        ...nameParts,
-        fullName: editForm.fullName.trim(),
-        category: editForm.category.trim() || editingRecord.category,
-        employeeId: editForm.staffType === 'non_teaching' ? editForm.employeeId.trim() || undefined : undefined,
-        subject: editForm.staffType === 'teaching' ? editForm.subject.trim() || undefined : undefined,
-        department:
-          editForm.staffType === 'non_teaching'
-            ? editForm.department.trim() || undefined
-            : editForm.subject.trim() || undefined,
-        designation:
-          editForm.staffType === 'non_teaching'
-            ? editForm.designation.trim() || undefined
-            : 'Teacher',
-        phone: editForm.phone.trim() || undefined,
-        email: editForm.email.trim() || undefined,
-        joiningDate: editForm.joiningDate || undefined,
-        shiftTiming: editForm.shiftTiming.trim() || undefined,
-        isActive: editForm.isActive,
-        photoDataUrl: editForm.photoDataUrl || undefined,
-        details: {
-          ...editingRecord.details,
-          primaryMobile: editForm.phone.trim() || undefined,
-        },
-      };
-      upsertStaffDirectoryRecord(nextRecord);
-      setViewingRecord((current) => (current?.id === editingRecord.id ? nextRecord : current));
 
       await loadRecords();
       closeEdit();
@@ -469,13 +446,10 @@ export default function StaffDirectory() {
       if (record.backendId) {
         if (record.backendType === 'teaching') {
           await apiService.deleteTeacher(record.backendId);
-          removeStoredEntityId(STAFF_ADDED_TEACHER_IDS_KEY, record.backendId);
         } else {
           await apiService.deleteInvigilator(record.backendId);
-          removeStoredEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, record.backendId);
         }
       }
-      removeStaffDirectoryRecord(record.id);
       await loadRecords();
       showMessage('Staff record deleted successfully.');
     } catch (error: any) {
@@ -493,17 +467,10 @@ export default function StaffDirectory() {
         if (record.backendId) {
           if (record.backendType === 'teaching') {
             await apiService.deleteTeacher(record.backendId);
-            removeStoredEntityId(STAFF_ADDED_TEACHER_IDS_KEY, record.backendId);
           } else {
             await apiService.deleteInvigilator(record.backendId);
-            removeStoredEntityId(STAFF_ADDED_INVIGILATOR_IDS_KEY, record.backendId);
           }
         }
-        removeStaffDirectoryRecord(record.id);
-      }
-
-      if (filtered.length === records.length) {
-        clearStaffDirectoryRecords();
       }
 
       await loadRecords();
