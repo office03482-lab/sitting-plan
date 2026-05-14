@@ -120,12 +120,12 @@ export default function HostelManagement() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingAllocated, setLoadingAllocated] = useState(false);
-  const [editingHostelId, setEditingHostelId] = useState<number | null>(null);
-  const [deletingHostelId, setDeletingHostelId] = useState<number | null>(null);
-  const [approvingRequestId, setApprovingRequestId] = useState<number | null>(null);
-  const [moveSelections, setMoveSelections] = useState<Record<number, { hostelId: string; roomId: string }>>({});
+  const [editingHostelId, setEditingHostelId] = useState<string | number | null>(null);
+  const [deletingHostelId, setDeletingHostelId] = useState<string | number | null>(null);
+  const [approvingRequestId, setApprovingRequestId] = useState<string | number | null>(null);
+  const [moveSelections, setMoveSelections] = useState<Record<string, { hostelId: string; roomId: string }>>({});
   const [hostelForm, setHostelForm] = useState<HostelFormState>(initialHostelForm);
-  const [roomForms, setRoomForms] = useState<Record<number, string>>({});
+  const [roomForms, setRoomForms] = useState<Record<string, string>>({});
 
   const loadAll = async () => {
     setLoading(true);
@@ -183,7 +183,7 @@ export default function HostelManagement() {
     hostelId: String(request.hostel_id || ''),
     roomId: request.room_id ? String(request.room_id) : '',
   };
-  const updateMoveSelection = (requestId: number, field: 'hostelId' | 'roomId', value: string) => {
+  const updateMoveSelection = (requestId: string | number, field: 'hostelId' | 'roomId', value: string) => {
     setMoveSelections((current) => ({
       ...current,
       [requestId]: {
@@ -193,7 +193,7 @@ export default function HostelManagement() {
       },
     }));
   };
-  const getHostelRooms = (hostelId: number, includeRoomId?: number) =>
+  const getHostelRooms = (hostelId: string | number, includeRoomId?: string | number) =>
     (hostels.find((hostel) => hostel.id === hostelId)?.rooms || []).filter(
       (room) => room.available_beds > 0 || room.id === includeRoomId,
     );
@@ -276,7 +276,7 @@ export default function HostelManagement() {
     }
   };
 
-  const handleAddHostelRoom = async (hostelId: number) => {
+  const handleAddHostelRoom = async (hostelId: string | number) => {
     const roomNumber = (roomForms[hostelId] || '').trim();
     if (!roomNumber) {
       setMessage('Room number required hai.');
@@ -296,7 +296,7 @@ export default function HostelManagement() {
     }
   };
 
-  const handleApproveRequest = async (request: StudentHostelRequest, roomId?: number) => {
+  const handleApproveRequest = async (request: StudentHostelRequest, roomId?: string | number) => {
     const selection = getMoveSelection(request);
     const selectedHostelId = Number(selection.hostelId || request.hostel_id || 0) || request.hostel_id;
     const selectedRoomId = Number(selection.roomId || roomId || 0) || roomId;
@@ -340,7 +340,7 @@ export default function HostelManagement() {
     }
   };
 
-  const handleRejectRequest = async (requestId: number) => {
+  const handleRejectRequest = async (requestId: string | number) => {
     setApprovingRequestId(requestId);
     try {
       await apiService.rejectStudentHostelRequest(requestId, {

@@ -543,7 +543,7 @@ const BatchManagement: React.FC = () => {
     }
   };
 
-  const handleMoveBatch = async (batchId: number, direction: 'up' | 'down') => {
+  const handleMoveBatch = async (batchId: string | number, direction: 'up' | 'down') => {
     const currentIndex = batches.findIndex((batch) => batch.id === batchId);
     if (currentIndex === -1) return;
     const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;

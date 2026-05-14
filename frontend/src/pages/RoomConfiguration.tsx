@@ -48,7 +48,7 @@ const normalizeDoorLocation = (value: string): FormData['door_location'] => {
 export default function RoomConfiguration() {
   const { rooms, setRooms } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     name: '',
@@ -160,7 +160,7 @@ export default function RoomConfiguration() {
     }
   };
 
-  const handleDelete = async (roomId: number) => {
+  const handleDelete = async (roomId: string | number) => {
     if (confirm('Are you sure you want to delete this room?')) {
       try {
         await apiService.deleteRoom(roomId);

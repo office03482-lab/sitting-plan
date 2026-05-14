@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAuthStore } from '@store/auth';
+import { useAuth } from '@/contexts/AuthProvider';
 
 type StatsState = {
   totalStudents: number;
@@ -155,6 +156,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
+  const { signOut } = useAuth();
   const isAdmin = user?.role === 'admin';
 
   const canViewAdminOffice = isAdmin || hasPermission('admin_office');
@@ -431,7 +433,7 @@ export default function Dashboard() {
                 </div>
                 <button
                   onClick={async () => {
-                    await apiService.logout();
+                    await signOut();
                     navigate('/login');
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100"

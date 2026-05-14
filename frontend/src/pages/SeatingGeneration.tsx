@@ -94,8 +94,8 @@ export default function SeatingGeneration() {
   const [loading, setLoading] = useState(false);
   const [selectedExam, setSelectedExam] = useState<number | null>(null);
   const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
-  const [selectedRooms, setSelectedRooms] = useState<number[]>([]);
-  const [roomInvigilatorAssignments, setRoomInvigilatorAssignments] = useState<{[roomId: number]: number | null}>({});
+  const [selectedRooms, setSelectedRooms] = useState<Array<string | number>>([]);
+  const [roomInvigilatorAssignments, setRoomInvigilatorAssignments] = useState<{[roomId: string]: number | null}>({});
   const [planType] = useState<'all_in_one'>('all_in_one');
   const [generatedDate, setGeneratedDate] = useState(toDateTimeLocalValue(new Date()));
   const [batchConflictGroups, setBatchConflictGroups] = useState<string[][]>([]);
@@ -271,7 +271,7 @@ export default function SeatingGeneration() {
       setInvigilators(invigilatorsData);
       setSavedRoomAssignments(roomAssignmentsData);
       setRoomInvigilatorAssignments(() => {
-        const nextAssignments: { [roomId: number]: number | null } = {};
+        const nextAssignments: { [roomId: string]: number | null } = {};
         toArray<RoomInvigilator>(roomAssignmentsData)
           .filter((item: RoomInvigilator) => item.is_active)
           .forEach((item: RoomInvigilator) => {
@@ -323,13 +323,13 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleRoomToggle = (roomId: number) => {
+  const handleRoomToggle = (roomId: string | number) => {
     setSelectedRooms((prev) =>
       prev.includes(roomId) ? prev.filter((id) => id !== roomId) : [...prev, roomId]
     );
   };
 
-  const moveSelectedRoom = (roomId: number, direction: 'up' | 'down') => {
+  const moveSelectedRoom = (roomId: string | number, direction: 'up' | 'down') => {
     setSelectedRooms((prev) => {
       const currentIndex = prev.indexOf(roomId);
       if (currentIndex === -1) return prev;
@@ -373,7 +373,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleInvigilatorAssignment = (roomId: number, invigilatorId: number | null) => {
+  const handleInvigilatorAssignment = (roomId: string | number, invigilatorId: number | null) => {
     setRoomInvigilatorAssignments((prev) => ({
       ...prev,
       [roomId]: invigilatorId,

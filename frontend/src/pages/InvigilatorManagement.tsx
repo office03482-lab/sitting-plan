@@ -99,7 +99,7 @@ export default function InvigilatorManagement() {
           const room = roomsData[index];
           const roomInvigilators = toArray<Invigilator>(result.value.data);
           return roomInvigilators.map((invigilator) => ({
-            id: -(room.id * 1000 + invigilator.id),
+            id: -((index + 1) * 1000 + invigilator.id),
             room_id: room.id,
             invigilator_id: invigilator.id,
             school_id: schoolId,

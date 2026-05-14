@@ -6,6 +6,7 @@ interface AuthStore extends AuthState {
   setToken: (token: string | null) => void;
   setRefreshToken: (refreshToken: string | null) => void;
   login: (token: string, user: User, refreshToken?: string | null) => void;
+  hydrate: (payload: { token: string | null; refreshToken?: string | null; user: User | null }) => void;
   logout: () => void;
   isLoggedIn: () => boolean;
   hasPermission: (permission: string) => boolean;
@@ -117,6 +118,33 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     set({ refresh_token: refreshToken, is_authenticated: !!(get().token || refreshToken) });
   },
 
+  hydrate: ({ token, refreshToken = null, user }) => {
+    if (token) {
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_token');
+    }
+
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken);
+    } else {
+      localStorage.removeItem('refresh_token');
+    }
+
+    if (user) {
+      localStorage.setItem('user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('user');
+    }
+
+    set({
+      token,
+      refresh_token: refreshToken,
+      user,
+      is_authenticated: !!(token || refreshToken),
+    });
+  },
+
   login: (token, user, refreshToken = null) => {
     localStorage.setItem('auth_token', token);
     if (refreshToken) {
@@ -142,7 +170,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   hasPermission: (permission) => {
     const user = get().user;
     if (!user || !user.is_active) return false;
-    if (user.role === 'admin') return true;
+    if (user.role === 'admin' || user.role_key === 'platform_admin' || user.role_key === 'school_admin') return true;
     const permissions = user.permissions || [];
     return (
       permissions.includes(permission) ||

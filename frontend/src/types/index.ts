@@ -5,8 +5,8 @@
  */
 
 // ==================== Common ====================
-export type UserRole = 'admin' | 'store_manager' | 'teacher' | 'viewer';
-export type UserType = 'teaching' | 'non_teaching';
+export type UserRole = 'admin' | 'store_manager' | 'teacher' | 'staff' | 'student' | 'viewer';
+export type UserType = 'teaching' | 'non_teaching' | 'student';
 
 export interface ApiListMeta {
   total?: number;
@@ -17,13 +17,13 @@ export interface ApiListMeta {
 
 // ==================== Batch Management ====================
 export interface Batch {
-  id: number;
+  id: string | number;
   name: string;
   category?: 'batch' | 'class' | string;
   syllabus?: string;
   stream?: string;
   display_order?: number;
-  school_id: number;
+  school_id: string | number;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -42,7 +42,7 @@ export interface OTPLoginCredentials {
 }
 
 export interface User {
-  id: number;
+  id: string;
   email: string;
   full_name: string;
   role: UserRole;
@@ -50,6 +50,10 @@ export interface User {
   username?: string;
   user_type?: UserType;
   permissions?: string[];
+  role_key?: string;
+  school_id?: string;
+  membership_id?: string;
+  default_school_id?: string | null;
 }
 
 export interface RolePowerUser {
@@ -141,8 +145,8 @@ export interface StudentBatchTransferResponse {
 }
 
 export interface HostelRoom {
-  id: number;
-  hostel_id: number;
+  id: string | number;
+  hostel_id: string | number;
   room_number: string;
   total_beds: number;
   occupied_beds: number;
@@ -151,7 +155,7 @@ export interface HostelRoom {
 }
 
 export interface Hostel {
-  id: number;
+  id: string | number;
   name: string;
   hostel_head?: string;
   warden_name?: string;
@@ -166,8 +170,8 @@ export interface Hostel {
 }
 
 export interface StudentHostelRequest {
-  id: number;
-  student_id: number;
+  id: string | number;
+  student_id: string | number;
   student_name: string;
   roll_number: string;
   batch: string;
@@ -176,9 +180,9 @@ export interface StudentHostelRequest {
   reference_name?: string;
   reference_number?: string;
   reference_remark?: string;
-  hostel_id: number;
+  hostel_id: string | number;
   hostel_name: string;
-  room_id?: number;
+  room_id?: string | number;
   room_number?: string;
   requested_notes?: string;
   status: string;
@@ -203,7 +207,7 @@ export interface StudentDashboard {
 
 // ==================== Room ====================
 export interface Room {
-  id: number;
+  id: string | number;
   name: string;
   length_feet: number;
   width_feet: number;
@@ -384,7 +388,7 @@ export interface Invigilator {
 
 export interface RoomInvigilator {
   id: number;
-  room_id: number;
+  room_id: string | number;
   invigilator_id: number;
   school_id: number;
   exam_id?: number;

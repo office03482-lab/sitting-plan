@@ -1,46 +1,32 @@
 import { FormEvent, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
-import { apiService } from '@services/api';
-import { useAuthStore } from '@store/auth';
+import { useAuth } from '@/contexts/AuthProvider';
 
 export default function Login() {
-  const navigate = useNavigate();
-  const login = useAuthStore((state) => state.login);
-  const isLoggedIn = useAuthStore((state) => state.isLoggedIn());
-  const [username, setUsername] = useState('');
+  const { signIn, user, authError, getDefaultRoute } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (isLoggedIn) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={getDefaultRoute(user)} replace />;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const response = await apiService.loginWithPassword({ username, password });
-      const data = response.data;
-      login(
-        data.access_token,
-        {
-          id: data.user_id,
-          username: data.username,
-          email: data.email,
-          full_name: data.full_name,
-          role: data.role,
-          user_type: data.user_type,
-          permissions: data.permissions || [],
-          is_active: true,
-        },
-        data.refresh_token || null,
-      );
-      navigate('/', { replace: true });
+      await signIn(email, password);
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || requestError?.message || 'Login failed');
+      setError(
+        requestError?.response?.data?.detail ||
+          requestError?.message ||
+          requestError?.error_description ||
+          'Login failed',
+      );
     } finally {
       setLoading(false);
     }
@@ -69,14 +55,15 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="flex flex-1 flex-col">
             <div className="mb-4">
               <label className="mb-1.5 block text-[12px] font-extrabold tracking-[0.3px] text-[#1a2d4a]">
-                Username
+                Email
               </label>
               <div className="flex items-center rounded-[10px] border-[1.5px] border-[#d0e8f5] bg-white px-3 transition focus-within:border-sky-600 focus-within:shadow-[0_0_0_3px_rgba(26,144,217,0.1)]">
                 <Mail className="mr-2 h-[18px] w-[18px] flex-shrink-0 text-[#90bdd8]" />
                 <input
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Enter your username"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="Enter your email"
                   className="flex-1 bg-transparent py-[11px] text-[13px] text-slate-700 outline-none placeholder:text-[#b8cfe0]"
                 />
               </div>
@@ -107,6 +94,16 @@ export default function Login() {
             </div>
 
             {error ? <p className="mb-4 text-sm font-semibold text-rose-500">{error}</p> : null}
+            {!error && authError ? <p className="mb-4 text-sm font-semibold text-amber-700">{authError}</p> : null}
+            {error || authError ? (
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                Agar error Failed to fetch ya network related ho, browser me F12, phir Network tab khol kar
+                auth v1 token request dekho. Saath hi ye URL browser me check karo:
+                <div className="mt-1 break-all font-semibold">
+                  {`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}
+                </div>
+              </div>
+            ) : null}
 
             <button
               type="submit"

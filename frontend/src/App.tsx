@@ -5,7 +5,8 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-d
 
 import { ErrorBoundary } from '@components/ErrorBoundary';
 import Layout from '@components/Layout';
-import { useAuthStore } from '@store/auth';
+import { ProtectedRoute } from '@components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthProvider';
 
 import AccessControl from '@pages/AccessControl';
 import AddStaff from '@pages/AddStaff';
@@ -31,9 +32,9 @@ import TeacherManagement from '@pages/TeacherManagement';
 import TimetableManagement from '@pages/TimetableManagement';
 
 function AppShell() {
-  const isLoggedIn = useAuthStore((state) => state.isLoggedIn());
+  const { user } = useAuth();
 
-  if (!isLoggedIn) {
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
 
@@ -41,26 +42,166 @@ function AppShell() {
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/admin-office" element={<AdminOffice />} />
-        <Route path="/rooms" element={<RoomConfiguration />} />
-        <Route path="/seating/generate" element={<SeatingGeneration />} />
-        <Route path="/seating/plans" element={<SeatingPlanManagement />} />
-        <Route path="/attendance-management" element={<AttendanceManagement />} />
-        <Route path="/hostels" element={<HostelManagement />} />
-        <Route path="/teachers" element={<TeacherManagement />} />
-        <Route path="/students" element={<StudentManagement />} />
-        <Route path="/students/directory" element={<StudentDirectory />} />
-        <Route path="/batches" element={<BatchManagement />} />
-        <Route path="/staff/add" element={<AddStaff />} />
-        <Route path="/staff/directory" element={<StaffDirectory />} />
-        <Route path="/staff/bulk-upload" element={<StaffBulkUpload />} />
-        <Route path="/invigilators" element={<InvigilatorManagement />} />
-        <Route path="/timetable" element={<TimetableManagement />} />
-        <Route path="/inventory" element={<InventoryManagement />} />
-        <Route path="/edupay" element={<FeeManagement />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/admin/access-control" element={<AccessControl />} />
+        <Route
+          path="/admin-office"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office']}>
+              <AdminOffice />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rooms"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.rooms']}>
+              <RoomConfiguration />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seating/generate"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.seating_generation']}>
+              <SeatingGeneration />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seating/plans"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.seating_plans']}>
+              <SeatingPlanManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/attendance-management"
+          element={
+            <ProtectedRoute requiredPermissions={['attendance']}>
+              <AttendanceManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/hostels"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.hostels']}>
+              <HostelManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/teachers"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.teachers']}>
+              <TeacherManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/students"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.students']}>
+              <StudentManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/students/directory"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.students']}>
+              <StudentDirectory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/batches"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.batches']}>
+              <BatchManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/staff/add"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office']}>
+              <AddStaff />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/staff/directory"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office']}>
+              <StaffDirectory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/staff/bulk-upload"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office']}>
+              <StaffBulkUpload />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invigilators"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.invigilators']}>
+              <InvigilatorManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/timetable"
+          element={
+            <ProtectedRoute requiredPermissions={['timetable']}>
+              <TimetableManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory"
+          element={
+            <ProtectedRoute requiredPermissions={['inventory']}>
+              <InventoryManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/edupay"
+          element={
+            <ProtectedRoute requiredPermissions={['edupay']}>
+              <FeeManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.reports']}>
+              <Reports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute requiredPermissions={['settings']}>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/access-control"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.access_control']}>
+              <AccessControl />
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
@@ -68,12 +209,26 @@ function AppShell() {
 }
 
 export function App() {
+  const { user, loading, initialized, getDefaultRoute } = useAuth();
+
   return (
     <ErrorBoundary>
       <Router>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/*" element={<AppShell />} />
+          <Route
+            path="/login"
+            element={
+              initialized && !loading && user ? <Navigate to={getDefaultRoute(user)} replace /> : <Login />
+            }
+          />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <AppShell />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </Router>
     </ErrorBoundary>
