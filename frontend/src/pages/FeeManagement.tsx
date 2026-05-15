@@ -349,6 +349,10 @@ function formatCurrency(value: number) {
   return `Rs ${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
+function ensureArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 function formatDate(value?: string) {
   if (!value) return 'N/A';
   return new Date(value).toLocaleDateString();
@@ -397,7 +401,7 @@ export default function FeeManagement() {
   const [studentSearch, setStudentSearch] = useState('');
   const [admissionMode, setAdmissionMode] = useState<AdmissionMode>('request');
   const [selectedAdmissionRequestId, setSelectedAdmissionRequestId] = useState('');
-  const [admissionRequests, setAdmissionRequests] = useState<EduPayAdmissionRequest[]>(() => readEduPayAdmissionRequests());
+  const [admissionRequests, setAdmissionRequests] = useState<EduPayAdmissionRequest[]>(() => ensureArray<EduPayAdmissionRequest>(readEduPayAdmissionRequests()));
   const [studentMetaMap, setStudentMetaMap] = useState<Record<string, EduPayStudentMeta>>(() => readEduPayStudentMeta());
   const [instituteFilter, setInstituteFilter] = useState('all');
   const [boardFilter, setBoardFilter] = useState('all');
@@ -416,8 +420,8 @@ export default function FeeManagement() {
   const [bookingReceivedModeInput, setBookingReceivedModeInput] = useState<EduPayPaymentMode>('upi');
   const [bookingReceivedReferenceInput, setBookingReceivedReferenceInput] = useState('');
   const [bookingReceivedDateInput, setBookingReceivedDateInput] = useState(new Date().toISOString().slice(0, 10));
-  const [paymentLinks, setPaymentLinks] = useState<EduPayPaymentLinkRecord[]>(() => readEduPayPaymentLinks());
-  const [pageTransactions, setPageTransactions] = useState<EduPayPageTransactionRecord[]>(() => readEduPayPageTransactions());
+  const [paymentLinks, setPaymentLinks] = useState<EduPayPaymentLinkRecord[]>(() => ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()));
+  const [pageTransactions, setPageTransactions] = useState<EduPayPageTransactionRecord[]>(() => ensureArray<EduPayPageTransactionRecord>(readEduPayPageTransactions()));
   const [studentPhotoPreviewUrl, setStudentPhotoPreviewUrl] = useState('');
   const studentPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const studentCameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -523,10 +527,10 @@ export default function FeeManagement() {
       ]);
 
       setDashboard(dashboardRes.data);
-      setStudents(studentsRes.data);
-      setFeeStructures(structuresRes.data);
-      setAssignments(assignmentsRes.data);
-      setPayments(paymentsRes.data);
+      setStudents(ensureArray<EduPayStudent>(studentsRes.data));
+      setFeeStructures(ensureArray<EduPayFeeStructure>(structuresRes.data));
+      setAssignments(ensureArray<EduPayAssignment>(assignmentsRes.data));
+      setPayments(ensureArray<EduPayPayment>(paymentsRes.data));
       setParentPortal(parentResult?.data ?? null);
     } catch (error: any) {
       console.error('Failed to load EduPay data', error);
@@ -549,12 +553,12 @@ export default function FeeManagement() {
   }, []);
 
   useEffect(() => {
-    setPaymentLinks(readEduPayPaymentLinks());
-    setPageTransactions(readEduPayPageTransactions());
+    setPaymentLinks(ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()));
+    setPageTransactions(ensureArray<EduPayPageTransactionRecord>(readEduPayPageTransactions()));
   }, [activeTab, paymentWorkspaceView]);
 
   const refreshAdmissionRequestState = () => {
-    setAdmissionRequests(readEduPayAdmissionRequests());
+    setAdmissionRequests(ensureArray<EduPayAdmissionRequest>(readEduPayAdmissionRequests()));
   };
 
   const buildAdmissionSnapshot = (): EduPayAdmissionSnapshot => ({
@@ -885,7 +889,7 @@ export default function FeeManagement() {
   }, [studentSearch, visibleEduPayStudents, studentMetaMap, instituteFilter, boardFilter, gradeFilter, academicYearFilter, admissionFilter]);
 
   const plannerPaymentOptions = useMemo(() => {
-    const profiles = readEduPayStudentProfiles();
+    const profiles = ensureArray(readEduPayStudentProfiles());
 
     return profiles.flatMap((profile) => {
       const financePlan = profile.details.financePlan;
@@ -1109,7 +1113,7 @@ export default function FeeManagement() {
           dueDate: nextPaymentDateInput || undefined,
         };
         upsertEduPayPaymentLink(paymentLinkRecord);
-        setPaymentLinks(readEduPayPaymentLinks());
+        setPaymentLinks(ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()));
       }
 
       if (selectedAdmissionRequestId) {
@@ -1117,7 +1121,7 @@ export default function FeeManagement() {
         refreshAdmissionRequestState();
       }
 
-      setPageTransactions(readEduPayPageTransactions());
+      setPageTransactions(ensureArray<EduPayPageTransactionRecord>(readEduPayPageTransactions()));
       resetAdmissionDraftState();
       setAdmissionMode('request');
       setPaymentWorkspaceView('collector');
@@ -1172,7 +1176,7 @@ export default function FeeManagement() {
           createdAt: new Date().toISOString(),
           notes: selectedPlannerPayment.installmentLabel,
         });
-        setPageTransactions(readEduPayPageTransactions());
+        setPageTransactions(ensureArray<EduPayPageTransactionRecord>(readEduPayPageTransactions()));
         setPaymentForm(initialPaymentForm);
         setAlert({ type: 'success', message: `${selectedPlannerPayment.installmentLabel} payment record save ho gaya.` });
         return;
@@ -1197,14 +1201,14 @@ export default function FeeManagement() {
         createdAt: response.data.payment_date,
         notes: response.data.receipt_number,
       });
-      const matchingLink = readEduPayPaymentLinks().find(
+      const matchingLink = ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()).find(
         (link) => link.studentName === response.data.student_name && link.status !== 'paid',
       );
       if (matchingLink) {
         upsertEduPayPaymentLink({ ...matchingLink, status: 'paid' });
       }
-      setPaymentLinks(readEduPayPaymentLinks());
-      setPageTransactions(readEduPayPageTransactions());
+      setPaymentLinks(ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()));
+      setPageTransactions(ensureArray<EduPayPageTransactionRecord>(readEduPayPageTransactions()));
       setPaymentForm(initialPaymentForm);
       setAlert({ type: 'success', message: 'Payment record save ho gaya aur receipt generate ho gayi.' });
       await loadEduPayData();
