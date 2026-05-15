@@ -1101,7 +1101,7 @@ class ApiService {
 
       const token = this.getAccessToken();
       const currentUser = useAuthStore.getState().user;
-      config.headers = config.headers || {};
+      config.headers = (config.headers || {}) as any;
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
