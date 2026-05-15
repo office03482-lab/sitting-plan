@@ -8,6 +8,7 @@
     "ignoreDeprecations": "5.0",
     "paths": {
       "@/*": ["src/*"],
+      "@lib/*": ["src/lib/*"],
       "@components/*": ["src/components/*"],
       "@pages/*": ["src/pages/*"],
       "@services/*": ["src/services/*"],
