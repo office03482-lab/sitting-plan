@@ -1,11 +1,11 @@
 """
 EduPay fee management routes
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,7 +21,6 @@ from app.models import (
     PaymentMethod,
     PaymentVerificationStatus,
     School,
-    User,
     UserRole,
 )
 from app.schemas import (
@@ -42,6 +41,7 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/edupay", tags=["EduPay"])
+logger = logging.getLogger(__name__)
 
 WRITE_ROLES = {
     UserRole.ADMIN.value,
@@ -51,36 +51,36 @@ WRITE_ROLES = {
 }
 
 
-def ensure_school_context(db: Session, school_id: int = 1) -> School:
+def get_school_id_from_context(
+    school_id: str = Query(None),
+    actor: dict = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db),
+) -> str:
+    user_id = actor.get("user_id") or actor.get("id")
+    resolved_id = str(school_id) if school_id and str(school_id) != "1" else None
+    if not resolved_id:
+        try:
+            from app.models import Profile, SchoolMembership
+
+            profile = db.query(Profile).filter(Profile.user_id == user_id).first()
+            if profile:
+                membership = db.query(SchoolMembership).filter(SchoolMembership.profile_id == profile.id).first()
+                if membership:
+                    resolved_id = str(membership.school_id)
+        except Exception:
+            pass
+        resolved_id = resolved_id or actor.get("school_id")
+
+    if not resolved_id or resolved_id == "1":
+        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+    return str(resolved_id)
+
+
+def ensure_school_context(db: Session, school_id: str) -> School:
     school = db.query(School).filter(School.id == school_id).first()
     if school:
         return school
-
-    admin = db.query(User).filter(User.id == 1).first()
-    if not admin:
-        admin = User(
-            id=1,
-            email="admin@school.edu",
-            full_name="System Administrator",
-            password_hash="dummy_hash",
-            role=UserRole.ADMIN,
-            is_active=True,
-            is_verified=True,
-        )
-        db.add(admin)
-        db.commit()
-        db.refresh(admin)
-
-    school = School(
-        id=school_id,
-        name="Default School",
-        admin_id=admin.id,
-        is_active=True,
-    )
-    db.add(school)
-    db.commit()
-    db.refresh(school)
-    return school
+    raise HTTPException(status_code=404, detail="School not found")
 
 
 def require_write_access(actor: Dict[str, str] = Depends(get_authenticated_actor_context)) -> Dict[str, str]:
@@ -108,7 +108,7 @@ def installment_gap_days(plan: FeeInstallmentPlan) -> int:
     return 30
 
 
-def next_receipt_number(db: Session, school_id: int) -> str:
+def next_receipt_number(db: Session, school_id: str) -> str:
     last_payment = (
         db.query(EduPayPayment)
         .filter(EduPayPayment.school_id == school_id)
@@ -116,7 +116,8 @@ def next_receipt_number(db: Session, school_id: int) -> str:
         .first()
     )
     next_id = (last_payment.id + 1) if last_payment else 1
-    return f"EDU-{school_id:02d}-{next_id:05d}"
+    school_token = str(school_id).replace("-", "").upper()[:8]
+    return f"EDU-{school_token}-{next_id:05d}"
 
 
 def refresh_assignment_status(assignment: EduPayFeeAssignment, now: Optional[datetime] = None) -> None:
@@ -234,7 +235,7 @@ def serialize_fee_structure(fee_structure: EduPayFeeStructure) -> EduPayFeeStruc
 
 def assign_fee_structure_to_students(
     db: Session,
-    school_id: int,
+    school_id: str,
     fee_structure: EduPayFeeStructure,
     target_students: List[EduPayStudent],
     start_date: Optional[datetime] = None,
@@ -277,139 +278,13 @@ def assign_fee_structure_to_students(
             refresh_assignment_status(assignment, now=datetime.now())
             db.add(assignment)
 
-
-def seed_edupay_data(db: Session, school_id: int = 1) -> None:
-    ensure_school_context(db, school_id)
-    if db.query(EduPayStudent).filter(EduPayStudent.school_id == school_id).first():
-        return
-
-    parent_payloads = [
-        {"full_name": "Neha Mehta", "mobile_number": "9876543210", "email": "neha.mehta@example.com", "relation": "mother"},
-        {"full_name": "Rohit Sharma", "mobile_number": "9876543211", "email": "rohit.sharma@example.com", "relation": "father"},
-        {"full_name": "Vandana Jain", "mobile_number": "9876543212", "email": "vandana.jain@example.com", "relation": "mother"},
-    ]
-    parents: List[EduPayParent] = []
-    for payload in parent_payloads:
-        parent = EduPayParent(school_id=school_id, is_active=True, **payload)
-        db.add(parent)
-        parents.append(parent)
-    db.flush()
-
-    student_payloads = [
-        {"admission_no": "EDU001", "full_name": "Aarav Mehta", "class_name": "Class 9 - A", "batch_name": "Batch Alpha", "parent_id": parents[0].id, "email": "aarav@example.com", "phone": "9000000001"},
-        {"admission_no": "EDU002", "full_name": "Aahana Mehta", "class_name": "Class 4 - B", "batch_name": "Batch Junior", "parent_id": parents[0].id, "email": "aahana@example.com", "phone": "9000000002"},
-        {"admission_no": "EDU003", "full_name": "Siya Sharma", "class_name": "Class 7 - B", "batch_name": "Batch Rise", "parent_id": parents[1].id, "email": "siya@example.com", "phone": "9000000003"},
-        {"admission_no": "EDU004", "full_name": "Kabir Jain", "class_name": "Class 11 Commerce", "batch_name": "Batch Commerce", "parent_id": parents[2].id, "email": "kabir@example.com", "phone": "9000000004"},
-        {"admission_no": "EDU005", "full_name": "Anaya Verma", "class_name": "Class 5 - C", "batch_name": "Batch Junior", "parent_id": parents[2].id, "email": "anaya@example.com", "phone": "9000000005"},
-    ]
-    students: List[EduPayStudent] = []
-    for payload in student_payloads:
-        student = EduPayStudent(school_id=school_id, is_active=True, **payload)
-        db.add(student)
-        students.append(student)
-    db.flush()
-
-    structure_payloads = [
-        {
-            "name": "Core Tuition Plan",
-            "fee_type": "tuition",
-            "class_name": None,
-            "installment_plan": FeeInstallmentPlan.QUARTERLY,
-            "total_amount": 48000,
-            "discount_amount": 2000,
-            "late_fee_rule": "Rs 75 per day",
-            "description": "Main tuition, labs, and activity coverage",
-        },
-        {
-            "name": "Transport Plan",
-            "fee_type": "transport",
-            "class_name": "Class 9 - A",
-            "installment_plan": FeeInstallmentPlan.MONTHLY,
-            "total_amount": 12000,
-            "discount_amount": 0,
-            "late_fee_rule": "2% flat after due date",
-            "description": "Route transport coverage",
-        },
-        {
-            "name": "Senior Commerce Bundle",
-            "fee_type": "exam",
-            "class_name": "Class 11 Commerce",
-            "installment_plan": FeeInstallmentPlan.YEARLY,
-            "total_amount": 22500,
-            "discount_amount": 1500,
-            "late_fee_rule": "Rs 150 per day",
-            "description": "Senior commerce tuition and exam package",
-        },
-    ]
-    fee_structures: List[EduPayFeeStructure] = []
-    for payload in structure_payloads:
-        structure = EduPayFeeStructure(school_id=school_id, is_active=True, **payload)
-        db.add(structure)
-        fee_structures.append(structure)
-    db.flush()
-
-    now = datetime.now()
-    for structure in fee_structures:
-        matched_students = [
-            student
-            for student in students
-            if structure.class_name is None or student.class_name == structure.class_name
-        ]
-        assign_fee_structure_to_students(db, school_id, structure, matched_students, start_date=now - timedelta(days=45))
-    db.flush()
-
-    assignments = (
-        db.query(EduPayFeeAssignment)
-        .filter(EduPayFeeAssignment.school_id == school_id)
-        .order_by(EduPayFeeAssignment.id.asc())
-        .all()
-    )
-    if assignments:
-        first = assignments[0]
-        first.amount_paid = first.amount_due
-        refresh_assignment_status(first, now=now)
-        db.add(
-            EduPayPayment(
-                assignment_id=first.id,
-                student_id=first.student_id,
-                amount=first.amount_due,
-                method=PaymentMethod.UPI,
-                payment_date=now - timedelta(days=20),
-                transaction_reference="UPI-DEMO-001",
-                receipt_number=next_receipt_number(db, school_id),
-                verification_status=PaymentVerificationStatus.VERIFIED,
-                school_id=school_id,
-            )
-        )
-
-    if len(assignments) > 1:
-        second = assignments[1]
-        partial_amount = round(second.amount_due / 2, 2)
-        second.amount_paid = partial_amount
-        refresh_assignment_status(second, now=now)
-        db.add(
-            EduPayPayment(
-                assignment_id=second.id,
-                student_id=second.student_id,
-                amount=partial_amount,
-                method=PaymentMethod.CARD,
-                payment_date=now - timedelta(days=8),
-                transaction_reference="CARD-DEMO-002",
-                receipt_number=next_receipt_number(db, school_id),
-                verification_status=PaymentVerificationStatus.PENDING,
-                school_id=school_id,
-            )
-        )
-
-    db.commit()
-
-
 @router.get("/dashboard", response_model=EduPayDashboardResponse)
 def get_dashboard(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     now = datetime.now()
     assignments = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id).all()
     payments = (
@@ -484,6 +359,14 @@ def get_dashboard(
         )
 
     db.commit()
+    logger.info(
+        "EduPay dashboard loaded - User ID: %s, School ID: %s, Row count: assignments=%s,payments=%s,students=%s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(assignments),
+        len(payments),
+        students_count,
+    )
     return EduPayDashboardResponse(
         total_collected=round(total_collected, 2),
         pending_amount=round(pending_amount, 2),
@@ -501,10 +384,11 @@ def get_dashboard(
 
 @router.get("/students", response_model=List[EduPayStudentResponse])
 def list_students(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     students = (
         db.query(EduPayStudent)
         .filter(EduPayStudent.school_id == school_id)
@@ -513,17 +397,23 @@ def list_students(
     )
     payload = [serialize_student(student) for student in students]
     db.commit()
+    logger.info(
+        "EduPay students listed - User ID: %s, School ID: %s, Row count: %s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(payload),
+    )
     return payload
 
 
 @router.post("/students", response_model=EduPayStudentResponse)
 def create_student(
     payload: EduPayStudentCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     existing = (
         db.query(EduPayStudent)
         .filter(
@@ -584,32 +474,45 @@ def create_student(
 
     db.commit()
     db.refresh(student)
+    logger.info(
+        "EduPay student created - User ID: %s, School ID: %s, Row count: 1",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+    )
     return serialize_student(student)
 
 
 @router.get("/fee-structures", response_model=List[EduPayFeeStructureResponse])
 def list_fee_structures(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     structures = (
         db.query(EduPayFeeStructure)
         .filter(EduPayFeeStructure.school_id == school_id)
         .order_by(EduPayFeeStructure.created_at.desc(), EduPayFeeStructure.id.desc())
         .all()
     )
-    return [serialize_fee_structure(item) for item in structures]
+    payload = [serialize_fee_structure(item) for item in structures]
+    logger.info(
+        "EduPay fee structures listed - User ID: %s, School ID: %s, Row count: %s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(payload),
+    )
+    return payload
 
 
 @router.post("/fee-structures", response_model=EduPayFeeStructureResponse)
 def create_fee_structure(
     payload: EduPayFeeStructureCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     structure = EduPayFeeStructure(
         name=payload.name.strip(),
         fee_type=payload.fee_type.strip(),
@@ -633,17 +536,23 @@ def create_fee_structure(
 
     db.commit()
     db.refresh(structure)
+    logger.info(
+        "EduPay fee structure created - User ID: %s, School ID: %s, Row count: 1",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+    )
     return serialize_fee_structure(structure)
 
 
 @router.get("/assignments", response_model=List[EduPayFeeAssignmentResponse])
 def list_assignments(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     status_filter: Optional[FeeAssignmentStatus] = Query(default=None, alias="status"),
     student_id: Optional[int] = Query(default=None),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     query = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id)
     if student_id:
         query = query.filter(EduPayFeeAssignment.student_id == student_id)
@@ -656,32 +565,46 @@ def list_assignments(
             continue
         payload.append(serialize_assignment(assignment))
     db.commit()
+    logger.info(
+        "EduPay assignments listed - User ID: %s, School ID: %s, Row count: %s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(payload),
+    )
     return payload
 
 
 @router.get("/payments", response_model=List[EduPayPaymentResponse])
 def list_payments(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     payments = (
         db.query(EduPayPayment)
         .filter(EduPayPayment.school_id == school_id)
         .order_by(EduPayPayment.payment_date.desc(), EduPayPayment.id.desc())
         .all()
     )
-    return [serialize_payment(payment) for payment in payments]
+    payload = [serialize_payment(payment) for payment in payments]
+    logger.info(
+        "EduPay payments listed - User ID: %s, School ID: %s, Row count: %s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(payload),
+    )
+    return payload
 
 
 @router.post("/payments", response_model=EduPayPaymentResponse)
 def create_payment(
     payload: EduPayPaymentCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     assignment = (
         db.query(EduPayFeeAssignment)
         .filter(
@@ -713,16 +636,22 @@ def create_payment(
     db.add(payment)
     db.commit()
     db.refresh(payment)
+    logger.info(
+        "EduPay payment created - User ID: %s, School ID: %s, Row count: 1",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+    )
     return serialize_payment(payment)
 
 
 @router.get("/parent-portal", response_model=EduPayParentPortalResponse)
 def get_parent_portal(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     parent_id: Optional[int] = Query(default=None),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    seed_edupay_data(db, school_id)
+    ensure_school_context(db, school_id)
     query = db.query(EduPayParent).filter(EduPayParent.school_id == school_id, EduPayParent.is_active == True)
     parent = query.filter(EduPayParent.id == parent_id).first() if parent_id else query.order_by(EduPayParent.id.asc()).first()
     if not parent:
@@ -764,6 +693,13 @@ def get_parent_portal(
         else []
     )
     db.commit()
+    logger.info(
+        "EduPay parent portal loaded - User ID: %s, School ID: %s, Row count: children=%s,payments=%s",
+        actor.get("user_id") or actor.get("id"),
+        school_id,
+        len(children_payload),
+        len(payments[:8]),
+    )
     return EduPayParentPortalResponse(
         parent=serialize_parent(parent),
         children=children_payload,

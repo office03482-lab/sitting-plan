@@ -508,13 +508,18 @@ export default function FeeManagement() {
   const loadEduPayData = async (initial = false) => {
     try {
       initial ? setLoading(true) : setRefreshing(true);
-      const [dashboardRes, studentsRes, structuresRes, assignmentsRes, paymentsRes, parentRes] = await Promise.all([
+      const [dashboardRes, studentsRes, structuresRes, assignmentsRes, paymentsRes, parentResult] = await Promise.all([
         apiService.getEduPayDashboard(),
         apiService.listEduPayStudents(),
         apiService.listEduPayFeeStructures(),
-        apiService.listEduPayAssignments({ school_id: 1 }),
+        apiService.listEduPayAssignments(),
         apiService.listEduPayPayments(),
-        apiService.getEduPayParentPortal(),
+        apiService
+          .getEduPayParentPortal()
+          .catch((error) => {
+            console.warn('EduPay parent portal unavailable', error);
+            return null;
+          }),
       ]);
 
       setDashboard(dashboardRes.data);
@@ -522,7 +527,7 @@ export default function FeeManagement() {
       setFeeStructures(structuresRes.data);
       setAssignments(assignmentsRes.data);
       setPayments(paymentsRes.data);
-      setParentPortal(parentRes.data);
+      setParentPortal(parentResult?.data ?? null);
     } catch (error: any) {
       console.error('Failed to load EduPay data', error);
       setAlert({

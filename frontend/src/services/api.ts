@@ -3781,14 +3781,26 @@ class ApiService {
   // ==================== EduPay ====================
 
   async getEduPayDashboard(schoolId: number = 1) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load EduPay dashboard');
+    }
     return this.api.get<EduPayDashboard>('/edupay/dashboard', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async listEduPayStudents(schoolId: number = 1) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load EduPay students');
+    }
     return this.api.get<EduPayStudent[]>('/edupay/students', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -3805,16 +3817,28 @@ class ApiService {
       parent_email?: string;
       parent_relation?: string;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create an EduPay student');
+    }
     return this.api.post<EduPayStudent>('/edupay/students', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async listEduPayFeeStructures(schoolId: number = 1) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load EduPay fee structures');
+    }
     return this.api.get<EduPayFeeStructure[]>('/edupay/fee-structures', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -3830,24 +3854,48 @@ class ApiService {
       description?: string;
       is_active?: boolean;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create an EduPay fee structure');
+    }
     return this.api.post<EduPayFeeStructure>('/edupay/fee-structures', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async listEduPayAssignments(params?: {
-    school_id?: number;
+    school_id?: number | string;
     status?: 'paid' | 'pending' | 'overdue';
     student_id?: number;
   }) {
-    return this.api.get<EduPayAssignment[]>('/edupay/assignments', { params });
+    const scopedSchoolId =
+      params?.school_id && String(params.school_id) !== '1'
+        ? String(params.school_id)
+        : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load EduPay assignments');
+    }
+    return this.api.get<EduPayAssignment[]>('/edupay/assignments', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
   async listEduPayPayments(schoolId: number = 1) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load EduPay payments');
+    }
     return this.api.get<EduPayPayment[]>('/edupay/payments', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -3859,16 +3907,28 @@ class ApiService {
       payment_date?: string;
       transaction_reference?: string;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create an EduPay payment');
+    }
     return this.api.post<EduPayPayment>('/edupay/payments', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async getEduPayParentPortal(schoolId: number = 1, parentId?: number) {
+  async getEduPayParentPortal(schoolId: number | string = 1, parentId?: number) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load the EduPay parent portal');
+    }
     return this.api.get<EduPayParentPortal>('/edupay/parent-portal', {
-      params: { school_id: schoolId, parent_id: parentId },
+      params: { school_id: scopedSchoolId, parent_id: parentId },
     });
   }
 
