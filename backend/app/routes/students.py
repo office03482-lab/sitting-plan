@@ -4,7 +4,7 @@ Student management routes
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from typing import Any, List
@@ -29,8 +29,6 @@ from app.schemas import (
 )
 from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
-import tempfile
-import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -374,15 +372,9 @@ async def download_student_template():
     """
     try:
         excel_file = create_student_excel_template()
-        
-        # Write to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            tmp.write(excel_file.getvalue())
-            tmp_path = tmp.name
 
-        return FileResponse(
-            path=tmp_path,
-            filename="student_data_template.xlsx",
+        return StreamingResponse(
+            excel_file,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=student_data_template.xlsx"}
         )

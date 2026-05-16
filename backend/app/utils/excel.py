@@ -256,25 +256,29 @@ def create_student_excel_template() -> BytesIO:
     """
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
-    worksheet.title = "Student Data Template"
+    worksheet.title = "Student Upload"
+    instructions_sheet = workbook.create_sheet("Instructions")
 
-    # Header styling
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF")
-    required_font = Font(color="FF0000")
 
-    # Instructions
-    worksheet['A1'] = "ASPIRE IIT & MEDICAL - Student Data Upload Template"
-    worksheet['A1'].font = Font(bold=True, size=14)
+    headers = [
+        'SR. NO',
+        'ADMISSION ID',
+        'COURSE',
+        'PROGRAM',
+        'ACADEMIC SESSION',
+        'BATCH',
+        'ROLL NO',
+        'FIRST NAME',
+        'LAST NAME (OPTIONAL)',
+        'FATHER NAME',
+        'EMAIL',
+        'PHONE',
+        'SPECIAL NEEDS',
+        'ROOM NO',
+    ]
 
-    worksheet['A2'] = "IMPORTANT: Fill data starting from row 2. Do not modify column headers in row 1."
-    worksheet['A2'].font = Font(bold=True, color="FF6600")
-
-    worksheet['A3'] = "Required fields are marked with *"
-    worksheet['A3'].font = Font(italic=True)
-
-    # Column headers (row 1)
-    headers = ['SR. NO', 'ADMISSION ID', 'COURSE', 'PROGRAM', 'ACADEMIC SESSION', 'BATCH', 'ROLL NO', 'FIRST NAME', 'LAST NAME (OPTIONAL)', 'FATHER NAME', 'EMAIL', 'PHONE', 'SPECIAL NEEDS', 'ROOM NO']
     for col_idx, header in enumerate(headers, 1):
         cell = worksheet.cell(row=1, column=col_idx)
         cell.value = header
@@ -282,80 +286,52 @@ def create_student_excel_template() -> BytesIO:
         cell.font = header_font
         cell.alignment = Alignment(horizontal='center')
 
-    # Sample data (row 2)
-    sample_data = [
-        1,
-        'ADM-101',
-        'NEET',
-        'Medical',
-        'Apr 2026 - Mar 2027',
-        'Dropper Medical Alpha',
-        '101',
-        'Rahul',
-        'Sharma',
-        'Rakesh Sharma',
-        'rahul@example.com',
-        '9876543210',
-        '',
-        'Room 1'
-    ]
-    for col_idx, value in enumerate(sample_data, 1):
-        cell = worksheet.cell(row=2, column=col_idx)
-        cell.value = value
-        cell.alignment = Alignment(horizontal='center')
+    worksheet.freeze_panes = "A2"
 
-    # Additional sample rows
     sample_rows = [
+        [1, 'ADM-101', 'NEET', 'Medical', 'Apr 2026 - Mar 2027', 'Dropper Medical Alpha', '101', 'Rahul', 'Sharma', 'Rakesh Sharma', 'rahul@example.com', '9876543210', '', 'Room 1'],
         [2, 'ADM-102', 'JEE-MAIN', 'Non Medical', 'Apr 2026 - Mar 2027', 'Dropper Non Medical Prime', '102', 'Priya', 'Patel', 'Rajesh Patel', 'priya@example.com', '9988776655', '', 'Room 1'],
         [3, 'ADM-103', 'ADVANCE', 'Non Medical', 'Apr 2026 - Mar 2027', '11th Non Medical Advance', '103', 'Amit', 'Kumar', 'Suresh Kumar', 'amit@example.com', '9123456780', 'Near exit seat', 'Room 2'],
         [4, 'ADM-104', 'S.S.B', 'Medical', 'Apr 2026 - Mar 2027', '12th Medical SSB', '104', 'Sneha', 'Singh', 'Vikram Singh', 'sneha@example.com', '9012345678', '', 'Room 2'],
     ]
 
-    for row_idx, row_data in enumerate(sample_rows, 6):
+    for row_idx, row_data in enumerate(sample_rows, 2):
         for col_idx, value in enumerate(row_data, 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
             cell.value = value
             cell.alignment = Alignment(horizontal='center')
 
-    # Instructions box (starting row 8)
-    instructions_start_row = 8
-    worksheet.cell(row=instructions_start_row, column=1).value = "INSTRUCTIONS:"
-    worksheet.cell(row=instructions_start_row, column=1).font = Font(bold=True)
-
+    instructions_sheet['A1'] = "Student Bulk Upload Instructions"
+    instructions_sheet['A1'].font = Font(bold=True, size=14)
     instructions = [
-        "1. SR. NO: Sequential number (1, 2, 3, ...)",
-        "2. ACADEMIC SESSION*: Session like Apr 2026 - Mar 2027 (required)",
-        "3. ROLL NO*: Unique student roll number (required)",
-        "4. CANDIDATE NAME*: Full name of the student (required)",
-        "5. FATHER NAME: Father's name (optional)",
-        "6. BATCH*: Any batch name is allowed and will be created automatically during import",
-        "7. ROOM NO: Room assignment (optional, can be left blank)",
+        "Use only the 'Student Upload' sheet for data entry.",
+        "Do not change the column headers in row 1.",
+        "Data entry starts from row 2.",
+        "Required fields: ROLL NO, BATCH, and student name.",
+        "You can provide name using FIRST NAME, or FIRST NAME + LAST NAME.",
+        "ACADEMIC SESSION blank hoga to default session auto-fill ho jayega.",
+        "BATCH new ho to import ke time auto-create ho jayega.",
+        "File ko .xlsx format me hi upload karo.",
+        "ROLL NO aur ADMISSION ID duplicates skip ho sakte hain.",
         "",
-        "NOTES:",
-        "• ACADEMIC SESSION must be filled for every student",
-        "• ROLL NO must be unique across the entire file",
-        "• Headers are in row 1, data starts from row 2",
-        "• Save file as .xlsx format only",
-        "• ROOM NO is optional and can be assigned later",
-        "• New batch names from Excel will be auto-added to the system",
+        "Recommended header order:",
+        ", ".join(headers),
     ]
+    for row_idx, instruction in enumerate(instructions, 3):
+        instructions_sheet.cell(row=row_idx, column=1).value = instruction
 
-    for idx, instruction in enumerate(instructions):
-        worksheet.cell(row=instructions_start_row + 1 + idx, column=1).value = instruction
+    instructions_sheet.column_dimensions['A'].width = 120
 
-    # Auto-fit columns
     for col in worksheet.columns:
         max_length = 0
         column = col[0].column_letter
         for cell in col:
             try:
                 max_length = max(max_length, len(str(cell.value)))
-            except:
+            except Exception:
                 pass
-        adjusted_width = min(max_length + 2, 50)
-        worksheet.column_dimensions[column].width = adjusted_width
+        worksheet.column_dimensions[column].width = min(max_length + 2, 40)
 
-    # Save to BytesIO
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -1138,3 +1114,4 @@ def _build_room_summary_sheet(worksheet, room_plans: List[Dict], title_override:
     }
     for column, width in widths.items():
         worksheet.column_dimensions[column].width = width
+
