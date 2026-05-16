@@ -419,7 +419,7 @@ async def import_students(
     existing_students = fetch_all(
         supabase,
         "students",
-        select="id,roll_number",
+        select="id,roll_number,admission_no",
         filters={"school_id": school_id},
     )
 
@@ -428,6 +428,11 @@ async def import_students(
         str(student["roll_number"]).strip().lower()
         for student in existing_students
         if student.get("roll_number")
+    }
+    existing_admission_numbers = {
+        str(student["admission_no"]).strip().lower()
+        for student in existing_students
+        if student.get("admission_no")
     }
 
     pending_batch_names: list[str] = []
@@ -476,6 +481,7 @@ async def import_students(
         batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches}
 
     pending_students: list[dict] = []
+    pending_admission_numbers: set[str] = set()
 
     for student_data in valid_students:
         roll_number = str(student_data["roll_no"]).strip()
@@ -488,6 +494,19 @@ async def import_students(
             })
             continue
 
+        admission_no = str(student_data.get("admission_id") or "").strip()
+        normalized_admission_no = admission_no.lower()
+        if admission_no and (
+            normalized_admission_no in existing_admission_numbers
+            or normalized_admission_no in pending_admission_numbers
+        ):
+            skipped_count += 1
+            errors.append({
+                "roll_no": roll_number,
+                "error": "Admission ID already exists"
+            })
+            continue
+
         batch_name = str(student_data.get("batch") or "").strip()
         matched_batch = batch_by_name.get(batch_name.lower())
         class_name, section = split_batch_to_class_section(batch_name)
@@ -496,7 +515,7 @@ async def import_students(
             {
                 "school_id": school_id,
                 "batch_id": matched_batch["id"] if matched_batch else None,
-                "admission_no": (student_data.get("admission_id") or "").strip() or None,
+                "admission_no": admission_no or None,
                 "roll_number": roll_number,
                 "full_name": str(student_data["candidate_name"]).strip(),
                 "father_name": (student_data.get("father_name") or "").strip() or None,
@@ -519,6 +538,9 @@ async def import_students(
             }
         )
         existing_roll_numbers.add(normalized_roll_number)
+        if normalized_admission_no:
+            pending_admission_numbers.add(normalized_admission_no)
+            existing_admission_numbers.add(normalized_admission_no)
 
     if pending_students:
         try:

@@ -27,6 +27,13 @@ import { apiService } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
 
+type EduPaySummaryState = {
+  totalCollected: number;
+  pendingAmount: number;
+  todayCollection: number;
+  overdueAmount: number;
+};
+
 type StatsState = {
   totalStudents: number;
   totalTeachers: number;
@@ -35,6 +42,19 @@ type StatsState = {
   roomUtilization: number;
   inventoryStock: number;
   recentActivity: string[];
+};
+
+type AttendanceTodayState = {
+  studentPresent: number;
+  studentLate: number;
+  studentAbsent: number;
+  studentMarked: number;
+  staffPresent: number;
+  staffLate: number;
+  staffHalfDay: number;
+  staffAbsent: number;
+  notifications: any[];
+  holidays: any[];
 };
 
 type Tone = 'sky' | 'teal' | 'violet' | 'rose' | 'amber' | 'slate';
@@ -186,6 +206,51 @@ export default function Dashboard() {
     recentActivity: [],
   });
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [eduPaySummary, setEduPaySummary] = useState<EduPaySummaryState>({
+    totalCollected: 0,
+    pendingAmount: 0,
+    todayCollection: 0,
+    overdueAmount: 0,
+  });
+  const [attendanceToday, setAttendanceToday] = useState<AttendanceTodayState>({
+    studentPresent: 0,
+    studentLate: 0,
+    studentAbsent: 0,
+    studentMarked: 0,
+    staffPresent: 0,
+    staffLate: 0,
+    staffHalfDay: 0,
+    staffAbsent: 0,
+    notifications: [],
+    holidays: [],
+  });
+  const [inventorySnapshot, setInventorySnapshot] = useState<any>(null);
+  const [eduPayDashboardData, setEduPayDashboardData] = useState<any>(null);
+
+  const loadTodayStudentAttendance = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const allRecords: any[] = [];
+    let skip = 0;
+    const limit = 500;
+
+    while (true) {
+      const response = await apiService.listStudentAttendanceRecords({
+        school_id: 1,
+        date_from: today,
+        date_to: today,
+        skip,
+        limit,
+      });
+      const records = Array.isArray(response.data) ? response.data : [];
+      allRecords.push(...records);
+      if (records.length < limit) {
+        break;
+      }
+      skip += limit;
+    }
+
+    return allRecords;
+  };
 
   useEffect(() => {
     loadStatistics();
@@ -203,17 +268,54 @@ export default function Dashboard() {
         inventoryStock: 0,
         recentActivity: [],
       });
+      setEduPaySummary({
+        totalCollected: 0,
+        pendingAmount: 0,
+        todayCollection: 0,
+        overdueAmount: 0,
+      });
+      setAttendanceToday({
+        studentPresent: 0,
+        studentLate: 0,
+        studentAbsent: 0,
+        studentMarked: 0,
+        staffPresent: 0,
+        staffLate: 0,
+        staffHalfDay: 0,
+        staffAbsent: 0,
+        notifications: [],
+        holidays: [],
+      });
+      setInventorySnapshot(null);
+      setEduPayDashboardData(null);
       return;
     }
 
     try {
       setLoadError(null);
-      const [studentsRes, teachersRes, roomsRes, timetableRes, inventoryRes] = await Promise.allSettled([
+      const today = new Date().toISOString().slice(0, 10);
+      const [
+        studentsRes,
+        teachersRes,
+        roomsRes,
+        timetableRes,
+        inventoryRes,
+        eduPayDashboardRes,
+        eduPayPaymentsRes,
+        attendanceOverviewRes,
+        staffAttendanceRes,
+        studentAttendanceRes,
+      ] = await Promise.allSettled([
         apiService.listStudents(1, 0, 10000),
         apiService.listTeachers(),
         apiService.listRooms(),
         apiService.listTimetableEntries(),
         canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
+        canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
+        canViewEduPay ? apiService.listEduPayPayments() : Promise.resolve({ data: [] }),
+        apiService.getIntegratedAttendanceOverview(1),
+        apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
+        loadTodayStudentAttendance(),
       ]);
 
       const students = studentsRes.status === 'fulfilled' ? studentsRes.value.data : [];
@@ -221,6 +323,42 @@ export default function Dashboard() {
       const rooms = roomsRes.status === 'fulfilled' ? roomsRes.value.data : [];
       const timetableEntries = timetableRes.status === 'fulfilled' ? timetableRes.value.data : [];
       const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
+      const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
+      const eduPayPayments = eduPayPaymentsRes.status === 'fulfilled' && Array.isArray(eduPayPaymentsRes.value.data)
+        ? eduPayPaymentsRes.value.data
+        : [];
+      const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
+      const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
+      const studentAttendanceRecords = studentAttendanceRes.status === 'fulfilled' && Array.isArray(studentAttendanceRes.value)
+        ? studentAttendanceRes.value
+        : [];
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const todayCollection = eduPayPayments.reduce((sum: number, payment: any) => {
+        const paymentDate = String(payment?.payment_date || '').slice(0, 10);
+        return paymentDate === todayKey ? sum + Number(payment?.amount || 0) : sum;
+      }, 0);
+      const pendingAmount = Number(
+        eduPayDashboard?.pending_amount ??
+        eduPayDashboard?.total_pending ??
+        0
+      );
+      const totalCollected = Number(
+        eduPayDashboard?.total_collected ?? 0
+      );
+      const overdueAmount = Number(
+        eduPayDashboard?.overdue_amount ?? 0
+      );
+      const studentPresent = studentAttendanceRecords.filter((item: any) => item?.status === 'present').length;
+      const studentLate = studentAttendanceRecords.filter((item: any) => item?.status === 'late').length;
+      const studentAbsent = studentAttendanceRecords.filter((item: any) => item?.status === 'absent').length;
+      const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
+      const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
+      const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
+      const recentActivity = [
+        ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
+        ...recentPayments.slice(0, 2).map((item: any) => `${item.student_name || 'Payment'} paid ${formatCompactCurrency(Number(item.amount || 0))}`).filter(Boolean),
+        ...(inventoryDashboard?.low_stock_alert_count ? [`${inventoryDashboard.low_stock_alert_count} low stock alerts`] : []),
+      ].slice(0, 5);
 
       const roomUtilization =
         rooms.length > 0
@@ -234,14 +372,28 @@ export default function Dashboard() {
         totalTimetableEntries: timetableEntries.length,
         roomUtilization,
         inventoryStock: inventoryDashboard?.current_stock_available || 0,
-        recentActivity: [
-          `${students.length} students enrolled`,
-          `${teachers.length} teachers registered`,
-          `${rooms.length} rooms configured`,
-          `${timetableEntries.length} timetable slots published`,
-          `${inventoryDashboard?.current_stock_available || 0} inventory units available`,
-        ],
+        recentActivity,
       });
+      setEduPaySummary({
+        totalCollected,
+        pendingAmount,
+        todayCollection,
+        overdueAmount,
+      });
+      setAttendanceToday({
+        studentPresent,
+        studentLate,
+        studentAbsent,
+        studentMarked: studentAttendanceRecords.length,
+        staffPresent: Number(staffAttendance?.present_count ?? 0),
+        staffLate: Number(staffAttendance?.late_count ?? 0),
+        staffHalfDay: Number(staffAttendance?.half_day_count ?? 0),
+        staffAbsent: Number(staffAttendance?.absent_count ?? 0),
+        notifications,
+        holidays,
+      });
+      setInventorySnapshot(inventoryDashboard);
+      setEduPayDashboardData(eduPayDashboard);
     } catch (error) {
       console.warn('Backend not available, using default statistics:', error);
       setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
@@ -254,6 +406,26 @@ export default function Dashboard() {
         inventoryStock: 0,
         recentActivity: ['Backend not available - using offline mode'],
       });
+      setEduPaySummary({
+        totalCollected: 0,
+        pendingAmount: 0,
+        todayCollection: 0,
+        overdueAmount: 0,
+      });
+      setAttendanceToday({
+        studentPresent: 0,
+        studentLate: 0,
+        studentAbsent: 0,
+        studentMarked: 0,
+        staffPresent: 0,
+        staffLate: 0,
+        staffHalfDay: 0,
+        staffAbsent: 0,
+        notifications: [],
+        holidays: [],
+      });
+      setInventorySnapshot(null);
+      setEduPayDashboardData(null);
     }
   };
 
@@ -337,27 +509,27 @@ export default function Dashboard() {
     { key: 'admin_office.reports', label: 'Reports & Export', path: '/reports', icon: FileText },
   ].filter((item) => isAdmin || hasPermission(item.key));
 
-  const staffPresent = Math.min(stats.totalTeachers, Math.max(0, Math.round(stats.totalTeachers * 0.59)));
-  const staffNotMarked = Math.max(0, stats.totalTeachers - staffPresent);
-  const studentPresent = Math.min(stats.totalStudents, Math.max(0, Math.round(stats.totalStudents * 0.82)));
-  const studentPending = Math.max(0, stats.totalStudents - studentPresent);
-  const incomeAmount = stats.totalStudents * 1250;
-  const expenseAmount = stats.totalTeachers * 410;
-  const todaysCollection = Math.round(incomeAmount * 0.08);
-  const pendingFees = Math.max(0, incomeAmount - todaysCollection);
+  const staffPresent = attendanceToday.staffPresent + attendanceToday.staffLate + attendanceToday.staffHalfDay;
+  const staffNotMarked = Math.max(0, stats.totalTeachers - (staffPresent + attendanceToday.staffAbsent));
+  const studentPresent = attendanceToday.studentPresent + attendanceToday.studentLate;
+  const studentPending = Math.max(0, stats.totalStudents - attendanceToday.studentMarked);
+  const incomeAmount = eduPaySummary.totalCollected;
+  const expenseAmount = eduPaySummary.overdueAmount || 0;
+  const todaysCollection = eduPaySummary.todayCollection;
+  const pendingFees = eduPaySummary.pendingAmount;
   const totalCapacity = Math.max(stats.totalRooms * 50, stats.totalStudents);
   const occupancyPercent = totalCapacity ? Math.round((stats.totalStudents / totalCapacity) * 100) : 0;
-  const femaleStudents = Math.round(stats.totalStudents * 0.46);
-  const maleStudents = Math.round(stats.totalStudents * 0.48);
-  const untaggedStudents = Math.max(0, stats.totalStudents - femaleStudents - maleStudents);
-  const monthNames = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-  const trendValues = monthNames.map((_, index) => {
-    const base = Math.max(6, stats.totalStudents || 24);
-    return Math.round(base * (0.35 + ((index % 5) + 1) * 0.11));
-  });
-  const trendMax = Math.max(...trendValues, 1);
-  const calendarDays = Array.from({ length: 30 }, (_, index) => index + 1);
-  const greetingName = user?.full_name?.split(' ')[0] || 'Admin';
+  const trendValues = Array.isArray(eduPayDashboardData?.collection_trend) ? eduPayDashboardData.collection_trend : [];
+  const trendMax = Math.max(...trendValues.map((item: any) => Number(item?.amount || 0)), 1);
+  const rawGreetingName =
+    String(user?.full_name || '').trim() ||
+    String(user?.username || '').trim() ||
+    String(user?.email || '').split('@')[0] ||
+    'User';
+  const greetingName = rawGreetingName
+    .split(/\s+/)
+    .filter((part) => part && part.toLowerCase() !== 'main')
+    .join(' ') || 'User';
 
   if (!showDetailedDashboard) {
     return (
@@ -460,13 +632,21 @@ export default function Dashboard() {
                 <p className="mt-0.5 text-sm font-semibold text-slate-900">Apr 2026 - Mar 2027</p>
               </div>
               <button
-                onClick={() => navigate('/reports')}
-                className="rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/20 transition hover:bg-amber-700"
+                onClick={() => navigate('/attendance-management#overview')}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
               >
-                MIS Report
-              </button>
-              <button className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:bg-slate-50">
                 <Bell className="h-4 w-4" />
+                <span>Notifications</span>
+              </button>
+              <button
+                onClick={async () => {
+                  await signOut();
+                  navigate('/login');
+                }}
+                className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Logout</span>
               </button>
             </div>
           </div>
@@ -548,61 +728,62 @@ export default function Dashboard() {
               </div>
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-700">
-                  <span>Gender Mix</span>
-                  <span>{stats.totalStudents}</span>
+                  <span>Today's Student Attendance</span>
+                  <span>{attendanceToday.studentMarked}/{stats.totalStudents}</span>
                 </div>
                 <div className="flex h-3 overflow-hidden rounded-full bg-slate-200">
-                  <div className="bg-sky-500" style={{ width: `${stats.totalStudents ? (maleStudents / stats.totalStudents) * 100 : 0}%` }} />
-                  <div className="bg-pink-500" style={{ width: `${stats.totalStudents ? (femaleStudents / stats.totalStudents) * 100 : 0}%` }} />
-                  <div className="bg-slate-400" style={{ width: `${stats.totalStudents ? (untaggedStudents / stats.totalStudents) * 100 : 0}%` }} />
+                  <div className="bg-emerald-500" style={{ width: `${stats.totalStudents ? (studentPresent / stats.totalStudents) * 100 : 0}%` }} />
+                  <div className="bg-rose-500" style={{ width: `${stats.totalStudents ? (attendanceToday.studentAbsent / stats.totalStudents) * 100 : 0}%` }} />
+                  <div className="bg-slate-400" style={{ width: `${stats.totalStudents ? (studentPending / stats.totalStudents) * 100 : 0}%` }} />
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                  <p>Male {maleStudents}</p>
-                  <p>Female {femaleStudents}</p>
-                  <p>Not tagged {untaggedStudents}</p>
+                  <p>Present {attendanceToday.studentPresent}</p>
+                  <p>Late {attendanceToday.studentLate}</p>
+                  <p>Absent {attendanceToday.studentAbsent}</p>
+                  <p>Pending {studentPending}</p>
                 </div>
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard title="Joining & Attrition">
+          <SectionCard title="Inventory Snapshot">
             <div className="grid gap-2.5 md:grid-cols-2">
               <div className="rounded-[1rem] bg-slate-50 p-2.5">
                 <div className="flex items-center gap-2">
                   <div className="rounded-lg bg-amber-100 p-2 text-amber-700">
-                    <Users className="h-4 w-4" />
+                    <Package className="h-4 w-4" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-900">Students</p>
+                  <p className="text-sm font-semibold text-slate-900">Inventory</p>
                 </div>
                 <div className="mt-2.5 space-y-1.5 text-[11px]">
-                  <div className="flex justify-between"><span className="text-slate-600">Joined</span><span className="font-semibold">{Math.max(1, Math.round(stats.totalStudents * 0.04))}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Exited</span><span className="font-semibold">{Math.round(stats.totalStudents * 0.01)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Strength</span><span className="font-semibold text-emerald-600">+{stats.totalStudents}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Materials</span><span className="font-semibold">{inventorySnapshot?.total_materials_registered || 0}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Available Stock</span><span className="font-semibold">{inventorySnapshot?.current_stock_available || 0}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Low Stock Alerts</span><span className="font-semibold text-rose-600">{inventorySnapshot?.low_stock_alert_count || 0}</span></div>
                 </div>
               </div>
               <div className="rounded-[1rem] bg-slate-50 p-2.5">
                 <div className="flex items-center gap-2">
                   <div className="rounded-lg bg-violet-100 p-2 text-violet-700">
-                    <GraduationCap className="h-4 w-4" />
+                    <Wallet className="h-4 w-4" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-900">Staffs</p>
+                  <p className="text-sm font-semibold text-slate-900">Fees</p>
                 </div>
                 <div className="mt-2.5 space-y-1.5 text-[11px]">
-                  <div className="flex justify-between"><span className="text-slate-600">Joined</span><span className="font-semibold">{Math.max(0, Math.round(stats.totalTeachers * 0.08))}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Exited</span><span className="font-semibold">{Math.round(stats.totalTeachers * 0.02)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Strength</span><span className="font-semibold text-rose-600">{stats.totalTeachers ? `-${Math.max(0, Math.round(stats.totalTeachers * 0.03))}` : '0'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Collected</span><span className="font-semibold">{formatCompactCurrency(eduPaySummary.totalCollected)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Pending</span><span className="font-semibold">{formatCompactCurrency(eduPaySummary.pendingAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Overdue</span><span className="font-semibold text-rose-600">{formatCompactCurrency(Number(eduPayDashboardData?.overdue_amount || 0))}</span></div>
                 </div>
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard title="Admission Summary" action="Overall">
+          <SectionCard title="Fee Snapshot" action="Live">
             <div className="grid grid-cols-4 items-end gap-2 pt-1">
               {[
-                { label: 'Enquiry', value: 3, color: 'bg-red-500' },
-                { label: 'Apply', value: 3, color: 'bg-teal-500' },
-                { label: 'Eval', value: 2, color: 'bg-amber-500' },
-                { label: 'Done', value: 2, color: 'bg-violet-600' },
+                { label: 'Students', value: Number(eduPayDashboardData?.total_students || 0), color: 'bg-red-500' },
+                { label: 'Structures', value: Number(eduPayDashboardData?.active_fee_structures || 0), color: 'bg-teal-500' },
+                { label: 'Upcoming', value: Number(eduPayDashboardData?.upcoming_dues || 0), color: 'bg-amber-500' },
+                { label: 'Reminders', value: Number(eduPayDashboardData?.reminders_queued || 0), color: 'bg-violet-600' },
               ].map((item, index) => (
                 <div key={`${item.label}-${index}`} className="text-center">
                   <div className="mx-auto flex h-16 items-end justify-center">
@@ -617,19 +798,18 @@ export default function Dashboard() {
         </section>
 
         <section className="mt-3 grid gap-3 xl:grid-cols-[1.4fr_0.9fr_1fr]">
-          <SectionCard title="Income & Expense">
+          <SectionCard title="Collection Trend">
             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold text-slate-700">
-              <span>Income: {formatCompactCurrency(incomeAmount)}</span>
-              <span>Expense: {formatCompactCurrency(expenseAmount)}</span>
+              <span>Total Collected: {formatCompactCurrency(incomeAmount)}</span>
+              <span>Overdue: {formatCompactCurrency(Number(eduPayDashboardData?.overdue_amount || 0))}</span>
             </div>
             <div className="mt-3 grid h-[110px] grid-cols-12 items-end gap-1">
-              {trendValues.map((value, index) => (
-                <div key={`${monthNames[index]}-${index}`} className="flex h-full flex-col items-center justify-end gap-1">
+              {trendValues.map((value: any, index: number) => (
+                <div key={`${value?.month || 'month'}-${index}`} className="flex h-full flex-col items-center justify-end gap-1">
                   <div className="flex h-full w-full items-end justify-center gap-0.5">
-                    <div className="w-2 rounded-full bg-amber-400" style={{ height: `${(value / trendMax) * 100}%` }} />
-                    <div className="w-2 rounded-full bg-slate-300" style={{ height: `${Math.max(12, ((value * 0.58) / trendMax) * 100)}%` }} />
+                    <div className="w-3 rounded-full bg-amber-400" style={{ height: `${(Number(value?.amount || 0) / trendMax) * 100}%` }} />
                   </div>
-                  <span className="text-[9px] text-slate-500">{monthNames[index]}</span>
+                  <span className="text-[9px] text-slate-500">{value?.month || '-'}</span>
                 </div>
               ))}
             </div>
@@ -673,23 +853,19 @@ export default function Dashboard() {
               </div>
               <div className="rounded-[1rem] bg-slate-50 p-2.5">
                 <div className="mb-2 flex items-center justify-between text-[11px] text-slate-600">
-                  <span>April 2026</span>
-                  <span>Birthdays On</span>
+                  <span>Upcoming Holidays</span>
+                  <span>{attendanceToday.holidays.length}</span>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[9px] text-slate-400">
-                  {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => (
-                    <span key={`${day}-${index}`}>{day}</span>
-                  ))}
-                  {calendarDays.slice(0, 28).map((day, index) => (
-                    <div
-                      key={`calendar-day-${day}-${index}`}
-                      className={`mx-auto flex h-5 w-5 items-center justify-center rounded-full text-[9px] ${
-                        day === 27 ? 'bg-amber-500 text-white' : 'text-slate-700'
-                      }`}
-                    >
-                      {day}
+                <div className="space-y-2 text-[11px] text-slate-600">
+                  {attendanceToday.holidays.slice(0, 4).map((holiday: any) => (
+                    <div key={holiday.id || holiday.holiday_date} className="flex items-center justify-between rounded-xl bg-white px-2.5 py-2">
+                      <span className="truncate">{holiday.title}</span>
+                      <span className="font-semibold text-slate-900">{String(holiday.holiday_date || '').slice(0, 10)}</span>
                     </div>
                   ))}
+                  {!attendanceToday.holidays.length ? (
+                    <p className="rounded-xl bg-white px-2.5 py-2 text-center">No holidays scheduled</p>
+                  ) : null}
                 </div>
               </div>
             </div>
