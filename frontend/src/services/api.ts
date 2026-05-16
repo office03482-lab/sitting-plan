@@ -694,6 +694,9 @@ class ApiService {
 
     if (hostelsError) {
       this.logSupabaseQueryError('listSupabaseHostels.hostels', hostelsError, { schoolId: scopedSchoolId });
+      if (hostelsError.code === '42501' || hostelsError.code === 'PGRST106') {
+        return [];
+      }
       throw hostelsError;
     }
 
@@ -706,6 +709,9 @@ class ApiService {
 
     if (roomsError) {
       this.logSupabaseQueryError('listSupabaseHostels.hostel_rooms', roomsError, { schoolId: scopedSchoolId });
+      if (roomsError.code === '42501' || roomsError.code === 'PGRST106') {
+        return (hostels || []).map((item: any) => this.mapSupabaseHostelToLegacy(item, []));
+      }
       throw roomsError;
     }
 

@@ -468,10 +468,14 @@ async def import_students(
         )
 
     if pending_batch_rows:
-        try:
-            insert_rows(supabase, "batches", pending_batch_rows)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Failed to create batches in Supabase: {exc}") from exc
+        for batch_row in pending_batch_rows:
+            try:
+                insert_rows(supabase, "batches", [batch_row])
+            except Exception as exc:
+                batch_name = str(batch_row.get("name") or "").strip()
+                errors.append({
+                    "error": f"Failed to create batch '{batch_name}': {exc}"
+                })
         existing_batches = fetch_all(
             supabase,
             "batches",
@@ -543,11 +547,16 @@ async def import_students(
             existing_admission_numbers.add(normalized_admission_no)
 
     if pending_students:
-        try:
-            insert_rows(supabase, "students", pending_students)
-            imported_count = len(pending_students)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Failed to import students into Supabase: {exc}") from exc
+        for student_row in pending_students:
+            try:
+                insert_rows(supabase, "students", [student_row])
+                imported_count += 1
+            except Exception as exc:
+                skipped_count += 1
+                errors.append({
+                    "roll_no": student_row.get("roll_number"),
+                    "error": f"Failed to import student into Supabase: {exc}"
+                })
 
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {imported_count}")
     return StudentImportResponse(
