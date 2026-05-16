@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
-from typing import List
+from typing import Any, List
 from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest
@@ -114,6 +114,28 @@ def split_batch_to_class_section(batch_name: str | None) -> tuple[str | None, st
         return normalized, None
 
     return None, None
+
+
+def format_bulk_import_exception(exc: Exception) -> str:
+    detail = str(exc).strip()
+    if not detail:
+        return "Unknown import error"
+
+    lower_detail = detail.lower()
+    if "duplicate key value" in lower_detail:
+        if "roll" in lower_detail:
+            return "Student with this roll number already exists"
+        if "admission" in lower_detail:
+            return "Student with this admission id already exists"
+        return "Duplicate record already exists"
+
+    if "permission denied" in lower_detail or "not allowed" in lower_detail:
+        return "Supabase permission denied during bulk import"
+
+    if "relation" in lower_detail and "does not exist" in lower_detail:
+        return "Required Supabase table is missing for student import"
+
+    return detail
 
 
 def normalize_student_class_name(class_name: str | None, batch_name: str | None = None) -> str | None:
@@ -402,161 +424,206 @@ async def import_students(
     imported_count = 0
     skipped_count = 0
     try:
-        supabase = get_supabase_admin_client()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        try:
+            supabase = get_supabase_admin_client()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    schools = fetch_all(supabase, "schools", select="id,name", filters={"id": school_id})
-    if not schools:
-        raise HTTPException(status_code=400, detail="Supabase school not found for import.")
+        try:
+            schools = fetch_all(supabase, "schools", select="id,name", filters={"id": school_id})
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to verify school in Supabase: {format_bulk_import_exception(exc)}",
+            ) from exc
 
-    existing_batches = fetch_all(
-        supabase,
-        "batches",
-        select="id,name,batch_code,class_name,section,category",
-        filters={"school_id": school_id},
-    )
-    existing_students = fetch_all(
-        supabase,
-        "students",
-        select="id,roll_number,admission_no",
-        filters={"school_id": school_id},
-    )
+        if not schools:
+            raise HTTPException(status_code=400, detail="Supabase school not found for import.")
 
-    batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches}
-    existing_roll_numbers = {
-        str(student["roll_number"]).strip().lower()
-        for student in existing_students
-        if student.get("roll_number")
-    }
-    existing_admission_numbers = {
-        str(student["admission_no"]).strip().lower()
-        for student in existing_students
-        if student.get("admission_no")
-    }
+        try:
+            existing_batches = fetch_all(
+                supabase,
+                "batches",
+                select="id,name,batch_code,class_name,section,category",
+                filters={"school_id": school_id},
+            )
+            existing_students = fetch_all(
+                supabase,
+                "students",
+                select="id,roll_number,admission_no",
+                filters={"school_id": school_id},
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load existing students or batches from Supabase: {format_bulk_import_exception(exc)}",
+            ) from exc
 
-    pending_batch_names: list[str] = []
-    pending_batch_rows: list[dict] = []
+        batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches if batch.get("name")}
+        existing_roll_numbers = {
+            str(student["roll_number"]).strip().lower()
+            for student in existing_students
+            if student.get("roll_number")
+        }
+        existing_admission_numbers = {
+            str(student["admission_no"]).strip().lower()
+            for student in existing_students
+            if student.get("admission_no")
+        }
 
-    for student_data in valid_students:
-        batch_name = str(student_data.get("batch") or "").strip()
-        normalized_batch_name = batch_name.lower()
-        if not batch_name or normalized_batch_name in batch_by_name or normalized_batch_name in pending_batch_names:
-            continue
+        pending_batch_names: list[str] = []
+        pending_batch_rows: list[dict[str, Any]] = []
 
-        class_name, section = split_batch_to_class_section(batch_name)
-        pending_batch_names.append(normalized_batch_name)
-        pending_batch_rows.append(
-            {
-                "school_id": school_id,
-                "batch_code": build_batch_code(batch_name, len(pending_batch_rows) + 1),
-                "name": batch_name,
-                "category": "batch",
-                "class_name": class_name,
-                "section": section,
-                "academic_session": student_data.get("academic_session") or None,
-                "stream": (student_data.get("course") or "").strip() or None,
-                "syllabus": " | ".join(
-                    [part for part in [student_data.get("program"), student_data.get("course")] if part]
-                ) or None,
-                "display_order": len(existing_batches) + len(pending_batch_rows),
-                "metadata": {
-                    "source": "student_bulk_upload",
-                },
-                "is_active": True,
-            }
-        )
+        for student_data in valid_students:
+            batch_name = str(student_data.get("batch") or "").strip()
+            normalized_batch_name = batch_name.lower()
+            if not batch_name or normalized_batch_name in batch_by_name or normalized_batch_name in pending_batch_names:
+                continue
 
-    if pending_batch_rows:
-        for batch_row in pending_batch_rows:
-            try:
-                insert_rows(supabase, "batches", [batch_row])
-            except Exception as exc:
+            class_name, section = split_batch_to_class_section(batch_name)
+            pending_batch_names.append(normalized_batch_name)
+            pending_batch_rows.append(
+                {
+                    "school_id": school_id,
+                    "batch_code": build_batch_code(batch_name, len(pending_batch_rows) + 1),
+                    "name": batch_name,
+                    "category": "batch",
+                    "class_name": class_name,
+                    "section": section,
+                    "academic_session": student_data.get("academic_session") or None,
+                    "stream": (student_data.get("course") or "").strip() or None,
+                    "syllabus": " | ".join(
+                        [part for part in [student_data.get("program"), student_data.get("course")] if part]
+                    ) or None,
+                    "display_order": len(existing_batches) + len(pending_batch_rows),
+                    "metadata": {
+                        "source": "student_bulk_upload",
+                    },
+                    "is_active": True,
+                }
+            )
+
+        if pending_batch_rows:
+            for batch_row in pending_batch_rows:
                 batch_name = str(batch_row.get("name") or "").strip()
-                errors.append({
-                    "error": f"Failed to create batch '{batch_name}': {exc}"
-                })
-        existing_batches = fetch_all(
-            supabase,
-            "batches",
-            select="id,name,batch_code,class_name,section,category",
-            filters={"school_id": school_id},
-        )
-        batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches}
+                try:
+                    insert_rows(supabase, "batches", [batch_row])
+                except Exception as exc:
+                    try:
+                        refreshed_batches = fetch_all(
+                            supabase,
+                            "batches",
+                            select="id,name,batch_code,class_name,section,category",
+                            filters={"school_id": school_id},
+                        )
+                        existing_batches = refreshed_batches
+                        batch_by_name = {
+                            str(batch["name"]).strip().lower(): batch
+                            for batch in existing_batches
+                            if batch.get("name")
+                        }
+                        if batch_name.lower() in batch_by_name:
+                            continue
+                    except Exception:
+                        pass
 
-    pending_students: list[dict] = []
-    pending_admission_numbers: set[str] = set()
+                    errors.append({
+                        "batch": batch_name,
+                        "error": f"Failed to create batch '{batch_name}': {format_bulk_import_exception(exc)}",
+                    })
 
-    for student_data in valid_students:
-        roll_number = str(student_data["roll_no"]).strip()
-        normalized_roll_number = roll_number.lower()
-        if normalized_roll_number in existing_roll_numbers:
-            skipped_count += 1
-            errors.append({
-                "roll_no": roll_number,
-                "error": "Student already exists"
-            })
-            continue
+            existing_batches = fetch_all(
+                supabase,
+                "batches",
+                select="id,name,batch_code,class_name,section,category",
+                filters={"school_id": school_id},
+            )
+            batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches if batch.get("name")}
 
-        admission_no = str(student_data.get("admission_id") or "").strip()
-        normalized_admission_no = admission_no.lower()
-        if admission_no and (
-            normalized_admission_no in existing_admission_numbers
-            or normalized_admission_no in pending_admission_numbers
-        ):
-            skipped_count += 1
-            errors.append({
-                "roll_no": roll_number,
-                "error": "Admission ID already exists"
-            })
-            continue
+        pending_students: list[dict[str, Any]] = []
+        pending_admission_numbers: set[str] = set()
 
-        batch_name = str(student_data.get("batch") or "").strip()
-        matched_batch = batch_by_name.get(batch_name.lower())
-        class_name, section = split_batch_to_class_section(batch_name)
-
-        pending_students.append(
-            {
-                "school_id": school_id,
-                "batch_id": matched_batch["id"] if matched_batch else None,
-                "admission_no": admission_no or None,
-                "roll_number": roll_number,
-                "full_name": str(student_data["candidate_name"]).strip(),
-                "father_name": (student_data.get("father_name") or "").strip() or None,
-                "email": (student_data.get("email") or "").strip() or None,
-                "phone": (student_data.get("phone") or "").strip() or None,
-                "guardian_name": (student_data.get("father_name") or "").strip() or None,
-                "class_name": class_name,
-                "section": section,
-                "academic_session": (student_data.get("academic_session") or "").strip() or None,
-                "special_needs": (student_data.get("special_needs") or "").strip() or None,
-                "hostel_required": False,
-                "metadata": {
-                    "managed_batch": batch_name,
-                    "source": "student_bulk_upload",
-                    "legacy_room_no": (student_data.get("room_no") or "").strip() or None,
-                    "course": (student_data.get("course") or "").strip() or None,
-                    "program": (student_data.get("program") or "").strip() or None,
-                },
-                "is_active": True,
-            }
-        )
-        existing_roll_numbers.add(normalized_roll_number)
-        if normalized_admission_no:
-            pending_admission_numbers.add(normalized_admission_no)
-            existing_admission_numbers.add(normalized_admission_no)
-
-    if pending_students:
-        for student_row in pending_students:
-            try:
-                insert_rows(supabase, "students", [student_row])
-                imported_count += 1
-            except Exception as exc:
+        for student_data in valid_students:
+            roll_number = str(student_data["roll_no"]).strip()
+            normalized_roll_number = roll_number.lower()
+            if normalized_roll_number in existing_roll_numbers:
                 skipped_count += 1
                 errors.append({
-                    "roll_no": student_row.get("roll_number"),
-                    "error": f"Failed to import student into Supabase: {exc}"
+                    "roll_no": roll_number,
+                    "error": "Student already exists",
                 })
+                continue
+
+            admission_no = str(student_data.get("admission_id") or "").strip()
+            normalized_admission_no = admission_no.lower()
+            if admission_no and (
+                normalized_admission_no in existing_admission_numbers
+                or normalized_admission_no in pending_admission_numbers
+            ):
+                skipped_count += 1
+                errors.append({
+                    "roll_no": roll_number,
+                    "admission_no": admission_no,
+                    "error": "Admission ID already exists",
+                })
+                continue
+
+            batch_name = str(student_data.get("batch") or "").strip()
+            matched_batch = batch_by_name.get(batch_name.lower())
+            class_name, section = split_batch_to_class_section(batch_name)
+
+            pending_students.append(
+                {
+                    "school_id": school_id,
+                    "batch_id": matched_batch["id"] if matched_batch else None,
+                    "admission_no": admission_no or None,
+                    "roll_number": roll_number,
+                    "full_name": str(student_data["candidate_name"]).strip(),
+                    "father_name": (student_data.get("father_name") or "").strip() or None,
+                    "email": (student_data.get("email") or "").strip() or None,
+                    "phone": (student_data.get("phone") or "").strip() or None,
+                    "guardian_name": (student_data.get("father_name") or "").strip() or None,
+                    "class_name": class_name,
+                    "section": section,
+                    "academic_session": (student_data.get("academic_session") or "").strip() or None,
+                    "special_needs": (student_data.get("special_needs") or "").strip() or None,
+                    "hostel_required": False,
+                    "metadata": {
+                        "managed_batch": batch_name,
+                        "source": "student_bulk_upload",
+                        "legacy_room_no": (student_data.get("room_no") or "").strip() or None,
+                        "course": (student_data.get("course") or "").strip() or None,
+                        "program": (student_data.get("program") or "").strip() or None,
+                    },
+                    "is_active": True,
+                }
+            )
+            existing_roll_numbers.add(normalized_roll_number)
+            if normalized_admission_no:
+                pending_admission_numbers.add(normalized_admission_no)
+                existing_admission_numbers.add(normalized_admission_no)
+
+        if pending_students:
+            for student_row in pending_students:
+                try:
+                    insert_rows(supabase, "students", [student_row])
+                    imported_count += 1
+                except Exception as exc:
+                    skipped_count += 1
+                    errors.append({
+                        "roll_no": student_row.get("roll_number"),
+                        "admission_no": student_row.get("admission_no"),
+                        "student_name": student_row.get("full_name"),
+                        "batch": student_row.get("metadata", {}).get("managed_batch"),
+                        "error": f"Failed to import student into Supabase: {format_bulk_import_exception(exc)}",
+                    })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Student bulk import failed: {format_bulk_import_exception(exc)}",
+        ) from exc
 
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {imported_count}")
     return StudentImportResponse(
