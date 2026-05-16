@@ -220,6 +220,7 @@ const toNullableString = (value: string) => {
   const trimmed = value.trim();
   return trimmed || null;
 };
+const OPERATION_STATUS_AUTO_HIDE_MS = 4000;
 
 const calculateAgeAsOfToday = (dob: string) => {
   if (!dob) return '';
@@ -408,7 +409,26 @@ export default function StudentManagement() {
   const directorySectionRef = useRef<HTMLDivElement | null>(null);
   const studentImportInputRef = useRef<HTMLInputElement | null>(null);
   const skipNextAddAutoOpenRef = useRef(false);
+  const operationProgressTimerRef = useRef<number | null>(null);
   const isDedicatedAddView = location.hash === '#add';
+
+  const clearOperationProgressTimer = () => {
+    if (operationProgressTimerRef.current !== null) {
+      window.clearTimeout(operationProgressTimerRef.current);
+      operationProgressTimerRef.current = null;
+    }
+  };
+
+  const scheduleOperationProgressReset = () => {
+    clearOperationProgressTimer();
+    operationProgressTimerRef.current = window.setTimeout(() => {
+      setOperationProgress(null);
+      operationProgressTimerRef.current = null;
+    }, OPERATION_STATUS_AUTO_HIDE_MS);
+  };
+
+  const isAxiosTimeoutError = (error: any) =>
+    error?.code === 'ECONNABORTED' || String(error?.message || '').toLowerCase().includes('timeout');
 
   useEffect(() => {
     loadStudents();
@@ -475,8 +495,22 @@ export default function StudentManagement() {
       if (studentMediaStreamRef.current) {
         studentMediaStreamRef.current.getTracks().forEach((track) => track.stop());
       }
+      clearOperationProgressTimer();
     };
   }, [studentPhotoPreviewUrl, studentDocuments]);
+
+  useEffect(() => {
+    const hasBlockingOperation = uploading || deletingAll || transferringSelected || transferringBatch || isSubmitting;
+    if (!hasBlockingOperation) return undefined;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [uploading, deletingAll, transferringSelected, transferringBatch, isSubmitting]);
 
   useEffect(() => {
     if (!studentForm.dob) {
@@ -588,6 +622,7 @@ export default function StudentManagement() {
   const handleImportStudents = async () => {
     if (!uploadedFile) return;
 
+    clearOperationProgressTimer();
     setUploading(true);
     setOperationProgress({
       kind: 'import',
@@ -616,6 +651,11 @@ export default function StudentManagement() {
                 total,
                 processed: loaded,
                 percent,
+                phase: total > 0 && loaded >= total ? 'Processing large Excel file on server' : current.phase,
+                detail:
+                  total > 0 && loaded >= total
+                    ? 'Upload complete hai. Backend ab rows ko Supabase me process kar raha hai. Large imports me thoda time lag sakta hai.'
+                    : current.detail,
               }
             : current,
         );
@@ -660,28 +700,45 @@ export default function StudentManagement() {
         unit: 'rows',
         detail: `${response.data.imported_count} imported, ${response.data.skipped_count} skipped, ${response.data.errors.length} failed.`,
       });
+      scheduleOperationProgressReset();
     } catch (error: any) {
       console.error('Import failed:', error);
+      const isTimeout = isAxiosTimeoutError(error);
       setImportResult({
         imported_count: 0,
         skipped_count: 0,
-        errors: [{ error: error.response?.data?.detail || 'Import failed' }],
+        errors: [{
+          error: isTimeout
+            ? 'Browser timeout hit ho gaya, lekin backend ab bhi processing complete kar chuka ho sakta hai.'
+            : error.response?.data?.detail || 'Import failed',
+        }],
         message: 'Import error'
       });
-      setMessage(error.response?.data?.detail || 'Import failed');
+      if (isTimeout) {
+        await loadStudents();
+        bumpStudentRefreshToken();
+      }
+      setMessage(
+        isTimeout
+          ? 'Import request browser timeout se ruk gayi, lekin backend slow processing/cold start ke baad complete ho sakta hai. Latest student list refresh kar di gayi hai.'
+          : error.response?.data?.detail || 'Import failed'
+      );
       setOperationProgress({
         kind: 'import',
         status: 'error',
-        title: 'Student import failed',
-        phase: 'Import stopped',
+        title: isTimeout ? 'Student import taking longer than expected' : 'Student import failed',
+        phase: isTimeout ? 'Browser timeout reached' : 'Import stopped',
         total: uploadedFile.size || 0,
-        processed: 0,
+        processed: uploadedFile.size || 0,
         successCount: 0,
         failureCount: 1,
         percent: 100,
         unit: 'bytes',
-        detail: error.response?.data?.detail || 'Backend import process complete nahi ho paaya.',
+        detail: isTimeout
+          ? 'Backend cold start ya slow Supabase batching ki wajah se response 60s se zyada le sakta tha. Request timeout extend kar diya gaya hai, aur latest data refresh kiya gaya hai.'
+          : error.response?.data?.detail || 'Backend import process complete nahi ho paaya.',
       });
+      scheduleOperationProgressReset();
     } finally {
       setUploading(false);
     }
@@ -690,6 +747,7 @@ export default function StudentManagement() {
   const handleDeleteAllStudents = async () => {
     if (!deleteAllConfirm) return;
 
+    clearOperationProgressTimer();
     setDeletingAll(true);
     const totalStudents = students.length;
     setOperationProgress({
@@ -741,6 +799,7 @@ export default function StudentManagement() {
         unit: 'students',
         detail: `${totalStudents} student records removed and table refreshed.`,
       });
+      scheduleOperationProgressReset();
     } catch (error: any) {
       console.error('Failed to delete all students:', error);
       setMessage(error?.response?.data?.detail || 'Failed to delete all students');
@@ -757,6 +816,7 @@ export default function StudentManagement() {
         unit: 'students',
         detail: error?.response?.data?.detail || 'Bulk delete request complete nahi ho paayi.',
       });
+      scheduleOperationProgressReset();
     } finally {
       setDeletingAll(false);
     }

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ChevronLeft, Eye, Pencil, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
@@ -17,6 +17,7 @@ const inputClass =
 const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500';
 const detailLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400';
 const DEFAULT_SESSION_OPTIONS = ['Apr 2026 - Mar 2027', 'Apr 2027 - Mar 2028'];
+const BULK_DELETE_STATUS_AUTO_HIDE_MS = 4000;
 
 type EditFormState = {
   name: string;
@@ -146,6 +147,22 @@ export default function StudentDirectory() {
   const [saving, setSaving] = useState(false);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<BulkDeleteProgress | null>(null);
+  const bulkDeleteTimerRef = useRef<number | null>(null);
+
+  const clearBulkDeleteTimer = () => {
+    if (bulkDeleteTimerRef.current !== null) {
+      window.clearTimeout(bulkDeleteTimerRef.current);
+      bulkDeleteTimerRef.current = null;
+    }
+  };
+
+  const scheduleBulkDeleteReset = () => {
+    clearBulkDeleteTimer();
+    bulkDeleteTimerRef.current = window.setTimeout(() => {
+      setBulkDeleteProgress(null);
+      bulkDeleteTimerRef.current = null;
+    }, BULK_DELETE_STATUS_AUTO_HIDE_MS);
+  };
 
   const loadStudents = async () => {
     setStudentsLoading(true);
@@ -186,6 +203,24 @@ export default function StudentDirectory() {
     void loadStudents();
     void loadClassBatches();
   }, [studentRefreshToken]);
+
+  useEffect(() => {
+    return () => {
+      clearBulkDeleteTimer();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!saving) return undefined;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saving]);
 
   const showMessage = (nextMessage: string, type: 'success' | 'error' = 'success') => {
     setMessage(nextMessage);
@@ -392,6 +427,7 @@ export default function StudentDirectory() {
     if (!window.confirm('Current filtered students delete karne hain?')) return;
 
     try {
+      clearBulkDeleteTimer();
       setSaving(true);
       let successCount = 0;
       let failureCount = 0;
@@ -437,6 +473,7 @@ export default function StudentDirectory() {
         phase: failureCount > 0 ? 'Completed with warnings' : 'Completed successfully',
         detail: `${successCount} deleted, ${failureCount} failed.`,
       });
+      scheduleBulkDeleteReset();
       showMessage(
         failureCount > 0
           ? `Bulk delete completed with warnings. Deleted ${successCount}, failed ${failureCount}.`
@@ -453,6 +490,7 @@ export default function StudentDirectory() {
         phase: 'Bulk delete failed',
         detail: error?.response?.data?.detail || 'Delete request complete nahi ho paayi.',
       });
+      scheduleBulkDeleteReset();
       showMessage(error?.response?.data?.detail || 'Delete all failed.', 'error');
     } finally {
       setSaving(false);

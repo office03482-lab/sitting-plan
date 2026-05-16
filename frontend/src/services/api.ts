@@ -24,6 +24,7 @@ import {
 const MAX_GET_RETRIES = 2;
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const API_TIMEOUT_MS = 60000;
+const LONG_RUNNING_IMPORT_TIMEOUT_MS = 10 * 60 * 1000;
 const STUDENT_PHOTO_BUCKET = 'student-photos';
 const STAFF_PHOTO_BUCKET = 'staff-photos';
 
@@ -1425,6 +1426,7 @@ class ApiService {
     return this.api.post('/students/import', formData, {
       params: { school_id: scopedSchoolId },
       onUploadProgress,
+      timeout: LONG_RUNNING_IMPORT_TIMEOUT_MS,
     });
   }
 
