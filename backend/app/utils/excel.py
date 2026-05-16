@@ -5,6 +5,14 @@ from typing import List, Dict, Tuple
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from io import BytesIO
+from datetime import datetime
+
+
+def default_academic_session() -> str:
+    now = datetime.now()
+    start_year = now.year if now.month >= 4 else now.year - 1
+    end_year = start_year + 1
+    return f"Apr {start_year} - Mar {end_year}"
 
 
 def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
@@ -108,11 +116,11 @@ def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
             if matched_header and matched_header not in header_map:
                 header_map[matched_header] = col_idx
 
-        missing_headers = [header for header in ['ACADEMIC SESSION', 'ROLL NO', 'BATCH'] if header not in header_map]
+        missing_headers = [header for header in ['ROLL NO', 'BATCH'] if header not in header_map]
         if missing_headers:
             errors.append({
                 'row': 1,
-                'error': f'Missing column(s): {", ".join(missing_headers)}. Found headers: {actual_headers}. Required headers: ACADEMIC SESSION, ROLL NO, BATCH, and either CANDIDATE NAME or FIRST NAME. LAST NAME optional hai.'
+                'error': f'Missing column(s): {", ".join(missing_headers)}. Found headers: {actual_headers}. Required headers: ROLL NO, BATCH, and either CANDIDATE NAME or FIRST NAME. ACADEMIC SESSION optional hai; blank hua to default fill hoga.'
             })
             return valid_students, errors
 
@@ -164,20 +172,16 @@ def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
                     if sr_no is None and father_name is None and room_no is None:
                         continue
 
-                if not academic_session or not roll_no or not full_name or not batch:
+                if not roll_no or not full_name or not batch:
                     errors.append({
                         'row': row_idx,
-                        'error': 'Missing required data in row. Required columns: ACADEMIC SESSION, ROLL NO, BATCH, and student name.'
+                        'error': 'Missing required data in row. Required columns: ROLL NO, BATCH, and student name.'
                     })
                     continue
 
-                academic_session_str = str(academic_session).strip()
+                academic_session_str = str(academic_session).strip() if academic_session else default_academic_session()
                 if not academic_session_str:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'ACADEMIC SESSION cannot be empty.'
-                    })
-                    continue
+                    academic_session_str = default_academic_session()
 
                 roll_no_str = str(roll_no).strip()
                 if not roll_no_str:

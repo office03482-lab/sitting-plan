@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText, Plus } from 'lucide-react';
+import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } from 'lucide-react';
 import { apiService } from '@services/api';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
@@ -13,9 +12,48 @@ const teacherIdFromStaffCode = (staffId?: string) => {
   const match = (staffId || '').trim().match(/^TCH-(\d+)$/i);
   return match ? Number(match[1]) : null;
 };
+const formatApiError = (error: any, fallback: string) => {
+  const detail = error?.response?.data?.detail;
+
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    const joined = detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          const location = Array.isArray(item.loc) ? item.loc.join(' -> ') : '';
+          const message = typeof item.msg === 'string' ? item.msg : '';
+          if (location && message) return `${location}: ${message}`;
+          if (message) return message;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join(' | ');
+
+    if (joined) {
+      return joined;
+    }
+  }
+
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.msg === 'string' && detail.msg.trim()) {
+      return detail.msg;
+    }
+    return fallback;
+  }
+
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallback;
+};
 
 export default function InvigilatorManagement() {
-  const navigate = useNavigate();
   const schoolId = 1;
   const [invigilators, setInvigilators] = useState<Invigilator[]>([]);
   const [teachingStaff, setTeachingStaff] = useState<Teacher[]>([]);
@@ -157,7 +195,7 @@ export default function InvigilatorManagement() {
     [enrichedAssignments, rooms, visibleAssignmentIds]
   );
   const selectedRoomAssignments = useMemo(
-    () => activeAssignments.filter((item) => item.room_id === Number(assignmentData.room_id)),
+    () => activeAssignments.filter((item) => String(item.room_id) === assignmentData.room_id),
     [activeAssignments, assignmentData.room_id]
   );
   const roomWiseAssignments = useMemo(
@@ -296,8 +334,8 @@ export default function InvigilatorManagement() {
     e.preventDefault();
     try {
       const invigilatorId = await resolveAssigneeInvigilatorId();
-      const roomId = parseInt(assignmentData.room_id, 10);
-      const existingRoomAssignment = activeAssignments.find((item) => item.room_id === roomId);
+      const roomId = assignmentData.room_id;
+      const existingRoomAssignment = activeAssignments.find((item) => String(item.room_id) === roomId);
 
       if (existingRoomAssignment) {
         if (existingRoomAssignment.invigilator_id === invigilatorId) {
@@ -328,7 +366,7 @@ export default function InvigilatorManagement() {
       showMessage(existingRoomAssignment ? 'Room assignment updated successfully' : 'Invigilator assigned successfully', 'success');
     } catch (error: any) {
       console.error('Error assigning invigilator:', error);
-      showMessage(error?.response?.data?.detail || error?.message || 'Failed to assign invigilator', 'error');
+      showMessage(formatApiError(error, 'Failed to assign invigilator'), 'error');
     }
   };
 
@@ -344,7 +382,7 @@ export default function InvigilatorManagement() {
       showMessage('Assignment removed successfully', 'success');
     } catch (error: any) {
       console.error('Error removing assignment:', error);
-      showMessage(error?.response?.data?.detail || 'Failed to remove assignment', 'error');
+      showMessage(formatApiError(error, 'Failed to remove assignment'), 'error');
     }
   };
 
@@ -371,7 +409,7 @@ export default function InvigilatorManagement() {
       showMessage('All invigilator assignments deleted successfully', 'success');
     } catch (error: any) {
       console.error('Error deleting all assignments:', error);
-      showMessage(error?.response?.data?.detail || 'Failed to delete all assignments', 'error');
+      showMessage(formatApiError(error, 'Failed to delete all assignments'), 'error');
     } finally {
       setDeletingAllAssignments(false);
     }
@@ -431,16 +469,6 @@ export default function InvigilatorManagement() {
               <p className="mt-1 text-xs text-slate-500">
                 Active backend staff yahan automatically show hoga. `Add Staff` se add kiya hua staff bhi isi list mein aayega.
               </p>
-              <div className="mt-4">
-                <button
-                  type="button"
-                  onClick={() => navigate('/staff/add')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Staff
-                </button>
-              </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 <div className="rounded-lg border border-sky-100 bg-sky-50 p-4">

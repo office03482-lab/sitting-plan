@@ -1173,7 +1173,7 @@ export default function StudentManagement() {
               />
             </div>
             <p className="text-sm text-gray-500 mb-4">
-              Only `.xlsx` Excel files are supported. Naya template add-student form ke hisaab se hai and supports fields like Admission ID, Course, Program, Batch, Roll No, First Name, Father Name, Email, Phone, Special Needs.
+              Only `.xlsx` Excel files are supported. Naya template add-student form ke hisaab se hai and supports fields like Admission ID, Course, Program, Batch, Roll No, First Name, Father Name, Email, Phone, Special Needs. `Academic Session` blank hua to system default session auto-fill kar dega.
             </p>
             {uploadedFile && (
               <div className="flex items-center justify-center space-x-2 text-green-600">

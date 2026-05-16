@@ -270,7 +270,7 @@ export interface DeskLayout {
 }
 
 export interface RoomLayout {
-  room_id: number;
+  room_id: string | number;
   room_name: string;
   desks: DeskLayout[];
   dimensions: {
@@ -285,7 +285,7 @@ export interface RoomLayout {
 export interface SeatingPlan {
   id: number;
   exam_id: number;
-  room_id: number;
+  room_id: string | number;
   exam_name?: string;
   exam_subject?: string;
   room_name?: string;

@@ -14,6 +14,11 @@ import type {
 } from '@types';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@store/auth';
+import {
+  buildLegacyPlanSummary,
+  buildPlanBatchDistribution,
+  generatePlannerSeating,
+} from './seatingPlanner';
 
 const MAX_GET_RETRIES = 2;
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
@@ -26,6 +31,7 @@ const DIRECT_API_FALLBACKS = [
 ];
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 class ApiService {
   private api: AxiosInstance;
@@ -35,6 +41,10 @@ class ApiService {
   private teacherReverseIdMap = new Map<string, number>();
   private invigilatorIdMap = new Map<number, string>();
   private invigilatorReverseIdMap = new Map<string, number>();
+  private examIdMap = new Map<number, string>();
+  private examReverseIdMap = new Map<string, number>();
+  private seatingPlanIdMap = new Map<number, string>();
+  private seatingPlanReverseIdMap = new Map<string, number>();
   private supplierIdMap = new Map<number, string>();
   private supplierReverseIdMap = new Map<string, number>();
   private inventorySubjectIdMap = new Map<number, string>();
@@ -170,6 +180,22 @@ class ApiService {
     return forwardMap.get(Number(id)) || String(id);
   }
 
+  private getLegacyExamId(actualId?: string | null) {
+    return this.getLegacyInventoryId(this.examIdMap, this.examReverseIdMap, 'exam', actualId);
+  }
+
+  private resolveExamId(id: string | number) {
+    return this.resolveLegacyInventoryId(this.examIdMap, id);
+  }
+
+  private getLegacySeatingPlanId(actualId?: string | null) {
+    return this.getLegacyInventoryId(this.seatingPlanIdMap, this.seatingPlanReverseIdMap, 'seating-plan', actualId);
+  }
+
+  private resolveSeatingPlanId(id: string | number) {
+    return this.resolveLegacyInventoryId(this.seatingPlanIdMap, id);
+  }
+
   private getLegacyInventoryId(
     forwardMap: Map<number, string>,
     reverseMap: Map<string, number>,
@@ -211,6 +237,37 @@ class ApiService {
     return Object.fromEntries(
       Object.entries(value).filter(([, entry]) => entry !== undefined)
     ) as T;
+  }
+
+  private buildLegacyRoomAssignmentId(roomId: string | number, staffMemberId: string | number) {
+    const seed = `room-assignment:${String(roomId)}:${String(staffMemberId)}`;
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
+    }
+    return Math.abs(hash) || 1;
+  }
+
+  private getRoomAssignmentMetadata(room: any) {
+    const assignment = room?.metadata?.invigilator_assignment;
+    return assignment && typeof assignment === 'object' ? assignment : null;
+  }
+
+  private mapSupabaseRoomAssignmentToLegacy(room: any, staffMember: any): RoomInvigilator {
+    const assignmentMetadata = this.getRoomAssignmentMetadata(room) || {};
+    return {
+      id: this.buildLegacyRoomAssignmentId(room.id, staffMember.id),
+      room_id: room.id,
+      invigilator_id: this.getLegacyMappedId('invigilator', staffMember.id),
+      school_id: 1,
+      exam_id: undefined,
+      notes: assignmentMetadata.notes || '',
+      is_active: assignmentMetadata.is_active !== false,
+      created_at: assignmentMetadata.created_at || room.created_at,
+      updated_at: assignmentMetadata.updated_at || room.updated_at || room.created_at,
+      invigilator: this.mapSupabaseInvigilatorToLegacy(staffMember),
+      room: this.mapSupabaseRoomToLegacy(room),
+    } as RoomInvigilator;
   }
 
   private dataUrlToBlob(dataUrl: string) {
@@ -461,6 +518,44 @@ class ApiService {
       updated_at: batch.updated_at,
       student_count: typeof studentCount === 'number' ? studentCount : undefined,
     };
+  }
+
+  private mapSupabaseExamToLegacy(exam: any, totalStudents: number, totalBatches: number): Exam {
+    return {
+      id: this.getLegacyExamId(exam.id),
+      name: exam.name || '',
+      school_id: 1,
+      subject: exam.metadata?.subject_text || undefined,
+      exam_date: exam.exam_date || undefined,
+      duration_minutes: exam.duration_minutes || undefined,
+      total_students: totalStudents,
+      total_batches: totalBatches,
+      is_active: Boolean(exam.is_active),
+    } as Exam;
+  }
+
+  private mapSupabaseSeatingPlanToLegacy(plan: any, exam: any, room: any): SeatingPlan {
+    const distribution =
+      plan?.batch_distribution && typeof plan.batch_distribution === 'object'
+        ? Object.entries(plan.batch_distribution as Record<string, unknown>).reduce<Record<string, number>>((accumulator, [key, value]) => {
+            accumulator[key] = Number(value || 0);
+            return accumulator;
+          }, {})
+        : {};
+    const uiPlanType = plan?.plan_metadata?.ui_plan_type || (plan.plan_type === 'strict' ? 'all_in_one' : plan.plan_type);
+
+    return buildLegacyPlanSummary(
+      this.getLegacySeatingPlanId(plan.id),
+      this.getLegacyExamId(plan.exam_id),
+      room?.id || plan.room_id,
+      room?.name || plan.plan_metadata?.room_name || `Room ${plan.room_id}`,
+      exam?.name || plan.plan_metadata?.exam_name || `Exam ${plan.exam_id}`,
+      exam?.metadata?.subject_text || plan.plan_metadata?.exam_subject,
+      plan.created_at,
+      distribution,
+      Boolean(plan.is_valid),
+      uiPlanType,
+    );
   }
 
   private mapSupabaseStudentToLegacy(student: any): Student {
@@ -1982,54 +2077,267 @@ class ApiService {
     return { data: { message: 'Room deleted successfully' } } as { data: { message: string } };
   }
 
-  async deleteAllRooms(isAdmin: boolean = false, schoolId: number = 1) {
+  async deleteAllRooms(isAdmin: boolean = false, _schoolId: number = 1) {
     return this.api.delete('/rooms', {
-      params: { school_id: schoolId, is_admin: isAdmin },
+      params: { is_admin: isAdmin },
     });
   }
 
   // ==================== Seating Plans ====================
 
   async generateSeatingPlans(examId: number, roomIds: Array<string | number>, planType?: 'strict' | 'compact' | 'all_in_one', batches?: string[], invigilatorAssignments?: {[roomId: string]: number | null}, generatedDate?: string, batchConflictGroups?: string[][]) {
-    return this.api.post('/seating/generate', {
-      exam_id: examId,
-      room_ids: roomIds,
-      batches,
-      batch_conflict_groups: batchConflictGroups,
-      plan_type: planType,
-      generated_date: generatedDate,
-      invigilator_assignments: invigilatorAssignments,
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const resolvedExamId = this.resolveExamId(examId);
+    const [roomsResponse, studentsResponse] = await Promise.all([
+      this.listRooms(),
+      this.listStudents(1, 0, 10000),
+    ]);
+
+    const targetRooms = toArray<Room>(roomsResponse.data).filter((room) => roomIds.some((roomId) => String(roomId) === String(room.id)));
+    if (targetRooms.length === 0) {
+      throw new Error('Selected rooms not found');
+    }
+
+    const eligibleStudents = toArray<Student>(studentsResponse.data).filter((student) =>
+      !batches?.length || batches.includes(String(student.batch || '').trim())
+    );
+    if (eligibleStudents.length === 0) {
+      throw new Error('No students found for the selected batches');
+    }
+
+    const generation = generatePlannerSeating(eligibleStudents, targetRooms, batchConflictGroups);
+    const createdAt = generatedDate || new Date().toISOString();
+    const { data: examRow, error: examError } = await supabase
+      .schema('exam')
+      .from('exams')
+      .select('*')
+      .eq('id', resolvedExamId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+
+    if (examError || !examRow) {
+      throw examError || new Error('Exam not found');
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const generatedByProfileId = sessionData.session?.user?.id || null;
+
+    const insertPayload = generation.map(({ room, result, layout }) => {
+      const distribution = buildPlanBatchDistribution(layout);
+      return {
+        school_id: scopedSchoolId,
+        exam_id: resolvedExamId,
+        room_id: room.id,
+        generated_by_profile_id: generatedByProfileId,
+        plan_name: `${room.name} - Batches: ${Object.keys(distribution).join(', ')} - All-in-One Plan`,
+        plan_type: 'strict',
+        status: 'draft',
+        algorithm_version: 'supabase-1.0',
+        students_assigned: layout.occupied,
+        is_valid: result.validity,
+        validation_errors: result.validity ? [] : ['Some students could not be assigned.'],
+        batch_distribution: distribution,
+        plan_metadata: {
+          ui_plan_type: planType || 'all_in_one',
+          generated_date: createdAt,
+          selected_batches: batches || [],
+          exam_name: examRow.name,
+          exam_subject: examRow.metadata?.subject_text || null,
+          room_name: room.name,
+          layout,
+          assignment: result.assignment,
+          unassigned_student_ids: result.unassigned,
+          invigilator_id: invigilatorAssignments?.[String(room.id)] || null,
+        },
+        is_active: true,
+        created_at: createdAt,
+      };
     });
+
+    const { data: createdPlans, error: insertError } = await supabase
+      .schema('exam')
+      .from('seating_plans')
+      .insert(insertPayload)
+      .select('*');
+
+    if (insertError) throw insertError;
+
+    if (invigilatorAssignments) {
+      for (const roomId of Object.keys(invigilatorAssignments)) {
+        const invigilatorId = invigilatorAssignments[roomId];
+        if (!invigilatorId) continue;
+        const resolvedStaffMemberId = this.resolveMappedId('invigilator', invigilatorId);
+        await supabase
+          .schema('exam')
+          .from('invigilator_assignments')
+          .update({ is_active: false })
+          .eq('school_id', scopedSchoolId)
+          .eq('exam_id', resolvedExamId)
+          .eq('room_id', roomId)
+          .eq('is_active', true);
+
+        const { error: invigilatorAssignmentError } = await supabase
+          .schema('exam')
+          .from('invigilator_assignments')
+          .insert({
+            school_id: scopedSchoolId,
+            exam_id: resolvedExamId,
+            room_id: roomId,
+            staff_member_id: resolvedStaffMemberId,
+            assigned_by_profile_id: generatedByProfileId,
+            assignment_role: 'invigilator',
+            notes: null,
+            is_active: true,
+          });
+
+        if (invigilatorAssignmentError) {
+          console.warn('[Supabase] invigilator assignment insert failed', invigilatorAssignmentError);
+        }
+      }
+    }
+
+    const generatedPlanIds = toArray<any>(createdPlans).map((plan) => this.getLegacySeatingPlanId(plan.id));
+    return {
+      data: {
+        message: `Generated ${generatedPlanIds.length} seating plan(s)`,
+        generated_plan_type: planType || 'all_in_one',
+        plan_ids: generatedPlanIds,
+        selected_student_count: eligibleStudents.length,
+        unassigned_count: generation.reduce((sum, item) => sum + item.result.unassigned.length, 0),
+        plans: generation.map(({ room }, index) => ({
+          room_id: room.id,
+          plan_ids: [generatedPlanIds[index]],
+          all_in_one_id: generatedPlanIds[index],
+          plan_a_id: null,
+          plan_b_id: null,
+        })),
+      },
+    };
   }
 
   async listPlans(roomId: number, examId?: number) {
-    return this.api.get<SeatingPlan[]>(`/seating/plans/${roomId}`, {
-      params: { exam_id: examId },
-    });
+    const response = await this.listAllPlans(examId);
+    return {
+      data: toArray<SeatingPlan>(response.data).filter((plan) => String(plan.room_id) === String(roomId)),
+    } as { data: SeatingPlan[] };
   }
 
   async listAllPlans(examId?: number) {
-    return this.api.get<SeatingPlan[]>('/seating/plans', {
-      params: { exam_id: examId },
-    });
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: [] } as { data: SeatingPlan[] };
+    }
+
+    let query = supabase
+      .schema('exam')
+      .from('seating_plans')
+      .select('*')
+      .eq('school_id', scopedSchoolId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (examId !== undefined) {
+      query = query.eq('exam_id', this.resolveExamId(examId));
+    }
+
+    const { data: plans, error: planError } = await query;
+    if (planError) throw planError;
+
+    const planRows = toArray<any>(plans);
+    if (planRows.length === 0) {
+      return { data: [] } as { data: SeatingPlan[] };
+    }
+
+    const uniqueExamIds = Array.from(new Set(planRows.map((plan) => plan.exam_id).filter(Boolean)));
+    const uniqueRoomIds = Array.from(new Set(planRows.map((plan) => plan.room_id).filter(Boolean)));
+
+    const [{ data: exams, error: examsError }, { data: rooms, error: roomsError }] = await Promise.all([
+      supabase.schema('exam').from('exams').select('*').in('id', uniqueExamIds),
+      supabase.from('rooms').select('*').in('id', uniqueRoomIds),
+    ]);
+
+    if (examsError) throw examsError;
+    if (roomsError) throw roomsError;
+
+    const examById = new Map(toArray<any>(exams).map((exam) => [String(exam.id), exam]));
+    const roomById = new Map(toArray<any>(rooms).map((room) => [String(room.id), room]));
+
+    return {
+      data: planRows.map((plan) => this.mapSupabaseSeatingPlanToLegacy(plan, examById.get(String(plan.exam_id)), roomById.get(String(plan.room_id)))),
+    } as { data: SeatingPlan[] };
   }
 
   async getPlanLayout(planId: number) {
-    return this.api.get<RoomLayout>(`/seating/${planId}/layout`);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    const { data, error } = await supabase
+      .schema('exam')
+      .from('seating_plans')
+      .select('plan_metadata')
+      .eq('id', resolvedPlanId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+
+    if (error || !data) {
+      throw error || new Error('Seating plan not found');
+    }
+
+    const layout = data.plan_metadata?.layout;
+    if (!layout) {
+      throw new Error('Preview data is not available for this plan.');
+    }
+
+    return { data: layout as RoomLayout } as { data: RoomLayout };
   }
 
   async finalizePlan(planId: number) {
-    return this.api.post(`/seating/${planId}/finalize`);
+    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    const { data, error } = await supabase
+      .schema('exam')
+      .from('seating_plans')
+      .update({ status: 'finalized' })
+      .eq('id', resolvedPlanId)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return { data } as { data: any };
   }
 
   async deleteSeatingPlan(planId: number) {
-    return this.api.delete(`/seating/${planId}`);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    const { error } = await supabase
+      .schema('exam')
+      .from('seating_plans')
+      .delete()
+      .eq('id', resolvedPlanId)
+      .eq('school_id', scopedSchoolId);
+
+    if (error) throw error;
+    return { data: { message: 'Seating plan deleted successfully' } } as { data: { message: string } };
   }
 
-  async deleteAllSeatingPlans(isAdmin: boolean = false, schoolId: number = 1) {
-    return this.api.delete('/seating', {
-      params: { school_id: schoolId, is_admin: isAdmin },
-    });
+  async deleteAllSeatingPlans(isAdmin: boolean = false, _schoolId: number = 1) {
+    if (!isAdmin) {
+      throw new Error('Only administrators can delete all seating plans');
+    }
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { error } = await supabase
+      .schema('exam')
+      .from('seating_plans')
+      .delete()
+      .eq('school_id', scopedSchoolId);
+    if (error) throw error;
+    return { data: { message: 'All seating plans deleted successfully' } } as { data: { message: string } };
   }
 
   async importSeatingPlan(formData: FormData, examId?: number) {
@@ -2040,28 +2348,131 @@ class ApiService {
 
   // ==================== Exams ====================
 
-  async listExams(schoolId: number = 1) {
-    return this.api.get<Exam[]>('/exams', {
-      params: { school_id: schoolId },
-    });
+  async listExams(_schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: [] } as { data: Exam[] };
+    }
+
+    const [{ data: exams, error: examsError }, { data: students, error: studentsError }, { data: batches, error: batchesError }] = await Promise.all([
+      supabase
+        .schema('exam')
+        .from('exams')
+        .select('*')
+        .eq('school_id', scopedSchoolId)
+        .order('exam_date', { ascending: false }),
+      supabase
+        .from('students')
+        .select('id, batch_id')
+        .eq('school_id', scopedSchoolId)
+        .eq('is_active', true),
+      supabase
+        .from('batches')
+        .select('id')
+        .eq('school_id', scopedSchoolId)
+        .eq('is_active', true),
+    ]);
+
+    if (examsError) throw examsError;
+    if (studentsError) throw studentsError;
+    if (batchesError) throw batchesError;
+
+    const totalStudents = toArray<any>(students).length;
+    const totalBatches = new Set(toArray<any>(students).map((student) => student.batch_id).filter(Boolean)).size || toArray<any>(batches).length;
+
+    return {
+      data: toArray<any>(exams).map((exam) => this.mapSupabaseExamToLegacy(exam, totalStudents, totalBatches)),
+    } as { data: Exam[] };
   }
 
-  async createExam(examData: Partial<Exam>, schoolId: number = 1) {
-    return this.api.post<Exam>('/exams', examData, {
-      params: { school_id: schoolId },
-    });
+  async createExam(examData: Partial<Exam>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const normalizedName = String(examData.name || '').trim();
+    if (!normalizedName) throw new Error('Exam name is required');
+
+    const now = new Date();
+    const examCode = `EXM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${now.getTime().toString().slice(-6)}`;
+    const { data, error } = await supabase
+      .schema('exam')
+      .from('exams')
+      .insert({
+        school_id: scopedSchoolId,
+        exam_code: examCode,
+        name: normalizedName,
+        exam_type: 'written',
+        exam_date: examData.exam_date || new Date().toISOString().slice(0, 10),
+        duration_minutes: examData.duration_minutes || null,
+        status: 'draft',
+        metadata: {
+          subject_text: String(examData.subject || '').trim() || null,
+        },
+        is_active: true,
+      })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    const exams = await this.listExams();
+    const mapped = toArray<Exam>(exams.data).find((exam) => String(this.resolveExamId(exam.id)) === String(data.id));
+    return { data: mapped || this.mapSupabaseExamToLegacy(data, 0, 0) } as { data: Exam };
   }
 
-  async updateExam(examId: number, examData: Partial<Exam>, schoolId: number = 1) {
-    return this.api.put<Exam>(`/exams/${examId}`, examData, {
-      params: { school_id: schoolId },
-    });
+  async updateExam(examId: number, examData: Partial<Exam>, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const resolvedExamId = this.resolveExamId(examId);
+    const { data: existing, error: existingError } = await supabase
+      .schema('exam')
+      .from('exams')
+      .select('*')
+      .eq('id', resolvedExamId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+    if (existingError || !existing) throw existingError || new Error('Exam not found');
+
+    const nextMetadata =
+      existing.metadata && typeof existing.metadata === 'object'
+        ? { ...(existing.metadata as Record<string, unknown>) }
+        : {};
+    nextMetadata.subject_text = String(examData.subject || nextMetadata.subject_text || '').trim() || null;
+
+    const { data, error } = await supabase
+      .schema('exam')
+      .from('exams')
+      .update({
+        name: examData.name ? String(examData.name).trim() : existing.name,
+        exam_date: examData.exam_date || existing.exam_date,
+        duration_minutes: examData.duration_minutes ?? existing.duration_minutes,
+        metadata: nextMetadata,
+      })
+      .eq('id', resolvedExamId)
+      .eq('school_id', scopedSchoolId)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    const exams = await this.listExams();
+    const mapped = toArray<Exam>(exams.data).find((exam) => String(this.resolveExamId(exam.id)) === String(data.id));
+    return { data: mapped || this.mapSupabaseExamToLegacy(data, 0, 0) } as { data: Exam };
   }
 
-  async deleteExam(examId: number, schoolId: number = 1) {
-    return this.api.delete(`/exams/${examId}`, {
-      params: { school_id: schoolId },
-    });
+  async deleteExam(examId: number, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const resolvedExamId = this.resolveExamId(examId);
+    const { error } = await supabase
+      .schema('exam')
+      .from('exams')
+      .delete()
+      .eq('id', resolvedExamId)
+      .eq('school_id', scopedSchoolId);
+
+    if (error) throw error;
+    return { data: { message: 'Exam deleted successfully' } } as { data: { message: string } };
   }
 
   // ==================== Reports ====================
@@ -2569,33 +2980,290 @@ class ApiService {
   }
 
   // Room Assignment Methods
-  async assignInvigilatorToRoom(assignment: any, schoolId: number = 1) {
-    return this.api.post<RoomInvigilator>('/invigilators/room-assignment', assignment, {
-      params: { school_id: schoolId },
-    });
+  async assignInvigilatorToRoom(assignment: any, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const roomId = String(assignment.room_id || '').trim();
+    if (!roomId) {
+      throw new Error('Please select room');
+    }
+
+    const staffMemberId = this.resolveMappedId('invigilator', assignment.invigilator_id);
+    const timestamp = new Date().toISOString();
+
+    const [{ data: room, error: roomError }, { data: staffMember, error: staffError }] = await Promise.all([
+      supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', roomId)
+        .eq('school_id', scopedSchoolId)
+        .single(),
+      supabase
+        .from('staff_members')
+        .select('*')
+        .eq('id', staffMemberId)
+        .eq('school_id', scopedSchoolId)
+        .single(),
+    ]);
+
+    if (roomError || !room) {
+      throw roomError || new Error('Room not found');
+    }
+    if (staffError || !staffMember) {
+      throw staffError || new Error('Invigilator not found');
+    }
+
+    const currentMetadata =
+      room.metadata && typeof room.metadata === 'object' ? { ...(room.metadata as Record<string, unknown>) } : {};
+    const previousAssignment = this.getRoomAssignmentMetadata(room);
+    const nextMetadata = {
+      ...currentMetadata,
+      invigilator_assignment: {
+        staff_member_id: staffMember.id,
+        notes: assignment.notes || '',
+        is_active: true,
+        created_at: previousAssignment?.created_at || timestamp,
+        updated_at: timestamp,
+      },
+    };
+
+    const { data: updatedRoom, error: updateError } = await supabase
+      .from('rooms')
+      .update({ metadata: nextMetadata })
+      .eq('id', roomId)
+      .eq('school_id', scopedSchoolId)
+      .select('*')
+      .single();
+
+    if (updateError || !updatedRoom) {
+      throw updateError || new Error('Failed to save room assignment');
+    }
+
+    return { data: this.mapSupabaseRoomAssignmentToLegacy(updatedRoom, staffMember) } as { data: RoomInvigilator };
   }
 
   async getRoomInvigilators(roomId: string | number) {
-    return this.api.get<Invigilator[]>(`/invigilators/room/${roomId}/invigilators`);
+    const assignments = await this.listRoomAssignments(1, typeof roomId === 'number' ? roomId : undefined, undefined, true, roomId);
+    return { data: assignments.data.map((item) => item.invigilator).filter(Boolean) as Invigilator[] } as { data: Invigilator[] };
   }
 
-  async listRoomAssignments(schoolId: number = 1, roomId?: number, invigilatorId?: number, isActive = true) {
-    const params: any = { school_id: schoolId, is_active: isActive };
-    if (roomId) params.room_id = roomId;
-    if (invigilatorId) params.invigilator_id = invigilatorId;
-    return this.api.get<RoomInvigilator[]>('/invigilators/room-assignments', { params });
+  async listRoomAssignments(_schoolId: number = 1, roomId?: number, invigilatorId?: number, isActive = true, rawRoomId?: string | number) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: [] } as { data: RoomInvigilator[] };
+    }
+
+    const { data: rooms, error: roomsError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('school_id', scopedSchoolId)
+      .order('name', { ascending: true });
+
+    if (roomsError) throw roomsError;
+
+    const targetRoomId = rawRoomId !== undefined ? String(rawRoomId) : roomId !== undefined ? String(roomId) : null;
+    const roomAssignmentRows = (rooms || []).filter((room: any) => {
+      const assignmentMetadata = this.getRoomAssignmentMetadata(room);
+      if (!assignmentMetadata) return false;
+      if (targetRoomId && String(room.id) !== targetRoomId) return false;
+      if (isActive && assignmentMetadata.is_active === false) return false;
+      return true;
+    });
+
+    if (!roomAssignmentRows.length) {
+      return { data: [] } as { data: RoomInvigilator[] };
+    }
+
+    const uniqueStaffIds = Array.from(
+      new Set(
+        roomAssignmentRows
+          .map((room: any) => this.getRoomAssignmentMetadata(room)?.staff_member_id)
+          .filter(Boolean)
+      )
+    );
+
+    const { data: staffMembers, error: staffError } = await supabase
+      .from('staff_members')
+      .select('*')
+      .eq('school_id', scopedSchoolId)
+      .in('id', uniqueStaffIds);
+
+    if (staffError) throw staffError;
+
+    const staffById = new Map((staffMembers || []).map((item: any) => [String(item.id), item]));
+    const assignments = roomAssignmentRows
+      .map((room: any) => {
+        const assignmentMetadata = this.getRoomAssignmentMetadata(room);
+        const staffMember = staffById.get(String(assignmentMetadata?.staff_member_id || ''));
+        if (!staffMember) return null;
+        const mapped = this.mapSupabaseRoomAssignmentToLegacy(room, staffMember);
+        if (invigilatorId !== undefined && mapped.invigilator_id !== invigilatorId) {
+          return null;
+        }
+        return mapped;
+      })
+      .filter(Boolean) as RoomInvigilator[];
+
+    return { data: assignments } as { data: RoomInvigilator[] };
   }
 
   async updateRoomAssignment(assignmentId: number, data: Partial<RoomInvigilator>) {
-    return this.api.put<RoomInvigilator>(`/invigilators/assignments/${assignmentId}`, data);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { data: rooms, error: roomsError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('school_id', scopedSchoolId);
+
+    if (roomsError) throw roomsError;
+
+    const room = (rooms || []).find((item: any) => {
+      const assignmentMetadata = this.getRoomAssignmentMetadata(item);
+      if (!assignmentMetadata?.staff_member_id) return false;
+      return this.buildLegacyRoomAssignmentId(item.id, assignmentMetadata.staff_member_id) === assignmentId;
+    });
+
+    if (!room) {
+      throw new Error('Assignment not found');
+    }
+
+    const existingAssignment = this.getRoomAssignmentMetadata(room);
+    if (!existingAssignment?.staff_member_id) {
+      throw new Error('Assignment not found');
+    }
+
+    const nextStaffMemberId = data.invigilator_id !== undefined
+      ? this.resolveMappedId('invigilator', data.invigilator_id)
+      : existingAssignment.staff_member_id;
+
+    const { data: staffMember, error: staffError } = await supabase
+      .from('staff_members')
+      .select('*')
+      .eq('id', nextStaffMemberId)
+      .eq('school_id', scopedSchoolId)
+      .single();
+
+    if (staffError || !staffMember) {
+      throw staffError || new Error('Invigilator not found');
+    }
+
+    const currentMetadata =
+      room.metadata && typeof room.metadata === 'object' ? { ...(room.metadata as Record<string, unknown>) } : {};
+    const nextMetadata = {
+      ...currentMetadata,
+      invigilator_assignment: {
+        staff_member_id: staffMember.id,
+        notes: data.notes ?? existingAssignment.notes ?? '',
+        is_active: data.is_active ?? existingAssignment.is_active ?? true,
+        created_at: existingAssignment.created_at || room.created_at,
+        updated_at: new Date().toISOString(),
+      },
+    };
+
+    const { data: updatedRoom, error: updateError } = await supabase
+      .from('rooms')
+      .update({ metadata: nextMetadata })
+      .eq('id', room.id)
+      .eq('school_id', scopedSchoolId)
+      .select('*')
+      .single();
+
+    if (updateError || !updatedRoom) {
+      throw updateError || new Error('Failed to update assignment');
+    }
+
+    return { data: this.mapSupabaseRoomAssignmentToLegacy(updatedRoom, staffMember) } as { data: RoomInvigilator };
   }
 
   async deleteRoomAssignment(assignmentId: number) {
-    return this.api.delete(`/invigilators/assignments/${assignmentId}`);
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { data: rooms, error: roomsError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('school_id', scopedSchoolId);
+
+    if (roomsError) throw roomsError;
+
+    const room = (rooms || []).find((item: any) => {
+      const assignmentMetadata = this.getRoomAssignmentMetadata(item);
+      if (!assignmentMetadata?.staff_member_id) return false;
+      return this.buildLegacyRoomAssignmentId(item.id, assignmentMetadata.staff_member_id) === assignmentId;
+    });
+
+    if (!room) {
+      throw new Error('Assignment not found');
+    }
+
+    const currentMetadata =
+      room.metadata && typeof room.metadata === 'object' ? { ...(room.metadata as Record<string, unknown>) } : {};
+    const existingAssignment = this.getRoomAssignmentMetadata(room);
+    const nextMetadata = {
+      ...currentMetadata,
+      invigilator_assignment: {
+        ...(existingAssignment || {}),
+        is_active: false,
+        updated_at: new Date().toISOString(),
+      },
+    };
+
+    const { error } = await supabase
+      .from('rooms')
+      .update({ metadata: nextMetadata })
+      .eq('id', room.id)
+      .eq('school_id', scopedSchoolId);
+
+    if (error) throw error;
+    return { data: { message: 'Invigilator assignment removed from room' } } as { data: { message: string } };
   }
 
-  async deleteAllRoomAssignments(schoolId: number = 1) {
-    return this.api.delete('/invigilators/assignments', { params: { school_id: schoolId } });
+  async deleteAllRoomAssignments(_schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
+    const { data: rooms, error: roomsError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('school_id', scopedSchoolId);
+
+    if (roomsError) throw roomsError;
+
+    const assignedRooms = (rooms || []).filter((room: any) => this.getRoomAssignmentMetadata(room)?.is_active !== false && this.getRoomAssignmentMetadata(room)?.staff_member_id);
+    if (!assignedRooms.length) {
+      return { data: { message: 'No active invigilator assignments found', deleted_count: 0 } } as { data: { message: string; deleted_count: number } };
+    }
+
+    for (const room of assignedRooms) {
+      const currentMetadata =
+        room.metadata && typeof room.metadata === 'object' ? { ...(room.metadata as Record<string, unknown>) } : {};
+      const existingAssignment = this.getRoomAssignmentMetadata(room);
+      const nextMetadata = {
+        ...currentMetadata,
+        invigilator_assignment: {
+          ...(existingAssignment || {}),
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        },
+      };
+
+      const { error } = await supabase
+        .from('rooms')
+        .update({ metadata: nextMetadata })
+        .eq('id', room.id)
+        .eq('school_id', scopedSchoolId);
+
+      if (error) throw error;
+    }
+
+    return {
+      data: {
+        message: 'All invigilator assignments removed successfully',
+        deleted_count: assignedRooms.length,
+      },
+    } as { data: { message: string; deleted_count: number } };
   }
 
   // ==================== Inventory ====================

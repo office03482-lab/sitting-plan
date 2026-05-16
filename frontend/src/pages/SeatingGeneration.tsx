@@ -24,7 +24,7 @@ const extractBatchesFromPlanName = (planName: string) => {
 
 interface RoomBatchSummary {
   planId: number;
-  roomId: number;
+  roomId: string | number;
   roomName: string;
   totalStudents: number;
   totalBatches: number;
