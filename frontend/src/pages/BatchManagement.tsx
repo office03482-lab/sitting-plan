@@ -246,6 +246,7 @@ const BatchManagement: React.FC = () => {
   const [showStudentsModal, setShowStudentsModal] = useState(false);
   const [studentOverlayBatch, setStudentOverlayBatch] = useState<Batch | null>(null);
   const [batchStudents, setBatchStudents] = useState<Student[]>([]);
+  const [studentOverlaySearch, setStudentOverlaySearch] = useState('');
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
   const [reorderLoading, setReorderLoading] = useState(false);
@@ -448,6 +449,7 @@ const BatchManagement: React.FC = () => {
     setShowStudentsModal(false);
     setStudentOverlayBatch(null);
     setBatchStudents([]);
+    setStudentOverlaySearch('');
     setStudentsError(null);
     setStudentsLoading(false);
   };
@@ -456,6 +458,7 @@ const BatchManagement: React.FC = () => {
     try {
       setStudentOverlayBatch(batch);
       setShowStudentsModal(true);
+      setStudentOverlaySearch('');
       setStudentsLoading(true);
       setStudentsError(null);
       const response = selectedCategory === 'class'
@@ -475,6 +478,22 @@ const BatchManagement: React.FC = () => {
       setStudentsLoading(false);
     }
   };
+
+  const normalizedStudentOverlaySearch = studentOverlaySearch.trim().toLowerCase();
+  const filteredBatchStudents = batchStudents.filter((student) => {
+    if (!normalizedStudentOverlaySearch) return true;
+    return [
+      student.roll_number,
+      student.name,
+      student.father_name,
+      student.class_name,
+      student.section,
+      student.phone,
+      student.email,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedStudentOverlaySearch));
+  });
 
   const handleDeleteAllBatches = async () => {
     const confirmed = window.confirm(
@@ -1204,43 +1223,62 @@ const BatchManagement: React.FC = () => {
                   Is {selectedCategory === 'class' ? 'class' : 'batch'} mein abhi koi student available nahi hai.
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-xl border border-slate-700">
-                  <table className="w-full min-w-[900px]">
-                    <thead className="bg-slate-700/80">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Roll No</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Student Name</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Father Name</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Class / Section</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Phone</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Email</th>
-                        <th className="px-4 py-3 text-left text-sm font-semibold text-white">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {batchStudents.map((student) => (
-                        <tr key={student.id} className="border-t border-slate-700 bg-slate-800/80">
-                          <td className="px-4 py-3 text-sm text-slate-200">{student.roll_number || '-'}</td>
-                          <td className="px-4 py-3 text-sm font-medium text-white">{student.name || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-slate-300">{student.father_name || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-slate-300">{[student.class_name, student.section].filter(Boolean).join(' | ') || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-slate-300">{student.phone || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-slate-300">{student.email || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-slate-300">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-medium ${
-                                student.is_active
-                                  ? 'bg-emerald-500/20 text-emerald-200'
-                                  : 'bg-slate-500/20 text-slate-200'
-                              }`}
-                            >
-                              {student.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-4">
+                  <div className="relative max-w-md">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                      type="text"
+                      value={studentOverlaySearch}
+                      onChange={(event) => setStudentOverlaySearch(event.target.value)}
+                      placeholder="Search student by name, roll no, father name, class, phone..."
+                      className="w-full rounded-xl border border-slate-600 bg-slate-900/60 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-slate-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/30"
+                    />
+                  </div>
+
+                  {filteredBatchStudents.length === 0 ? (
+                    <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-10 text-center text-slate-300">
+                      Search ke hisaab se koi student nahi mila.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-700">
+                      <table className="w-full min-w-[900px]">
+                        <thead className="bg-slate-700/80">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Roll No</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Student Name</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Father Name</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Class / Section</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Phone</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Email</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-white">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredBatchStudents.map((student) => (
+                            <tr key={student.id} className="border-t border-slate-700 bg-slate-800/80">
+                              <td className="px-4 py-3 text-sm text-slate-200">{student.roll_number || '-'}</td>
+                              <td className="px-4 py-3 text-sm font-medium text-white">{student.name || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-slate-300">{student.father_name || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-slate-300">{[student.class_name, student.section].filter(Boolean).join(' | ') || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-slate-300">{student.phone || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-slate-300">{student.email || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-slate-300">
+                                <span
+                                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                                    student.is_active
+                                      ? 'bg-emerald-500/20 text-emerald-200'
+                                      : 'bg-slate-500/20 text-slate-200'
+                                  }`}
+                                >
+                                  {student.is_active ? 'Active' : 'Inactive'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
