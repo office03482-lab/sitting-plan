@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
+    # Supabase
+    supabase_url: str | None = None
+    supabase_service_role_key: str | None = None
+
     # Security
     jwt_secret: str | None = None
     jwt_algorithm: str = "HS256"
@@ -189,7 +193,7 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     class Config:
-        env_file = ".env"
+        env_file = str(BASE_DIR / ".env")
         case_sensitive = False
 
 

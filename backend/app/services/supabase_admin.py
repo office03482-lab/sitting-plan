@@ -6,11 +6,48 @@ import os
 from typing import Any, Dict, List
 
 from supabase import Client, create_client
+from app.config import BASE_DIR, settings
+
+
+def _read_env_file_value(key: str) -> str:
+    candidate_files = [
+        BASE_DIR / ".env",
+        BASE_DIR.parent / "frontend" / ".env",
+    ]
+
+    for env_file in candidate_files:
+        try:
+            if not env_file.exists():
+                continue
+            for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                current_key, value = line.split("=", 1)
+                if current_key.strip() != key:
+                    continue
+                return value.strip().strip('"').strip("'")
+        except OSError:
+            continue
+
+    return ""
 
 
 def get_supabase_admin_client() -> Client:
-    url = (os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL") or "").strip()
-    service_role_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    url = (
+        os.getenv("SUPABASE_URL")
+        or os.getenv("VITE_SUPABASE_URL")
+        or settings.supabase_url
+        or _read_env_file_value("SUPABASE_URL")
+        or _read_env_file_value("VITE_SUPABASE_URL")
+        or ""
+    ).strip()
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or settings.supabase_service_role_key
+        or _read_env_file_value("SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    ).strip()
 
     if not url:
         raise RuntimeError("SUPABASE_URL is required for Supabase persistence.")
