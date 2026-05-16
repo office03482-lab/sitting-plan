@@ -4,7 +4,7 @@ Student management routes
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from typing import Any, List
@@ -372,11 +372,13 @@ async def download_student_template():
     """
     try:
         excel_file = create_student_excel_template()
-
-        return StreamingResponse(
-            excel_file,
+        return Response(
+            content=excel_file.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=student_data_template.xlsx"}
+            headers={
+                "Content-Disposition": "attachment; filename=student_data_template.xlsx",
+                "Cache-Control": "no-store",
+            }
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating template: {str(e)}")

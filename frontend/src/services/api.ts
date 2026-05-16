@@ -25,10 +25,30 @@ const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const API_TIMEOUT_MS = 60000;
 const STUDENT_PHOTO_BUCKET = 'student-photos';
 const STAFF_PHOTO_BUCKET = 'staff-photos';
-const DIRECT_API_FALLBACKS = [
-  'http://127.0.0.1:8000/api',
-  'http://127.0.0.1:8010/api',
-];
+
+const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
+
+const getConfiguredApiOrigin = () => {
+  const rawValue = String(import.meta.env.VITE_API_URL || '').trim();
+  return rawValue ? stripTrailingSlash(rawValue) : '';
+};
+
+const isLocalDevelopmentHost = () =>
+  typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+export const getApiBaseUrl = () => {
+  const configuredOrigin = getConfiguredApiOrigin();
+  if (configuredOrigin) {
+    return `${configuredOrigin}/api`;
+  }
+
+  if (import.meta.env.DEV) {
+    return '/api';
+  }
+
+  console.warn('[API] VITE_API_URL is missing in production. Falling back to relative /api.');
+  return '/api';
+};
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
@@ -1187,7 +1207,7 @@ class ApiService {
 
   constructor() {
     this.api = axios.create({
-      baseURL: "/api",
+      baseURL: getApiBaseUrl(),
       timeout: API_TIMEOUT_MS,
     });
 
@@ -1269,21 +1289,11 @@ class ApiService {
           (isNetworkError || RETRYABLE_STATUS_CODES.has(status));
         const shouldTryDirectFallback =
           (isNetworkError || RETRYABLE_STATUS_CODES.has(status)) &&
-          typeof window !== 'undefined' &&
-          ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
-          (config?.__directFallbackIndex ?? 0) < DIRECT_API_FALLBACKS.length;
+          isLocalDevelopmentHost() &&
+          Boolean(import.meta.env.DEV);
 
         if (!config) {
           return Promise.reject(error);
-        }
-
-        if (!shouldRetry && shouldTryDirectFallback) {
-          const fallbackIndex = config.__directFallbackIndex ?? 0;
-          config.__directFallbackIndex = fallbackIndex + 1;
-          config.__usingDirectFallback = true;
-          config.baseURL = DIRECT_API_FALLBACKS[fallbackIndex];
-          await delay(300);
-          return this.api.request(config);
         }
 
         if (!shouldRetry) {
@@ -1304,20 +1314,14 @@ class ApiService {
           const retryNetworkError = !retryError?.response;
           const shouldRetryFallback =
             (retryNetworkError || RETRYABLE_STATUS_CODES.has(retryStatus)) &&
-            typeof window !== 'undefined' &&
-            ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
-            (config.__directFallbackIndex ?? 0) < DIRECT_API_FALLBACKS.length;
+            isLocalDevelopmentHost() &&
+            Boolean(import.meta.env.DEV) &&
+            shouldTryDirectFallback;
 
           if (!shouldRetryFallback) {
             return Promise.reject(retryError);
           }
-
-          const fallbackIndex = config.__directFallbackIndex ?? 0;
-          config.__directFallbackIndex = fallbackIndex + 1;
-          config.__usingDirectFallback = true;
-          config.baseURL = DIRECT_API_FALLBACKS[fallbackIndex];
-          await delay(300);
-          return this.api.request(config);
+          return Promise.reject(retryError);
         }
       }
     );
@@ -1349,17 +1353,9 @@ class ApiService {
       const status = error?.response?.status;
       if (
         status === 404 &&
-        typeof window !== 'undefined' &&
-        ['localhost', '127.0.0.1'].includes(window.location.hostname)
+        isLocalDevelopmentHost() &&
+        Boolean(import.meta.env.DEV)
       ) {
-        for (const baseURL of DIRECT_API_FALLBACKS) {
-          try {
-            const response = await axios.post<AuthResponse>(`${baseURL}/auth/login-password`, credentials);
-            return response;
-          } catch {
-            // Try next direct URL.
-          }
-        }
         throw new Error('Login endpoint not available. Restart backend and try again.');
       }
       throw error;
@@ -1515,6 +1511,12 @@ class ApiService {
 
   async downloadStudentTemplate() {
     return this.api.get('/students/template/download', {
+      responseType: 'blob',
+    });
+  }
+
+  async downloadSeatingTemplate() {
+    return this.api.get('/seating/template/download', {
       responseType: 'blob',
     });
   }

@@ -135,9 +135,8 @@ export default function SeatingPlanManagement() {
 
   const handleDownloadTemplate = async () => {
     try {
-      const response = await fetch('/api/seating/template/download');
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const response = await apiService.downloadSeatingTemplate();
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'seating_plan_template.xlsx';

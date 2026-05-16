@@ -437,6 +437,10 @@ export default function StudentManagement() {
   const handleDownloadTemplate = async () => {
     try {
       const response = await apiService.downloadStudentTemplate();
+      const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+      if (!contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+        throw new Error('Live template response is not a valid Excel file yet.');
+      }
       const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
