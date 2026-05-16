@@ -316,6 +316,7 @@ export default function StudentManagement() {
   const studentMediaStreamRef = useRef<MediaStream | null>(null);
   const importSectionRef = useRef<HTMLDivElement | null>(null);
   const directorySectionRef = useRef<HTMLDivElement | null>(null);
+  const studentImportInputRef = useRef<HTMLInputElement | null>(null);
   const skipNextAddAutoOpenRef = useRef(false);
   const isDedicatedAddView = location.hash === '#add';
 
@@ -454,12 +455,35 @@ export default function StudentManagement() {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.name.toLowerCase().endsWith('.xlsx')) {
-        alert('Please select a valid Excel file (.xlsx)');
+        setMessage('Please select a valid Excel file (.xlsx)');
+        setUploadedFile(null);
+        e.target.value = '';
         return;
       }
       setUploadedFile(file);
       setImportResult(null);
+      setMessage('');
     }
+  };
+
+  const handleChooseImportFile = () => {
+    studentImportInputRef.current?.click();
+  };
+
+  const handleImportDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      setMessage('Please drop a valid Excel file (.xlsx)');
+      setUploadedFile(null);
+      return;
+    }
+
+    setUploadedFile(file);
+    setImportResult(null);
+    setMessage('');
   };
 
   const handleImportStudents = async () => {
@@ -1157,19 +1181,28 @@ export default function StudentManagement() {
             </button>
           </div>
 
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-white mb-8">
+          <div
+            className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-white mb-8"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleImportDrop}
+          >
             <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <div className="mb-4">
-              <label htmlFor="file-upload" className="cursor-pointer">
-                <span className="text-blue-600 hover:text-blue-800 font-medium">Click to upload</span>
-                <span className="text-gray-500"> or drag and drop</span>
-              </label>
+              <button
+                type="button"
+                onClick={handleChooseImportFile}
+                className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700"
+              >
+                Choose Excel File
+              </button>
+              <div className="mt-3 text-sm text-gray-500">ya file yahan drag and drop karo</div>
               <input
                 id="file-upload"
                 type="file"
                 accept=".xlsx"
                 onChange={handleFileSelect}
                 className="hidden"
+                ref={studentImportInputRef}
               />
             </div>
             <p className="text-sm text-gray-500 mb-4">
