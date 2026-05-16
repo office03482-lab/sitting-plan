@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from '
 import { useNavigate } from 'react-router-dom';
 import { Camera, ChevronLeft, Eye, Pencil, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
+import { useAppStore } from '@store/app';
 import type { Batch, Student } from '@types';
 import {
   readEduPayAdmissionRequests,
@@ -71,6 +72,16 @@ type StudentDetailsState = {
   localDetails?: Record<string, unknown>;
 };
 
+type BulkDeleteProgress = {
+  status: 'running' | 'success' | 'error';
+  total: number;
+  processed: number;
+  successCount: number;
+  failureCount: number;
+  phase: string;
+  detail: string;
+};
+
 const normalizeStudent = (student: any): Student => ({
   ...student,
   id: Number(student?.id ?? 0),
@@ -120,7 +131,7 @@ function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student;
 
 export default function StudentDirectory() {
   const navigate = useNavigate();
-  const [students, setStudents] = useState<Student[]>([]);
+  const { students, setStudents, removeStudent, studentRefreshToken, bumpStudentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
   const [search, setSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState('all');
@@ -133,16 +144,23 @@ export default function StudentDirectory() {
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [viewingDetails, setViewingDetails] = useState<StudentDetailsState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<BulkDeleteProgress | null>(null);
 
   const loadStudents = async () => {
+    setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
       const nextStudents = Array.isArray(response.data)
         ? response.data.map(normalizeStudent).filter((student) => student.id > 0 && (student.name || student.roll_number))
         : [];
       setStudents(nextStudents);
+      return nextStudents;
     } catch (error: any) {
       showMessage(error?.response?.data?.detail || 'Students load nahi ho paaye.', 'error');
+      return [];
+    } finally {
+      setStudentsLoading(false);
     }
   };
 
@@ -167,7 +185,7 @@ export default function StudentDirectory() {
   useEffect(() => {
     void loadStudents();
     void loadClassBatches();
-  }, []);
+  }, [studentRefreshToken]);
 
   const showMessage = (nextMessage: string, type: 'success' | 'error' = 'success') => {
     setMessage(nextMessage);
@@ -347,6 +365,7 @@ export default function StudentDirectory() {
         details: nextSnapshot,
       });
       await loadStudents();
+      bumpStudentRefreshToken();
       closeEdit();
       showMessage('Student updated successfully.');
     } catch (error: any) {
@@ -360,7 +379,8 @@ export default function StudentDirectory() {
     if (!window.confirm(`${student.name} ko delete karna hai?`)) return;
     try {
       await apiService.deleteStudent(student.id);
-      await loadStudents();
+      removeStudent(student.id);
+      bumpStudentRefreshToken();
       showMessage('Student deleted successfully.');
     } catch (error: any) {
       showMessage(error?.response?.data?.detail || 'Student delete failed.', 'error');
@@ -373,12 +393,66 @@ export default function StudentDirectory() {
 
     try {
       setSaving(true);
-      for (const student of filteredStudents) {
-        await apiService.deleteStudent(student.id);
+      let successCount = 0;
+      let failureCount = 0;
+      const total = filteredStudents.length;
+
+      setBulkDeleteProgress({
+        status: 'running',
+        total,
+        processed: 0,
+        successCount: 0,
+        failureCount: 0,
+        phase: 'Deleting filtered students',
+        detail: 'Har student delete hote hi progress update hogi.',
+      });
+
+      for (const [index, student] of filteredStudents.entries()) {
+        try {
+          await apiService.deleteStudent(student.id);
+          removeStudent(student.id);
+          successCount += 1;
+        } catch {
+          failureCount += 1;
+        }
+
+        setBulkDeleteProgress({
+          status: 'running',
+          total,
+          processed: index + 1,
+          successCount,
+          failureCount,
+          phase: 'Deleting filtered students',
+          detail: `${index + 1} / ${total} students process ho chuke hain.`,
+        });
       }
       await loadStudents();
-      showMessage('Selected students deleted successfully.');
+      bumpStudentRefreshToken();
+      setBulkDeleteProgress({
+        status: failureCount > 0 ? 'error' : 'success',
+        total,
+        processed: total,
+        successCount,
+        failureCount,
+        phase: failureCount > 0 ? 'Completed with warnings' : 'Completed successfully',
+        detail: `${successCount} deleted, ${failureCount} failed.`,
+      });
+      showMessage(
+        failureCount > 0
+          ? `Bulk delete completed with warnings. Deleted ${successCount}, failed ${failureCount}.`
+          : 'Selected students deleted successfully.',
+        failureCount > 0 ? 'error' : 'success',
+      );
     } catch (error: any) {
+      setBulkDeleteProgress({
+        status: 'error',
+        total: filteredStudents.length,
+        processed: 0,
+        successCount: 0,
+        failureCount: filteredStudents.length || 1,
+        phase: 'Bulk delete failed',
+        detail: error?.response?.data?.detail || 'Delete request complete nahi ho paayi.',
+      });
       showMessage(error?.response?.data?.detail || 'Delete all failed.', 'error');
     } finally {
       setSaving(false);
@@ -408,6 +482,64 @@ export default function StudentDirectory() {
             }`}
           >
             {message}
+          </div>
+        ) : null}
+
+        {bulkDeleteProgress ? (
+          <div
+            className={`mb-4 rounded-2xl border p-4 ${
+              bulkDeleteProgress.status === 'success'
+                ? 'border-emerald-200 bg-emerald-50'
+                : bulkDeleteProgress.status === 'error'
+                  ? 'border-amber-200 bg-amber-50'
+                  : 'border-blue-200 bg-blue-50'
+            }`}
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Bulk delete status</p>
+                <p className="mt-1 text-sm text-slate-600">{bulkDeleteProgress.phase}</p>
+                <p className="mt-1 text-sm text-slate-500">{bulkDeleteProgress.detail}</p>
+              </div>
+              <div className="min-w-[220px] rounded-xl bg-white/80 p-3">
+                <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <span>Progress</span>
+                  <span>{Math.round((bulkDeleteProgress.processed / Math.max(bulkDeleteProgress.total, 1)) * 100)}%</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      bulkDeleteProgress.status === 'success'
+                        ? 'bg-emerald-500'
+                        : bulkDeleteProgress.status === 'error'
+                          ? 'bg-amber-500'
+                          : 'bg-blue-600'
+                    }`}
+                    style={{ width: `${Math.max(6, Math.min((bulkDeleteProgress.processed / Math.max(bulkDeleteProgress.total, 1)) * 100, 100))}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Total</p>
+                    <p className="font-semibold text-slate-900">{bulkDeleteProgress.total}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Processed</p>
+                    <p className="font-semibold text-slate-900">{bulkDeleteProgress.processed}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Remaining</p>
+                    <p className="font-semibold text-slate-900">{Math.max(bulkDeleteProgress.total - bulkDeleteProgress.processed, 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Success / Failed</p>
+                    <p className="font-semibold text-slate-900">
+                      {bulkDeleteProgress.successCount} / {bulkDeleteProgress.failureCount}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         ) : null}
 
@@ -498,11 +630,11 @@ export default function StudentDirectory() {
             <button
               type="button"
               onClick={handleDeleteAll}
-              disabled={!filteredStudents.length || saving}
+              disabled={!filteredStudents.length || saving || studentsLoading}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Trash2 className="h-4 w-4" />
-              Delete All
+              {saving ? 'Deleting...' : 'Delete All'}
             </button>
           </div>
 
@@ -548,7 +680,8 @@ export default function StudentDirectory() {
                     <button
                       type="button"
                       onClick={() => handleDeleteStudent(student)}
-                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-100"
+                      disabled={saving}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <Trash2 className="h-4 w-4" />
                       Delete
@@ -595,7 +728,7 @@ export default function StudentDirectory() {
                       <button type="button" onClick={() => openDetails(student)} className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-700 hover:bg-amber-100" title="Full details">
                         <Eye className="h-4 w-4" />
                       </button>
-                      <button type="button" onClick={() => handleDeleteStudent(student)} className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100" title="Delete">
+                      <button type="button" onClick={() => handleDeleteStudent(student)} disabled={saving} className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60" title="Delete">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>

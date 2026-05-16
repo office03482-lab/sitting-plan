@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import type { AxiosProgressEvent } from 'axios';
 import type { 
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, OTPLoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator, InvigilatorWithRooms,
@@ -1411,7 +1412,11 @@ class ApiService {
 
   // ==================== Students ====================
 
-  async importStudents(formData: FormData, schoolId?: number | string) {
+  async importStudents(
+    formData: FormData,
+    schoolId?: number | string,
+    onUploadProgress?: (progressEvent: AxiosProgressEvent) => void,
+  ) {
     const scopedSchoolId = typeof schoolId === 'string'
       ? schoolId
       : await this.resolveCurrentSupabaseSchoolId();
@@ -1419,6 +1424,7 @@ class ApiService {
 
     return this.api.post('/students/import', formData, {
       params: { school_id: scopedSchoolId },
+      onUploadProgress,
     });
   }
 

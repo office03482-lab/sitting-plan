@@ -276,20 +276,110 @@ function StudentField({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+type StudentOperationProgress = {
+  kind: 'import' | 'delete-all' | 'bulk-delete';
+  status: 'running' | 'success' | 'error';
+  title: string;
+  phase: string;
+  total: number;
+  processed: number;
+  successCount: number;
+  failureCount: number;
+  percent: number;
+  unit: 'rows' | 'students' | 'bytes';
+  detail: string;
+};
+
+const formatProgressMetric = (value: number, unit: StudentOperationProgress['unit']) => {
+  if (unit !== 'bytes') return `${value}`;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+function StudentOperationStatusCard({ progress }: { progress: StudentOperationProgress | null }) {
+  if (!progress) return null;
+
+  const remaining = Math.max(progress.total - progress.processed, 0);
+  const toneClass =
+    progress.status === 'success'
+      ? 'border-emerald-200 bg-emerald-50'
+      : progress.status === 'error'
+        ? 'border-amber-200 bg-amber-50'
+        : 'border-blue-200 bg-blue-50';
+  const textClass =
+    progress.status === 'success'
+      ? 'text-emerald-700'
+      : progress.status === 'error'
+        ? 'text-amber-700'
+        : 'text-blue-700';
+
+  return (
+    <div className={`mb-6 rounded-2xl border p-5 shadow-sm ${toneClass}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <RefreshCw className={`h-4 w-4 ${progress.status === 'running' ? 'animate-spin' : ''} ${textClass}`} />
+            <h3 className="text-base font-semibold text-slate-900">{progress.title}</h3>
+          </div>
+          <p className="mt-1 text-sm text-slate-600">{progress.phase}</p>
+          <p className="mt-1 text-sm text-slate-500">{progress.detail}</p>
+        </div>
+        <div className="min-w-[220px] rounded-xl bg-white/80 p-3">
+          <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <span>Progress</span>
+            <span>{Math.round(progress.percent)}%</span>
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${
+                progress.status === 'success' ? 'bg-emerald-500' : progress.status === 'error' ? 'bg-amber-500' : 'bg-blue-600'
+              }`}
+              style={{ width: `${Math.max(6, Math.min(progress.percent, 100))}%` }}
+            />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600">
+            <div>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Total</p>
+              <p className="font-semibold text-slate-900">{formatProgressMetric(progress.total, progress.unit)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Processed</p>
+              <p className="font-semibold text-slate-900">{formatProgressMetric(progress.processed, progress.unit)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Remaining</p>
+              <p className="font-semibold text-slate-900">{formatProgressMetric(remaining, progress.unit)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Success / Failed</p>
+              <p className="font-semibold text-slate-900">
+                {progress.successCount} / {progress.failureCount}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function StudentManagement() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { students, setStudents } = useAppStore();
+  const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');
   const [batches, setBatches] = useState<Batch[]>([]);
   const [hostels, setHostels] = useState<Hostel[]>([]);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [studentsLoading, setStudentsLoading] = useState(false);
   const [importResult, setImportResult] = useState<StudentImportResponse | null>(null);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
   const [message, setMessage] = useState('');
+  const [operationProgress, setOperationProgress] = useState<StudentOperationProgress | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
   const [transferTargetBatch, setTransferTargetBatch] = useState('');
   const [transferringSelected, setTransferringSelected] = useState(false);
@@ -403,6 +493,7 @@ export default function StudentManagement() {
   }, [studentForm.dob, studentForm.ageAsOfToday]);
 
   const loadStudents = async () => {
+    setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
       setStudents(response.data);
@@ -410,8 +501,12 @@ export default function StudentManagement() {
         .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
         .filter(Boolean);
       setSessionOptions(Array.from(new Set([...DEFAULT_SESSION_OPTIONS, ...sessions])).sort((a, b) => a.localeCompare(b)));
+      return response.data;
     } catch (error) {
       console.error('Failed to load students:', error);
+      return [];
+    } finally {
+      setStudentsLoading(false);
     }
   };
 
@@ -494,17 +589,77 @@ export default function StudentManagement() {
     if (!uploadedFile) return;
 
     setUploading(true);
+    setOperationProgress({
+      kind: 'import',
+      status: 'running',
+      title: 'Student import in progress',
+      phase: 'Uploading Excel file',
+      total: uploadedFile.size || 0,
+      processed: 0,
+      successCount: 0,
+      failureCount: 0,
+      percent: 0,
+      unit: 'bytes',
+      detail: 'File backend ko bheji ja rahi hai. Upload complete hote hi table auto-refresh hoga.',
+    });
     try {
       const formData = new FormData();
       formData.append('file', uploadedFile);
-      const response = await apiService.importStudents(formData);
+      const response = await apiService.importStudents(formData, undefined, (progressEvent) => {
+        const total = progressEvent.total || uploadedFile.size || 0;
+        const loaded = progressEvent.loaded || 0;
+        const percent = total > 0 ? Math.round((loaded / total) * 100) : 0;
+        setOperationProgress((current) =>
+          current
+            ? {
+                ...current,
+                total,
+                processed: loaded,
+                percent,
+              }
+            : current,
+        );
+      });
       setImportResult(response.data);
-
+      const totalRows = response.data.imported_count + response.data.skipped_count + response.data.errors.length;
+      setOperationProgress({
+        kind: 'import',
+        status: response.data.errors.length > 0 ? 'error' : 'running',
+        title: 'Student import in progress',
+        phase: 'Refreshing student table',
+        total: totalRows,
+        processed: totalRows,
+        successCount: response.data.imported_count,
+        failureCount: response.data.errors.length,
+        percent: 92,
+        unit: 'rows',
+        detail: 'Import complete ho gaya hai. Latest student list sync ki ja rahi hai.',
+      });
+      setSearchTerm('');
+      setSelectedBatch('');
+      await loadStudents();
+      bumpStudentRefreshToken();
       if (response.data.imported_count > 0) {
-        // Reload students
-        await loadStudents();
         setUploadedFile(null);
       }
+      setMessage(
+        response.data.errors.length > 0
+          ? `Import completed with warnings. Imported ${response.data.imported_count}, skipped ${response.data.skipped_count}, errors ${response.data.errors.length}.`
+          : `Import completed successfully. Imported ${response.data.imported_count} students.`
+      );
+      setOperationProgress({
+        kind: 'import',
+        status: response.data.errors.length > 0 ? 'error' : 'success',
+        title: 'Student import completed',
+        phase: response.data.errors.length > 0 ? 'Completed with warnings' : 'Completed successfully',
+        total: totalRows,
+        processed: totalRows,
+        successCount: response.data.imported_count,
+        failureCount: response.data.errors.length,
+        percent: 100,
+        unit: 'rows',
+        detail: `${response.data.imported_count} imported, ${response.data.skipped_count} skipped, ${response.data.errors.length} failed.`,
+      });
     } catch (error: any) {
       console.error('Import failed:', error);
       setImportResult({
@@ -512,6 +667,20 @@ export default function StudentManagement() {
         skipped_count: 0,
         errors: [{ error: error.response?.data?.detail || 'Import failed' }],
         message: 'Import error'
+      });
+      setMessage(error.response?.data?.detail || 'Import failed');
+      setOperationProgress({
+        kind: 'import',
+        status: 'error',
+        title: 'Student import failed',
+        phase: 'Import stopped',
+        total: uploadedFile.size || 0,
+        processed: 0,
+        successCount: 0,
+        failureCount: 1,
+        percent: 100,
+        unit: 'bytes',
+        detail: error.response?.data?.detail || 'Backend import process complete nahi ho paaya.',
       });
     } finally {
       setUploading(false);
@@ -522,14 +691,72 @@ export default function StudentManagement() {
     if (!deleteAllConfirm) return;
 
     setDeletingAll(true);
+    const totalStudents = students.length;
+    setOperationProgress({
+      kind: 'delete-all',
+      status: 'running',
+      title: 'Delete all students in progress',
+      phase: 'Deleting records on server',
+      total: totalStudents,
+      processed: 0,
+      successCount: 0,
+      failureCount: 0,
+      percent: 15,
+      unit: 'students',
+      detail: 'Bulk delete request chal rahi hai. Complete hote hi table refresh hoga.',
+    });
     try {
       await apiService.deleteAllStudents(true); // is_admin=true
       setStudents([]);
+      setSearchTerm('');
+      setSelectedBatch('');
+      setSelectedStudentIds([]);
+      setOperationProgress({
+        kind: 'delete-all',
+        status: 'running',
+        title: 'Delete all students in progress',
+        phase: 'Refreshing empty table',
+        total: totalStudents,
+        processed: totalStudents,
+        successCount: totalStudents,
+        failureCount: 0,
+        percent: 85,
+        unit: 'students',
+        detail: 'Delete successful. UI state ko latest database snapshot ke saath sync kar rahe hain.',
+      });
+      await loadStudents();
+      bumpStudentRefreshToken();
       setDeleteAllConfirm(false);
       setMessage('All students deleted successfully');
+      setOperationProgress({
+        kind: 'delete-all',
+        status: 'success',
+        title: 'Delete all students completed',
+        phase: 'Completed successfully',
+        total: totalStudents,
+        processed: totalStudents,
+        successCount: totalStudents,
+        failureCount: 0,
+        percent: 100,
+        unit: 'students',
+        detail: `${totalStudents} student records removed and table refreshed.`,
+      });
     } catch (error: any) {
       console.error('Failed to delete all students:', error);
       setMessage(error?.response?.data?.detail || 'Failed to delete all students');
+      setOperationProgress({
+        kind: 'delete-all',
+        status: 'error',
+        title: 'Delete all students failed',
+        phase: 'Delete stopped',
+        total: totalStudents,
+        processed: 0,
+        successCount: 0,
+        failureCount: totalStudents || 1,
+        percent: 100,
+        unit: 'students',
+        detail: error?.response?.data?.detail || 'Bulk delete request complete nahi ho paayi.',
+      });
     } finally {
       setDeletingAll(false);
     }
@@ -826,7 +1053,8 @@ export default function StudentManagement() {
     try {
       await apiService.deleteStudent(id);
       setMessage('Student deleted successfully');
-      loadStudents();
+      await loadStudents();
+      bumpStudentRefreshToken();
     } catch (error: any) {
       console.error('Failed to delete student:', error);
       setMessage(error?.response?.data?.detail || 'Failed to delete student');
@@ -875,6 +1103,7 @@ export default function StudentManagement() {
       setTransferTargetBatch('');
       await loadStudents();
       await loadBatches();
+      bumpStudentRefreshToken();
     } catch (error: any) {
       console.error('Failed to transfer selected students:', error);
       setMessage(error?.response?.data?.detail || 'Failed to transfer selected students');
@@ -905,6 +1134,7 @@ export default function StudentManagement() {
       setTransferTargetBatch('');
       await loadStudents();
       await loadBatches();
+      bumpStudentRefreshToken();
     } catch (error: any) {
       console.error('Failed to transfer batch students:', error);
       setMessage(error?.response?.data?.detail || 'Failed to transfer batch students');
@@ -1071,6 +1301,7 @@ export default function StudentManagement() {
       resetStudentForm();
       await loadStudents();
       await loadHostels();
+      bumpStudentRefreshToken();
       if (isDedicatedAddView) {
         if (!editStudent && sendToEduPayOnSubmit) {
           navigate('/edupay');
@@ -1174,11 +1405,13 @@ export default function StudentManagement() {
             {message}
           </div>
         )}
+        <StudentOperationStatusCard progress={operationProgress} />
           <div ref={importSectionRef} className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-gray-800">Import Student Data</h2>
             <button
               onClick={handleDownloadTemplate}
-              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              disabled={uploading}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-60"
             >
               <Download className="w-4 h-4 mr-2" />
               Download Template
@@ -1195,7 +1428,8 @@ export default function StudentManagement() {
               <button
                 type="button"
                 onClick={handleChooseImportFile}
-                className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700"
+                disabled={uploading}
+                className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
               >
                 Choose Excel File
               </button>
@@ -1281,24 +1515,27 @@ export default function StudentManagement() {
             <div className="flex space-x-2">
               <button
                 onClick={openAddModal}
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                disabled={uploading || deletingAll || studentsLoading}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-60"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Add Student
               </button>
               <button
                 onClick={() => setDeleteAllConfirm(true)}
-                className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                disabled={uploading || deletingAll || studentsLoading}
+                className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-60"
               >
                 <AlertTriangle className="w-4 h-4 mr-2" />
                 Delete All
               </button>
               <button
-                onClick={loadStudents}
-                className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                onClick={() => void loadStudents()}
+                disabled={studentsLoading}
+                className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60"
               >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
+                <RefreshCw className={`w-4 h-4 mr-2 ${studentsLoading ? 'animate-spin' : ''}`} />
+                {studentsLoading ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
           </div>
@@ -1365,14 +1602,14 @@ export default function StudentManagement() {
                 </div>
                 <button
                   onClick={handleTransferSelectedStudents}
-                  disabled={transferringSelected || selectedStudents.length === 0 || !transferTargetBatch}
+                  disabled={transferringSelected || uploading || deletingAll || selectedStudents.length === 0 || !transferTargetBatch}
                   className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {transferringSelected ? 'Transferring...' : `Transfer Selected (${selectedStudents.length})`}
                 </button>
                 <button
                   onClick={handleTransferBatchStudents}
-                  disabled={transferringBatch || !selectedBatch || !transferTargetBatch}
+                  disabled={transferringBatch || uploading || deletingAll || !selectedBatch || !transferTargetBatch}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {transferringBatch ? 'Transferring Batch...' : selectedBatch ? `Transfer All From ${selectedBatch}` : 'Transfer Whole Batch'}
@@ -1484,6 +1721,7 @@ export default function StudentManagement() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <button
                             onClick={() => openEditModal(student)}
+                            disabled={uploading || deletingAll}
                             className="text-blue-600 hover:text-blue-900 mr-4"
                             title="Edit"
                           >
@@ -1491,6 +1729,7 @@ export default function StudentManagement() {
                           </button>
                           <button
                             onClick={() => handleDeleteStudent(student.id)}
+                            disabled={uploading || deletingAll}
                             className="text-red-600 hover:text-red-900"
                             title="Delete"
                           >

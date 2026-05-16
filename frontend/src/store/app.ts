@@ -12,6 +12,8 @@ interface AppStore {
   addStudent: (student: Student) => void;
   updateStudent: (student: Student) => void;
   removeStudent: (studentId: number) => void;
+  studentRefreshToken: number;
+  bumpStudentRefreshToken: () => void;
 
   // Room management
   rooms: Room[];
@@ -47,6 +49,10 @@ export const useAppStore = create<AppStore>((set) => ({
   })),
   removeStudent: (studentId) => set((state) => ({
     students: state.students.filter((s) => s.id !== studentId),
+  })),
+  studentRefreshToken: 0,
+  bumpStudentRefreshToken: () => set((state) => ({
+    studentRefreshToken: state.studentRefreshToken + 1,
   })),
 
   rooms: [],
