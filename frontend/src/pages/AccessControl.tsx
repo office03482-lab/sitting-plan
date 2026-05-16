@@ -122,6 +122,36 @@ const initialForm: UserFormState = {
   permissions: ['timetable'],
 };
 
+const toArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (Array.isArray((value as { data?: unknown } | null)?.data)) {
+    return (value as { data: T[] }).data;
+  }
+  return [];
+};
+
+const normalizePermissions = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const normalizeRolePowerUser = (value: any): RolePowerUser => ({
+  ...value,
+  permissions: normalizePermissions(value?.permissions),
+});
+
 function loadPasswordCache() {
   const raw = localStorage.getItem(PASSWORD_CACHE_KEY);
   if (!raw) return {} as Record<string, string>;
@@ -249,7 +279,7 @@ export default function AccessControl() {
     setLoading(true);
     try {
       const response = await apiService.listRoleUsers();
-      const fetchedUsers = response.data;
+      const fetchedUsers = toArray<any>(response?.data).map(normalizeRolePowerUser);
       setUsers(fetchedUsers);
       const nextCache = { ...passwordCache };
       fetchedUsers.forEach((item) => {
@@ -295,7 +325,7 @@ export default function AccessControl() {
       full_name: user.full_name,
       role: user.role as UserRole,
       user_type: user.user_type as UserType,
-      permissions: user.permissions || [],
+      permissions: normalizePermissions(user.permissions),
     });
   };
 
@@ -348,8 +378,8 @@ export default function AccessControl() {
   };
 
   const userPermissionLabels = useMemo(() => {
-    return (values: string[]) =>
-      values.map((item) => POWER_LABELS[item] || item).join(', ') || 'none';
+    return (values: unknown) =>
+      normalizePermissions(values).map((item) => POWER_LABELS[item] || item).join(', ') || 'none';
   }, []);
 
   return (

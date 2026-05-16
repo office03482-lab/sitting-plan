@@ -167,6 +167,21 @@ const warningButtonClass = 'rounded-lg bg-amber-100 px-3 py-2 text-xs font-semib
 const dangerButtonClass = 'rounded-lg bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-200';
 const masterTabButtonClass = 'rounded-xl px-4 py-2 text-sm font-semibold transition';
 
+const inventoryRequestLabels: Record<string, string> = {
+  dashboard: 'dashboard',
+  materials: 'materials',
+  suppliers: 'suppliers',
+  stockIn: 'stock-in',
+  stockOut: 'stock-out',
+  studentIssues: 'student-issues',
+  batches: 'batches',
+  students: 'students',
+  subjects: 'subjects',
+  sets: 'sets',
+  volumes: 'volumes',
+  catalog: 'catalog',
+};
+
 function OverlayPanel({
   open,
   title,
@@ -419,8 +434,44 @@ export default function InventoryManagement() {
   const getApiErrorMessage = (error: any, fallback: string) =>
     error?.response?.data?.detail ||
     error?.response?.data?.error ||
+    error?.details ||
+    error?.hint ||
     error?.message ||
     fallback;
+
+  const buildInventoryFailureMessage = (failedEntries: Array<{ key: string; reason: any }>) => {
+    if (!failedEntries.length) {
+      return 'Failed to load inventory module data.';
+    }
+
+    const failedLabels = failedEntries
+      .map((entry) => inventoryRequestLabels[entry.key] || entry.key)
+      .filter(Boolean);
+    const primaryFailure = failedEntries[0];
+    const reason = getApiErrorMessage(primaryFailure.reason, 'Unknown error');
+    const normalizedReason = String(reason || '');
+    const lowerReason = normalizedReason.toLowerCase();
+
+    if (
+      lowerReason.includes('406') ||
+      lowerReason.includes('not acceptable') ||
+      lowerReason.includes('schema') ||
+      lowerReason.includes('relation') ||
+      lowerReason.includes('column')
+    ) {
+      return `Inventory schema/data issue detected. Failed: ${failedLabels.join(', ')}. ${normalizedReason}`;
+    }
+
+    if (
+      lowerReason.includes('row-level security') ||
+      lowerReason.includes('permission denied') ||
+      lowerReason.includes('policy')
+    ) {
+      return `Inventory permission issue detected. Failed: ${failedLabels.join(', ')}. ${normalizedReason}`;
+    }
+
+    return `Failed to load inventory module data (${failedLabels.join(', ')}). ${normalizedReason}`;
+  };
 
   const loadInventoryData = async (initial = false, targetTab: TabKey = activeTab, force = false) => {
     try {
@@ -479,9 +530,15 @@ export default function InventoryManagement() {
       }
 
       const results = await Promise.allSettled(requests.map((entry) => entry.request));
-      const failures = results.filter((result) => result.status === 'rejected');
+      const failures = results
+        .map((result, index) =>
+          result.status === 'rejected'
+            ? { key: requests[index]?.key || `request_${index}`, reason: result.reason }
+            : null
+        )
+        .filter(Boolean) as Array<{ key: string; reason: any }>;
       if (failures.length === results.length && requests.length > 0) {
-        throw new Error('All inventory requests failed');
+        throw new Error(buildInventoryFailureMessage(failures));
       }
 
       const resultMap = new Map<string, PromiseSettledResult<any>>();
@@ -528,11 +585,16 @@ export default function InventoryManagement() {
       }
 
       if (failures.length > 0) {
-        setAlert({ type: 'warning', message: 'Inventory loaded partially. Some catalog records or older tables were recovering in the background.' });
+        setAlert({
+          type: 'warning',
+          message: `Inventory loaded partially. Failed sections: ${failures
+            .map((entry) => inventoryRequestLabels[entry.key] || entry.key)
+            .join(', ')}.`,
+        });
       }
     } catch (error) {
       console.error('Failed to load inventory data:', error);
-      setAlert({ type: 'error', message: 'Failed to load inventory module data.' });
+      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to load inventory module data.') });
     } finally {
       setLoading(false);
       setRefreshing(false);
