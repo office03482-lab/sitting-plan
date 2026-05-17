@@ -1240,9 +1240,10 @@ const BatchManagement: React.FC = () => {
                       Search ke hisaab se koi student nahi mila.
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-xl border border-slate-700">
-                      <table className="w-full min-w-[900px]">
-                        <thead className="bg-slate-700/80">
+                    <div className="overflow-hidden rounded-xl border border-slate-700">
+                      <div className="max-h-[52vh] overflow-auto">
+                        <table className="w-full min-w-[900px]">
+                        <thead className="sticky top-0 z-10 bg-slate-700/95 backdrop-blur">
                           <tr>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-white">Roll No</th>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-white">Student Name</th>
@@ -1277,6 +1278,7 @@ const BatchManagement: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>

@@ -788,9 +788,9 @@ export default function AddStaff() {
                   className="hidden"
                   onChange={handlePhotoInputChange}
                 />
-                <div className="mt-4 flex h-44 items-center justify-center overflow-hidden rounded-lg bg-[#f0e4cf] text-xs text-slate-500">
+                <div className="mt-4 flex h-44 items-center justify-center overflow-hidden rounded-lg bg-[#f0e4cf] p-2 text-xs text-slate-500">
                   {photoPreviewUrl ? (
-                    <img src={photoPreviewUrl} alt="Staff preview" className="h-full w-full object-cover" />
+                    <img src={photoPreviewUrl} alt="Staff preview" className="h-full w-full rounded-md object-contain" />
                   ) : (
                     'Image Preview'
                   )}

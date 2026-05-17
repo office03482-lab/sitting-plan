@@ -512,7 +512,7 @@ export default function FeeManagement() {
   const loadEduPayData = async (initial = false) => {
     try {
       initial ? setLoading(true) : setRefreshing(true);
-      const [dashboardRes, studentsRes, structuresRes, assignmentsRes, paymentsRes, parentResult] = await Promise.all([
+      const [dashboardRes, studentsRes, structuresRes, assignmentsRes, paymentsRes, parentResult] = await Promise.allSettled([
         apiService.getEduPayDashboard(),
         apiService.listEduPayStudents(),
         apiService.listEduPayFeeStructures(),
@@ -526,12 +526,29 @@ export default function FeeManagement() {
           }),
       ]);
 
-      setDashboard(dashboardRes.data);
-      setStudents(ensureArray<EduPayStudent>(studentsRes.data));
-      setFeeStructures(ensureArray<EduPayFeeStructure>(structuresRes.data));
-      setAssignments(ensureArray<EduPayAssignment>(assignmentsRes.data));
-      setPayments(ensureArray<EduPayPayment>(paymentsRes.data));
-      setParentPortal(parentResult?.data ?? null);
+      setDashboard(dashboardRes.status === 'fulfilled' ? dashboardRes.value.data : null);
+      setStudents(studentsRes.status === 'fulfilled' ? ensureArray<EduPayStudent>(studentsRes.value.data) : []);
+      setFeeStructures(structuresRes.status === 'fulfilled' ? ensureArray<EduPayFeeStructure>(structuresRes.value.data) : []);
+      setAssignments(assignmentsRes.status === 'fulfilled' ? ensureArray<EduPayAssignment>(assignmentsRes.value.data) : []);
+      setPayments(paymentsRes.status === 'fulfilled' ? ensureArray<EduPayPayment>(paymentsRes.value.data) : []);
+      setParentPortal(parentResult.status === 'fulfilled' ? parentResult.value?.data ?? null : null);
+
+      const failedSections = [
+        dashboardRes.status !== 'fulfilled' ? 'dashboard' : null,
+        studentsRes.status !== 'fulfilled' ? 'students' : null,
+        structuresRes.status !== 'fulfilled' ? 'fee structures' : null,
+        assignmentsRes.status !== 'fulfilled' ? 'assignments' : null,
+        paymentsRes.status !== 'fulfilled' ? 'payments' : null,
+      ].filter(Boolean);
+
+      setAlert(
+        failedSections.length
+          ? {
+              type: 'error',
+              message: `BRAIN OF HIMACHAL ke kuch sections load nahi ho paaye: ${failedSections.join(', ')}.`,
+            }
+          : null
+      );
     } catch (error: any) {
       console.error('Failed to load EduPay data', error);
       setAlert({

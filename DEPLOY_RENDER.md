@@ -27,7 +27,8 @@ npm install && npm run build
 1. Backend production requires `DATABASE_URL`
 2. Backend production requires a strong `JWT_SECRET`
 3. Frontend also needs Supabase env vars
-4. Frontend `/api/*` proxy still needs one manual Render rewrite after backend URL is known
+4. Prefer setting `VITE_API_URL=https://YOUR_BACKEND_RENDER_DOMAIN` so local/live API mode is explicit
+5. Frontend `/api/*` rewrite is only needed if you intentionally keep relative `/api`
 
 ## Backend Service Settings
 
@@ -91,13 +92,14 @@ SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 ## Required Frontend Environment Variables
 
 ```env
+VITE_API_URL=https://YOUR_BACKEND_RENDER_DOMAIN
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=<your-anon-key>
 ```
 
-## Manual Rewrite You Must Add In Render Static Site
+## Rewrite Option If You Skip `VITE_API_URL`
 
-After backend deploys and you know the backend URL, add this rewrite in the frontend static site settings:
+After backend deploys and you know the backend URL, add this rewrite in the frontend static site settings only if you do not set `VITE_API_URL`:
 
 - Source:
 
@@ -139,7 +141,7 @@ Also keep the SPA fallback:
 6. Confirm backend `/health` and `/readyz`
 7. Deploy frontend
 8. Set frontend env vars
-9. Add frontend `/api/*` rewrite to backend URL
+9. Set frontend `VITE_API_URL` to backend URL, or add frontend `/api/*` rewrite
 10. Apply Supabase SQL migrations if not already applied
 11. Test login, students, staff, inventory, and photo upload
 
@@ -171,5 +173,6 @@ After deploy:
 - `JWT_SECRET` missing or weak
 - `CORS_ORIGINS` missing frontend domain
 - frontend `/api/*` rewrite not configured
+- `VITE_API_URL` missing in frontend production envs
 - Supabase env vars missing
 - Supabase storage buckets not created

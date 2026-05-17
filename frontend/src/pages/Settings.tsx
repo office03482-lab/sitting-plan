@@ -4,6 +4,7 @@ import { useSettingsStore } from '../store/settings';
 import { apiService } from '../services/api';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
+import { getRuntimeDiagnostics } from '../lib/runtimeConfig';
 
 const SettingsPage: React.FC = () => {
   const {
@@ -17,6 +18,7 @@ const SettingsPage: React.FC = () => {
 
   const [saving, setSaving] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const diagnostics = getRuntimeDiagnostics();
 
   useEffect(() => {
     // Only load from API if backend is available
@@ -102,6 +104,42 @@ const SettingsPage: React.FC = () => {
       )}
 
       <div className="space-y-8">
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Shield className="mr-2 h-5 w-5" />
+            Runtime Connectivity
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">API Mode</p>
+              <p className="mt-1 text-gray-700">{diagnostics.apiMode}</p>
+              <p className="mt-2 text-xs text-gray-500">Base: {diagnostics.apiBaseLabel}</p>
+              <p className="mt-1 text-xs text-gray-500">Proxy Target: {diagnostics.proxyTargetLabel}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <p className="font-semibold text-gray-900">Supabase</p>
+              <p className={`mt-1 ${diagnostics.supabaseConfigured ? 'text-green-700' : 'text-red-700'}`}>
+                {diagnostics.supabaseConfigured ? 'Configured' : 'Missing env configuration'}
+              </p>
+              <p className="mt-2 text-xs text-gray-500">Host: {diagnostics.hostname || 'Unknown host'}</p>
+            </div>
+          </div>
+          {diagnostics.warnings.length > 0 ? (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900">Parity warnings</p>
+              <ul className="mt-2 list-disc pl-5 text-sm text-amber-800">
+                {diagnostics.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+              Local/live connectivity envs healthy lag rahe hain.
+            </div>
+          )}
+        </div>
+
         {/* School Information */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">

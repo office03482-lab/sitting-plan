@@ -232,6 +232,19 @@ export default function InvigilatorManagement() {
       }, {}),
     [activeAssignments]
   );
+  const assignedTeachingKeys = useMemo(
+    () =>
+      new Set(
+        Object.keys(assignmentsByStaffCode)
+          .map((key) => key.trim().toLowerCase())
+          .filter(Boolean)
+      ),
+    [assignmentsByStaffCode]
+  );
+  const assignedNonTeachingIds = useMemo(
+    () => new Set(activeAssignments.map((item) => item.invigilator_id)),
+    [activeAssignments]
+  );
   const assignmentReportRows = useMemo(
     () =>
       activeAssignments.map((assign) => ({
@@ -336,6 +349,21 @@ export default function InvigilatorManagement() {
       const invigilatorId = await resolveAssigneeInvigilatorId();
       const roomId = assignmentData.room_id;
       const existingRoomAssignment = activeAssignments.find((item) => String(item.room_id) === roomId);
+      const selectedInvigilator = invigilators.find((item) => item.id === invigilatorId);
+      const selectedStaffCode = (selectedInvigilator?.staff_id || '').trim().toLowerCase();
+      const duplicateAssignment = activeAssignments.find((item) => {
+        if (existingRoomAssignment && item.id === existingRoomAssignment.id) return false;
+        if (String(item.room_id) === String(roomId)) return false;
+        if (item.invigilator_id === invigilatorId) return true;
+        const currentStaffCode = (item.invigilator?.staff_id || '').trim().toLowerCase();
+        return Boolean(selectedStaffCode) && currentStaffCode === selectedStaffCode;
+      });
+
+      if (duplicateAssignment) {
+        throw new Error(
+          `${selectedInvigilator?.name || 'Selected staff'} is already assigned to ${duplicateAssignment.room?.name || `Room ${duplicateAssignment.room_id}`}`
+        );
+      }
 
       if (existingRoomAssignment) {
         if (existingRoomAssignment.invigilator_id === invigilatorId) {
@@ -615,13 +643,21 @@ export default function InvigilatorManagement() {
                     <option value="">Select Staff</option>
                     {assignmentData.staff_type === 'non_teaching' &&
                       nonTeachingOptions.map((staff) => (
-                        <option key={`inv-${staff.id}`} value={`inv-${staff.id}`}>
+                        <option
+                          key={`inv-${staff.id}`}
+                          value={`inv-${staff.id}`}
+                          disabled={assignedNonTeachingIds.has(staff.id)}
+                        >
                           {staff.name} ({staff.staff_id})
                         </option>
                       ))}
                     {assignmentData.staff_type === 'teaching' &&
                       teachingOptions.map((teacher) => (
-                        <option key={`teach-${teacher.id}`} value={`teach-${teacher.id}`}>
+                        <option
+                          key={`teach-${teacher.id}`}
+                          value={`teach-${teacher.id}`}
+                          disabled={assignedTeachingKeys.has(teacherStaffCode(teacher).trim().toLowerCase())}
+                        >
                           {teacher.name} ({teacherStaffCode(teacher)})
                         </option>
                       ))}

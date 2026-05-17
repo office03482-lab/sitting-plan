@@ -186,7 +186,7 @@ const TimetableManagement: React.FC = () => {
         return;
       }
 
-      const [entriesResponse, teachersResponse, roomsResponse, studentsResponse, batchResponse, classResponse] = await Promise.all([
+      const [entriesResponse, teachersResponse, roomsResponse, studentsResponse, batchResponse, classResponse] = await Promise.allSettled([
         apiService.listTimetableEntries(),
         apiService.listTeachers(),
         apiService.listRooms(),
@@ -194,14 +194,21 @@ const TimetableManagement: React.FC = () => {
         apiService.listBatches(1, undefined, 'batch'),
         apiService.listBatches(1, undefined, 'class'),
       ]);
-      setEntries(ensureArray<TimetableView>(entriesResponse.data));
-      setTeachers(ensureArray<Teacher>(teachersResponse.data));
-      setRooms(ensureArray<Room>(roomsResponse.data));
-      setStudents(ensureArray<Student>(studentsResponse.data));
-      const managedOptions = [...ensureArray<Batch>(batchResponse.data), ...ensureArray<Batch>(classResponse.data)]
+
+      setEntries(entriesResponse.status === 'fulfilled' ? ensureArray<TimetableView>(entriesResponse.value.data) : []);
+      setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
+      setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
+      setStudents(studentsResponse.status === 'fulfilled' ? ensureArray<Student>(studentsResponse.value.data) : []);
+      const managedOptions = [
+        ...ensureArray<Batch>(batchResponse.status === 'fulfilled' ? batchResponse.value.data : []),
+        ...ensureArray<Batch>(classResponse.status === 'fulfilled' ? classResponse.value.data : []),
+      ]
         .map((item: Batch) => String(item.name || '').trim())
         .filter(Boolean);
       setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
+      if (entriesResponse.status !== 'fulfilled') {
+        setAlert({ type: 'error', message: 'Timetable entries abhi load nahi ho paaye. Baaki data show ho raha hai.' });
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       setAlert({ type: 'error', message: 'Failed to load timetable data' });

@@ -108,7 +108,7 @@ export default function SeatingGeneration() {
   const [savedRoomAssignments, setSavedRoomAssignments] = useState<RoomInvigilator[]>([]);
   const [message, setMessage] = useState('');
   const [showExamForm, setShowExamForm] = useState(false);
-  const [examForm, setExamForm] = useState({ name: '', subject: '' });
+  const [examForm, setExamForm] = useState({ name: '' });
   const [editingExamId, setEditingExamId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ planId: number; planName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -142,11 +142,6 @@ export default function SeatingGeneration() {
   const getExamLabel = (plan: SeatingPlan) => {
     const exam = exams.find((item) => item.id === plan.exam_id);
     return plan.exam_name || exam?.name || `Exam ${plan.exam_id}`;
-  };
-
-  const getExamSubject = (plan: SeatingPlan) => {
-    const exam = exams.find((item) => item.id === plan.exam_id);
-    return plan.exam_subject || exam?.subject || 'Subject not set';
   };
 
   const getPlanTypeLabel = (type: SeatingPlan['plan_type'] | 'all_in_one') => {
@@ -468,7 +463,7 @@ export default function SeatingGeneration() {
         setSelectedExam(createdExam.id);
         setMessage('Exam created successfully');
       }
-      setExamForm({ name: '', subject: '' });
+      setExamForm({ name: '' });
       setShowExamForm(false);
       setEditingExamId(null);
     } catch (error: any) {
@@ -481,7 +476,6 @@ export default function SeatingGeneration() {
     setEditingExamId(exam.id);
     setExamForm({
       name: exam.name || '',
-      subject: exam.subject || '',
     });
     setShowExamForm(true);
     setMessage('');
@@ -513,7 +507,7 @@ export default function SeatingGeneration() {
       setSeatingPlans([]);
       setShowExamForm(false);
       setEditingExamId(null);
-      setExamForm({ name: '', subject: '' });
+      setExamForm({ name: '' });
       setMessage('Exam deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete exam:', error);
@@ -672,7 +666,7 @@ export default function SeatingGeneration() {
                     type="button"
                     onClick={() => {
                       setEditingExamId(null);
-                      setExamForm({ name: '', subject: '' });
+                      setExamForm({ name: '' });
                       setShowExamForm((prev) => !prev);
                     }}
                     className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
@@ -717,7 +711,7 @@ export default function SeatingGeneration() {
               </select>
               {selectedExam && (
                 <p className="text-xs text-gray-500 mt-2">
-                  Exam Type/Subject: {selectedExamDetails?.subject || 'Subject not set'}
+                  Selected exam ready for seating generation
                 </p>
               )}
               {showExamForm && (
@@ -727,13 +721,6 @@ export default function SeatingGeneration() {
                     value={examForm.name}
                     onChange={(e) => setExamForm((prev) => ({ ...prev, name: e.target.value }))}
                     placeholder="Exam name"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  />
-                  <input
-                    type="text"
-                    value={examForm.subject}
-                    onChange={(e) => setExamForm((prev) => ({ ...prev, subject: e.target.value }))}
-                    placeholder="Subject"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2"
                   />
                   <button
@@ -748,7 +735,7 @@ export default function SeatingGeneration() {
                     onClick={() => {
                       setShowExamForm(false);
                       setEditingExamId(null);
-                      setExamForm({ name: '', subject: '' });
+                      setExamForm({ name: '' });
                     }}
                     className="ml-2 rounded-lg bg-gray-200 px-4 py-2 text-gray-800 hover:bg-gray-300"
                   >
@@ -1187,7 +1174,6 @@ export default function SeatingGeneration() {
                               </td>
                               <td className="px-4 py-3 text-xs text-gray-600">
                                 <div className="max-w-[10rem] truncate font-medium text-gray-800">{getExamLabel(plan)}</div>
-                                <div className="max-w-[10rem] truncate text-[11px] text-gray-500">{getExamSubject(plan)}</div>
                               </td>
                               <td className="px-4 py-3 text-xs text-gray-600">
                                 <div className="max-w-[12rem] truncate">{getPlanBatches(plan)}</div>

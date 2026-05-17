@@ -1973,32 +1973,45 @@ class ApiService {
   }
 
   async listStudentHostelRequests(schoolId: number = 1, statusFilter?: string) {
+    const scopedSchoolId = schoolId && String(schoolId) !== '1'
+      ? String(schoolId)
+      : await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
+
     return this.api.get<StudentHostelRequest[]>('/students/hostel-requests', {
-      params: { school_id: schoolId, status_filter: statusFilter },
+      params: { school_id: scopedSchoolId, status_filter: statusFilter },
     });
   }
 
   async createStudentHostelRequest(studentId: number, data: { hostel_id: number; requested_notes?: string }, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
     return this.api.post<StudentHostelRequest>(`/students/${studentId}/hostel-request`, data, {
-      params: { school_id: _schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async approveStudentHostelRequest(requestId: string | number, data: { hostel_id?: number | string; room_id?: number | string; reviewed_by?: string; review_notes?: string }, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
     return this.api.post<StudentHostelRequest>(`/students/hostel-requests/${requestId}/approve`, data, {
-      params: { school_id: _schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async moveStudentHostelAllocation(requestId: string | number, data: { hostel_id?: number | string; room_id?: number | string; reviewed_by?: string; review_notes?: string }, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
     return this.api.post<StudentHostelRequest>(`/students/hostel-requests/${requestId}/move`, data, {
-      params: { school_id: _schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async rejectStudentHostelRequest(requestId: string | number, data: { reviewed_by?: string; review_notes?: string }, _schoolId: number = 1) {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) throw new Error('No active school membership found.');
     return this.api.post<StudentHostelRequest>(`/students/hostel-requests/${requestId}/reject`, data, {
-      params: { school_id: _schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -2274,8 +2287,12 @@ class ApiService {
       supabase.from('rooms').select('*').in('id', uniqueRoomIds),
     ]);
 
-    if (examsError) throw examsError;
-    if (roomsError) throw roomsError;
+    if (examsError) {
+      console.warn('[Supabase] listAllPlans exams lookup failed', examsError);
+    }
+    if (roomsError) {
+      console.warn('[Supabase] listAllPlans rooms lookup failed', roomsError);
+    }
 
     const examById = new Map(toArray<any>(exams).map((exam) => [String(exam.id), exam]));
     const roomById = new Map(toArray<any>(rooms).map((room) => [String(room.id), room]));
@@ -2390,8 +2407,12 @@ class ApiService {
     ]);
 
     if (examsError) throw examsError;
-    if (studentsError) throw studentsError;
-    if (batchesError) throw batchesError;
+    if (studentsError) {
+      console.warn('[Supabase] listExams students lookup failed', studentsError);
+    }
+    if (batchesError) {
+      console.warn('[Supabase] listExams batches lookup failed', batchesError);
+    }
 
     const totalStudents = toArray<any>(students).length;
     const totalBatches = new Set(toArray<any>(students).map((student) => student.batch_id).filter(Boolean)).size || toArray<any>(batches).length;
@@ -3030,6 +3051,25 @@ class ApiService {
       throw staffError || new Error('Invigilator not found');
     }
 
+    const { data: existingRooms, error: existingRoomsError } = await supabase
+      .from('rooms')
+      .select('id, name, metadata')
+      .eq('school_id', scopedSchoolId);
+
+    if (existingRoomsError) {
+      throw existingRoomsError;
+    }
+
+    const duplicateAssignmentRoom = (existingRooms || []).find((item: any) => {
+      if (String(item.id) === roomId) return false;
+      const activeAssignment = this.getRoomAssignmentMetadata(item);
+      return activeAssignment?.is_active !== false && String(activeAssignment?.staff_member_id || '') === String(staffMember.id);
+    });
+
+    if (duplicateAssignmentRoom) {
+      throw new Error(`${staffMember.full_name || 'Selected staff'} is already assigned to ${duplicateAssignmentRoom.name || `Room ${duplicateAssignmentRoom.id}`}`);
+    }
+
     const currentMetadata =
       room.metadata && typeof room.metadata === 'object' ? { ...(room.metadata as Record<string, unknown>) } : {};
     const previousAssignment = this.getRoomAssignmentMetadata(room);
@@ -3163,6 +3203,16 @@ class ApiService {
 
     if (staffError || !staffMember) {
       throw staffError || new Error('Invigilator not found');
+    }
+
+    const duplicateAssignmentRoom = (rooms || []).find((item: any) => {
+      if (String(item.id) === String(room.id)) return false;
+      const activeAssignment = this.getRoomAssignmentMetadata(item);
+      return activeAssignment?.is_active !== false && String(activeAssignment?.staff_member_id || '') === String(staffMember.id);
+    });
+
+    if (duplicateAssignmentRoom) {
+      throw new Error(`${staffMember.full_name || 'Selected staff'} is already assigned to ${duplicateAssignmentRoom.name || `Room ${duplicateAssignmentRoom.id}`}`);
     }
 
     const currentMetadata =
@@ -5056,17 +5106,117 @@ async exportAttendanceReport(params: {
   }
 
   async listIntegratedStudents(params?: { school_id?: number; skip?: number; limit?: number; search?: string; batch?: string }) {
-    return this.api.get<AttendanceStudent[]>('/attendance/integrated-students', { params });
+    try {
+      return await this.api.get<AttendanceStudent[]>('/attendance/integrated-students', { params });
+    } catch (error) {
+      console.warn('[API] listIntegratedStudents fallback activated', error);
+      const studentsResponse = await this.listStudents(1, params?.skip || 0, params?.limit || 500, params?.batch);
+      const searchTerm = String(params?.search || '').trim().toLowerCase();
+      const normalized = toArray<Student>(studentsResponse.data)
+        .filter((student) => {
+          if (!searchTerm) return true;
+          return [student.name, student.roll_number, student.father_name, student.batch]
+            .some((value) => String(value || '').toLowerCase().includes(searchTerm));
+        })
+        .map((student) => ({
+          id: Number(student.id || 0),
+          name: String(student.name || ''),
+          class_name: String(student.class_name || student.batch || 'General'),
+          section: String(student.section || 'A'),
+          roll_no: String(student.roll_number || ''),
+          parent_contact: String(student.phone || ''),
+          is_active: Boolean(student.is_active ?? true),
+        }));
+      return { data: normalized } as { data: AttendanceStudent[] };
+    }
   }
 
   async listIntegratedStaff(params?: { school_id?: number; skip?: number; limit?: number; search?: string; department?: string; source?: 'teachers' | 'invigilators' | 'all' }) {
-    return this.api.get<AttendanceStaff[]>('/attendance/integrated-staff', { params });
+    try {
+      return await this.api.get<AttendanceStaff[]>('/attendance/integrated-staff', { params });
+    } catch (error) {
+      console.warn('[API] listIntegratedStaff fallback activated', error);
+      const source = params?.source || 'all';
+      const searchTerm = String(params?.search || '').trim().toLowerCase();
+      const departmentFilter = String(params?.department || '').trim().toLowerCase();
+      const [teachersResponse, invigilatorsResponse] = await Promise.all([
+        source === 'invigilators' ? Promise.resolve({ data: [] as Teacher[] }) : this.listTeachers(1, params?.skip || 0, params?.limit || 500),
+        source === 'teachers' ? Promise.resolve({ data: [] as Invigilator[] }) : this.listInvigilators(1),
+      ]);
+
+      const mappedTeachers = toArray<Teacher>(teachersResponse.data).map((teacher) => ({
+        id: Number(teacher.id || 0),
+        staff_id: teacher.employee_code || `TCH-${teacher.id}`,
+        name: String(teacher.name || ''),
+        department: String(teacher.subject || teacher.department || 'Academics'),
+        designation: teacher.designation || 'Teacher',
+        email: teacher.email,
+        phone: teacher.phone,
+      }));
+      const mappedInvigilators = toArray<Invigilator>(invigilatorsResponse.data).map((invigilator) => ({
+        id: Number(invigilator.id || 0),
+        staff_id: String(invigilator.staff_id || ''),
+        name: String(invigilator.name || ''),
+        department: String(invigilator.department || invigilator.designation || 'Staff'),
+        designation: invigilator.designation,
+        email: invigilator.email,
+        phone: invigilator.phone,
+      }));
+
+      const filtered = [...mappedTeachers, ...mappedInvigilators].filter((staff) => {
+        const matchesSearch = !searchTerm || [staff.name, staff.staff_id, staff.department, staff.designation]
+          .some((value) => String(value || '').toLowerCase().includes(searchTerm));
+        const matchesDepartment = !departmentFilter || String(staff.department || '').toLowerCase().includes(departmentFilter);
+        return matchesSearch && matchesDepartment;
+      });
+
+      return { data: filtered } as { data: AttendanceStaff[] };
+    }
   }
 
   async getIntegratedAttendanceOverview(schoolId: number = 1) {
-    return this.api.get('/attendance/integrated-overview', {
-      params: { school_id: schoolId },
-    });
+    try {
+      return await this.api.get('/attendance/integrated-overview', {
+        params: { school_id: schoolId },
+      });
+    } catch (error) {
+      console.warn('[API] getIntegratedAttendanceOverview fallback activated', error);
+      const [studentsResponse, teachersResponse, invigilatorsResponse] = await Promise.all([
+        this.listStudents(),
+        this.listTeachers(),
+        this.listInvigilators(1),
+      ]);
+      const students = toArray<Student>(studentsResponse.data);
+      const teachers = toArray<Teacher>(teachersResponse.data);
+      const invigilators = toArray<Invigilator>(invigilatorsResponse.data);
+      const classOptions = Array.from(new Set(students.map((student) => String(student.class_name || '').trim()).filter(Boolean))).sort();
+      const sectionOptions = Array.from(new Set(students.map((student) => String(student.section || '').trim()).filter(Boolean))).sort();
+      const departmentOptions = Array.from(
+        new Set(
+          [...teachers.map((teacher) => teacher.subject || teacher.department), ...invigilators.map((item) => item.department || item.designation)]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+        )
+      ).sort();
+      return {
+        data: {
+          student_count: students.length,
+          staff_count: teachers.length + invigilators.length,
+          class_options: classOptions,
+          section_options: sectionOptions,
+          subject_options: [],
+          department_options: departmentOptions,
+          notifications: [],
+          holidays: [],
+          settings: {
+            minimum_attendance_threshold: 75,
+            working_hours_start: '09:00',
+            working_hours_end: '17:00',
+            updated_at: new Date().toISOString(),
+          },
+        },
+      };
+    }
   }
 }
 

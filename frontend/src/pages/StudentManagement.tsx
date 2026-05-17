@@ -1962,9 +1962,9 @@ export default function StudentManagement() {
                     <div className="rounded-xl border border-dashed border-[#d9c39a] bg-[#fcf5ea] p-4">
                       <p className="text-sm font-semibold text-slate-800">Student Photo</p>
                       <input ref={studentPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={handleStudentPhotoInputChange} />
-                      <div className="mt-4 flex h-44 items-center justify-center overflow-hidden rounded-lg bg-[#f0e4cf] text-xs text-slate-500">
+                      <div className="mt-4 flex h-44 items-center justify-center overflow-hidden rounded-lg bg-[#f0e4cf] p-2 text-xs text-slate-500">
                         {studentPhotoPreviewUrl ? (
-                          <img src={studentPhotoPreviewUrl} alt="Student preview" className="h-full w-full object-cover" />
+                          <img src={studentPhotoPreviewUrl} alt="Student preview" className="h-full w-full rounded-md object-contain" />
                         ) : (
                           'Image Preview'
                         )}

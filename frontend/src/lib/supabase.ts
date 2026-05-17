@@ -1,6 +1,14 @@
 import { createClient } from '@supabase/supabase-js'
+import { runtimeConfig } from './runtimeConfig'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const fallbackSupabaseUrl = 'https://example.supabase.co'
+const fallbackSupabaseAnonKey = 'public-anon-key-placeholder'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+if (!runtimeConfig.supabaseUrl || !runtimeConfig.supabaseAnonKey) {
+  console.warn('[Supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. Falling back to placeholder config.');
+}
+
+export const supabase = createClient(
+  runtimeConfig.supabaseUrl || fallbackSupabaseUrl,
+  runtimeConfig.supabaseAnonKey || fallbackSupabaseAnonKey
+)

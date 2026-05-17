@@ -10,7 +10,7 @@ from sqlalchemy import func
 
 from app.database import get_db
 from app.models import User, UserRole
-from app.middleware.auth import require_admin_actor
+from app.middleware.auth import get_authenticated_user, user_has_permission
 from app.services.auth_security import (
     assert_not_rate_limited,
     consume_otp,
@@ -39,6 +39,14 @@ from app.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def require_user_management_access(
+    user: User = Depends(get_authenticated_user),
+) -> User:
+    if user.role == UserRole.ADMIN or user_has_permission(user, "admin_office.access_control"):
+        return user
+    raise HTTPException(status_code=403, detail="Only admin or access-control users can manage users")
 
 ALLOWED_USER_TYPES = {"teaching", "non_teaching"}
 ALLOWED_ROLE_VALUES = {item.value for item in UserRole}
@@ -468,7 +476,7 @@ async def login_password(payload: PasswordLoginRequest, request: Request, db: Se
 @router.get("/users", response_model=List[UserRolePowerResponse])
 async def list_role_users(
     school_id: int = Query(default=1),
-    _: Dict[str, str] = Depends(require_admin_actor),
+    _: User = Depends(require_user_management_access),
     db: Session = Depends(get_db),
 ):
     users = db.query(User).order_by(User.created_at.desc()).all()
@@ -478,7 +486,7 @@ async def list_role_users(
 @router.post("/users", response_model=UserRolePowerResponse)
 async def create_role_user(
     payload: UserRolePowerCreate,
-    _: Dict[str, str] = Depends(require_admin_actor),
+    _: User = Depends(require_user_management_access),
     db: Session = Depends(get_db),
 ):
     username = payload.username.strip().lower()
@@ -516,7 +524,7 @@ async def create_role_user(
 async def update_role_user(
     user_id: int,
     payload: UserRolePowerUpdate,
-    actor: Dict[str, str] = Depends(require_admin_actor),
+    actor_user: User = Depends(require_user_management_access),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -535,7 +543,7 @@ async def update_role_user(
             )
             if active_admin_count < 1:
                 raise HTTPException(status_code=400, detail="At least one active admin user must remain")
-            if str(actor.get("user_id") or "") == str(user.id):
+            if str(actor_user.id) == str(user.id):
                 raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
         user.role = next_role
     if payload.user_type is not None:
@@ -548,7 +556,7 @@ async def update_role_user(
         if (
             user.role == UserRole.ADMIN
             and payload.is_active is False
-            and str(actor.get("user_id") or "") == str(user.id)
+            and str(actor_user.id) == str(user.id)
         ):
             raise HTTPException(status_code=400, detail="You cannot deactivate your own admin account")
         if user.role == UserRole.ADMIN and payload.is_active is False:
@@ -569,7 +577,7 @@ async def update_role_user(
 @router.delete("/users/{user_id}")
 async def delete_role_user(
     user_id: int,
-    _: Dict[str, str] = Depends(require_admin_actor),
+    _: User = Depends(require_user_management_access),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
