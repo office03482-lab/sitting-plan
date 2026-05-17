@@ -436,7 +436,7 @@ export default function SeatingGeneration() {
       setEditingExamId(null);
     } catch (error: any) {
       console.error('Failed to create exam:', error);
-      setMessage(error?.response?.data?.error || error?.response?.data?.detail || 'Failed to save exam');
+      setMessage(error?.response?.data?.error || error?.response?.data?.detail || error?.message || 'Failed to save exam');
     }
   };
 

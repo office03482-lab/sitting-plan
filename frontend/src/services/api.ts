@@ -16,7 +16,6 @@ import type {
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@store/auth';
 import {
-  buildLegacyPlanSummary,
   buildPlanBatchDistribution,
   generatePlannerSeating,
 } from './seatingPlanner';
@@ -54,6 +53,15 @@ export const getApiBaseUrl = () => {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const getPersistedUser = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const rawUser = window.localStorage.getItem('user');
+    return rawUser ? JSON.parse(rawUser) : null;
+  } catch {
+    return null;
+  }
+};
 
 class ApiService {
   private api: AxiosInstance;
@@ -107,7 +115,24 @@ class ApiService {
 
   private getCurrentSupabaseSchoolId() {
     const user = useAuthStore.getState().user;
-    return user?.school_id || user?.default_school_id || null;
+    const directValue = user?.school_id || user?.default_school_id || null;
+    if (directValue) {
+      return directValue;
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const rawUser = window.localStorage.getItem('user');
+        if (rawUser) {
+          const parsedUser = JSON.parse(rawUser) as { school_id?: string; default_school_id?: string };
+          return parsedUser?.school_id || parsedUser?.default_school_id || null;
+        }
+      } catch {
+        // Ignore malformed persisted auth payload.
+      }
+    }
+
+    return null;
   }
 
   private async resolveCurrentSupabaseSchoolId() {
@@ -259,17 +284,6 @@ class ApiService {
     return Object.fromEntries(
       Object.entries(value).filter(([, entry]) => entry !== undefined)
     ) as T;
-  }
-
-  private formatSupabaseError(error: any, fallback: string) {
-    if (!error) return fallback;
-    const parts = [
-      typeof error.message === 'string' ? error.message.trim() : '',
-      typeof error.details === 'string' ? error.details.trim() : '',
-      typeof error.hint === 'string' ? error.hint.trim() : '',
-      typeof error.code === 'string' ? `Code: ${error.code}` : '',
-    ].filter(Boolean);
-    return parts[0] ? parts.join(' | ') : fallback;
   }
 
   private buildLegacyRoomAssignmentId(roomId: string | number, staffMemberId: string | number) {
@@ -567,28 +581,27 @@ class ApiService {
     } as Exam;
   }
 
-  private mapSupabaseSeatingPlanToLegacy(plan: any, exam: any, room: any): SeatingPlan {
-    const distribution =
-      plan?.batch_distribution && typeof plan.batch_distribution === 'object'
-        ? Object.entries(plan.batch_distribution as Record<string, unknown>).reduce<Record<string, number>>((accumulator, [key, value]) => {
-            accumulator[key] = Number(value || 0);
-            return accumulator;
-          }, {})
-        : {};
-    const uiPlanType = plan?.plan_metadata?.ui_plan_type || (plan.plan_type === 'strict' ? 'all_in_one' : plan.plan_type);
+  private mapAnyExamToLegacy(exam: any, totalStudents: number, totalBatches: number): Exam {
+    const looksLikeSupabaseExam =
+      typeof exam?.id === 'string' ||
+      Object.prototype.hasOwnProperty.call(exam || {}, 'exam_code') ||
+      Object.prototype.hasOwnProperty.call(exam || {}, 'metadata');
 
-    return buildLegacyPlanSummary(
-      this.getLegacySeatingPlanId(plan.id),
-      this.getLegacyExamId(plan.exam_id),
-      room?.id || plan.room_id,
-      room?.name || plan.plan_metadata?.room_name || `Room ${plan.room_id}`,
-      exam?.name || plan.plan_metadata?.exam_name || `Exam ${plan.exam_id}`,
-      exam?.metadata?.subject_text || plan.plan_metadata?.exam_subject,
-      plan.created_at,
-      distribution,
-      Boolean(plan.is_valid),
-      uiPlanType,
-    );
+    if (looksLikeSupabaseExam) {
+      return this.mapSupabaseExamToLegacy(exam, totalStudents, totalBatches);
+    }
+
+    return {
+      id: Number(exam?.id || 0),
+      name: String(exam?.name || ''),
+      school_id: Number(exam?.school_id || 1),
+      subject: exam?.subject || undefined,
+      exam_date: exam?.exam_date || undefined,
+      duration_minutes: exam?.duration_minutes || undefined,
+      total_students: Number(exam?.total_students ?? totalStudents ?? 0),
+      total_batches: Number(exam?.total_batches ?? totalBatches ?? 0),
+      is_active: Boolean(exam?.is_active ?? true),
+    } as Exam;
   }
 
   private mapSupabaseStudentToLegacy(student: any): Student {
@@ -1234,7 +1247,7 @@ class ApiService {
       }
 
       const token = this.getAccessToken();
-      const currentUser = useAuthStore.getState().user;
+      const currentUser = useAuthStore.getState().user || getPersistedUser();
       config.headers = (config.headers || {}) as any;
 
       if (token) {
@@ -2265,77 +2278,19 @@ class ApiService {
   }
 
   async listAllPlans(examId?: number) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) {
-      return { data: [] } as { data: SeatingPlan[] };
-    }
-
-    let query = supabase
-      .schema('exam')
-      .from('seating_plans')
-      .select('*')
-      .eq('school_id', scopedSchoolId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
-
-    if (examId !== undefined) {
-      query = query.eq('exam_id', this.resolveExamId(examId));
-    }
-
-    const { data: plans, error: planError } = await query;
-    if (planError) throw planError;
-
-    const planRows = toArray<any>(plans);
-    if (planRows.length === 0) {
-      return { data: [] } as { data: SeatingPlan[] };
-    }
-
-    const uniqueExamIds = Array.from(new Set(planRows.map((plan) => plan.exam_id).filter(Boolean)));
-    const uniqueRoomIds = Array.from(new Set(planRows.map((plan) => plan.room_id).filter(Boolean)));
-
-    const [{ data: exams, error: examsError }, { data: rooms, error: roomsError }] = await Promise.all([
-      supabase.schema('exam').from('exams').select('*').in('id', uniqueExamIds),
-      supabase.from('rooms').select('*').in('id', uniqueRoomIds),
-    ]);
-
-    if (examsError) {
-      console.warn('[Supabase] listAllPlans exams lookup failed', examsError);
-    }
-    if (roomsError) {
-      console.warn('[Supabase] listAllPlans rooms lookup failed', roomsError);
-    }
-
-    const examById = new Map(toArray<any>(exams).map((exam) => [String(exam.id), exam]));
-    const roomById = new Map(toArray<any>(rooms).map((room) => [String(room.id), room]));
-
-    return {
-      data: planRows.map((plan) => this.mapSupabaseSeatingPlanToLegacy(plan, examById.get(String(plan.exam_id)), roomById.get(String(plan.room_id)))),
-    } as { data: SeatingPlan[] };
+    const preferredSchoolId = this.getCurrentSupabaseSchoolId();
+    const response = await this.api.get('/seating/plans', {
+      params: {
+        ...(preferredSchoolId ? { school_id: preferredSchoolId } : {}),
+        ...(examId !== undefined ? { exam_id: examId } : {}),
+      },
+    });
+    return { data: toArray<SeatingPlan>(response.data) } as { data: SeatingPlan[] };
   }
 
   async getPlanLayout(planId: number) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) throw new Error('No active school membership found.');
-
-    const resolvedPlanId = this.resolveSeatingPlanId(planId);
-    const { data, error } = await supabase
-      .schema('exam')
-      .from('seating_plans')
-      .select('plan_metadata')
-      .eq('id', resolvedPlanId)
-      .eq('school_id', scopedSchoolId)
-      .single();
-
-    if (error || !data) {
-      throw error || new Error('Seating plan not found');
-    }
-
-    const layout = data.plan_metadata?.layout;
-    if (!layout) {
-      throw new Error('Preview data is not available for this plan.');
-    }
-
-    return { data: layout as RoomLayout } as { data: RoomLayout };
+    const response = await this.api.get(`/seating/${planId}/layout`);
+    return { data: response.data as RoomLayout } as { data: RoomLayout };
   }
 
   async finalizePlan(planId: number) {
@@ -2393,207 +2348,37 @@ class ApiService {
   // ==================== Exams ====================
 
   async listExams(_schoolId: number = 1) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) {
-      return { data: [] } as { data: Exam[] };
-    }
-
-    const [{ data: exams, error: examsError }, { data: students, error: studentsError }, { data: batches, error: batchesError }] = await Promise.all([
-      supabase
-        .schema('exam')
-        .from('exams')
-        .select('*')
-        .eq('school_id', scopedSchoolId)
-        .order('exam_date', { ascending: false }),
-      supabase
-        .from('students')
-        .select('id, batch_id')
-        .eq('school_id', scopedSchoolId)
-        .eq('is_active', true),
-      supabase
-        .from('batches')
-        .select('id')
-        .eq('school_id', scopedSchoolId)
-        .eq('is_active', true),
-    ]);
-
-    if (examsError) throw examsError;
-    if (studentsError) {
-      console.warn('[Supabase] listExams students lookup failed', studentsError);
-    }
-    if (batchesError) {
-      console.warn('[Supabase] listExams batches lookup failed', batchesError);
-    }
-
-    const totalStudents = toArray<any>(students).length;
-    const totalBatches = new Set(toArray<any>(students).map((student) => student.batch_id).filter(Boolean)).size || toArray<any>(batches).length;
-
-    return {
-      data: toArray<any>(exams).map((exam) => this.mapSupabaseExamToLegacy(exam, totalStudents, totalBatches)),
-    } as { data: Exam[] };
+    const preferredSchoolId = this.getCurrentSupabaseSchoolId();
+    const response = await this.api.get('/exams', {
+      params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
+    });
+    return { data: toArray<any>(response.data).map((exam) => this.mapAnyExamToLegacy(exam, 0, 0)) } as { data: Exam[] };
   }
 
   async createExam(examData: Partial<Exam>, _schoolId: number = 1) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) throw new Error('No active school membership found.');
-
     const normalizedName = String(examData.name || '').trim();
     if (!normalizedName) throw new Error('Exam name is required');
 
-    const now = new Date();
-    const examCode = `EXM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${now.getTime().toString().slice(-6)}`;
-    const fullPayload = {
-      school_id: scopedSchoolId,
-      exam_code: examCode,
-      name: normalizedName,
-      exam_type: 'written',
-      exam_date: examData.exam_date || new Date().toISOString().slice(0, 10),
-      duration_minutes: examData.duration_minutes || null,
-      status: 'draft',
-      metadata: {
-        subject_text: String(examData.subject || '').trim() || null,
-      },
-      is_active: true,
-    };
-
-    let data: any = null;
-    const firstAttempt = await supabase
-      .schema('exam')
-      .from('exams')
-      .insert(fullPayload)
-      .select('*')
-      .single();
-
-    if (firstAttempt.error) {
-      console.warn('[Supabase] createExam full payload failed, retrying minimal payload', firstAttempt.error);
-      const retryAttempt = await supabase
-        .schema('exam')
-        .from('exams')
-        .insert({
-          school_id: scopedSchoolId,
-          exam_code: examCode,
-          name: normalizedName,
-          exam_type: 'written',
-          exam_date: fullPayload.exam_date,
-          status: 'draft',
-          is_active: true,
-        })
-        .select('*')
-        .single();
-
-      if (retryAttempt.error) {
-        throw new Error(this.formatSupabaseError(retryAttempt.error, 'Failed to save exam'));
-      }
-      data = retryAttempt.data;
-    } else {
-      data = firstAttempt.data;
-    }
-
-    let totalStudents = 0;
-    let totalBatches = 0;
-    try {
-      const [studentsResponse, batchesResponse] = await Promise.all([
-        this.listStudents(),
-        this.listBatches(),
-      ]);
-      totalStudents = toArray<Student>(studentsResponse.data).length;
-      totalBatches = toArray<Batch>(batchesResponse.data).length;
-    } catch (error) {
-      console.warn('[Supabase] createExam count hydration failed', error);
-    }
-
-    return { data: this.mapSupabaseExamToLegacy(data, totalStudents, totalBatches) } as { data: Exam };
+    const preferredSchoolId = this.getCurrentSupabaseSchoolId();
+    const response = await this.api.post('/exams', examData, {
+      params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
+    });
+    return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
   }
 
   async updateExam(examId: number, examData: Partial<Exam>, _schoolId: number = 1) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) throw new Error('No active school membership found.');
-
-    const resolvedExamId = this.resolveExamId(examId);
-    const { data: existing, error: existingError } = await supabase
-      .schema('exam')
-      .from('exams')
-      .select('*')
-      .eq('id', resolvedExamId)
-      .eq('school_id', scopedSchoolId)
-      .single();
-    if (existingError || !existing) throw existingError || new Error('Exam not found');
-
-    const nextMetadata =
-      existing.metadata && typeof existing.metadata === 'object'
-        ? { ...(existing.metadata as Record<string, unknown>) }
-        : {};
-    nextMetadata.subject_text = String(examData.subject || nextMetadata.subject_text || '').trim() || null;
-
-    const fullUpdatePayload = {
-      name: examData.name ? String(examData.name).trim() : existing.name,
-      exam_date: examData.exam_date || existing.exam_date,
-      duration_minutes: examData.duration_minutes ?? existing.duration_minutes,
-      metadata: nextMetadata,
-    };
-
-    let data: any = null;
-    const firstAttempt = await supabase
-      .schema('exam')
-      .from('exams')
-      .update(fullUpdatePayload)
-      .eq('id', resolvedExamId)
-      .eq('school_id', scopedSchoolId)
-      .select('*')
-      .single();
-
-    if (firstAttempt.error) {
-      console.warn('[Supabase] updateExam full payload failed, retrying minimal payload', firstAttempt.error);
-      const retryAttempt = await supabase
-        .schema('exam')
-        .from('exams')
-        .update({
-          name: fullUpdatePayload.name,
-          exam_date: fullUpdatePayload.exam_date,
-        })
-        .eq('id', resolvedExamId)
-        .eq('school_id', scopedSchoolId)
-        .select('*')
-        .single();
-
-      if (retryAttempt.error) {
-        throw new Error(this.formatSupabaseError(retryAttempt.error, 'Failed to update exam'));
-      }
-      data = retryAttempt.data;
-    } else {
-      data = firstAttempt.data;
-    }
-
-    let totalStudents = 0;
-    let totalBatches = 0;
-    try {
-      const [studentsResponse, batchesResponse] = await Promise.all([
-        this.listStudents(),
-        this.listBatches(),
-      ]);
-      totalStudents = toArray<Student>(studentsResponse.data).length;
-      totalBatches = toArray<Batch>(batchesResponse.data).length;
-    } catch (error) {
-      console.warn('[Supabase] updateExam count hydration failed', error);
-    }
-
-    return { data: this.mapSupabaseExamToLegacy(data, totalStudents, totalBatches) } as { data: Exam };
+    const preferredSchoolId = this.getCurrentSupabaseSchoolId();
+    const response = await this.api.put(`/exams/${examId}`, examData, {
+      params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
+    });
+    return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
   }
 
   async deleteExam(examId: number, _schoolId: number = 1) {
-    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
-    if (!scopedSchoolId) throw new Error('No active school membership found.');
-
-    const resolvedExamId = this.resolveExamId(examId);
-    const { error } = await supabase
-      .schema('exam')
-      .from('exams')
-      .delete()
-      .eq('id', resolvedExamId)
-      .eq('school_id', scopedSchoolId);
-
-    if (error) throw error;
-    return { data: { message: 'Exam deleted successfully' } } as { data: { message: string } };
+    const preferredSchoolId = this.getCurrentSupabaseSchoolId();
+    return this.api.delete(`/exams/${examId}`, {
+      params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
+    });
   }
 
   // ==================== Reports ====================
