@@ -239,6 +239,12 @@ const getBatchPresetFee = ({
   return 0;
 };
 
+const getRequestErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+
+const getSettledErrorMessage = (result: PromiseSettledResult<any>, fallback: string) =>
+  result.status === 'rejected' ? getRequestErrorMessage(result.reason, fallback) : '';
+
 const buildFinancePlan = ({
   totalFee,
   bookingAmount,
@@ -533,30 +539,20 @@ export default function FeeManagement() {
       setPayments(paymentsRes.status === 'fulfilled' ? ensureArray<EduPayPayment>(paymentsRes.value.data) : []);
       setParentPortal(parentResult.status === 'fulfilled' ? parentResult.value?.data ?? null : null);
 
-      const failedSections = [
-        dashboardRes.status !== 'fulfilled' ? 'dashboard' : null,
-        studentsRes.status !== 'fulfilled' ? 'students' : null,
-        structuresRes.status !== 'fulfilled' ? 'fee structures' : null,
-        assignmentsRes.status !== 'fulfilled' ? 'assignments' : null,
-        paymentsRes.status !== 'fulfilled' ? 'payments' : null,
+      const failedMessages = [
+        dashboardRes.status !== 'fulfilled' ? `Dashboard: ${getSettledErrorMessage(dashboardRes, 'Dashboard load nahi hua.')}` : null,
+        studentsRes.status !== 'fulfilled' ? `Students: ${getSettledErrorMessage(studentsRes, 'Students load nahi hue.')}` : null,
+        structuresRes.status !== 'fulfilled' ? `Fee Structures: ${getSettledErrorMessage(structuresRes, 'Fee structures load nahi hui.')}` : null,
+        assignmentsRes.status !== 'fulfilled' ? `Assignments: ${getSettledErrorMessage(assignmentsRes, 'Assignments load nahi hue.')}` : null,
+        paymentsRes.status !== 'fulfilled' ? `Payments: ${getSettledErrorMessage(paymentsRes, 'Payments load nahi hue.')}` : null,
       ].filter(Boolean);
 
-      setAlert(
-        failedSections.length
-          ? {
-              type: 'error',
-              message: `BRAIN OF HIMACHAL ke kuch sections load nahi ho paaye: ${failedSections.join(', ')}.`,
-            }
-          : null
-      );
+      setAlert(failedMessages.length ? { type: 'error', message: failedMessages.join(' | ') } : null);
     } catch (error: any) {
       console.error('Failed to load EduPay data', error);
       setAlert({
         type: 'error',
-        message:
-          error?.response?.data?.detail ||
-          error?.response?.data?.error ||
-          'BRAIN OF HIMACHAL data load nahi ho paya.',
+        message: getRequestErrorMessage(error, 'BRAIN OF HIMACHAL data load nahi ho paya.'),
       });
     } finally {
       setLoading(false);

@@ -261,6 +261,17 @@ class ApiService {
     ) as T;
   }
 
+  private formatSupabaseError(error: any, fallback: string) {
+    if (!error) return fallback;
+    const parts = [
+      typeof error.message === 'string' ? error.message.trim() : '',
+      typeof error.details === 'string' ? error.details.trim() : '',
+      typeof error.hint === 'string' ? error.hint.trim() : '',
+      typeof error.code === 'string' ? `Code: ${error.code}` : '',
+    ].filter(Boolean);
+    return parts[0] ? parts.join(' | ') : fallback;
+  }
+
   private buildLegacyRoomAssignmentId(roomId: string | number, staffMemberId: string | number) {
     const seed = `room-assignment:${String(roomId)}:${String(staffMemberId)}`;
     let hash = 0;
@@ -2431,29 +2442,67 @@ class ApiService {
 
     const now = new Date();
     const examCode = `EXM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${now.getTime().toString().slice(-6)}`;
-    const { data, error } = await supabase
+    const fullPayload = {
+      school_id: scopedSchoolId,
+      exam_code: examCode,
+      name: normalizedName,
+      exam_type: 'written',
+      exam_date: examData.exam_date || new Date().toISOString().slice(0, 10),
+      duration_minutes: examData.duration_minutes || null,
+      status: 'draft',
+      metadata: {
+        subject_text: String(examData.subject || '').trim() || null,
+      },
+      is_active: true,
+    };
+
+    let data: any = null;
+    const firstAttempt = await supabase
       .schema('exam')
       .from('exams')
-      .insert({
-        school_id: scopedSchoolId,
-        exam_code: examCode,
-        name: normalizedName,
-        exam_type: 'written',
-        exam_date: examData.exam_date || new Date().toISOString().slice(0, 10),
-        duration_minutes: examData.duration_minutes || null,
-        status: 'draft',
-        metadata: {
-          subject_text: String(examData.subject || '').trim() || null,
-        },
-        is_active: true,
-      })
+      .insert(fullPayload)
       .select('*')
       .single();
 
-    if (error) throw error;
-    const exams = await this.listExams();
-    const mapped = toArray<Exam>(exams.data).find((exam) => String(this.resolveExamId(exam.id)) === String(data.id));
-    return { data: mapped || this.mapSupabaseExamToLegacy(data, 0, 0) } as { data: Exam };
+    if (firstAttempt.error) {
+      console.warn('[Supabase] createExam full payload failed, retrying minimal payload', firstAttempt.error);
+      const retryAttempt = await supabase
+        .schema('exam')
+        .from('exams')
+        .insert({
+          school_id: scopedSchoolId,
+          exam_code: examCode,
+          name: normalizedName,
+          exam_type: 'written',
+          exam_date: fullPayload.exam_date,
+          status: 'draft',
+          is_active: true,
+        })
+        .select('*')
+        .single();
+
+      if (retryAttempt.error) {
+        throw new Error(this.formatSupabaseError(retryAttempt.error, 'Failed to save exam'));
+      }
+      data = retryAttempt.data;
+    } else {
+      data = firstAttempt.data;
+    }
+
+    let totalStudents = 0;
+    let totalBatches = 0;
+    try {
+      const [studentsResponse, batchesResponse] = await Promise.all([
+        this.listStudents(),
+        this.listBatches(),
+      ]);
+      totalStudents = toArray<Student>(studentsResponse.data).length;
+      totalBatches = toArray<Batch>(batchesResponse.data).length;
+    } catch (error) {
+      console.warn('[Supabase] createExam count hydration failed', error);
+    }
+
+    return { data: this.mapSupabaseExamToLegacy(data, totalStudents, totalBatches) } as { data: Exam };
   }
 
   async updateExam(examId: number, examData: Partial<Exam>, _schoolId: number = 1) {
@@ -2476,24 +2525,59 @@ class ApiService {
         : {};
     nextMetadata.subject_text = String(examData.subject || nextMetadata.subject_text || '').trim() || null;
 
-    const { data, error } = await supabase
+    const fullUpdatePayload = {
+      name: examData.name ? String(examData.name).trim() : existing.name,
+      exam_date: examData.exam_date || existing.exam_date,
+      duration_minutes: examData.duration_minutes ?? existing.duration_minutes,
+      metadata: nextMetadata,
+    };
+
+    let data: any = null;
+    const firstAttempt = await supabase
       .schema('exam')
       .from('exams')
-      .update({
-        name: examData.name ? String(examData.name).trim() : existing.name,
-        exam_date: examData.exam_date || existing.exam_date,
-        duration_minutes: examData.duration_minutes ?? existing.duration_minutes,
-        metadata: nextMetadata,
-      })
+      .update(fullUpdatePayload)
       .eq('id', resolvedExamId)
       .eq('school_id', scopedSchoolId)
       .select('*')
       .single();
 
-    if (error) throw error;
-    const exams = await this.listExams();
-    const mapped = toArray<Exam>(exams.data).find((exam) => String(this.resolveExamId(exam.id)) === String(data.id));
-    return { data: mapped || this.mapSupabaseExamToLegacy(data, 0, 0) } as { data: Exam };
+    if (firstAttempt.error) {
+      console.warn('[Supabase] updateExam full payload failed, retrying minimal payload', firstAttempt.error);
+      const retryAttempt = await supabase
+        .schema('exam')
+        .from('exams')
+        .update({
+          name: fullUpdatePayload.name,
+          exam_date: fullUpdatePayload.exam_date,
+        })
+        .eq('id', resolvedExamId)
+        .eq('school_id', scopedSchoolId)
+        .select('*')
+        .single();
+
+      if (retryAttempt.error) {
+        throw new Error(this.formatSupabaseError(retryAttempt.error, 'Failed to update exam'));
+      }
+      data = retryAttempt.data;
+    } else {
+      data = firstAttempt.data;
+    }
+
+    let totalStudents = 0;
+    let totalBatches = 0;
+    try {
+      const [studentsResponse, batchesResponse] = await Promise.all([
+        this.listStudents(),
+        this.listBatches(),
+      ]);
+      totalStudents = toArray<Student>(studentsResponse.data).length;
+      totalBatches = toArray<Batch>(batchesResponse.data).length;
+    } catch (error) {
+      console.warn('[Supabase] updateExam count hydration failed', error);
+    }
+
+    return { data: this.mapSupabaseExamToLegacy(data, totalStudents, totalBatches) } as { data: Exam };
   }
 
   async deleteExam(examId: number, _schoolId: number = 1) {

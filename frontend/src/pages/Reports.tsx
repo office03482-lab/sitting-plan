@@ -6,6 +6,9 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { apiService } from '../services/api';
 import type { SeatingPlan, Student, Teacher } from '../types';
 
+const getRequestErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+
 const getPlanTypeLabel = (type: SeatingPlan['plan_type']) => {
   if (type === 'all_in_one') return 'All-in-One';
   if (type === 'strict') return 'Strict';
@@ -79,9 +82,14 @@ const Reports: React.FC = () => {
       }
 
       if (failedSections.length > 0) {
+        const detailedFailures = [
+          teachersRes.status !== 'fulfilled' ? `Teachers: ${getRequestErrorMessage(teachersRes.reason, 'Teachers report data load nahi hua.')}` : null,
+          studentsRes.status !== 'fulfilled' ? `Students: ${getRequestErrorMessage(studentsRes.reason, 'Students report data load nahi hua.')}` : null,
+          plansRes.status !== 'fulfilled' ? `Seating Plans: ${getRequestErrorMessage(plansRes.reason, 'Seating plan report data load nahi hua.')}` : null,
+        ].filter(Boolean);
         setAlert({
           type: 'error',
-          message: `Some report sections could not load: ${failedSections.join(', ')}`,
+          message: detailedFailures.join(' | ') || `Some report sections could not load: ${failedSections.join(', ')}`,
         });
       } else {
         setAlert(null);

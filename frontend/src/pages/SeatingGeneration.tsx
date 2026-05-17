@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Zap, Download, PlusCircle, Trash2, AlertTriangle, UserPlus, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Zap, Download, PlusCircle, Trash2, AlertTriangle, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
 import { useAppStore } from '@store/app';
 import { apiService } from '@services/api';
-import type { SeatingPlan, Exam, Invigilator, Batch, Student, RoomInvigilator, Room, RoomLayout } from '@types';
+import type { SeatingPlan, Exam, Batch, Student, Room, RoomLayout } from '@types';
 
 const toDateTimeLocalValue = (date: Date) => {
   const offsetMs = date.getTimezoneOffset() * 60000;
@@ -89,13 +88,11 @@ const buildRoomBatchSummaryFromPlan = (plan: SeatingPlan): RoomBatchSummary | nu
 };
 
 export default function SeatingGeneration() {
-  const navigate = useNavigate();
   const { rooms, setRooms, setSeatingPlans } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [selectedExam, setSelectedExam] = useState<number | null>(null);
   const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
   const [selectedRooms, setSelectedRooms] = useState<Array<string | number>>([]);
-  const [roomInvigilatorAssignments, setRoomInvigilatorAssignments] = useState<{[roomId: string]: number | null}>({});
   const [planType] = useState<'all_in_one'>('all_in_one');
   const [generatedDate, setGeneratedDate] = useState(toDateTimeLocalValue(new Date()));
   const [batchConflictGroups, setBatchConflictGroups] = useState<string[][]>([]);
@@ -104,8 +101,6 @@ export default function SeatingGeneration() {
   const [generatedPlans, setGeneratedPlans] = useState<SeatingPlan[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [invigilators, setInvigilators] = useState<Invigilator[]>([]);
-  const [savedRoomAssignments, setSavedRoomAssignments] = useState<RoomInvigilator[]>([]);
   const [message, setMessage] = useState('');
   const [showExamForm, setShowExamForm] = useState(false);
   const [examForm, setExamForm] = useState({ name: '' });
@@ -122,11 +117,6 @@ export default function SeatingGeneration() {
   const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<number | null>(null);
 
   const selectedExamDetails = exams.find((exam) => exam.id === selectedExam);
-  const activeSavedAssignments = useMemo(
-    () => toArray<RoomInvigilator>(savedRoomAssignments).filter((item) => item?.is_active),
-    [savedRoomAssignments]
-  );
-
   const getPlanBatches = (plan: SeatingPlan) => {
     if (plan.batches && plan.batches.length > 0) {
       return plan.batches.join(', ');
@@ -227,9 +217,7 @@ export default function SeatingGeneration() {
         { key: 'rooms', required: true, request: apiService.listRooms() },
         { key: 'exams', required: true, request: apiService.listExams() },
         { key: 'batches', required: true, request: apiService.listBatches(1) },
-        { key: 'invigilators', required: true, request: apiService.listInvigilators() },
         { key: 'students', required: true, request: apiService.listStudents(1, 0, 10000) },
-        { key: 'room assignments', required: false, request: apiService.listRoomAssignments(1) },
       ] as const;
 
       const results = await Promise.allSettled(dataSources.map((item) => item.request));
@@ -240,9 +228,7 @@ export default function SeatingGeneration() {
       const roomsData = resultMap.rooms?.status === 'fulfilled' ? toArray<Room>(resultMap.rooms.value.data) : [];
       const examsData = resultMap.exams?.status === 'fulfilled' ? toArray<Exam>(resultMap.exams.value.data) : [];
       const batchesData = resultMap.batches?.status === 'fulfilled' ? toArray<Batch>(resultMap.batches.value.data) : [];
-      const invigilatorsData = resultMap.invigilators?.status === 'fulfilled' ? toArray<Invigilator>(resultMap.invigilators.value.data) : [];
       const studentsData = resultMap.students?.status === 'fulfilled' ? toArray<Student>(resultMap.students.value.data) : [];
-      const roomAssignmentsData = resultMap['room assignments']?.status === 'fulfilled' ? toArray<RoomInvigilator>(resultMap['room assignments'].value.data) : [];
 
       const batchByName = new Map<string, Batch>();
       batchesData.forEach((batch: Batch) => batchByName.set(batch.name, batch));
@@ -263,19 +249,6 @@ export default function SeatingGeneration() {
       setRooms(roomsData);
       setExams(examsData);
       setBatches(Array.from(batchByName.values()));
-      setInvigilators(invigilatorsData);
-      setSavedRoomAssignments(roomAssignmentsData);
-      setRoomInvigilatorAssignments(() => {
-        const nextAssignments: { [roomId: string]: number | null } = {};
-        toArray<RoomInvigilator>(roomAssignmentsData)
-          .filter((item: RoomInvigilator) => item.is_active)
-          .forEach((item: RoomInvigilator) => {
-            if (!(item.room_id in nextAssignments)) {
-              nextAssignments[item.room_id] = item.invigilator_id;
-            }
-          });
-        return nextAssignments;
-      });
 
       const requiredFailures = dataSources.filter((item, index) => item.required && results[index].status === 'rejected');
       const optionalFailures = dataSources.filter((item, index) => !item.required && results[index].status === 'rejected');
@@ -292,14 +265,19 @@ export default function SeatingGeneration() {
       }
 
       if (requiredFailures.length > 0) {
-        setMessage(`Warning: Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`);
+        const failedSource = requiredFailures[0];
+        const failedResult = resultMap[failedSource.key];
+        const detail =
+          failedResult?.status === 'rejected'
+            ? failedResult.reason?.response?.data?.detail || failedResult.reason?.message
+            : '';
+        setMessage(detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`);
       } else if (optionalFailures.length > 0) {
-        // Room-assignment auto-linking is optional, so don't block the page with a warning.
         setMessage('');
       }
     } catch (error) {
       console.error('Failed to load data:', error);
-      setMessage('Failed to load rooms, exams, batches, and invigilators');
+      setMessage((error as any)?.response?.data?.detail || (error as any)?.message || 'Failed to load seating generation data');
     } finally {
       setLoading(false);
     }
@@ -315,6 +293,7 @@ export default function SeatingGeneration() {
       console.error('Failed to load seating plans for exam:', error);
       setGeneratedPlans([]);
       setSeatingPlans([]);
+      setMessage((error as any)?.response?.data?.detail || (error as any)?.message || 'Failed to load generated seating plans');
     }
   };
 
@@ -368,13 +347,6 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleInvigilatorAssignment = (roomId: string | number, invigilatorId: number | null) => {
-    setRoomInvigilatorAssignments((prev) => ({
-      ...prev,
-      [roomId]: invigilatorId,
-    }));
-  };
-
   const handleGeneratePlans = async () => {
     if (!selectedExam) {
       setMessage('Please select an exam');
@@ -395,16 +367,12 @@ export default function SeatingGeneration() {
     setMessage('');
 
     try {
-      const optionalInvigilatorAssignments = Object.fromEntries(
-        Object.entries(roomInvigilatorAssignments).filter(([, invigilatorId]) => Boolean(invigilatorId))
-      );
-      // Generate plans with multiple batches. Invigilator assignment is optional.
       const response = await apiService.generateSeatingPlans(
         selectedExam,
         selectedRooms,
         planType,
         selectedBatches,
-        optionalInvigilatorAssignments,
+        undefined,
         generatedDate ? new Date(generatedDate).toISOString() : undefined,
         batchConflictGroups
       );
@@ -1017,69 +985,6 @@ export default function SeatingGeneration() {
             )}
           </div>
 
-          {/* Invigilator Assignment */}
-          {selectedRooms.length > 0 && (
-            <div>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Assign Invigilators to Rooms <span className="text-gray-500">(Optional)</span>
-                  </label>
-                  <p className="text-xs text-gray-500">
-                    Seating plan bina invigilator ke generate ho sakta hai. Room ke saath invigilator baad mein attach kar sakte hain.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => navigate('/invigilators')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-sm text-white hover:bg-gray-800"
-                >
-                  <UserPlus className="h-4 w-4" />
-                  Attach Later
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {selectedRooms.map((roomId) => {
-                  const room = rooms.find(r => r.id === roomId);
-                  const autoAssigned = activeSavedAssignments.find((item) => item.room_id === roomId);
-                  const selectedInvigilator = invigilators.find((item) => item.id === roomInvigilatorAssignments[roomId]);
-                  return (
-                    <div key={roomId} className="p-4 border border-gray-300 rounded-lg bg-gray-50">
-                      <p className="font-medium text-gray-800 mb-2">{room?.name}</p>
-                      <select
-                        value={roomInvigilatorAssignments[roomId] || ''}
-                        onChange={(e) => handleInvigilatorAssignment(roomId, e.target.value ? parseInt(e.target.value) : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">No invigilator now</option>
-                        {invigilators.map((invigilator) => (
-                          <option key={invigilator.id} value={invigilator.id}>
-                            {invigilator.name} ({invigilator.staff_id})
-                          </option>
-                        ))}
-                      </select>
-                      {false && roomInvigilatorAssignments[roomId] && (
-                        <p className="text-xs text-green-600 mt-1">
-                          ✓ Assigned: {invigilators.find(i => i.id === roomInvigilatorAssignments[roomId])?.name}
-                        </p>
-                      )}
-                      {roomInvigilatorAssignments[roomId] && (
-                        <div className="mt-2 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700">
-                          <p>Assigned: {selectedInvigilator?.name || 'Selected invigilator'}</p>
-                          {autoAssigned ? (
-                            <p className="mt-1 text-green-600">
-                              Auto-linked from Invigilator Management for this room.
-                            </p>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Generate Button */}
           <div className="mt-8">
             <button
@@ -1094,7 +999,7 @@ export default function SeatingGeneration() {
             {message && (
               <p
                 className={`mt-4 text-sm font-medium ${
-                  message.includes('Failed') || message.includes('Please select') || message.includes('could not be seated') ? 'text-red-600' : 'text-green-600'
+                  message.startsWith('Successfully') || message.startsWith('Generated ') ? 'text-green-600' : 'text-red-600'
                 }`}
               >
                 {message}

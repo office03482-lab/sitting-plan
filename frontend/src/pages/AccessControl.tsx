@@ -152,6 +152,9 @@ const normalizeRolePowerUser = (value: any): RolePowerUser => ({
   permissions: normalizePermissions(value?.permissions),
 });
 
+const getRequestErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+
 function loadPasswordCache() {
   const raw = localStorage.getItem(PASSWORD_CACHE_KEY);
   if (!raw) return {} as Record<string, string>;
@@ -293,7 +296,7 @@ export default function AccessControl() {
       savePasswordCache(nextCache);
       setError(null);
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || 'Failed to load users');
+      setError(getRequestErrorMessage(requestError, 'Failed to load users'));
     } finally {
       setLoading(false);
     }
@@ -313,7 +316,7 @@ export default function AccessControl() {
       setCreateForm(initialForm);
       await loadUsers();
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || 'Failed to create user');
+      setError(getRequestErrorMessage(requestError, 'Failed to create user'));
     }
   };
 
@@ -354,7 +357,7 @@ export default function AccessControl() {
       cancelEdit();
       await loadUsers();
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || 'Failed to update user');
+      setError(getRequestErrorMessage(requestError, 'Failed to update user'));
     }
   };
 
@@ -363,7 +366,7 @@ export default function AccessControl() {
       await apiService.updateRoleUser(user.id, { is_active: !user.is_active });
       await loadUsers();
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || 'Failed to update user');
+      setError(getRequestErrorMessage(requestError, 'Failed to update user'));
     }
   };
 
@@ -373,7 +376,7 @@ export default function AccessControl() {
       await apiService.deleteRoleUser(user.id);
       await loadUsers();
     } catch (requestError: any) {
-      setError(requestError?.response?.data?.detail || 'Failed to delete user');
+      setError(getRequestErrorMessage(requestError, 'Failed to delete user'));
     }
   };
 

@@ -73,6 +73,8 @@ const isNoTeacherSession = (sessionType?: TimetableSessionType) =>
   sessionType === 'break_time' || sessionType === 'self_study';
 
 const ensureArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const getRequestErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
 
 const TimetableManagement: React.FC = () => {
   const user = useAuthStore((state) => state.user);
@@ -207,11 +209,14 @@ const TimetableManagement: React.FC = () => {
         .filter(Boolean);
       setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
       if (entriesResponse.status !== 'fulfilled') {
-        setAlert({ type: 'error', message: 'Timetable entries abhi load nahi ho paaye. Baaki data show ho raha hai.' });
+        setAlert({
+          type: 'error',
+          message: getRequestErrorMessage(entriesResponse.reason, 'Timetable entries load nahi ho paaye.'),
+        });
       }
     } catch (error) {
       console.error('Error loading data:', error);
-      setAlert({ type: 'error', message: 'Failed to load timetable data' });
+      setAlert({ type: 'error', message: getRequestErrorMessage(error, 'Failed to load timetable data') });
     } finally {
       setLoading(false);
     }

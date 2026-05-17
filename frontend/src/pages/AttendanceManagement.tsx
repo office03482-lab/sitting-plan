@@ -602,10 +602,6 @@ function AttendanceManagementContent() {
       } catch (error) {
         const fallbackRes = await apiService.getIntegratedAttendanceOverview(1);
         normalizedOverview = normalizeOverview(fallbackRes.data);
-        setAlert({
-          type: 'warning',
-          message: 'Attendance overview slow tha, isliye integrated fallback data dikhaya ja raha hai.',
-        });
       }
       setOverview(normalizedOverview);
       if (normalizedOverview) {
