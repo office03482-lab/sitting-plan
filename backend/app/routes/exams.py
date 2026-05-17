@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -106,6 +107,28 @@ def normalize_supabase_exam_payload(exam_data: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def parse_legacy_exam_date(value: Any):
+    if value in (None, "", False):
+        return None
+    if isinstance(value, datetime):
+        return value
+
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+
+    for parser in (datetime.fromisoformat,):
+        try:
+            return parser(text_value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+
+    try:
+        return datetime.strptime(text_value, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Exam date must be a valid date")
+
+
 def build_supabase_exam_code(name: str) -> str:
     from datetime import datetime
 
@@ -182,6 +205,14 @@ def delete_exam_in_supabase(school_id: str, exam_id: str) -> dict[str, Any]:
 def create_exam_in_legacy_store(db: Session, school_id: Any, exam_data: dict[str, Any]) -> Exam:
     legacy_school_id = normalize_legacy_school_id(school_id)
     ensure_school_exists(db, legacy_school_id)
+    name = str(exam_data.get("name") or exam_data.get("exam_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Exam name is required")
+
+    exam_date = parse_legacy_exam_date(exam_data.get("exam_date"))
+    if not exam_date:
+        raise HTTPException(status_code=400, detail="Exam date is required")
+
     total_students = db.query(Student).filter(Student.school_id == legacy_school_id, Student.is_active == True).count()
     total_batches = (
         db.query(func.count(func.distinct(Student.batch)))
@@ -190,9 +221,11 @@ def create_exam_in_legacy_store(db: Session, school_id: Any, exam_data: dict[str
         or 0
     )
     exam = Exam(
-        name=str(exam_data.get("name") or "").strip(),
+        name=name,
         school_id=legacy_school_id,
         subject=str(exam_data.get("subject") or "").strip() or None,
+        exam_date=exam_date,
+        duration_minutes=int(exam_data.get("duration_minutes")) if exam_data.get("duration_minutes") not in (None, "", False) else None,
         total_students=total_students,
         total_batches=int(total_batches),
     )
@@ -291,8 +324,15 @@ async def update_exam(
             raise HTTPException(status_code=404, detail="Exam not found")
         if "name" in exam_data and str(exam_data.get("name") or "").strip():
             exam.name = str(exam_data.get("name")).strip()
+        elif "exam_name" in exam_data and str(exam_data.get("exam_name") or "").strip():
+            exam.name = str(exam_data.get("exam_name")).strip()
         if "subject" in exam_data:
             exam.subject = str(exam_data.get("subject") or "").strip() or None
+        if "exam_date" in exam_data:
+            exam.exam_date = parse_legacy_exam_date(exam_data.get("exam_date"))
+        if "duration_minutes" in exam_data:
+            duration_value = exam_data.get("duration_minutes")
+            exam.duration_minutes = int(duration_value) if duration_value not in (None, "", False) else None
         db.commit()
         db.refresh(exam)
         return exam
@@ -309,8 +349,15 @@ async def update_exam(
             raise HTTPException(status_code=404, detail="Exam not found")
         if "name" in exam_data and str(exam_data.get("name") or "").strip():
             exam.name = str(exam_data.get("name")).strip()
+        elif "exam_name" in exam_data and str(exam_data.get("exam_name") or "").strip():
+            exam.name = str(exam_data.get("exam_name")).strip()
         if "subject" in exam_data:
             exam.subject = str(exam_data.get("subject") or "").strip() or None
+        if "exam_date" in exam_data:
+            exam.exam_date = parse_legacy_exam_date(exam_data.get("exam_date"))
+        if "duration_minutes" in exam_data:
+            duration_value = exam_data.get("duration_minutes")
+            exam.duration_minutes = int(duration_value) if duration_value not in (None, "", False) else None
         db.commit()
         db.refresh(exam)
         return exam

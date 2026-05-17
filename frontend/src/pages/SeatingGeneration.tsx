@@ -88,6 +88,7 @@ const buildRoomBatchSummaryFromPlan = (plan: SeatingPlan): RoomBatchSummary | nu
 };
 
 export default function SeatingGeneration() {
+  const defaultExamDate = new Date().toISOString().slice(0, 10);
   const { rooms, setRooms, setSeatingPlans } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [selectedExam, setSelectedExam] = useState<number | null>(null);
@@ -103,7 +104,7 @@ export default function SeatingGeneration() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [message, setMessage] = useState('');
   const [showExamForm, setShowExamForm] = useState(false);
-  const [examForm, setExamForm] = useState({ name: '' });
+  const [examForm, setExamForm] = useState({ name: '', exam_date: defaultExamDate });
   const [editingExamId, setEditingExamId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ planId: number; planName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -416,22 +417,31 @@ export default function SeatingGeneration() {
       setMessage('Exam name is required');
       return;
     }
+    if (!examForm.exam_date) {
+      setMessage('Exam date is required');
+      return;
+    }
+
+    const examPayload = {
+      name: examForm.name.trim(),
+      exam_date: examForm.exam_date,
+    };
 
     try {
       if (editingExamId) {
-        const response = await apiService.updateExam(editingExamId, examForm);
+        const response = await apiService.updateExam(editingExamId, examPayload);
         const updatedExam = response.data;
         setExams((prev) => prev.map((exam) => (exam.id === editingExamId ? updatedExam : exam)));
         setSelectedExam(updatedExam.id);
         setMessage('Exam updated successfully');
       } else {
-        const response = await apiService.createExam(examForm);
+        const response = await apiService.createExam(examPayload);
         const createdExam = response.data;
         setExams((prev) => [...prev, createdExam]);
         setSelectedExam(createdExam.id);
         setMessage('Exam created successfully');
       }
-      setExamForm({ name: '' });
+      setExamForm({ name: '', exam_date: defaultExamDate });
       setShowExamForm(false);
       setEditingExamId(null);
     } catch (error: any) {
@@ -444,6 +454,7 @@ export default function SeatingGeneration() {
     setEditingExamId(exam.id);
     setExamForm({
       name: exam.name || '',
+      exam_date: (exam.exam_date || '').slice(0, 10) || defaultExamDate,
     });
     setShowExamForm(true);
     setMessage('');
@@ -475,7 +486,7 @@ export default function SeatingGeneration() {
       setSeatingPlans([]);
       setShowExamForm(false);
       setEditingExamId(null);
-      setExamForm({ name: '' });
+      setExamForm({ name: '', exam_date: defaultExamDate });
       setMessage('Exam deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete exam:', error);
@@ -634,7 +645,7 @@ export default function SeatingGeneration() {
                     type="button"
                     onClick={() => {
                       setEditingExamId(null);
-                      setExamForm({ name: '' });
+                      setExamForm({ name: '', exam_date: defaultExamDate });
                       setShowExamForm((prev) => !prev);
                     }}
                     className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
@@ -691,6 +702,12 @@ export default function SeatingGeneration() {
                     placeholder="Exam name"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2"
                   />
+                  <input
+                    type="date"
+                    value={examForm.exam_date}
+                    onChange={(e) => setExamForm((prev) => ({ ...prev, exam_date: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                  />
                   <button
                     type="button"
                     onClick={handleCreateExam}
@@ -703,7 +720,7 @@ export default function SeatingGeneration() {
                     onClick={() => {
                       setShowExamForm(false);
                       setEditingExamId(null);
-                      setExamForm({ name: '' });
+                      setExamForm({ name: '', exam_date: defaultExamDate });
                     }}
                     className="ml-2 rounded-lg bg-gray-200 px-4 py-2 text-gray-800 hover:bg-gray-300"
                   >

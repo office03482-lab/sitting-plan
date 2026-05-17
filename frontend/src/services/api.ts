@@ -2355,20 +2355,51 @@ class ApiService {
     return { data: toArray<any>(response.data).map((exam) => this.mapAnyExamToLegacy(exam, 0, 0)) } as { data: Exam[] };
   }
 
-  async createExam(examData: Partial<Exam>, _schoolId: number = 1) {
-    const normalizedName = String(examData.name || '').trim();
-    if (!normalizedName) throw new Error('Exam name is required');
+  private serializeExamPayload(examData: Partial<Exam> & Record<string, any>) {
+    const normalizedName = String(examData.name || examData.exam_name || '').trim();
+    const normalizedExamDate = String(examData.exam_date || '').trim();
 
+    if (!normalizedName) throw new Error('Exam name is required');
+    if (!normalizedExamDate) throw new Error('Exam date is required');
+
+    const payload: Record<string, any> = {
+      name: normalizedName,
+      exam_date: normalizedExamDate,
+    };
+
+    if ('subject' in examData) {
+      payload.subject = String(examData.subject || '').trim() || null;
+    }
+    if ('duration_minutes' in examData) {
+      const parsedDuration = Number(examData.duration_minutes);
+      payload.duration_minutes = Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null;
+    }
+    if ('exam_type' in examData && examData.exam_type) {
+      payload.exam_type = String(examData.exam_type).trim();
+    }
+    if ('status' in examData && examData.status) {
+      payload.status = String(examData.status).trim();
+    }
+    if ('is_active' in examData) {
+      payload.is_active = Boolean(examData.is_active);
+    }
+
+    return payload;
+  }
+
+  async createExam(examData: Partial<Exam>, _schoolId: number = 1) {
+    const payload = this.serializeExamPayload(examData as Partial<Exam> & Record<string, any>);
     const preferredSchoolId = this.getCurrentSupabaseSchoolId();
-    const response = await this.api.post('/exams', examData, {
+    const response = await this.api.post('/exams', payload, {
       params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
     });
     return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
   }
 
   async updateExam(examId: number, examData: Partial<Exam>, _schoolId: number = 1) {
+    const payload = this.serializeExamPayload(examData as Partial<Exam> & Record<string, any>);
     const preferredSchoolId = this.getCurrentSupabaseSchoolId();
-    const response = await this.api.put(`/exams/${examId}`, examData, {
+    const response = await this.api.put(`/exams/${examId}`, payload, {
       params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
     });
     return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
