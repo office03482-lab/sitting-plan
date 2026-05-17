@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -35,8 +35,42 @@ def normalize_legacy_exam_id(exam_id: Any) -> int:
 
 
 def should_use_legacy_exam_store(school_id: Any) -> bool:
-    normalized_school_id = str(school_id or "").strip()
-    return settings.database_url.startswith("sqlite:///") or not normalized_school_id.isdigit()
+    return settings.database_url.startswith("sqlite:///")
+
+
+def serialize_exam_response(exam: Any) -> dict[str, Any]:
+    if isinstance(exam, dict):
+        metadata = exam.get("metadata") or {}
+        exam_date_value = exam.get("exam_date")
+        created_at_value = exam.get("created_at")
+        updated_at_value = exam.get("updated_at")
+        return {
+            "id": exam.get("id"),
+            "name": exam.get("name") or exam.get("exam_name") or "",
+            "school_id": exam.get("school_id"),
+            "subject": metadata.get("subject_text") if isinstance(metadata, dict) else None,
+            "exam_date": exam_date_value.isoformat() if isinstance(exam_date_value, (datetime, date)) else exam_date_value,
+            "duration_minutes": exam.get("duration_minutes"),
+            "total_students": int(exam.get("total_students") or 0),
+            "total_batches": int(exam.get("total_batches") or 0),
+            "is_active": bool(exam.get("is_active", True)),
+            "created_at": created_at_value.isoformat() if isinstance(created_at_value, datetime) else created_at_value,
+            "updated_at": updated_at_value.isoformat() if isinstance(updated_at_value, datetime) else updated_at_value,
+        }
+
+    return {
+        "id": getattr(exam, "id", None),
+        "name": getattr(exam, "name", "") or "",
+        "school_id": getattr(exam, "school_id", None),
+        "subject": getattr(exam, "subject", None),
+        "exam_date": getattr(exam, "exam_date", None).isoformat() if getattr(exam, "exam_date", None) else None,
+        "duration_minutes": getattr(exam, "duration_minutes", None),
+        "total_students": int(getattr(exam, "total_students", 0) or 0),
+        "total_batches": int(getattr(exam, "total_batches", 0) or 0),
+        "is_active": bool(getattr(exam, "is_active", True)),
+        "created_at": getattr(exam, "created_at", None).isoformat() if getattr(exam, "created_at", None) else None,
+        "updated_at": getattr(exam, "updated_at", None).isoformat() if getattr(exam, "updated_at", None) else None,
+    }
 
 
 def get_school_id_from_context(
@@ -90,7 +124,7 @@ def ensure_school_exists(db: Session, school_id: Any) -> School:
 
 
 def normalize_supabase_exam_payload(exam_data: dict[str, Any]) -> dict[str, Any]:
-    name = str(exam_data.get("name") or "").strip()
+    name = str(exam_data.get("name") or exam_data.get("exam_name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Exam name is required")
 
@@ -243,13 +277,13 @@ async def create_exam(
 ):
     """Create a new exam."""
     if should_use_legacy_exam_store(school_id):
-        return create_exam_in_legacy_store(db, school_id, exam_data)
+        return serialize_exam_response(create_exam_in_legacy_store(db, school_id, exam_data))
 
     try:
-        return create_exam_in_supabase(school_id, exam_data)
+        return serialize_exam_response(create_exam_in_supabase(school_id, exam_data))
     except Exception as exc:
         logger.warning("Falling back to legacy exam create path: %s", exc)
-        return create_exam_in_legacy_store(db, school_id, exam_data)
+        return serialize_exam_response(create_exam_in_legacy_store(db, school_id, exam_data))
 
 
 @router.get("")
@@ -261,15 +295,17 @@ async def list_exams(
     if should_use_legacy_exam_store(school_id):
         legacy_school_id = normalize_legacy_school_id(school_id)
         ensure_school_exists(db, legacy_school_id)
-        return db.query(Exam).filter(Exam.school_id == legacy_school_id).all()
+        exams = db.query(Exam).filter(Exam.school_id == legacy_school_id).all()
+        return [serialize_exam_response(exam) for exam in exams]
 
     try:
-        return list_exams_from_supabase(school_id)
+        return [serialize_exam_response(exam) for exam in list_exams_from_supabase(school_id)]
     except Exception as exc:
         logger.warning("Falling back to legacy exam list path: %s", exc)
         legacy_school_id = normalize_legacy_school_id(school_id)
         ensure_school_exists(db, legacy_school_id)
-        return db.query(Exam).filter(Exam.school_id == legacy_school_id).all()
+        exams = db.query(Exam).filter(Exam.school_id == legacy_school_id).all()
+        return [serialize_exam_response(exam) for exam in exams]
 
 
 @router.get("/{exam_id}")
@@ -285,7 +321,7 @@ async def get_exam(
         exam = db.query(Exam).filter(Exam.id == legacy_exam_id, Exam.school_id == legacy_school_id).first()
         if not exam:
             raise HTTPException(status_code=404, detail="Exam not found")
-        return exam
+        return serialize_exam_response(exam)
 
     try:
         rows = fetch_all(
@@ -296,7 +332,7 @@ async def get_exam(
         )
         if not rows:
             raise HTTPException(status_code=404, detail="Exam not found")
-        return rows[0]
+        return serialize_exam_response(rows[0])
     except Exception as exc:
         logger.warning("Falling back to legacy exam get path: %s", exc)
         legacy_school_id = normalize_legacy_school_id(school_id)
@@ -304,7 +340,7 @@ async def get_exam(
         exam = db.query(Exam).filter(Exam.id == legacy_exam_id, Exam.school_id == legacy_school_id).first()
         if not exam:
             raise HTTPException(status_code=404, detail="Exam not found")
-        return exam
+        return serialize_exam_response(exam)
 
 
 @router.put("/{exam_id}")
@@ -335,10 +371,10 @@ async def update_exam(
             exam.duration_minutes = int(duration_value) if duration_value not in (None, "", False) else None
         db.commit()
         db.refresh(exam)
-        return exam
+        return serialize_exam_response(exam)
 
     try:
-        return update_exam_in_supabase(school_id, exam_id, exam_data)
+        return serialize_exam_response(update_exam_in_supabase(school_id, exam_id, exam_data))
     except Exception as exc:
         logger.warning("Falling back to legacy exam update path: %s", exc)
         legacy_school_id = normalize_legacy_school_id(school_id)
@@ -360,7 +396,7 @@ async def update_exam(
             exam.duration_minutes = int(duration_value) if duration_value not in (None, "", False) else None
         db.commit()
         db.refresh(exam)
-        return exam
+        return serialize_exam_response(exam)
 
 
 @router.delete("/{exam_id}")
