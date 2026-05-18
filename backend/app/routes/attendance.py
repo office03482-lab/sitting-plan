@@ -74,6 +74,19 @@ from app.schemas import (
     TeacherAttendanceContextResponse,
 )
 from app.schemas import DayOfWeek as TimetableDayOfWeek
+from app.services.supabase_attendance import (
+    get_integrated_overview as get_supabase_integrated_overview,
+    get_overview as get_supabase_attendance_overview,
+    get_staff_dashboard as get_supabase_staff_dashboard,
+    list_integrated_staff as list_supabase_integrated_staff,
+    list_integrated_students as list_supabase_integrated_students,
+    list_staff as list_supabase_attendance_staff,
+    list_staff_records as list_supabase_staff_records,
+    list_student_records as list_supabase_student_records,
+    list_students as list_supabase_attendance_students,
+    list_subjects as list_supabase_attendance_subjects,
+)
+from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
 
@@ -170,6 +183,20 @@ WRITE_ROLES = {
     "hr",
     "hr_admin",
 }
+
+
+def get_school_id_from_context(
+    school_id: str = Query(None),
+    actor: dict = Depends(get_authenticated_actor_context),
+) -> str:
+    return resolve_school_id_from_actor(school_id, actor)
+
+
+def coerce_legacy_school_id(school_id: str | int | None) -> int:
+    try:
+        return int(str(school_id or "1"))
+    except (TypeError, ValueError):
+        return 1
 
 
 def normalize_student_batch_label(value: object) -> str:
@@ -1053,9 +1080,12 @@ def build_pdf(rows: List[Dict[str, object]], title: str) -> BytesIO:
 
 @router.get("/overview", response_model=AttendanceOverviewResponse)
 def get_overview(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return AttendanceOverviewResponse(**get_supabase_attendance_overview(school_id))
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     settings = get_settings(db, school_id)
     student_count = (
@@ -1161,12 +1191,20 @@ def get_overview(
 
 @router.get("/students", response_model=List[AttendanceStudentResponse])
 def list_students(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_attendance_students(
+            school_id,
+            skip=skip,
+            limit=limit,
+            search=search,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     query = db.query(AttendanceStudent).filter(AttendanceStudent.school_id == school_id)
     if search:
@@ -1201,13 +1239,21 @@ def create_student(
 
 @router.get("/staff", response_model=List[AttendanceStaffResponse])
 def list_staff(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_attendance_staff(
+            school_id,
+            skip=skip,
+            limit=limit,
+            search=search,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     query = db.query(AttendanceStaff).filter(
         AttendanceStaff.school_id == school_id,
@@ -1248,9 +1294,12 @@ def create_staff(
 
 @router.get("/subjects", response_model=List[AttendanceSubjectResponse])
 def list_subjects(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_attendance_subjects(school_id)
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     subjects = (
         db.query(AttendanceSubject)
@@ -1719,7 +1768,7 @@ def save_student_marking(
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])
 def list_student_records(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
@@ -1729,6 +1778,18 @@ def list_student_records(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_student_records(
+            school_id,
+            class_name=class_name,
+            section=section,
+            student_name=student_name,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
+            skip=skip,
+            limit=limit,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     query = (
         db.query(StudentAttendance)
@@ -2047,7 +2108,7 @@ def save_staff_marking(
 
 @router.get("/staff-records", response_model=List[StaffAttendanceRecordResponse])
 def list_staff_records(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     department: Optional[str] = Query(default=None),
     staff_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
@@ -2057,6 +2118,17 @@ def list_staff_records(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_staff_records(
+            school_id,
+            department=department,
+            staff_name=staff_name,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
+            skip=skip,
+            limit=limit,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     query = (
         db.query(StaffAttendance)
@@ -2143,13 +2215,23 @@ def delete_all_staff_records(
 
 @router.get("/staff-dashboard", response_model=StaffDashboardResponse)
 def get_staff_dashboard(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     department: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return StaffDashboardResponse(
+            **get_supabase_staff_dashboard(
+                school_id,
+                department=department,
+                date_from=date_from.isoformat() if date_from else None,
+                date_to=date_to.isoformat() if date_to else None,
+            )
+        )
+    school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
     actor_staff = require_teacher_staff_for_actor(db, school_id, actor)
     base_query = (
@@ -2586,7 +2668,7 @@ def serialize_integrated_staff_invigilator(
 
 @router.get("/integrated-students", response_model=List[AttendanceStudentResponse])
 def list_integrated_students(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -2594,6 +2676,15 @@ def list_integrated_students(
     db: Session = Depends(get_db),
 ):
     """List students directly from Student Management"""
+    if not is_legacy_sqlite_mode():
+        return list_supabase_integrated_students(
+            school_id,
+            skip=skip,
+            limit=limit,
+            search=search,
+            batch=batch,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     try:
         query = db.query(Student).filter(
             Student.school_id == school_id, Student.is_active == True
@@ -2618,7 +2709,7 @@ def list_integrated_students(
 
 @router.get("/integrated-staff", response_model=List[AttendanceStaffResponse])
 def list_integrated_staff(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -2629,6 +2720,16 @@ def list_integrated_staff(
     db: Session = Depends(get_db),
 ):
     """List staff directly from Teacher and Invigilator Management"""
+    if not is_legacy_sqlite_mode():
+        return list_supabase_integrated_staff(
+            school_id,
+            skip=skip,
+            limit=limit,
+            search=search,
+            department=department,
+            source=source,
+        )
+    school_id = coerce_legacy_school_id(school_id)
     try:
         results: List[AttendanceStaffResponse] = []
 
@@ -2688,10 +2789,13 @@ def list_integrated_staff(
 
 @router.get("/integrated-overview")
 def get_integrated_overview(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """Get attendance overview using integrated Student and Teacher/Invigilator data"""
+    if not is_legacy_sqlite_mode():
+        return get_supabase_integrated_overview(school_id)
+    school_id = coerce_legacy_school_id(school_id)
     try:
         students = (
             db.query(Student)

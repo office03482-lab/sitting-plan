@@ -1270,8 +1270,8 @@ class AttendanceStudentCreate(BaseModel):
 
 
 class AttendanceStudentResponse(AttendanceStudentCreate):
-    id: int
-    school_id: int
+    id: int | str
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -1291,8 +1291,8 @@ class AttendanceStaffCreate(BaseModel):
 
 
 class AttendanceStaffResponse(AttendanceStaffCreate):
-    id: int
-    school_id: int
+    id: int | str
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -1308,8 +1308,8 @@ class AttendanceSubjectCreate(BaseModel):
 
 
 class AttendanceSubjectResponse(AttendanceSubjectCreate):
-    id: int
-    school_id: int
+    id: int | str
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -1335,11 +1335,11 @@ class AttendanceHolidayCreate(BaseModel):
 
 
 class AttendanceHolidayResponse(BaseModel):
-    id: int
+    id: int | str
     title: str
     holiday_date: datetime
     description: Optional[str] = None
-    school_id: int
+    school_id: int | str
     created_at: datetime
     updated_at: datetime
 
@@ -1348,13 +1348,13 @@ class AttendanceHolidayResponse(BaseModel):
 
 
 class AttendanceNotificationResponse(BaseModel):
-    id: int
+    id: int | str
     user_name: Optional[str] = None
     user_role: Optional[str] = None
     message: str
     notification_type: str
     is_read: bool
-    school_id: int
+    school_id: int | str
     created_at: datetime
     updated_at: datetime
 
@@ -1376,8 +1376,8 @@ class AttendanceLeaveDecision(BaseModel):
 
 
 class AttendanceLeaveResponse(BaseModel):
-    id: int
-    staff_member_id: int
+    id: int | str
+    staff_member_id: int | str
     staff_name: str
     leave_type: str
     from_date: datetime
@@ -1389,7 +1389,7 @@ class AttendanceLeaveResponse(BaseModel):
 
 
 class StudentAttendanceMarkingRow(BaseModel):
-    student_id: int
+    student_id: int | str
     roll_no: str
     student_name: str
     status: str = "present"
@@ -1397,14 +1397,14 @@ class StudentAttendanceMarkingRow(BaseModel):
 
 
 class StudentAttendanceMarkEntry(BaseModel):
-    student_id: int
+    student_id: int | str
     status: str = "present"
     absence_reason: Optional[str] = None
 
 
 class StudentAttendanceMarkRequest(BaseModel):
     date: date
-    subject_id: int
+    subject_id: int | str
     marked_by: Optional[str] = None
     entries: List[StudentAttendanceMarkEntry] = Field(default_factory=list)
 
@@ -1413,20 +1413,20 @@ class StudentAttendanceMarkingResponse(BaseModel):
     date: datetime
     class_name: str
     section: str
-    subject_id: int
+    subject_id: int | str
     subject_name: str
     students: List[StudentAttendanceMarkingRow] = Field(default_factory=list)
 
 
 class StudentAttendanceRecordResponse(BaseModel):
-    id: int
-    student_id: int
+    id: int | str
+    student_id: int | str
     student_name: str
     roll_no: str
     class_name: str
     section: str
     date: datetime
-    subject_id: int
+    subject_id: int | str
     subject_name: str
     status: str
     absence_reason: Optional[str] = None
@@ -1435,16 +1435,16 @@ class StudentAttendanceRecordResponse(BaseModel):
 
 
 class TeacherAttendanceContextResponse(BaseModel):
-    teacher_id: int
+    teacher_id: int | str
     teacher_name: str
     date: datetime
     class_name: Optional[str] = None
     section: Optional[str] = None
     subject: Optional[str] = None
-    subject_id: Optional[int] = None
+    subject_id: Optional[int | str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
-    timetable_entry_id: Optional[int] = None
+    timetable_entry_id: Optional[int | str] = None
     matched_by_current_time: bool = False
 
 
@@ -1458,7 +1458,7 @@ class StudentDashboardResponse(BaseModel):
 
 
 class StaffAttendanceMarkingRow(BaseModel):
-    staff_member_id: int
+    staff_member_id: int | str
     staff_id: str
     staff_name: str
     department: str
@@ -1472,7 +1472,7 @@ class StaffAttendanceMarkingRow(BaseModel):
 
 
 class StaffAttendanceMarkEntry(BaseModel):
-    staff_member_id: int
+    staff_member_id: int | str
     status: str = "present"
     check_in: Optional[str] = None
     check_out: Optional[str] = None
@@ -1491,8 +1491,8 @@ class StaffAttendanceMarkingResponse(BaseModel):
 
 
 class StaffAttendanceRecordResponse(BaseModel):
-    id: int
-    staff_member_id: int
+    id: int | str
+    staff_member_id: int | str
     staff_id: str
     staff_name: str
     department: str
