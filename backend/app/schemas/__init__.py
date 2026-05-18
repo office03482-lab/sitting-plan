@@ -1093,12 +1093,12 @@ class InventoryReportResponse(BaseModel):
 # ==================== EduPay Schemas ====================
 
 class EduPayParentResponse(BaseModel):
-    id: int
+    id: int | str
     full_name: str
     mobile_number: str
     email: Optional[str] = None
     relation: str
-    school_id: int
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -1121,15 +1121,15 @@ class EduPayStudentCreate(BaseModel):
 
 
 class EduPayStudentResponse(BaseModel):
-    id: int
+    id: int | str
     admission_no: str
     full_name: str
     class_name: str
     batch_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
-    school_id: int
-    parent_id: int
+    school_id: int | str
+    parent_id: int | str
     parent_name: str
     parent_mobile: str
     parent_email: Optional[str] = None
@@ -1155,7 +1155,7 @@ class EduPayFeeStructureCreate(BaseModel):
 
 
 class EduPayFeeStructureResponse(BaseModel):
-    id: int
+    id: int | str
     name: str
     fee_type: str
     class_name: Optional[str] = None
@@ -1165,17 +1165,17 @@ class EduPayFeeStructureResponse(BaseModel):
     late_fee_rule: Optional[str] = None
     description: Optional[str] = None
     is_active: bool
-    school_id: int
+    school_id: int | str
     assigned_students: int
     created_at: datetime
     updated_at: datetime
 
 
 class EduPayFeeAssignmentResponse(BaseModel):
-    id: int
-    student_id: int
+    id: int | str
+    student_id: int | str
     student_name: str
-    fee_structure_id: int
+    fee_structure_id: int | str
     fee_structure_name: str
     installment_label: str
     due_date: datetime
@@ -1184,13 +1184,13 @@ class EduPayFeeAssignmentResponse(BaseModel):
     discount_amount: float
     late_fee_applied: float
     status: str
-    school_id: int
+    school_id: int | str
     created_at: datetime
     updated_at: datetime
 
 
 class EduPayPaymentCreate(BaseModel):
-    assignment_id: int
+    assignment_id: int | str
     amount: float
     method: str = "upi"
     payment_date: Optional[datetime] = None
@@ -1198,9 +1198,9 @@ class EduPayPaymentCreate(BaseModel):
 
 
 class EduPayPaymentResponse(BaseModel):
-    id: int
-    assignment_id: int
-    student_id: int
+    id: int | str
+    assignment_id: int | str
+    student_id: int | str
     student_name: str
     amount: float
     method: str
@@ -1208,7 +1208,7 @@ class EduPayPaymentResponse(BaseModel):
     transaction_reference: Optional[str] = None
     receipt_number: str
     verification_status: str
-    school_id: int
+    school_id: int | str
     created_at: datetime
 
 
@@ -1245,7 +1245,7 @@ class EduPayDashboardResponse(BaseModel):
 
 
 class EduPayParentChildSummary(BaseModel):
-    student_id: int
+    student_id: int | str
     student_name: str
     class_name: str
     due_amount: float

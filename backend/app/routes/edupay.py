@@ -43,6 +43,14 @@ from app.services.supabase_context import (
     is_legacy_sqlite_mode,
     resolve_school_id_from_actor,
 )
+from app.services.supabase_edupay import (
+    create_payment as create_supabase_edupay_payment,
+    get_dashboard as get_supabase_edupay_dashboard,
+    list_assignments as list_supabase_edupay_assignments,
+    list_fee_structures as list_supabase_edupay_fee_structures,
+    list_payments as list_supabase_edupay_payments,
+    list_students as list_supabase_edupay_students,
+)
 
 router = APIRouter(prefix="/api/edupay", tags=["EduPay"])
 logger = logging.getLogger(__name__)
@@ -281,6 +289,14 @@ def get_dashboard(
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payload = get_supabase_edupay_dashboard(school_id)
+        logger.info(
+            "EduPay dashboard loaded - User ID: %s, School ID: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+        )
+        return EduPayDashboardResponse(**payload)
     now = datetime.now()
     assignments = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id).all()
     payments = (
@@ -385,6 +401,15 @@ def list_students(
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payload = list_supabase_edupay_students(school_id)
+        logger.info(
+            "EduPay students listed - User ID: %s, School ID: %s, Row count: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+            len(payload),
+        )
+        return payload
     students = (
         db.query(EduPayStudent)
         .filter(EduPayStudent.school_id == school_id)
@@ -485,6 +510,15 @@ def list_fee_structures(
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payload = list_supabase_edupay_fee_structures(school_id)
+        logger.info(
+            "EduPay fee structures listed - User ID: %s, School ID: %s, Row count: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+            len(payload),
+        )
+        return payload
     structures = (
         db.query(EduPayFeeStructure)
         .filter(EduPayFeeStructure.school_id == school_id)
@@ -544,11 +578,24 @@ def create_fee_structure(
 def list_assignments(
     school_id: str = Depends(get_school_id_from_context),
     status_filter: Optional[FeeAssignmentStatus] = Query(default=None, alias="status"),
-    student_id: Optional[int] = Query(default=None),
+    student_id: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payload = list_supabase_edupay_assignments(
+            school_id,
+            status_filter=status_filter.value if status_filter else None,
+            student_id=student_id,
+        )
+        logger.info(
+            "EduPay assignments listed - User ID: %s, School ID: %s, Row count: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+            len(payload),
+        )
+        return payload
     query = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id)
     if student_id:
         query = query.filter(EduPayFeeAssignment.student_id == student_id)
@@ -577,6 +624,15 @@ def list_payments(
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payload = list_supabase_edupay_payments(school_id)
+        logger.info(
+            "EduPay payments listed - User ID: %s, School ID: %s, Row count: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+            len(payload),
+        )
+        return payload
     payments = (
         db.query(EduPayPayment)
         .filter(EduPayPayment.school_id == school_id)
@@ -601,6 +657,14 @@ def create_payment(
     db: Session = Depends(get_db),
 ):
     ensure_school_context(school_id)
+    if not is_legacy_sqlite_mode():
+        payment = create_supabase_edupay_payment(school_id, payload.model_dump(), actor)
+        logger.info(
+            "EduPay payment created - User ID: %s, School ID: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+        )
+        return EduPayPaymentResponse(**payment)
     assignment = (
         db.query(EduPayFeeAssignment)
         .filter(
