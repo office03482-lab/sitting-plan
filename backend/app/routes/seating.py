@@ -2,7 +2,7 @@
 Seating plan generation routes
 """
 import json
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status, Query
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List
@@ -10,7 +10,6 @@ from app.database import get_db
 from app.models import SeatingPlan, Exam, Room, Student, Desk, Seat
 from app.schemas import GenerateSeatingRequest, SeatingPlanResponse, PlansComparisonResponse, RoomLayout, DeskLayout, SeatPosition, SeatingPlanImportResponse
 from app.services.seating_engine import SeatingAlgorithmEngine
-from app.middleware.auth import get_authenticated_actor_context
 from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
 from app.services.supabase_seating import (
     delete_all_seating_plans,
@@ -24,11 +23,7 @@ from app.utils.excel import parse_seating_plan_excel, create_seating_plan_templa
 router = APIRouter()
 
 
-def get_school_id_from_context(
-    school_id: str = Query(default=None),
-    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
-) -> str:
-    return resolve_school_id_from_actor(school_id, actor)
+
 
 
 def interleave_students_by_batch(students: List[Dict]) -> List[Dict]:
@@ -442,7 +437,7 @@ async def generate_seating_plans(
 async def list_plans(
     room_id: str,
     exam_id: str = None,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -464,7 +459,7 @@ async def list_plans(
 @router.get("/plans", response_model=List[SeatingPlanResponse])
 async def list_all_plans(
     exam_id: str = None,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -485,7 +480,7 @@ async def list_all_plans(
 @router.get("/{plan_id}/layout")
 async def get_plan_layout(
     plan_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -555,7 +550,7 @@ async def get_plan_layout(
 @router.post("/{plan_id}/finalize")
 async def finalize_plan(
     plan_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -577,7 +572,7 @@ async def finalize_plan(
 @router.delete("/{plan_id}")
 async def delete_plan(
     plan_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -598,7 +593,7 @@ async def delete_plan(
 @router.delete("")
 async def delete_all_plans(
     is_admin: bool = False,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -645,7 +640,7 @@ async def download_seating_template():
 async def import_seating_plan(
     file: UploadFile = File(...),
     exam_id: int = None,
-    school_id: int = 1,  # TODO: Get from authenticated user
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """

@@ -2,7 +2,8 @@
 Settings management routes
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends
+from app.services.supabase_context import resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -13,20 +14,7 @@ from app.models import Settings
 
 logger = logging.getLogger(__name__)
 
-def get_school_id_from_context(school_id: str = Query(None), actor: dict = Depends(get_authenticated_actor_context), db: Session = Depends(get_db)) -> str:
-    user_id, res_id = actor.get("user_id") or actor.get("id"), str(school_id) if school_id and str(school_id) != "1" else None
-    if not res_id:
-        try:
-            from app.models import Profile, SchoolMembership
-            p = db.query(Profile).filter(Profile.user_id == user_id).first()
-            if p:
-                m = db.query(SchoolMembership).filter(SchoolMembership.profile_id == p.id).first()
-                if m: res_id = str(m.school_id)
-        except Exception: pass
-        res_id = res_id or actor.get("school_id")
-    if not res_id or res_id == "1":
-        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
-    return str(res_id)
+
 
 router = APIRouter()
 
@@ -50,7 +38,7 @@ class SchoolSettings(BaseModel):
 
 @router.get("")
 async def get_settings(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db)
 ):
@@ -121,7 +109,7 @@ async def get_settings(
 @router.put("")
 async def update_settings(
     settings_data: SchoolSettings,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db)
 ):
@@ -175,13 +163,13 @@ async def update_settings(
 
 
 @router.post("/reset")
-async def reset_settings(db: Session = Depends(get_db)):
+async def reset_settings(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    db: Session = Depends(get_db),
+):
     """
     Reset settings to defaults
     """
-    # For now, use school_id = 1 (default school)
-    school_id = 1
-
     settings = db.query(Settings).filter(Settings.school_id == school_id).first()
 
     if settings:

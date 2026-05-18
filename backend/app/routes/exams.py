@@ -59,11 +59,7 @@ def serialize_legacy_exam_response(exam: Any) -> dict[str, Any]:
     }
 
 
-def get_school_id_from_context(
-    school_id: str = Query(None),
-    actor: dict = Depends(get_authenticated_actor_context),
-) -> str:
-    return resolve_school_id_from_actor(school_id, actor)
+
 
 
 def ensure_school_exists(db: Session, school_id: Any) -> School:
@@ -150,7 +146,7 @@ def create_exam_in_legacy_store(db: Session, school_id: Any, exam_data: dict[str
 @router.post("")
 async def create_exam(
     exam_data: dict,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """Create a new exam."""
@@ -162,7 +158,7 @@ async def create_exam(
 
 @router.get("")
 async def list_exams(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """List all exams for a school."""
@@ -178,7 +174,7 @@ async def list_exams(
 @router.get("/{exam_id}")
 async def get_exam(
     exam_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """Get exam details."""
@@ -197,7 +193,7 @@ async def get_exam(
 async def update_exam(
     exam_id: str,
     exam_data: dict,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """Update exam details."""
@@ -229,7 +225,7 @@ async def update_exam(
 @router.delete("/{exam_id}")
 async def delete_exam(
     exam_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """Delete a single exam and its seating plans."""
@@ -250,7 +246,7 @@ async def delete_exam(
 
 @router.delete("", summary="Delete all exams")
 async def delete_all_exams(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_admin: bool = False,
     db: Session = Depends(get_db),
 ):

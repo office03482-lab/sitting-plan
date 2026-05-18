@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from app.services.supabase_context import resolve_school_id_from_actor
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib import colors
@@ -725,7 +726,7 @@ def build_pdf_report(report_type: str, rows: List[Dict[str, object]]) -> BytesIO
 
 @router.get("/suppliers", response_model=List[SupplierResponse])
 def list_suppliers(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     search: Optional[str] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
     db: Session = Depends(get_db),
@@ -743,7 +744,7 @@ def list_suppliers(
 @router.post("/suppliers", response_model=SupplierResponse)
 def create_supplier(
     payload: SupplierCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -774,7 +775,7 @@ def create_supplier(
 def update_supplier(
     supplier_id: int,
     payload: SupplierUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -804,7 +805,7 @@ def update_supplier(
 @router.delete("/suppliers/{supplier_id}")
 def delete_supplier(
     supplier_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -823,7 +824,7 @@ def delete_supplier(
 
 @router.get("/subjects", response_model=List[InventorySubjectResponse])
 def list_subjects(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_active: Optional[bool] = Query(default=None),
     db: Session = Depends(get_db),
 ):
@@ -838,7 +839,7 @@ def list_subjects(
 @router.post("/subjects", response_model=InventorySubjectResponse)
 def create_subject(
     payload: InventorySubjectCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -861,7 +862,7 @@ def create_subject(
 def update_subject(
     subject_id: int,
     payload: InventorySubjectUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -900,7 +901,7 @@ def update_subject(
 @router.delete("/subjects/{subject_id}")
 def delete_subject(
     subject_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -922,7 +923,7 @@ def delete_subject(
 
 @router.get("/sets", response_model=List[InventorySetResponse])
 def list_sets(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     subject_id: Optional[int] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
     db: Session = Depends(get_db),
@@ -940,7 +941,7 @@ def list_sets(
 @router.post("/sets", response_model=InventorySetResponse)
 def create_set(
     payload: InventorySetCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -976,7 +977,7 @@ def create_set(
 def update_set(
     set_id: int,
     payload: InventorySetUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1029,7 +1030,7 @@ def update_set(
 @router.delete("/sets/{set_id}")
 def delete_set(
     set_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1072,7 +1073,7 @@ def delete_set(
 
 @router.get("/volumes", response_model=List[InventoryVolumeResponse])
 def list_volumes(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     subject_id: Optional[int] = Query(default=None),
     set_id: Optional[int] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
@@ -1093,7 +1094,7 @@ def list_volumes(
 @router.post("/volumes", response_model=InventoryVolumeResponse)
 def create_volume(
     payload: InventoryVolumeCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1130,7 +1131,7 @@ def create_volume(
 def update_volume(
     volume_id: int,
     payload: InventoryVolumeUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1188,7 +1189,7 @@ def update_volume(
 @router.delete("/volumes/{volume_id}")
 def delete_volume(
     volume_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1216,7 +1217,7 @@ def delete_volume(
 
 @router.get("/catalog", response_model=List[InventoryCatalogSubject])
 def get_inventory_catalog(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     include_inactive: bool = Query(default=True),
     db: Session = Depends(get_db),
 ):
@@ -1276,7 +1277,7 @@ def get_inventory_catalog(
 
 @router.get("/materials", response_model=List[MaterialResponse])
 def list_materials(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     search: Optional[str] = Query(default=None),
     subject: Optional[str] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
@@ -1323,7 +1324,7 @@ def download_material_import_template():
 @router.post("/materials/import", response_model=InventoryMaterialImportResponse)
 async def import_materials_from_excel(
     file: UploadFile = File(...),
-    school_id: str = Query(default="1"),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1652,7 +1653,7 @@ async def import_materials_from_excel(
 @router.post("/materials", response_model=MaterialResponse)
 def create_material(
     payload: MaterialCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1703,7 +1704,7 @@ def create_material(
 def update_material(
     material_id: int,
     payload: MaterialUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1769,7 +1770,7 @@ def update_material(
 @router.delete("/materials/{material_id}")
 def delete_material(
     material_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1789,7 +1790,7 @@ def delete_material(
 
 @router.get("/stock-in", response_model=List[StockInResponse])
 def list_stock_in(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     supplier_id: Optional[int] = Query(default=None),
     material_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
@@ -1805,7 +1806,7 @@ def list_stock_in(
 @router.post("/stock-in", response_model=StockInResponse)
 def create_stock_in(
     payload: StockInCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1839,7 +1840,7 @@ def create_stock_in(
 @router.delete("/stock-in/{entry_id}")
 def delete_stock_in(
     entry_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1864,7 +1865,7 @@ def delete_stock_in(
 
 @router.get("/stock-out", response_model=List[StockOutResponse])
 def list_stock_out(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     batch_id: Optional[int] = Query(default=None),
     material_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
@@ -1879,7 +1880,7 @@ def list_stock_out(
 
 @router.get("/student-issues", response_model=List[StudentIssueResponse])
 def list_student_issues(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     batch_id: Optional[int] = Query(default=None),
     student_id: Optional[int] = Query(default=None),
     material_id: Optional[int] = Query(default=None),
@@ -1898,7 +1899,7 @@ def list_student_issues(
 @router.post("/stock-out", response_model=StockOutResponse)
 def create_stock_out(
     payload: StockOutCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -1961,7 +1962,7 @@ def create_stock_out(
 @router.post("/student-issues", response_model=StudentIssueResponse)
 def create_student_issues(
     payload: StudentIssueCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -2030,7 +2031,7 @@ def create_student_issues(
 @router.delete("/stock-out/{entry_id}")
 def delete_stock_out(
     entry_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -2050,7 +2051,7 @@ def delete_stock_out(
 @router.delete("/student-issues/{entry_id}")
 def delete_student_issue(
     entry_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_inventory_write),
     db: Session = Depends(get_db),
 ):
@@ -2069,7 +2070,7 @@ def delete_student_issue(
 
 @router.get("/dashboard", response_model=InventoryDashboardResponse)
 def get_inventory_dashboard(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     ensure_school_context(db, school_id)
@@ -2095,7 +2096,7 @@ def get_inventory_dashboard(
 @router.get("/history/material/{material_id}", response_model=List[InventoryHistoryEntry])
 def get_material_history(
     material_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     material = db.query(MaterialItem).filter(MaterialItem.id == material_id, MaterialItem.school_id == school_id).first()
@@ -2164,7 +2165,7 @@ def get_material_history(
 @router.get("/reports/data", response_model=InventoryReportResponse)
 def get_inventory_report(
     report_type: str = Query(...),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     date_from: Optional[datetime] = Query(default=None),
     date_to: Optional[datetime] = Query(default=None),
     supplier_id: Optional[int] = Query(default=None),
@@ -2186,7 +2187,7 @@ def get_inventory_report(
 def export_inventory_report(
     report_type: str = Query(...),
     export_format: str = Query(..., pattern="^(excel|pdf)$"),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     date_from: Optional[datetime] = Query(default=None),
     date_to: Optional[datetime] = Query(default=None),
     supplier_id: Optional[int] = Query(default=None),

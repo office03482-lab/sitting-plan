@@ -5,6 +5,7 @@ import smtplib
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from app.services.supabase_context import resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -475,7 +476,7 @@ async def login_password(payload: PasswordLoginRequest, request: Request, db: Se
 
 @router.get("/users", response_model=List[UserRolePowerResponse])
 async def list_role_users(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     _: User = Depends(require_user_management_access),
     db: Session = Depends(get_db),
 ):

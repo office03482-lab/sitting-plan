@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.database import get_db
+from app.services.supabase_context import resolve_school_id_from_actor
 from app.models import BatchTable, Student
 from app.schemas import BatchCreate, BatchUpdate, BatchResponse, BatchWithStudentCount, BatchReorderRequest
 # from app.middleware.auth import get_current_user  # Temporarily disabled
@@ -37,7 +38,7 @@ def _next_display_order(db: Session, school_id: int) -> int:
 @router.post("", response_model=BatchResponse)
 def create_batch(
     batch: BatchCreate,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -82,7 +83,7 @@ def create_batch(
 
 @router.get("", response_model=List[BatchWithStudentCount])
 def list_batches(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_active: bool = Query(None),
     category: str | None = Query(default=None),
     # current_user: dict = Depends(get_current_user),
@@ -133,7 +134,7 @@ def list_batches(
 @router.get("/{batch_id}", response_model=BatchWithStudentCount)
 def get_batch(
     batch_id: int,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -163,7 +164,7 @@ def get_batch(
 def update_batch(
     batch_id: int,
     batch_update: BatchUpdate,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -255,7 +256,7 @@ def update_batch(
 @router.post("/reorder", response_model=List[BatchWithStudentCount])
 def reorder_batches(
     payload: BatchReorderRequest,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db)
 ):
     """Persist manual batch ordering for a school."""
@@ -302,7 +303,7 @@ def reorder_batches(
 @router.delete("/{batch_id}")
 def delete_batch(
     batch_id: int,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -343,7 +344,7 @@ def delete_batch(
 
 @router.delete("")
 def delete_all_batches(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     category: str | None = Query(default=None),
     db: Session = Depends(get_db)
 ):
@@ -390,7 +391,7 @@ def delete_all_batches(
 @router.get("/by-name/{batch_name}")
 def get_batch_by_name(
     batch_name: str,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db)
 ):
     """

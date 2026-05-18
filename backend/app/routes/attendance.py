@@ -185,13 +185,6 @@ WRITE_ROLES = {
 }
 
 
-def get_school_id_from_context(
-    school_id: str = Query(None),
-    actor: dict = Depends(get_authenticated_actor_context),
-) -> str:
-    return resolve_school_id_from_actor(school_id, actor)
-
-
 def coerce_legacy_school_id(school_id: str | int | None) -> int:
     try:
         return int(str(school_id or "1"))
@@ -1080,7 +1073,7 @@ def build_pdf(rows: List[Dict[str, object]], title: str) -> BytesIO:
 
 @router.get("/overview", response_model=AttendanceOverviewResponse)
 def get_overview(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     if not is_legacy_sqlite_mode():
@@ -1191,7 +1184,7 @@ def get_overview(
 
 @router.get("/students", response_model=List[AttendanceStudentResponse])
 def list_students(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -1227,7 +1220,7 @@ def list_students(
 @router.post("/students", response_model=AttendanceStudentResponse)
 def create_student(
     payload: AttendanceStudentCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1239,7 +1232,7 @@ def create_student(
 
 @router.get("/staff", response_model=List[AttendanceStaffResponse])
 def list_staff(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -1282,7 +1275,7 @@ def list_staff(
 @router.post("/staff", response_model=AttendanceStaffResponse)
 def create_staff(
     payload: AttendanceStaffCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1294,7 +1287,7 @@ def create_staff(
 
 @router.get("/subjects", response_model=List[AttendanceSubjectResponse])
 def list_subjects(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     if not is_legacy_sqlite_mode():
@@ -1317,7 +1310,7 @@ def list_subjects(
 @router.post("/subjects", response_model=AttendanceSubjectResponse)
 def create_subject(
     payload: AttendanceSubjectCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1345,7 +1338,7 @@ def create_subject(
 
 @router.get("/settings", response_model=AttendanceSettingResponse)
 def get_attendance_settings(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -1361,7 +1354,7 @@ def get_attendance_settings(
 @router.put("/settings", response_model=AttendanceSettingResponse)
 def update_attendance_settings(
     payload: AttendanceSettingUpdate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1389,7 +1382,7 @@ def update_attendance_settings(
 
 @router.get("/holidays", response_model=List[AttendanceHolidayResponse])
 def list_holidays(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -1405,7 +1398,7 @@ def list_holidays(
 @router.post("/holidays", response_model=AttendanceHolidayResponse)
 def create_holiday(
     payload: AttendanceHolidayCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1432,7 +1425,7 @@ def create_holiday(
 @router.delete("/holidays/{holiday_id}")
 def delete_holiday(
     holiday_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1451,7 +1444,7 @@ def delete_holiday(
 
 @router.delete("/holidays")
 def delete_all_holidays(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1467,7 +1460,7 @@ def delete_all_holidays(
 def get_teacher_current_class(
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1556,7 +1549,7 @@ def get_batch_current_class(
     section: str = Query(...),
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -1641,7 +1634,7 @@ def get_student_marking(
     section: str = Query(...),
     subject_id: int = Query(...),
     search: Optional[str] = Query(default=None),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -1701,7 +1694,7 @@ def get_student_marking(
 @router.post("/student-marking")
 def save_student_marking(
     payload: StudentAttendanceMarkRequest,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1768,7 +1761,7 @@ def save_student_marking(
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])
 def list_student_records(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
@@ -1819,7 +1812,7 @@ def list_student_records(
 @router.delete("/student-records/{record_id}")
 def delete_student_record(
     record_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -1856,7 +1849,7 @@ def delete_student_record(
 
 @router.delete("/student-records")
 def delete_all_student_records(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
@@ -1901,7 +1894,7 @@ def delete_all_student_records(
 @router.get("/student-dashboard/{student_id}", response_model=StudentDashboardResponse)
 def get_student_dashboard(
     student_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -1981,7 +1974,7 @@ def get_staff_marking(
     date: date = Query(...),
     department: str = Query(...),
     search: Optional[str] = Query(default=None),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -2052,7 +2045,7 @@ def get_staff_marking(
 @router.post("/staff-marking")
 def save_staff_marking(
     payload: StaffAttendanceMarkRequest,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2108,7 +2101,7 @@ def save_staff_marking(
 
 @router.get("/staff-records", response_model=List[StaffAttendanceRecordResponse])
 def list_staff_records(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     department: Optional[str] = Query(default=None),
     staff_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
@@ -2161,7 +2154,7 @@ def list_staff_records(
 @router.delete("/staff-records/{record_id}")
 def delete_staff_record(
     record_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2180,7 +2173,7 @@ def delete_staff_record(
 
 @router.delete("/staff-records")
 def delete_all_staff_records(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     department: Optional[str] = Query(default=None),
     staff_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
@@ -2215,7 +2208,7 @@ def delete_all_staff_records(
 
 @router.get("/staff-dashboard", response_model=StaffDashboardResponse)
 def get_staff_dashboard(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     department: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
@@ -2326,7 +2319,7 @@ def get_staff_dashboard(
 
 @router.get("/leaves", response_model=List[AttendanceLeaveResponse])
 def list_leaves(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     status_filter: Optional[LeaveStatus] = Query(default=None, alias="status"),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
@@ -2345,7 +2338,7 @@ def list_leaves(
 @router.post("/leaves", response_model=AttendanceLeaveResponse)
 def create_leave(
     payload: AttendanceLeaveCreate,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2389,7 +2382,7 @@ def create_leave(
 def decide_leave(
     leave_id: int,
     payload: AttendanceLeaveDecision,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2420,7 +2413,7 @@ def decide_leave(
 @router.delete("/leaves/{leave_id}")
 def delete_leave(
     leave_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2442,7 +2435,7 @@ def delete_leave(
 
 @router.delete("/leaves")
 def delete_all_leaves(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     status_filter: Optional[LeaveStatus] = Query(default=None, alias="status"),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
@@ -2462,7 +2455,7 @@ def delete_all_leaves(
 
 @router.get("/notifications", response_model=List[AttendanceNotificationResponse])
 def list_notifications(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     seed_attendance_data(db, school_id)
@@ -2479,7 +2472,7 @@ def list_notifications(
 @router.delete("/notifications/{notification_id}")
 def delete_notification(
     notification_id: int,
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2501,7 +2494,7 @@ def delete_notification(
 
 @router.delete("/notifications")
 def delete_all_notifications(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -2522,7 +2515,7 @@ def get_report_data(
     report_type: str = Query(
         ..., pattern="^(student_summary|staff_summary|leave_summary)$"
     ),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     batch_names: Optional[str] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -2559,7 +2552,7 @@ def export_report(
         ..., pattern="^(student_summary|staff_summary|leave_summary)$"
     ),
     export_format: str = Query(..., pattern="^(excel|pdf)$"),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(resolve_school_id_from_actor),
     batch_names: Optional[str] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -2668,7 +2661,7 @@ def serialize_integrated_staff_invigilator(
 
 @router.get("/integrated-students", response_model=List[AttendanceStudentResponse])
 def list_integrated_students(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -2709,7 +2702,7 @@ def list_integrated_students(
 
 @router.get("/integrated-staff", response_model=List[AttendanceStaffResponse])
 def list_integrated_staff(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -2789,7 +2782,7 @@ def list_integrated_staff(
 
 @router.get("/integrated-overview")
 def get_integrated_overview(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """Get attendance overview using integrated Student and Teacher/Invigilator data"""

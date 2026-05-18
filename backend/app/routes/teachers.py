@@ -3,6 +3,7 @@ Teacher management routes
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from app.services.supabase_context import resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -12,29 +13,13 @@ from app.schemas import TeacherCreate, TeacherResponse, TeacherUpdate
 
 logger = logging.getLogger(__name__)
 
-def get_school_id_from_context(school_id: str = Query(None), actor: dict = Depends(get_authenticated_actor_context), db: Session = Depends(get_db)) -> str:
-    user_id, res_id = actor.get("user_id") or actor.get("id"), str(school_id) if school_id and str(school_id) != "1" else None
-    if not res_id:
-        try:
-            from app.models import Profile, SchoolMembership
-            p = db.query(Profile).filter(Profile.user_id == user_id).first()
-            if p:
-                m = db.query(SchoolMembership).filter(SchoolMembership.profile_id == p.id).first()
-                if m: res_id = str(m.school_id)
-        except Exception:
-            pass
-        res_id = res_id or actor.get("school_id")
-    if not res_id or res_id == "1":
-        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
-    return str(res_id)
-
 router = APIRouter()
 
 
 @router.post("", response_model=TeacherResponse)
 async def create_teacher(
     teacher: TeacherCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -90,7 +75,7 @@ async def create_teacher(
 
 @router.get("", response_model=List[TeacherResponse])
 async def list_teachers(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     skip: int = 0,
     limit: int = 100,
@@ -124,7 +109,7 @@ async def list_teachers(
 @router.get("/{teacher_id}", response_model=TeacherResponse)
 async def get_teacher(
     teacher_id: int,
-    school_id: int,  # TODO: Extract from authenticated user token
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -158,7 +143,7 @@ async def get_teacher(
 async def update_teacher(
     teacher_id: int,
     teacher_update: TeacherUpdate,
-    school_id: int,  # TODO: Extract from authenticated user token
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -199,7 +184,7 @@ async def update_teacher(
 @router.delete("/{teacher_id}")
 async def delete_teacher(
     teacher_id: int,
-    school_id: int,  # TODO: Extract from authenticated user token
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """

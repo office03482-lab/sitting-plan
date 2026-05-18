@@ -2,7 +2,8 @@
 Room configuration routes
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
+from app.services.supabase_context import resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -11,21 +12,6 @@ from app.models import Room, Desk, Seat, School, User, UserRole
 from app.schemas import RoomCreate, RoomResponse, RoomUpdate
 
 logger = logging.getLogger(__name__)
-
-def get_school_id_from_context(school_id: str = Query(None), actor: dict = Depends(get_authenticated_actor_context), db: Session = Depends(get_db)) -> str:
-    user_id, res_id = actor.get("user_id") or actor.get("id"), str(school_id) if school_id and str(school_id) != "1" else None
-    if not res_id:
-        try:
-            from app.models import Profile, SchoolMembership
-            p = db.query(Profile).filter(Profile.user_id == user_id).first()
-            if p:
-                m = db.query(SchoolMembership).filter(SchoolMembership.profile_id == p.id).first()
-                if m: res_id = str(m.school_id)
-        except Exception: pass
-        res_id = res_id or actor.get("school_id")
-    if not res_id or res_id == "1":
-        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
-    return str(res_id)
 
 router = APIRouter()
 
@@ -92,7 +78,7 @@ def serialize_room(room: Room) -> RoomResponse:
 @router.post("", response_model=RoomResponse)
 async def create_room(
     room_data: RoomCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -152,7 +138,7 @@ async def create_room(
 
 @router.get("", response_model=List[RoomResponse])
 async def list_rooms(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -232,7 +218,7 @@ async def delete_room(
 
 @router.delete("")
 async def delete_all_rooms(
-    school_id: int = 1,
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_admin: bool = False,
     db: Session = Depends(get_db),
 ):
@@ -280,7 +266,7 @@ async def delete_all_rooms(
 
 @router.delete("", summary="Delete all rooms")
 async def delete_all_rooms(
-    school_id: int = 1,
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_admin: bool = False,
     db: Session = Depends(get_db),
 ):

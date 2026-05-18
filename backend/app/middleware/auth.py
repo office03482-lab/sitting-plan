@@ -95,6 +95,14 @@ def build_actor_context(
             "email": str(payload.get("email") or "").strip(),
             "username": str(payload.get("username") or "").strip(),
             "user_id": str(payload.get("sub") or "").strip(),
+            "profile_id": str(payload.get("profile_id") or payload.get("sub") or "").strip(),
+            "school_id": str(
+                payload.get("school_id")
+                or payload.get("school_uuid")
+                or payload.get("active_school_id")
+                or payload.get("current_school_id")
+                or ""
+            ).strip(),
             "auth_source": "jwt",
         }
 
@@ -104,6 +112,8 @@ def build_actor_context(
         "email": "",
         "username": "",
         "user_id": "",
+        "profile_id": "",
+        "school_id": "",
         "auth_source": "headers",
     }
 
@@ -200,6 +210,8 @@ def build_authenticated_actor_context(user: User) -> Dict[str, str]:
         "email": (user.email or "").strip(),
         "username": (user.username or "").strip(),
         "user_id": str(user.id),
+        "profile_id": str(user.id),
+        "school_id": "",
         "auth_source": "jwt",
     }
 

@@ -56,11 +56,7 @@ BREAK_TEACHER_NAME = "__BREAK_SESSION__"
 SELF_STUDY_TEACHER_NAME = "__SELF_STUDY_SESSION__"
 
 
-def get_school_id_from_context(
-    school_id: str = Query(default=None),
-    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
-) -> str:
-    return resolve_school_id_from_actor(school_id, actor)
+
 
 
 def resolve_teacher_for_actor(db: Session, school_id: int, actor: Dict[str, str]) -> Optional[Teacher]:
@@ -597,7 +593,7 @@ def check_teacher_conflict(
 @router.post("", response_model=TimetableEntryResponse)
 async def create_timetable_entry(
     entry: TimetableEntryCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
@@ -663,7 +659,7 @@ async def create_timetable_entry(
 
 @router.get("", response_model=List[TimetableView])
 async def list_timetable_entries(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     day_of_week: Optional[DayOfWeek] = None,
     teacher_id: Optional[str | int] = None,
     class_name: Optional[str] = None,
@@ -705,7 +701,7 @@ async def export_timetable(
     export_format: str = Query(..., pattern="^(excel|pdf)$"),
     view_by: str = Query(default="day", pattern="^(day|teacher|room|batch)$"),
     session_mode_filter: str = Query(default="all", pattern="^(all|offline|online|merged)$"),
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     day_of_week: Optional[DayOfWeek] = Query(default=None),
     teacher_id: Optional[str | int] = Query(default=None),
     room_id: Optional[str | int] = Query(default=None),
@@ -779,7 +775,7 @@ async def export_timetable(
 @router.get("/{entry_id}", response_model=TimetableEntryResponse)
 async def get_timetable_entry(
     entry_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -801,7 +797,7 @@ async def get_timetable_entry(
 async def update_timetable_entry(
     entry_id: str,
     entry_update: TimetableEntryUpdate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
@@ -864,7 +860,7 @@ async def update_timetable_entry(
 @router.delete("/{entry_id}")
 async def delete_timetable_entry(
     entry_id: str,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
@@ -885,7 +881,7 @@ async def delete_timetable_entry(
 
 @router.delete("")
 async def delete_all_timetable_entries(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_admin: bool = Query(default=False),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
@@ -910,7 +906,7 @@ async def check_conflict(
     start_time: str = Body(...),
     end_time: str = Body(...),
     exclude_entry_id: str | int = Body(default=None),
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):

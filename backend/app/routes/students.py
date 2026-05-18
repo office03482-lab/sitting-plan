@@ -4,6 +4,7 @@ Student management routes
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from app.services.supabase_context import resolve_school_id_from_actor
 from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -33,30 +34,6 @@ import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def get_school_id_from_context(
-    school_id: str = Query(None),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-) -> str:
-    user_id = actor.get("user_id") or actor.get("id")
-    resolved_school_id = str(school_id) if school_id and str(school_id) != "1" else None
-    if not resolved_school_id:
-        try:
-            from app.models import Profile, SchoolMembership
-
-            profile = db.query(Profile).filter(Profile.user_id == user_id).first()
-            if profile:
-                membership = db.query(SchoolMembership).filter(SchoolMembership.profile_id == profile.id).first()
-                if membership:
-                    resolved_school_id = str(membership.school_id)
-        except Exception:
-            pass
-        resolved_school_id = resolved_school_id or actor.get("school_id")
-    if not resolved_school_id or resolved_school_id == "1":
-        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
-    return str(resolved_school_id)
 
 
 def build_batch_code(batch_name: str, fallback_index: int) -> str:
@@ -387,7 +364,7 @@ async def download_student_template():
 @router.post("/import", response_model=StudentImportResponse)
 async def import_students(
     file: UploadFile = File(...),
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -631,7 +608,7 @@ async def import_students(
 @router.post("", response_model=StudentResponse)
 async def create_student(
     student: StudentCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -700,7 +677,7 @@ async def create_student(
 
 @router.get("", response_model=List[StudentResponse])
 async def list_students(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     skip: int = 0,
     limit: int = 100,
@@ -722,7 +699,7 @@ async def list_students(
 
 @router.get("/hostels", response_model=List[HostelResponse])
 async def list_hostels(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -743,7 +720,7 @@ async def list_hostels(
 @router.post("/hostels", response_model=HostelResponse)
 async def create_hostel(
     payload: HostelCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -797,7 +774,7 @@ async def create_hostel(
 async def update_hostel(
     hostel_id: int,
     payload: HostelUpdate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -817,7 +794,7 @@ async def update_hostel(
 @router.delete("/hostels/{hostel_id}")
 async def delete_hostel(
     hostel_id: int,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -862,7 +839,7 @@ async def delete_hostel(
 async def add_hostel_room(
     hostel_id: int,
     payload: HostelRoomCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -886,7 +863,7 @@ async def add_hostel_room(
 
 @router.get("/hostel-requests", response_model=List[StudentHostelRequestResponse])
 async def list_hostel_requests(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     status_filter: str | None = None,
     db: Session = Depends(get_db),
@@ -914,7 +891,7 @@ async def list_hostel_requests(
 async def create_or_update_hostel_request(
     student_id: int,
     payload: StudentHostelRequestCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -970,7 +947,7 @@ async def create_or_update_hostel_request(
 async def approve_hostel_request(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1037,7 +1014,7 @@ async def approve_hostel_request(
 async def move_hostel_allocation(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1102,7 +1079,7 @@ async def move_hostel_allocation(
 async def reject_hostel_request(
     request_id: int,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1134,7 +1111,7 @@ async def reject_hostel_request(
 @router.post("/transfer", response_model=StudentBatchTransferResponse)
 async def transfer_students_to_batch(
     transfer_data: StudentBatchTransferRequest,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1215,7 +1192,7 @@ async def transfer_students_to_batch(
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: int,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1235,7 +1212,7 @@ async def get_student(
 async def update_student(
     student_id: int,
     update_data: StudentUpdate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1317,7 +1294,7 @@ async def update_student(
 @router.delete("/{student_id}")
 async def delete_student(
     student_id: int,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -1342,7 +1319,7 @@ async def delete_student(
 
 @router.delete("")
 async def delete_all_students(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     is_admin: bool = False,
     db: Session = Depends(get_db),

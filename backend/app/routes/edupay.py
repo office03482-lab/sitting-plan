@@ -63,11 +63,7 @@ WRITE_ROLES = {
 }
 
 
-def get_school_id_from_context(
-    school_id: str = Query(None),
-    actor: dict = Depends(get_authenticated_actor_context),
-) -> str:
-    return resolve_school_id_from_actor(school_id, actor)
+
 
 
 def ensure_school_context(school_id: str):
@@ -284,7 +280,7 @@ def assign_fee_structure_to_students(
 
 @router.get("/dashboard", response_model=EduPayDashboardResponse)
 def get_dashboard(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -396,7 +392,7 @@ def get_dashboard(
 
 @router.get("/students", response_model=List[EduPayStudentResponse])
 def list_students(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -430,7 +426,7 @@ def list_students(
 @router.post("/students", response_model=EduPayStudentResponse)
 def create_student(
     payload: EduPayStudentCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -505,7 +501,7 @@ def create_student(
 
 @router.get("/fee-structures", response_model=List[EduPayFeeStructureResponse])
 def list_fee_structures(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -538,7 +534,7 @@ def list_fee_structures(
 @router.post("/fee-structures", response_model=EduPayFeeStructureResponse)
 def create_fee_structure(
     payload: EduPayFeeStructureCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -576,7 +572,7 @@ def create_fee_structure(
 
 @router.get("/assignments", response_model=List[EduPayFeeAssignmentResponse])
 def list_assignments(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     status_filter: Optional[FeeAssignmentStatus] = Query(default=None, alias="status"),
     student_id: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
@@ -619,7 +615,7 @@ def list_assignments(
 
 @router.get("/payments", response_model=List[EduPayPaymentResponse])
 def list_payments(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -652,7 +648,7 @@ def list_payments(
 @router.post("/payments", response_model=EduPayPaymentResponse)
 def create_payment(
     payload: EduPayPaymentCreate,
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
@@ -706,7 +702,7 @@ def create_payment(
 
 @router.get("/parent-portal", response_model=EduPayParentPortalResponse)
 def get_parent_portal(
-    school_id: str = Depends(get_school_id_from_context),
+    school_id: str = Depends(resolve_school_id_from_actor),
     parent_id: Optional[int] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),

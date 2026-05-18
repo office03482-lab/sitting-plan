@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from typing import List, Optional
 from app.database import get_db
+from app.services.supabase_context import resolve_school_id_from_actor
 from app.models import Invigilator, RoomInvigilator, Room
 from app.schemas import (
     InvigilatorResponse, InvigilatorCreate, InvigilatorUpdate,
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/invigilators", tags=["invigilators"])
 @router.post("", response_model=InvigilatorResponse)
 def create_invigilator(
     invigilator: InvigilatorCreate,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db)
 ):
     """
@@ -65,7 +66,7 @@ def create_invigilator(
 
 @router.get("", response_model=List[InvigilatorResponse])
 def list_invigilators(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     is_active: Optional[bool] = Query(None),
     skip: int = 0,
     limit: int = 100,
@@ -85,7 +86,7 @@ def list_invigilators(
 
 @router.get("/room-assignments", response_model=List[RoomInvigilatorResponse])
 def list_room_assignments_v2(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     room_id: Optional[int] = Query(None),
     invigilator_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(True),
@@ -115,7 +116,7 @@ def list_room_assignments_v2(
 
 @router.get("/assignments", response_model=List[RoomInvigilatorResponse])
 def list_room_assignments(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     room_id: Optional[int] = Query(None),
     invigilator_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(True),
@@ -233,7 +234,7 @@ def delete_invigilator(
 @router.post("/room-assignment", response_model=RoomInvigilatorResponse)
 def assign_invigilator_to_room(
     assignment: RoomInvigilatorCreate,
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db)
 ):
     """
@@ -367,7 +368,7 @@ def update_room_assignment(
 
 @router.delete("/assignments")
 def delete_all_room_assignments(
-    school_id: int = Query(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db)
 ):
     """
