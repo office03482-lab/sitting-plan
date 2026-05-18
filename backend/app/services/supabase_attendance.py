@@ -11,6 +11,8 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 logger = logging.getLogger(__name__)
 
+ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
+
 
 def _iso(value: Any) -> Any:
     if isinstance(value, datetime):
@@ -48,6 +50,13 @@ def _sanitize_lookup_ids(values: list[Any], *, require_uuid: bool = False) -> li
             continue
         normalized.append(text)
     return sorted(set(normalized))
+
+
+def _chunk_values(values: list[str], chunk_size: int) -> list[list[str]]:
+    return [
+        values[index : index + chunk_size]
+        for index in range(0, len(values), chunk_size)
+    ]
 
 
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
@@ -446,19 +455,31 @@ def list_student_records(
     )
     if not student_ids:
         return []
-    query = (
-        get_supabase_admin_client()
-        .schema("attendance")
-        .table("student_attendance")
-        .select("id, school_id, student_id, subject_id, attendance_date, status, absence_reason, metadata, created_at")
-        .eq("school_id", school_id)
+    student_id_chunks = _chunk_values(student_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE)
+    logger.info(
+        "attendance.student_records.chunking",
+        extra={
+            "student_count": len(student_ids),
+            "chunk_count": len(student_id_chunks),
+            "chunk_size": ATTENDANCE_LOOKUP_CHUNK_SIZE,
+            "school_id": school_id,
+        },
     )
-    if date_from:
-        query = query.gte("attendance_date", date_from[:10])
-    if date_to:
-        query = query.lte("attendance_date", date_to[:10])
-    response = query.in_("student_id", student_ids).order("attendance_date", desc=True).execute()
-    rows = list(response.data or [])
+    rows: list[dict[str, Any]] = []
+    for chunk in student_id_chunks:
+        query = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("student_attendance")
+            .select("id, school_id, student_id, subject_id, attendance_date, status, absence_reason, metadata, created_at")
+            .eq("school_id", school_id)
+        )
+        if date_from:
+            query = query.gte("attendance_date", date_from[:10])
+        if date_to:
+            query = query.lte("attendance_date", date_to[:10])
+        response = query.in_("student_id", chunk).order("attendance_date", desc=True).execute()
+        rows.extend(list(response.data or []))
     subjects = {str(item.get("id")): item for item in _fetch_subjects(school_id)}
     student_lookup = {str(item.get("id")): item for item in filtered_students}
     payload = [
