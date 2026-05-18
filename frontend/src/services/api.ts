@@ -206,6 +206,14 @@ class ApiService {
     return activeMembership?.school_id || null;
   }
 
+  private async resolveScopedSchoolId(schoolId?: number | string | null) {
+    const candidate = String(schoolId ?? '').trim();
+    if (candidate && candidate !== '1') {
+      return candidate;
+    }
+    return this.resolveCurrentSupabaseSchoolId();
+  }
+
   private isUuidLike(value: string) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
@@ -4662,14 +4670,27 @@ class ApiService {
 
   // ==================== Attendance ====================
 
-  async getAttendanceOverview(schoolId: number = 1) {
+  async getAttendanceOverview(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance overview');
+    }
     return this.api.get<AttendanceOverview>('/attendance/overview', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async listAttendanceStudents(params?: { school_id?: number; skip?: number; limit?: number; search?: string }) {
-    return this.api.get<AttendanceStudent[]>('/attendance/students', { params });
+  async listAttendanceStudents(params?: { school_id?: number | string; skip?: number; limit?: number; search?: string }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance students');
+    }
+    return this.api.get<AttendanceStudent[]>('/attendance/students', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
   async createAttendanceStudent(
@@ -4680,15 +4701,28 @@ class ApiService {
       roll_no: string;
       parent_contact?: string;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create attendance students');
+    }
     return this.api.post<AttendanceStudent>('/attendance/students', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async listAttendanceStaff(params?: { school_id?: number; skip?: number; limit?: number; search?: string }) {
-    return this.api.get<AttendanceStaff[]>('/attendance/staff', { params });
+  async listAttendanceStaff(params?: { school_id?: number | string; skip?: number; limit?: number; search?: string }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance staff');
+    }
+    return this.api.get<AttendanceStaff[]>('/attendance/staff', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
   async createAttendanceStaff(
@@ -4701,35 +4735,54 @@ class ApiService {
       email?: string;
       phone?: string;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create attendance staff');
+    }
     return this.api.post<AttendanceStaff>('/attendance/staff', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async listAttendanceSubjects(schoolId: number = 1) {
+  async listAttendanceSubjects(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance subjects');
+    }
     return this.api.get<AttendanceSubject[]>('/attendance/subjects', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async createAttendanceSubject(
     data: { name: string; class_name: string; section: string },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create attendance subjects');
+    }
     return this.api.post<AttendanceSubject>('/attendance/subjects', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async getTeacherAttendanceContext(params?: {
     target_date?: string;
     current_time?: string;
-    school_id?: number;
+    school_id?: number | string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load teacher attendance context');
+    }
     return this.api.get<TeacherAttendanceContext>('/attendance/teacher-current-class', {
-      params,
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
     });
   }
 
@@ -4738,10 +4791,17 @@ class ApiService {
     section: string;
     target_date?: string;
     current_time?: string;
-    school_id?: number;
+    school_id?: number | string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load batch attendance context');
+    }
     return this.api.get<TeacherAttendanceContext>('/attendance/batch-current-class', {
-      params,
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
     });
   }
 
@@ -4751,13 +4811,18 @@ class ApiService {
     section: string;
     subject_id: number;
     search?: string;
-    school_id?: number;
+    school_id?: number | string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load student attendance marking');
+    }
+    const scopedParams = { ...params, school_id: scopedSchoolId };
     try {
-      return await this.api.get<StudentAttendanceMarkingResponse>('/attendance/student-marking', { params });
+      return await this.api.get<StudentAttendanceMarkingResponse>('/attendance/student-marking', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
-      const retryParams = { ...params, date: this.toDateTimeString(params.date) || params.date };
+      const retryParams = { ...scopedParams, date: this.toDateTimeString(params.date) || params.date };
       return this.api.get<StudentAttendanceMarkingResponse>('/attendance/student-marking', { params: retryParams });
     }
   }
@@ -4769,23 +4834,27 @@ class ApiService {
       marked_by?: string;
       entries: Array<{ student_id: number; status: 'present' | 'absent' | 'late'; absence_reason?: string }>;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to save student attendance');
+    }
     try {
       return await this.api.post('/attendance/student-marking', data, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
       const retryData = { ...data, date: this.toDateTimeString(data.date) || data.date };
       return this.api.post('/attendance/student-marking', retryData, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     }
   }
 
   async listStudentAttendanceRecords(params?: {
-    school_id?: number;
+    school_id?: number | string;
     class_name?: string;
     section?: string;
     student_name?: string;
@@ -4794,12 +4863,20 @@ class ApiService {
     skip?: number;
     limit?: number;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load student attendance records');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<StudentAttendanceRecord[]>('/attendance/student-records', { params });
+      return await this.api.get<StudentAttendanceRecord[]>('/attendance/student-records', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error) || !params) throw error;
       const retryParams = {
-        ...params,
+        ...scopedParams,
         date_from: this.toDateTimeString(params.date_from),
         date_to: this.toDateTimeString(params.date_to, true),
       };
@@ -4807,26 +4884,43 @@ class ApiService {
     }
   }
 
-  async deleteStudentAttendanceRecord(recordId: number, schoolId: number = 1) {
+  async deleteStudentAttendanceRecord(recordId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete student attendance records');
+    }
     return this.api.delete(`/attendance/student-records/${recordId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async deleteAllStudentAttendanceRecords(params?: {
-    school_id?: number;
+    school_id?: number | string;
     class_name?: string;
     section?: string;
     student_name?: string;
     date_from?: string;
     date_to?: string;
   }) {
-    return this.api.delete('/attendance/student-records', { params });
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete student attendance records');
+    }
+    return this.api.delete('/attendance/student-records', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
-  async getStudentAttendanceDashboard(studentId: number, schoolId: number = 1) {
+  async getStudentAttendanceDashboard(studentId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load student attendance dashboard');
+    }
     return this.api.get<StudentDashboard>(`/attendance/student-dashboard/${studentId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
@@ -4834,13 +4928,18 @@ class ApiService {
     date: string;
     department: string;
     search?: string;
-    school_id?: number;
+    school_id?: number | string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load staff attendance marking');
+    }
+    const scopedParams = { ...params, school_id: scopedSchoolId };
     try {
-      return await this.api.get<StaffAttendanceMarkingResponse>('/attendance/staff-marking', { params });
+      return await this.api.get<StaffAttendanceMarkingResponse>('/attendance/staff-marking', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
-      const retryParams = { ...params, date: this.toDateTimeString(params.date) || params.date };
+      const retryParams = { ...scopedParams, date: this.toDateTimeString(params.date) || params.date };
       return this.api.get<StaffAttendanceMarkingResponse>('/attendance/staff-marking', { params: retryParams });
     }
   }
@@ -4856,23 +4955,27 @@ class ApiService {
         check_out?: string;
       }>;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to save staff attendance');
+    }
     try {
       return await this.api.post('/attendance/staff-marking', data, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
       const retryData = { ...data, date: this.toDateTimeString(data.date) || data.date };
       return this.api.post('/attendance/staff-marking', retryData, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     }
   }
 
   async listStaffAttendanceRecords(params?: {
-    school_id?: number;
+    school_id?: number | string;
     department?: string;
     staff_name?: string;
     date_from?: string;
@@ -4880,12 +4983,20 @@ class ApiService {
     skip?: number;
     limit?: number;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load staff attendance records');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<StaffAttendanceRecord[]>('/attendance/staff-records', { params });
+      return await this.api.get<StaffAttendanceRecord[]>('/attendance/staff-records', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error) || !params) throw error;
       const retryParams = {
-        ...params,
+        ...scopedParams,
         date_from: this.toDateTimeString(params.date_from),
         date_to: this.toDateTimeString(params.date_to, true),
       };
@@ -4893,34 +5004,55 @@ class ApiService {
     }
   }
 
-  async deleteStaffAttendanceRecord(recordId: number, schoolId: number = 1) {
+  async deleteStaffAttendanceRecord(recordId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete staff attendance records');
+    }
     return this.api.delete(`/attendance/staff-records/${recordId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async deleteAllStaffAttendanceRecords(params?: {
-    school_id?: number;
+    school_id?: number | string;
     department?: string;
     staff_name?: string;
     date_from?: string;
     date_to?: string;
   }) {
-    return this.api.delete('/attendance/staff-records', { params });
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete staff attendance records');
+    }
+    return this.api.delete('/attendance/staff-records', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
   async getStaffAttendanceDashboard(params?: {
-    school_id?: number;
+    school_id?: number | string;
     department?: string;
     date_from?: string;
     date_to?: string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load staff attendance dashboard');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<StaffDashboard>('/attendance/staff-dashboard', { params });
+      return await this.api.get<StaffDashboard>('/attendance/staff-dashboard', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error) || !params) throw error;
       const retryParams = {
-        ...params,
+        ...scopedParams,
         date_from: this.toDateTimeString(params.date_from),
         date_to: this.toDateTimeString(params.date_to, true),
       };
@@ -4928,8 +5060,17 @@ class ApiService {
     }
   }
 
-  async listAttendanceLeaves(params?: { school_id?: number; status?: 'pending' | 'approved' | 'rejected' }) {
-    return this.api.get<AttendanceLeave[]>('/attendance/leaves', { params });
+  async listAttendanceLeaves(params?: { school_id?: number | string; status?: 'pending' | 'approved' | 'rejected' }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance leaves');
+    }
+    return this.api.get<AttendanceLeave[]>('/attendance/leaves', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
   async createAttendanceLeave(
@@ -4940,11 +5081,15 @@ class ApiService {
       to_date: string;
       reason?: string;
     },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create attendance leave');
+    }
     try {
       return await this.api.post<AttendanceLeave>('/attendance/leaves', data, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
@@ -4954,7 +5099,7 @@ class ApiService {
         to_date: this.toDateTimeString(data.to_date, true) || data.to_date,
       };
       return this.api.post<AttendanceLeave>('/attendance/leaves', retryData, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     }
   }
@@ -4962,66 +5107,111 @@ class ApiService {
   async decideAttendanceLeave(
     leaveId: number,
     data: { status: 'approved' | 'rejected'; approved_by: string },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to decide attendance leave');
+    }
     return this.api.post<AttendanceLeave>(`/attendance/leaves/${leaveId}/decision`, data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAttendanceLeave(leaveId: number, schoolId: number = 1) {
+  async deleteAttendanceLeave(leaveId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance leave');
+    }
     return this.api.delete(`/attendance/leaves/${leaveId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAllAttendanceLeaves(params?: { school_id?: number; status?: 'pending' | 'approved' | 'rejected' }) {
-    return this.api.delete('/attendance/leaves', { params });
+  async deleteAllAttendanceLeaves(params?: { school_id?: number | string; status?: 'pending' | 'approved' | 'rejected' }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance leaves');
+    }
+    return this.api.delete('/attendance/leaves', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+      },
+    });
   }
 
-  async listAttendanceNotifications(schoolId: number = 1) {
+  async listAttendanceNotifications(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance notifications');
+    }
     return this.api.get<AttendanceNotification[]>('/attendance/notifications', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAttendanceNotification(notificationId: number, schoolId: number = 1) {
+  async deleteAttendanceNotification(notificationId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance notifications');
+    }
     return this.api.delete(`/attendance/notifications/${notificationId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAllAttendanceNotifications(schoolId: number = 1) {
+  async deleteAllAttendanceNotifications(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance notifications');
+    }
     return this.api.delete('/attendance/notifications', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async listAttendanceHolidays(schoolId: number = 1) {
+  async listAttendanceHolidays(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance holidays');
+    }
     return this.api.get<AttendanceHoliday[]>('/attendance/holidays', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAttendanceHoliday(holidayId: number, schoolId: number = 1) {
+  async deleteAttendanceHoliday(holidayId: number | string, schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance holidays');
+    }
     return this.api.delete(`/attendance/holidays/${holidayId}`, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
-  async deleteAllAttendanceHolidays(schoolId: number = 1) {
+  async deleteAllAttendanceHolidays(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to delete attendance holidays');
+    }
     return this.api.delete('/attendance/holidays', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async createAttendanceHoliday(
     data: { title: string; holiday_date: string; description?: string },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to create attendance holidays');
+    }
     try {
       return await this.api.post<AttendanceHoliday>('/attendance/holidays', data, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
@@ -5030,40 +5220,56 @@ class ApiService {
         holiday_date: this.toDateTimeString(data.holiday_date) || data.holiday_date,
       };
       return this.api.post<AttendanceHoliday>('/attendance/holidays', retryData, {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     }
   }
 
-  async getAttendanceSettings(schoolId: number = 1) {
+  async getAttendanceSettings(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance settings');
+    }
     return this.api.get<AttendanceSettings>('/attendance/settings', {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async updateAttendanceSettings(
     data: { minimum_attendance_threshold: number; working_hours_start: string; working_hours_end: string },
-    schoolId: number = 1
+    schoolId: number | string = 1
   ) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to update attendance settings');
+    }
     return this.api.put<AttendanceSettings>('/attendance/settings', data, {
-      params: { school_id: schoolId },
+      params: { school_id: scopedSchoolId },
     });
   }
 
   async getAttendanceReportData(params: {
     report_type: 'student_summary' | 'staff_summary' | 'leave_summary';
-    school_id?: number;
+    school_id?: number | string;
     batch_names?: string;
     department?: string;
     date_from?: string;
     date_to?: string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load attendance report data');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<AttendanceReportResponse>('/attendance/reports/data', { params });
+      return await this.api.get<AttendanceReportResponse>('/attendance/reports/data', { params: scopedParams });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
       const retryParams = {
-        ...params,
+        ...scopedParams,
         date_from: this.toDateTimeString(params.date_from),
         date_to: this.toDateTimeString(params.date_to, true),
       };
@@ -5074,21 +5280,29 @@ class ApiService {
 async exportAttendanceReport(params: {
     report_type: 'student_summary' | 'staff_summary' | 'leave_summary';
     export_format: 'excel' | 'pdf';
-    school_id?: number;
+    school_id?: number | string;
     batch_names?: string;
     department?: string;
     date_from?: string;
     date_to?: string;
   }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to export attendance reports');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
       return await this.api.get('/attendance/reports/export', {
-        params,
+        params: scopedParams,
         responseType: 'blob',
       });
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
       const retryParams = {
-        ...params,
+        ...scopedParams,
         date_from: this.toDateTimeString(params.date_from),
         date_to: this.toDateTimeString(params.date_to, true),
       };
@@ -5099,9 +5313,17 @@ async exportAttendanceReport(params: {
     }
   }
 
-  async listIntegratedStudents(params?: { school_id?: number; skip?: number; limit?: number; search?: string; batch?: string }) {
+  async listIntegratedStudents(params?: { school_id?: number | string; skip?: number; limit?: number; search?: string; batch?: string }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load integrated attendance students');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<AttendanceStudent[]>('/attendance/integrated-students', { params });
+      return await this.api.get<AttendanceStudent[]>('/attendance/integrated-students', { params: scopedParams });
     } catch (error) {
       console.warn('[API] listIntegratedStudents fallback activated', error);
       const studentsResponse = await this.listStudents(1, params?.skip || 0, params?.limit || 500, params?.batch);
@@ -5125,9 +5347,17 @@ async exportAttendanceReport(params: {
     }
   }
 
-  async listIntegratedStaff(params?: { school_id?: number; skip?: number; limit?: number; search?: string; department?: string; source?: 'teachers' | 'invigilators' | 'all' }) {
+  async listIntegratedStaff(params?: { school_id?: number | string; skip?: number; limit?: number; search?: string; department?: string; source?: 'teachers' | 'invigilators' | 'all' }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load integrated attendance staff');
+    }
+    const scopedParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
     try {
-      return await this.api.get<AttendanceStaff[]>('/attendance/integrated-staff', { params });
+      return await this.api.get<AttendanceStaff[]>('/attendance/integrated-staff', { params: scopedParams });
     } catch (error) {
       console.warn('[API] listIntegratedStaff fallback activated', error);
       const source = params?.source || 'all';
@@ -5168,10 +5398,14 @@ async exportAttendanceReport(params: {
     }
   }
 
-  async getIntegratedAttendanceOverview(schoolId: number = 1) {
+  async getIntegratedAttendanceOverview(schoolId: number | string = 1) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(schoolId);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load integrated attendance overview');
+    }
     try {
       return await this.api.get('/attendance/integrated-overview', {
-        params: { school_id: schoolId },
+        params: { school_id: scopedSchoolId },
       });
     } catch (error) {
       console.warn('[API] getIntegratedAttendanceOverview fallback activated', error);
