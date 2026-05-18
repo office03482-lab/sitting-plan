@@ -43,3 +43,19 @@ def resolve_school_id_from_actor(explicit_school_id: Any, actor: dict[str, Any])
             return str(memberships[0]["school_id"])
 
     raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+
+
+def ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client()
+    response = (
+        supabase
+        .table("schools")
+        .select("id, name")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if rows:
+        return rows[0]
+    raise HTTPException(status_code=404, detail="School not found")

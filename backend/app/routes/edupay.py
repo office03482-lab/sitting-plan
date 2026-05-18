@@ -20,7 +20,6 @@ from app.models import (
     FeeInstallmentPlan,
     PaymentMethod,
     PaymentVerificationStatus,
-    School,
     UserRole,
 )
 from app.schemas import (
@@ -39,6 +38,11 @@ from app.schemas import (
     EduPayStudentResponse,
     EduPayTrendPoint,
 )
+from app.services.supabase_context import (
+    ensure_supabase_school_exists,
+    is_legacy_sqlite_mode,
+    resolve_school_id_from_actor,
+)
 
 router = APIRouter(prefix="/api/edupay", tags=["EduPay"])
 logger = logging.getLogger(__name__)
@@ -54,33 +58,25 @@ WRITE_ROLES = {
 def get_school_id_from_context(
     school_id: str = Query(None),
     actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
 ) -> str:
-    user_id = actor.get("user_id") or actor.get("id")
-    resolved_id = str(school_id) if school_id and str(school_id) != "1" else None
-    if not resolved_id:
+    return resolve_school_id_from_actor(school_id, actor)
+
+
+def ensure_school_context(school_id: str):
+    if is_legacy_sqlite_mode():
+        from app.models import School
+        from app.database import SessionLocal
+
+        db = SessionLocal()
         try:
-            from app.models import Profile, SchoolMembership
+            school = db.query(School).filter(School.id == school_id).first()
+            if school:
+                return school
+            raise HTTPException(status_code=404, detail="School not found")
+        finally:
+            db.close()
 
-            profile = db.query(Profile).filter(Profile.user_id == user_id).first()
-            if profile:
-                membership = db.query(SchoolMembership).filter(SchoolMembership.profile_id == profile.id).first()
-                if membership:
-                    resolved_id = str(membership.school_id)
-        except Exception:
-            pass
-        resolved_id = resolved_id or actor.get("school_id")
-
-    if not resolved_id or resolved_id == "1":
-        raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
-    return str(resolved_id)
-
-
-def ensure_school_context(db: Session, school_id: str) -> School:
-    school = db.query(School).filter(School.id == school_id).first()
-    if school:
-        return school
-    raise HTTPException(status_code=404, detail="School not found")
+    return ensure_supabase_school_exists(school_id)
 
 
 def require_write_access(actor: Dict[str, str] = Depends(get_authenticated_actor_context)) -> Dict[str, str]:
@@ -284,7 +280,7 @@ def get_dashboard(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     now = datetime.now()
     assignments = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id).all()
     payments = (
@@ -388,7 +384,7 @@ def list_students(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     students = (
         db.query(EduPayStudent)
         .filter(EduPayStudent.school_id == school_id)
@@ -413,7 +409,7 @@ def create_student(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     existing = (
         db.query(EduPayStudent)
         .filter(
@@ -488,7 +484,7 @@ def list_fee_structures(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     structures = (
         db.query(EduPayFeeStructure)
         .filter(EduPayFeeStructure.school_id == school_id)
@@ -512,7 +508,7 @@ def create_fee_structure(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     structure = EduPayFeeStructure(
         name=payload.name.strip(),
         fee_type=payload.fee_type.strip(),
@@ -552,7 +548,7 @@ def list_assignments(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     query = db.query(EduPayFeeAssignment).filter(EduPayFeeAssignment.school_id == school_id)
     if student_id:
         query = query.filter(EduPayFeeAssignment.student_id == student_id)
@@ -580,7 +576,7 @@ def list_payments(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     payments = (
         db.query(EduPayPayment)
         .filter(EduPayPayment.school_id == school_id)
@@ -604,7 +600,7 @@ def create_payment(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     assignment = (
         db.query(EduPayFeeAssignment)
         .filter(
@@ -651,7 +647,7 @@ def get_parent_portal(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    ensure_school_context(db, school_id)
+    ensure_school_context(school_id)
     query = db.query(EduPayParent).filter(EduPayParent.school_id == school_id, EduPayParent.is_active == True)
     parent = query.filter(EduPayParent.id == parent_id).first() if parent_id else query.order_by(EduPayParent.id.asc()).first()
     if not parent:
