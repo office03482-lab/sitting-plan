@@ -24,6 +24,16 @@ def _cf(value: Any) -> str:
     return _normalize(value).casefold()
 
 
+def _sanitize_lookup_ids(values: list[Any]) -> list[str]:
+    normalized = []
+    for value in values:
+        text = _normalize(value)
+        if not text or text == "None":
+            continue
+        normalized.append(text)
+    return sorted(set(normalized))
+
+
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
     normalized = _normalize(batch_name)
     if not normalized:
@@ -406,7 +416,7 @@ def list_student_records(
         and (not section or _cf(row.get("section")) == _cf(section))
         and (not student_name or _cf(student_name) in _cf(row.get("name")))
     ]
-    student_ids = [str(row.get("id")) for row in filtered_students]
+    student_ids = _sanitize_lookup_ids([row.get("id") for row in filtered_students])
     if not student_ids:
         return []
     query = (
@@ -461,7 +471,7 @@ def list_staff_records(
         for row in staff_rows
         if not staff_name or _cf(staff_name) in _cf(row.get("name"))
     ]
-    staff_ids = [str(row.get("id")) for row in filtered_staff]
+    staff_ids = _sanitize_lookup_ids([row.get("id") for row in filtered_staff])
     if not staff_ids:
         return []
     query = (

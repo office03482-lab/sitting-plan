@@ -66,6 +66,16 @@ def _looks_like_uuid(value: Any) -> bool:
     return len(text) == 36 and text.count("-") == 4
 
 
+def _sanitize_lookup_ids(values: list[Any]) -> list[str]:
+    normalized = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text == "None":
+            continue
+        normalized.append(text)
+    return sorted(set(normalized))
+
+
 def _month_anchor(now: datetime, month_offset: int) -> datetime:
     year = now.year
     month = now.month - month_offset
@@ -111,7 +121,7 @@ def _fetch_students(school_id: str) -> list[dict[str, Any]]:
 
 
 def _fetch_batches(batch_ids: list[str]) -> dict[str, dict[str, Any]]:
-    ids = [str(item) for item in batch_ids if item]
+    ids = _sanitize_lookup_ids(batch_ids)
     if not ids:
         return {}
     response = (

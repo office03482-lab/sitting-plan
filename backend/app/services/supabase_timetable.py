@@ -40,8 +40,18 @@ def is_no_teacher_session(session_type: str | None) -> bool:
     return str(session_type or "").strip().lower() in NO_TEACHER_SESSION_TYPES
 
 
+def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
+    normalized = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text == "None":
+            continue
+        normalized.append(text)
+    return sorted(set(normalized))
+
+
 def _fetch_staff_lookup(school_id: str, staff_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    ids = [str(item) for item in staff_ids if item]
+    ids = _sanitize_lookup_ids(staff_ids)
     if not ids:
         return {}
     supabase = get_supabase_admin_client()
@@ -57,7 +67,7 @@ def _fetch_staff_lookup(school_id: str, staff_ids: Iterable[str]) -> dict[str, d
 
 
 def _fetch_room_lookup(school_id: str, room_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    ids = [str(item) for item in room_ids if item]
+    ids = _sanitize_lookup_ids(room_ids)
     if not ids:
         return {}
     supabase = get_supabase_admin_client()

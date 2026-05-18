@@ -9,8 +9,18 @@ from fastapi import HTTPException
 from app.services.supabase_admin import get_supabase_admin_client
 
 
+def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
+    normalized = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text == "None":
+            continue
+        normalized.append(text)
+    return sorted(set(normalized))
+
+
 def _fetch_exam_lookup(exam_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    ids = [str(item) for item in exam_ids if item]
+    ids = _sanitize_lookup_ids(exam_ids)
     if not ids:
         return {}
     supabase = get_supabase_admin_client()
@@ -26,7 +36,7 @@ def _fetch_exam_lookup(exam_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
 
 
 def _fetch_room_lookup(room_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    ids = [str(item) for item in room_ids if item]
+    ids = _sanitize_lookup_ids(room_ids)
     if not ids:
         return {}
     supabase = get_supabase_admin_client()
