@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None
+    use_supabase_native_services: bool | None = None
 
     # Security
     jwt_secret: str | None = None
@@ -102,7 +103,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
 
-    @field_validator("debug", "reload", mode="before")
+    @field_validator("debug", "reload", "use_supabase_native_services", mode="before")
     @classmethod
     def parse_bool_flags(cls, value):
         return _coerce_env_bool(value)
@@ -175,6 +176,8 @@ class Settings(BaseSettings):
             self.jwt_secret = f"dev-only-{BASE_DIR.name.lower().replace(' ', '-')}-jwt-secret"
 
         if self.environment == "production":
+            if self.use_supabase_native_services is None:
+                self.use_supabase_native_services = True
             if self.debug:
                 raise ValueError("DEBUG must be false in production.")
             if self.reload:
@@ -185,6 +188,8 @@ class Settings(BaseSettings):
                 raise ValueError("SQLite is not allowed for production deployments.")
             if self.jwt_secret.strip().lower() in UNSAFE_JWT_SECRETS or len(self.jwt_secret.strip()) < 32:
                 raise ValueError("JWT_SECRET must be explicitly configured and at least 32 characters in production.")
+        elif self.use_supabase_native_services is None:
+            self.use_supabase_native_services = False
 
         return self
 

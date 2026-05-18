@@ -53,6 +53,28 @@ export const getApiBaseUrl = () => {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+export const getRequestErrorMessage = (error: any, fallback: string) => {
+  const detail = error?.response?.data?.detail || error?.response?.data?.error;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (error?.code === 'ECONNABORTED') {
+    return 'Request timeout ho gaya. Backend response time bahut slow hai.';
+  }
+
+  const message = typeof error?.message === 'string' ? error.message.trim() : '';
+  if (message === 'Network Error' || message === 'Failed to fetch') {
+    return 'Backend se connection nahi ho paaya. Server chal raha hai ya nahi, aur API URL sahi hai ya nahi check karo.';
+  }
+
+  if (error?.request && !error?.response) {
+    return 'Request backend tak gaya, lekin koi response nahi mila. Server ya proxy issue ho sakta hai.';
+  }
+
+  return message || fallback;
+};
+
 const getPersistedUser = () => {
   if (typeof window === 'undefined') return null;
   try {
@@ -75,6 +97,8 @@ class ApiService {
   private examReverseIdMap = new Map<string, number>();
   private seatingPlanIdMap = new Map<number, string>();
   private seatingPlanReverseIdMap = new Map<string, number>();
+  private timetableEntryIdMap = new Map<number, string>();
+  private timetableEntryReverseIdMap = new Map<string, number>();
   private supplierIdMap = new Map<number, string>();
   private supplierReverseIdMap = new Map<string, number>();
   private inventorySubjectIdMap = new Map<number, string>();
@@ -241,6 +265,14 @@ class ApiService {
 
   private resolveSeatingPlanId(id: string | number) {
     return this.resolveLegacyInventoryId(this.seatingPlanIdMap, id);
+  }
+
+  private getLegacyTimetableEntryId(actualId?: string | null) {
+    return this.getLegacyInventoryId(this.timetableEntryIdMap, this.timetableEntryReverseIdMap, 'timetable-entry', actualId);
+  }
+
+  private resolveTimetableEntryId(id: string | number) {
+    return this.resolveLegacyInventoryId(this.timetableEntryIdMap, id);
   }
 
   private getLegacyInventoryId(
@@ -602,6 +634,31 @@ class ApiService {
       total_batches: Number(exam?.total_batches ?? totalBatches ?? 0),
       is_active: Boolean(exam?.is_active ?? true),
     } as Exam;
+  }
+
+  private mapTimetableEntryToClient(entry: any): TimetableEntry {
+    return {
+      ...entry,
+      id: typeof entry?.id === 'string' ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
+      teacher_id:
+        typeof entry?.teacher_id === 'string'
+          ? this.getLegacyMappedId('teacher', entry.teacher_id)
+          : entry?.teacher_id ?? undefined,
+      room_id: entry?.room_id ?? undefined,
+      school_id: entry?.school_id ?? 1,
+    } as TimetableEntry;
+  }
+
+  private mapTimetableViewToClient(entry: any): TimetableView {
+    return {
+      ...entry,
+      id: typeof entry?.id === 'string' ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
+      teacher_id:
+        typeof entry?.teacher_id === 'string'
+          ? this.getLegacyMappedId('teacher', entry.teacher_id)
+          : entry?.teacher_id ?? undefined,
+      room_id: entry?.room_id ?? undefined,
+    } as TimetableView;
   }
 
   private mapSupabaseStudentToLegacy(student: any): Student {
@@ -2282,10 +2339,16 @@ class ApiService {
     const response = await this.api.get('/seating/plans', {
       params: {
         ...(preferredSchoolId ? { school_id: preferredSchoolId } : {}),
-        ...(examId !== undefined ? { exam_id: examId } : {}),
+        ...(examId !== undefined ? { exam_id: this.resolveExamId(examId) } : {}),
       },
     });
-    return { data: toArray<SeatingPlan>(response.data) } as { data: SeatingPlan[] };
+    return {
+      data: toArray<any>(response.data).map((plan) => ({
+        ...plan,
+        id: typeof plan?.id === 'string' ? this.getLegacySeatingPlanId(plan.id) : Number(plan?.id || 0),
+        exam_id: typeof plan?.exam_id === 'string' ? this.getLegacyExamId(plan.exam_id) : Number(plan?.exam_id || 0),
+      })),
+    } as { data: SeatingPlan[] };
   }
 
   async getPlanLayout(planId: number) {
@@ -2583,55 +2646,86 @@ class ApiService {
     end_time: string;
     exclude_entry_id?: number;
   }) {
-    return this.api.post('/timetable/check-conflict', data);
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
+    return this.api.post('/timetable/check-conflict', {
+      ...data,
+      teacher_id: this.resolveMappedId('teacher', data.teacher_id),
+      exclude_entry_id: data.exclude_entry_id ? this.resolveTimetableEntryId(data.exclude_entry_id) : undefined,
+    }, {
+      params: scopedSchoolId ? { school_id: scopedSchoolId } : undefined,
+    });
   }
 
   async createTimetableEntry(entryData: Partial<TimetableEntry>, schoolId: number = 1) {
-    return this.api.post<TimetableEntry>('/timetable', entryData, {
-      params: { school_id: schoolId },
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId() || schoolId;
+    const response = await this.api.post('/timetable', {
+      ...entryData,
+      teacher_id: entryData.teacher_id ? this.resolveMappedId('teacher', entryData.teacher_id) : undefined,
+    }, {
+      params: { school_id: scopedSchoolId },
     });
+    return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
   async listTimetableEntries(params?: {
     day_of_week?: DayOfWeek;
-    teacher_id?: number;
+    teacher_id?: string | number;
     class_name?: string;
-    room_id?: number;
-    school_id?: number;
+    room_id?: string | number;
+    school_id?: string | number;
   }) {
-    return this.api.get<TimetableView[]>('/timetable', { params });
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId() || params?.school_id;
+    const response = await this.api.get('/timetable', {
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+        teacher_id: params?.teacher_id ? this.resolveMappedId('teacher', params.teacher_id) : undefined,
+      },
+    });
+    return { data: toArray<any>(response.data).map((item) => this.mapTimetableViewToClient(item)) } as { data: TimetableView[] };
   }
 
   async exportTimetableReport(params: {
     export_format: 'excel' | 'pdf';
     view_by: 'day' | 'teacher' | 'room' | 'batch';
     session_mode_filter?: 'all' | 'offline' | 'online' | 'merged';
-    school_id?: number;
+    school_id?: string | number;
     day_of_week?: DayOfWeek;
-    teacher_id?: number;
-    room_id?: number;
+    teacher_id?: string | number;
+    room_id?: string | number;
     batch_name?: string;
   }) {
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId() || params.school_id;
     return this.api.get('/timetable/export', {
-      params,
+      params: {
+        ...params,
+        school_id: scopedSchoolId,
+        teacher_id: params.teacher_id ? this.resolveMappedId('teacher', params.teacher_id) : undefined,
+      },
       responseType: 'blob',
     });
   }
 
   async getTimetableEntry(entryId: number) {
-    return this.api.get<TimetableEntry>(`/timetable/${entryId}`);
+    const response = await this.api.get(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
+    return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
   async updateTimetableEntry(entryId: number, data: Partial<TimetableEntry>) {
-    return this.api.put<TimetableEntry>(`/timetable/${entryId}`, data);
+    const response = await this.api.put(`/timetable/${this.resolveTimetableEntryId(entryId)}`, {
+      ...data,
+      teacher_id: data.teacher_id ? this.resolveMappedId('teacher', data.teacher_id) : undefined,
+    });
+    return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
   async deleteTimetableEntry(entryId: number) {
-    return this.api.delete(`/timetable/${entryId}`);
+    return this.api.delete(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
   }
 
   async deleteAllTimetableEntries(schoolId: number = 1, isAdmin: boolean = true) {
-    return this.api.delete(`/timetable`, { params: { school_id: schoolId, is_admin: isAdmin } });
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId() || schoolId;
+    return this.api.delete(`/timetable`, { params: { school_id: scopedSchoolId, is_admin: isAdmin } });
   }
 
   // ==================== Settings ====================

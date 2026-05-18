@@ -28,6 +28,16 @@ from app.schemas import (
     TimetableEntryUpdate,
     TimetableView,
 )
+from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
+from app.services.supabase_timetable import (
+    check_teacher_conflicts as check_teacher_conflicts_supabase,
+    create_timetable_entry as create_timetable_entry_supabase,
+    delete_all_timetable_entries as delete_all_timetable_entries_supabase,
+    delete_timetable_entry as delete_timetable_entry_supabase,
+    get_timetable_entry as get_timetable_entry_supabase,
+    list_timetable_entries as list_timetable_entries_supabase,
+    update_timetable_entry as update_timetable_entry_supabase,
+)
 
 router = APIRouter()
 
@@ -44,6 +54,13 @@ EXPORT_GROUPINGS = {"day", "teacher", "room", "batch"}
 SESSION_MODE_FILTERS = {"all", "offline", "online", "merged"}
 BREAK_TEACHER_NAME = "__BREAK_SESSION__"
 SELF_STUDY_TEACHER_NAME = "__SELF_STUDY_SESSION__"
+
+
+def get_school_id_from_context(
+    school_id: str = Query(default=None),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
+) -> str:
+    return resolve_school_id_from_actor(school_id, actor)
 
 
 def resolve_teacher_for_actor(db: Session, school_id: int, actor: Dict[str, str]) -> Optional[Teacher]:
@@ -580,10 +597,13 @@ def check_teacher_conflict(
 @router.post("", response_model=TimetableEntryResponse)
 async def create_timetable_entry(
     entry: TimetableEntryCreate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return create_timetable_entry_supabase(school_id, entry.model_dump())
+
     is_break_session = entry.session_type == "break_time"
     is_no_teacher_entry = is_no_teacher_session(entry.session_type, entry.subject)
     teacher = None
@@ -643,14 +663,23 @@ async def create_timetable_entry(
 
 @router.get("", response_model=List[TimetableView])
 async def list_timetable_entries(
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
     day_of_week: Optional[DayOfWeek] = None,
-    teacher_id: Optional[int] = None,
+    teacher_id: Optional[str | int] = None,
     class_name: Optional[str] = None,
-    room_id: Optional[int] = None,
+    room_id: Optional[str | int] = None,
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_timetable_entries_supabase(
+            school_id,
+            day_of_week=day_of_week.value if day_of_week else None,
+            teacher_id=str(teacher_id) if teacher_id else None,
+            class_name=class_name,
+            room_id=str(room_id) if room_id else None,
+        )
+
     query = get_entry_query(db, school_id)
     actor_teacher = resolve_teacher_for_actor(db, school_id, actor)
     if actor.get("role") == UserRole.TEACHER.value:
@@ -676,14 +705,40 @@ async def export_timetable(
     export_format: str = Query(..., pattern="^(excel|pdf)$"),
     view_by: str = Query(default="day", pattern="^(day|teacher|room|batch)$"),
     session_mode_filter: str = Query(default="all", pattern="^(all|offline|online|merged)$"),
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     day_of_week: Optional[DayOfWeek] = Query(default=None),
-    teacher_id: Optional[int] = Query(default=None),
-    room_id: Optional[int] = Query(default=None),
+    teacher_id: Optional[str | int] = Query(default=None),
+    room_id: Optional[str | int] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        entries = list_timetable_entries_supabase(
+            school_id,
+            day_of_week=day_of_week.value if day_of_week else None,
+            teacher_id=str(teacher_id) if teacher_id else None,
+            class_name=batch_name if view_by == "batch" else None,
+            room_id=str(room_id) if room_id else None,
+        )
+        if not entries:
+            raise HTTPException(status_code=404, detail="No timetable entries found for export")
+
+        if export_format == "excel":
+            buffer = create_timetable_excel(entries, view_by, session_mode_filter)
+            filename = f"timetable-{session_mode_filter}-{view_by}-wise.xlsx"
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            buffer = create_timetable_pdf(entries, view_by, session_mode_filter)
+            filename = f"timetable-{session_mode_filter}-{view_by}-wise.pdf"
+            media_type = "application/pdf"
+
+        return StreamingResponse(
+            buffer,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     actor_teacher = resolve_teacher_for_actor(db, school_id, actor)
     if actor.get("role") == UserRole.TEACHER.value:
         if not actor_teacher:
@@ -723,11 +778,14 @@ async def export_timetable(
 
 @router.get("/{entry_id}", response_model=TimetableEntryResponse)
 async def get_timetable_entry(
-    entry_id: int,
-    school_id: int = 1,
+    entry_id: str,
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return get_timetable_entry_supabase(school_id, entry_id)
+
     result = get_entry_query(db, school_id).filter(TimetableEntry.id == entry_id).first()
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timetable entry not found")
@@ -741,12 +799,15 @@ async def get_timetable_entry(
 
 @router.put("/{entry_id}", response_model=TimetableEntryResponse)
 async def update_timetable_entry(
-    entry_id: int,
+    entry_id: str,
     entry_update: TimetableEntryUpdate,
-    school_id: int = 1,
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return update_timetable_entry_supabase(school_id, entry_id, entry_update.model_dump(exclude_unset=True))
+
     entry = db.query(TimetableEntry).filter(
         TimetableEntry.id == entry_id,
         TimetableEntry.school_id == school_id,
@@ -802,11 +863,14 @@ async def update_timetable_entry(
 
 @router.delete("/{entry_id}")
 async def delete_timetable_entry(
-    entry_id: int,
-    school_id: int = 1,
+    entry_id: str,
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return delete_timetable_entry_supabase(school_id, entry_id)
+
     entry = db.query(TimetableEntry).filter(
         TimetableEntry.id == entry_id,
         TimetableEntry.school_id == school_id,
@@ -821,13 +885,16 @@ async def delete_timetable_entry(
 
 @router.delete("")
 async def delete_all_timetable_entries(
-    school_id: int = Query(default=1),
+    school_id: str = Depends(get_school_id_from_context),
     is_admin: bool = Query(default=False),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
     if not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can delete all timetable entries")
+
+    if not is_legacy_sqlite_mode():
+        return delete_all_timetable_entries_supabase(school_id)
 
     entries = db.query(TimetableEntry).filter(TimetableEntry.school_id == school_id, TimetableEntry.is_active == True).all()
     for entry in entries:
@@ -838,15 +905,35 @@ async def delete_all_timetable_entries(
 
 @router.post("/check-conflict", response_model=ConflictCheckResponse)
 async def check_conflict(
-    teacher_id: int = Body(...),
+    teacher_id: str | int = Body(...),
     day_of_week: DayOfWeek = Body(...),
     start_time: str = Body(...),
     end_time: str = Body(...),
-    exclude_entry_id: int = Body(default=None),
-    school_id: int = 1,
+    exclude_entry_id: str | int = Body(default=None),
+    school_id: str = Depends(get_school_id_from_context),
     actor: Dict[str, str] = Depends(require_timetable_manage_access),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        conflicts = check_teacher_conflicts_supabase(
+            school_id,
+            str(teacher_id),
+            day_of_week.value,
+            start_time,
+            end_time,
+            exclude_entry_id=str(exclude_entry_id) if exclude_entry_id else None,
+        )
+        if conflicts:
+            return ConflictCheckResponse(
+                has_conflict=True,
+                conflicting_entries=[
+                    get_timetable_entry_supabase(school_id, str(conflict["id"]))
+                    for conflict in conflicts
+                ],
+                message="Conflict detected: Teacher is already assigned during this time slot",
+            )
+        return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
+
     conflicts = check_teacher_conflict(db, teacher_id, day_of_week, start_time, end_time, exclude_entry_id)
     if conflicts:
         teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()

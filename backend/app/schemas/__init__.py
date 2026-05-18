@@ -459,10 +459,10 @@ class RoomResponse(BaseModel):
 
 class SeatPosition(BaseModel):
     """Single seat position"""
-    seat_id: int
-    desk_id: int
+    seat_id: int | str
+    desk_id: int | str
     position: int  # 1 or 2
-    student_id: Optional[int] = None
+    student_id: Optional[int | str] = None
     student_name: Optional[str] = None
     student_roll: Optional[str] = None
     batch: Optional[str] = None
@@ -473,7 +473,7 @@ class SeatPosition(BaseModel):
 
 class DeskLayout(BaseModel):
     """Desk with both seat positions"""
-    desk_id: int
+    desk_id: int | str
     row: int
     col: int
     seats: List[SeatPosition]
@@ -483,7 +483,7 @@ class DeskLayout(BaseModel):
 
 class RoomLayout(BaseModel):
     """Complete room layout"""
-    room_id: int
+    room_id: int | str
     room_name: str
     desks: List[DeskLayout]
     dimensions: Dict[str, float]
@@ -493,8 +493,8 @@ class RoomLayout(BaseModel):
 
 class GenerateSeatingRequest(BaseModel):
     """Request to generate seating plans"""
-    exam_id: int
-    room_ids: List[int]
+    exam_id: int | str
+    room_ids: List[int | str]
     algorithm_version: str = "1.0"
     batches: List[str] = Field(default_factory=list)
     plan_type: Optional[str] = None
@@ -505,9 +505,9 @@ class GenerateSeatingRequest(BaseModel):
 
 class SeatingPlanResponse(BaseModel):
     """Seating plan response"""
-    id: int
-    exam_id: int
-    room_id: int
+    id: int | str
+    exam_id: int | str
+    room_id: int | str
     exam_name: Optional[str] = None
     exam_subject: Optional[str] = None
     room_name: Optional[str] = None
@@ -591,8 +591,8 @@ class DayOfWeek(str, Enum):
 
 class TimetableEntryBase(BaseModel):
     """Base timetable entry schema"""
-    teacher_id: Optional[int] = None
-    room_id: Optional[int] = None
+    teacher_id: Optional[int | str] = None
+    room_id: Optional[int | str] = None
     session_mode: str = "offline"
     session_type: str = "regular_class"
     extra_class_scope: Optional[str] = None
@@ -613,8 +613,8 @@ class TimetableEntryCreate(TimetableEntryBase):
 
 class TimetableEntryUpdate(BaseModel):
     """Update timetable entry schema"""
-    teacher_id: Optional[int] = None
-    room_id: Optional[int] = None
+    teacher_id: Optional[int | str] = None
+    room_id: Optional[int | str] = None
     session_mode: Optional[str] = None
     session_type: Optional[str] = None
     extra_class_scope: Optional[str] = None
@@ -631,8 +631,8 @@ class TimetableEntryUpdate(BaseModel):
 
 class TimetableEntryResponse(TimetableEntryBase):
     """Timetable entry response schema"""
-    id: int
-    school_id: int
+    id: int | str
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -642,15 +642,15 @@ class TimetableEntryResponse(TimetableEntryBase):
 
 class TimetableView(BaseModel):
     """Timetable view with teacher info"""
-    id: int
+    id: int | str
     day_of_week: DayOfWeek
     start_time: str
     end_time: str
     class_name: str
     subject: str
     teacher_name: Optional[str] = None
-    teacher_id: Optional[int] = None
-    room_id: Optional[int] = None
+    teacher_id: Optional[int | str] = None
+    room_id: Optional[int | str] = None
     room_name: Optional[str] = None
     session_mode: str = "offline"
     session_type: str = "regular_class"

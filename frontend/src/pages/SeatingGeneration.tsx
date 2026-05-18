@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Zap, Download, PlusCircle, Trash2, AlertTriangle, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
 import { useAppStore } from '@store/app';
-import { apiService } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 import type { SeatingPlan, Exam, Batch, Student, Room, RoomLayout } from '@types';
 
 const toDateTimeLocalValue = (date: Date) => {
@@ -270,7 +270,7 @@ export default function SeatingGeneration() {
         const failedResult = resultMap[failedSource.key];
         const detail =
           failedResult?.status === 'rejected'
-            ? failedResult.reason?.response?.data?.detail || failedResult.reason?.message
+            ? getRequestErrorMessage(failedResult.reason, '')
             : '';
         setMessage(detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`);
       } else if (optionalFailures.length > 0) {
@@ -278,7 +278,7 @@ export default function SeatingGeneration() {
       }
     } catch (error) {
       console.error('Failed to load data:', error);
-      setMessage((error as any)?.response?.data?.detail || (error as any)?.message || 'Failed to load seating generation data');
+      setMessage(getRequestErrorMessage(error, 'Failed to load seating generation data'));
     } finally {
       setLoading(false);
     }
@@ -294,7 +294,7 @@ export default function SeatingGeneration() {
       console.error('Failed to load seating plans for exam:', error);
       setGeneratedPlans([]);
       setSeatingPlans([]);
-      setMessage((error as any)?.response?.data?.detail || (error as any)?.message || 'Failed to load generated seating plans');
+      setMessage(getRequestErrorMessage(error, 'Failed to load generated seating plans'));
     }
   };
 
@@ -406,7 +406,7 @@ export default function SeatingGeneration() {
       );
     } catch (error: any) {
       console.error('Failed to generate plans:', error);
-      setMessage(error?.response?.data?.error || error?.response?.data?.detail || 'Failed to generate seating plans');
+      setMessage(getRequestErrorMessage(error, 'Failed to generate seating plans'));
     } finally {
       setLoading(false);
     }
@@ -446,7 +446,7 @@ export default function SeatingGeneration() {
       setEditingExamId(null);
     } catch (error: any) {
       console.error('Failed to create exam:', error);
-      setMessage(error?.response?.data?.error || error?.response?.data?.detail || error?.message || 'Failed to save exam');
+      setMessage(getRequestErrorMessage(error, 'Failed to save exam'));
     }
   };
 
@@ -490,7 +490,7 @@ export default function SeatingGeneration() {
       setMessage('Exam deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete exam:', error);
-      setMessage(error?.response?.data?.detail || 'Failed to delete exam');
+      setMessage(getRequestErrorMessage(error, 'Failed to delete exam'));
     } finally {
       setDeletingExam(false);
     }
@@ -564,7 +564,7 @@ export default function SeatingGeneration() {
       setMessage('All seating plans deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete all plans:', error);
-      setMessage(error?.response?.data?.detail || 'Failed to delete all seating plans');
+      setMessage(getRequestErrorMessage(error, 'Failed to delete all seating plans'));
     } finally {
       setDeletingAll(false);
     }
@@ -581,7 +581,7 @@ export default function SeatingGeneration() {
       setDeleteConfirm(null);
     } catch (error: any) {
       console.error('Failed to delete plan:', error);
-      setMessage(error?.response?.data?.error || error?.response?.data?.detail || 'Failed to delete seating plan');
+      setMessage(getRequestErrorMessage(error, 'Failed to delete seating plan'));
     } finally {
       setDeleting(false);
     }

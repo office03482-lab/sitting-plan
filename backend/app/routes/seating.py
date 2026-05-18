@@ -2,7 +2,7 @@
 Seating plan generation routes
 """
 import json
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Dict, List
@@ -10,9 +10,25 @@ from app.database import get_db
 from app.models import SeatingPlan, Exam, Room, Student, Desk, Seat
 from app.schemas import GenerateSeatingRequest, SeatingPlanResponse, PlansComparisonResponse, RoomLayout, DeskLayout, SeatPosition, SeatingPlanImportResponse
 from app.services.seating_engine import SeatingAlgorithmEngine
+from app.middleware.auth import get_authenticated_actor_context
+from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
+from app.services.supabase_seating import (
+    delete_all_seating_plans,
+    delete_seating_plan,
+    finalize_seating_plan,
+    get_seating_plan_layout,
+    list_seating_plans,
+)
 from app.utils.excel import parse_seating_plan_excel, create_seating_plan_template
 
 router = APIRouter()
+
+
+def get_school_id_from_context(
+    school_id: str = Query(default=None),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
+) -> str:
+    return resolve_school_id_from_actor(school_id, actor)
 
 
 def interleave_students_by_batch(students: List[Dict]) -> List[Dict]:
@@ -424,13 +440,17 @@ async def generate_seating_plans(
 
 @router.get("/plans/{room_id}", response_model=List[SeatingPlanResponse])
 async def list_plans(
-    room_id: int,
-    exam_id: int = None,
+    room_id: str,
+    exam_id: str = None,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
     List seating plans for a room
     """
+    if not is_legacy_sqlite_mode():
+        return list_seating_plans(school_id, exam_id=exam_id, room_id=room_id)
+
     query = db.query(SeatingPlan).filter(SeatingPlan.room_id == room_id)
     
     if exam_id:
@@ -443,12 +463,16 @@ async def list_plans(
 
 @router.get("/plans", response_model=List[SeatingPlanResponse])
 async def list_all_plans(
-    exam_id: int = None,
+    exam_id: str = None,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
     List all seating plans, optionally filtered by exam
     """
+    if not is_legacy_sqlite_mode():
+        return list_seating_plans(school_id, exam_id=exam_id)
+
     query = db.query(SeatingPlan)
 
     if exam_id:
@@ -460,12 +484,16 @@ async def list_all_plans(
 
 @router.get("/{plan_id}/layout")
 async def get_plan_layout(
-    plan_id: int,
+    plan_id: str,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
     Get visual layout for a seating plan
     """
+    if not is_legacy_sqlite_mode():
+        return get_seating_plan_layout(school_id, plan_id)
+
     plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -526,12 +554,16 @@ async def get_plan_layout(
 
 @router.post("/{plan_id}/finalize")
 async def finalize_plan(
-    plan_id: int,
+    plan_id: str,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
     Finalize a seating plan
     """
+    if not is_legacy_sqlite_mode():
+        return finalize_seating_plan(school_id, plan_id)
+
     plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -544,12 +576,16 @@ async def finalize_plan(
 
 @router.delete("/{plan_id}")
 async def delete_plan(
-    plan_id: int,
+    plan_id: str,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
     Delete a single seating plan
     """
+    if not is_legacy_sqlite_mode():
+        return delete_seating_plan(school_id, plan_id)
+
     plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -562,6 +598,7 @@ async def delete_plan(
 @router.delete("")
 async def delete_all_plans(
     is_admin: bool = False,
+    school_id: str = Depends(get_school_id_from_context),
     db: Session = Depends(get_db),
 ):
     """
@@ -572,6 +609,9 @@ async def delete_all_plans(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can delete all seating plans",
         )
+
+    if not is_legacy_sqlite_mode():
+        return delete_all_seating_plans(school_id)
 
     plans = db.query(SeatingPlan).all()
     deleted_count = len(plans)
