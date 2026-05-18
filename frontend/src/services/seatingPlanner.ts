@@ -357,7 +357,7 @@ export const buildPlanBatches = (distribution: Record<string, number>) =>
 
 export const buildLegacyPlanSummary = (
   planId: number,
-  examId: number,
+  examId: string | number,
   roomId: string | number,
   roomName: string,
   examName: string,

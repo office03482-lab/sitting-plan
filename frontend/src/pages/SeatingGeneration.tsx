@@ -10,6 +10,7 @@ const toDateTimeLocalValue = (date: Date) => {
 };
 
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 const extractBatchesFromPlanName = (planName: string) => {
   const labeledMatch = planName.match(/Batches:\s*(.+?)\s*-\s*Plan\s+[AB]\b/i);
@@ -91,7 +92,7 @@ export default function SeatingGeneration() {
   const defaultExamDate = new Date().toISOString().slice(0, 10);
   const { rooms, setRooms, setSeatingPlans } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [selectedExam, setSelectedExam] = useState<number | null>(null);
+  const [selectedExam, setSelectedExam] = useState<string | number | null>(null);
   const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
   const [selectedRooms, setSelectedRooms] = useState<Array<string | number>>([]);
   const [planType] = useState<'all_in_one'>('all_in_one');
@@ -105,7 +106,7 @@ export default function SeatingGeneration() {
   const [message, setMessage] = useState('');
   const [showExamForm, setShowExamForm] = useState(false);
   const [examForm, setExamForm] = useState({ name: '', exam_date: defaultExamDate });
-  const [editingExamId, setEditingExamId] = useState<number | null>(null);
+  const [editingExamId, setEditingExamId] = useState<string | number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ planId: number; planName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
@@ -211,6 +212,28 @@ export default function SeatingGeneration() {
     };
   }, [generatedPlans]);
 
+  const reloadExamsFromBackend = async (invalidExamId?: string | number | null) => {
+    const examsResponse = await apiService.listExams();
+    const refreshedExams = toArray<Exam>(examsResponse.data);
+    setExams(refreshedExams);
+
+    if (invalidExamId == null) {
+      return refreshedExams;
+    }
+
+    const stillExists = refreshedExams.some((exam) => String(exam.id) === String(invalidExamId));
+    if (!stillExists) {
+      if (selectedExam != null && String(selectedExam) === String(invalidExamId)) {
+        setSelectedExam(null);
+      }
+      if (editingExamId != null && String(editingExamId) === String(invalidExamId)) {
+        setEditingExamId(null);
+      }
+    }
+
+    return refreshedExams;
+  };
+
   const loadInitialData = async () => {
     setLoading(true);
     try {
@@ -284,7 +307,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const loadPlansForExam = async (examId?: number) => {
+  const loadPlansForExam = async (examId?: string | number) => {
     try {
       const plansResponse = await apiService.listAllPlans(examId);
       const plans = toArray<SeatingPlan>(plansResponse.data);
@@ -292,6 +315,15 @@ export default function SeatingGeneration() {
       setSeatingPlans(plans);
     } catch (error) {
       console.error('Failed to load seating plans for exam:', error);
+      if (!selectedExam || isUuid(String(selectedExam))) {
+        // no-op
+      } else {
+        try {
+          await reloadExamsFromBackend(selectedExam);
+        } catch (reloadError) {
+          console.error('Failed to reload exams after invalid local exam ID:', reloadError);
+        }
+      }
       setGeneratedPlans([]);
       setSeatingPlans([]);
       setMessage(getRequestErrorMessage(error, 'Failed to load generated seating plans'));
@@ -406,6 +438,13 @@ export default function SeatingGeneration() {
       );
     } catch (error: any) {
       console.error('Failed to generate plans:', error);
+      if (selectedExam && !isUuid(String(selectedExam))) {
+        try {
+          await reloadExamsFromBackend(selectedExam);
+        } catch (reloadError) {
+          console.error('Failed to reload exams after invalid local exam ID:', reloadError);
+        }
+      }
       setMessage(getRequestErrorMessage(error, 'Failed to generate seating plans'));
     } finally {
       setLoading(false);
@@ -446,6 +485,13 @@ export default function SeatingGeneration() {
       setEditingExamId(null);
     } catch (error: any) {
       console.error('Failed to create exam:', error);
+      if ((editingExamId && !isUuid(String(editingExamId))) || (selectedExam && !isUuid(String(selectedExam)))) {
+        try {
+          await reloadExamsFromBackend(editingExamId || selectedExam);
+        } catch (reloadError) {
+          console.error('Failed to reload exams after invalid local exam ID:', reloadError);
+        }
+      }
       setMessage(getRequestErrorMessage(error, 'Failed to save exam'));
     }
   };
@@ -490,6 +536,13 @@ export default function SeatingGeneration() {
       setMessage('Exam deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete exam:', error);
+      if (selectedExam && !isUuid(String(selectedExam))) {
+        try {
+          await reloadExamsFromBackend(selectedExam);
+        } catch (reloadError) {
+          console.error('Failed to reload exams after invalid local exam ID:', reloadError);
+        }
+      }
       setMessage(getRequestErrorMessage(error, 'Failed to delete exam'));
     } finally {
       setDeletingExam(false);
@@ -548,6 +601,13 @@ export default function SeatingGeneration() {
       document.body.removeChild(a);
     } catch (error) {
       console.error('Failed to export all-room Excel:', error);
+      if (selectedExam && !isUuid(String(selectedExam))) {
+        try {
+          await reloadExamsFromBackend(selectedExam);
+        } catch (reloadError) {
+          console.error('Failed to reload exams after invalid local exam ID:', reloadError);
+        }
+      }
       setMessage('Failed to export all rooms Excel');
     }
   };
@@ -678,7 +738,7 @@ export default function SeatingGeneration() {
               </div>
               <select
                 value={selectedExam || ''}
-                onChange={(e) => setSelectedExam(e.target.value ? parseInt(e.target.value) : null)}
+                onChange={(e) => setSelectedExam(e.target.value || null)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Choose Exam --</option>

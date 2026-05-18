@@ -235,9 +235,9 @@ export interface Room {
 
 // ==================== Exam ====================
 export interface Exam {
-  id: number;
+  id: string | number;
   name: string;
-  school_id: number;
+  school_id: string | number;
   subject?: string;
   exam_date?: string;
   duration_minutes?: number;
@@ -284,7 +284,7 @@ export interface RoomLayout {
 // ==================== Seating Plan ====================
 export interface SeatingPlan {
   id: number;
-  exam_id: number;
+  exam_id: string | number;
   room_id: string | number;
   exam_name?: string;
   exam_subject?: string;

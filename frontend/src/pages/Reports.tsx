@@ -229,7 +229,7 @@ ${students
     }
   };
 
-  const handleExportAllRoomsExcel = async (examId: number, planType: 'strict' | 'compact' | 'all_in_one') => {
+  const handleExportAllRoomsExcel = async (examId: string | number, planType: 'strict' | 'compact' | 'all_in_one') => {
     try {
       setExporting(`all-rooms-${examId}-${planType}`);
       const response = await apiService.exportAllRoomsExcel(examId, planType);

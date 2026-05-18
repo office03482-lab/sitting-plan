@@ -94,7 +94,6 @@ class ApiService {
   private invigilatorIdMap = new Map<number, string>();
   private invigilatorReverseIdMap = new Map<string, number>();
   private examIdMap = new Map<number, string>();
-  private examReverseIdMap = new Map<string, number>();
   private seatingPlanIdMap = new Map<number, string>();
   private seatingPlanReverseIdMap = new Map<string, number>();
   private timetableEntryIdMap = new Map<number, string>();
@@ -259,12 +258,32 @@ class ApiService {
     return forwardMap.get(Number(id)) || String(id);
   }
 
-  private getLegacyExamId(actualId?: string | null) {
-    return this.getLegacyInventoryId(this.examIdMap, this.examReverseIdMap, 'exam', actualId);
+  private resolveExamId(id: string | number) {
+    if (typeof id === 'string' && this.isUuidLike(id)) {
+      return id;
+    }
+
+    const mappedId = this.examIdMap.get(Number(id));
+    if (mappedId && this.isUuidLike(mappedId)) {
+      return mappedId;
+    }
+
+    return String(id);
   }
 
-  private resolveExamId(id: string | number) {
-    return this.resolveLegacyInventoryId(this.examIdMap, id);
+  private async resolveExamUuidOrThrow(examId: string | number) {
+    const resolvedExamId = this.resolveExamId(examId);
+    if (this.isUuidLike(resolvedExamId)) {
+      return resolvedExamId;
+    }
+
+    const response = await this.listExams();
+    const refreshedExam = toArray<Exam>(response.data).find((exam) => String(exam.id) === String(examId));
+    if (refreshedExam && typeof refreshedExam.id === 'string' && this.isUuidLike(refreshedExam.id)) {
+      return refreshedExam.id;
+    }
+
+    throw new Error('Selected exam is using a stale local ID. Reload exams and try again.');
   }
 
   private getLegacySeatingPlanId(actualId?: string | null) {
@@ -609,9 +628,9 @@ class ApiService {
 
   private mapSupabaseExamToLegacy(exam: any, totalStudents: number, totalBatches: number): Exam {
     return {
-      id: this.getLegacyExamId(exam.id),
+      id: typeof exam?.id === 'string' ? exam.id : Number(exam?.id || 0),
       name: exam.name || '',
-      school_id: 1,
+      school_id: exam.school_id || 1,
       subject: exam.metadata?.subject_text || undefined,
       exam_date: exam.exam_date || undefined,
       duration_minutes: exam.duration_minutes || undefined,
@@ -2203,11 +2222,11 @@ class ApiService {
 
   // ==================== Seating Plans ====================
 
-  async generateSeatingPlans(examId: number, roomIds: Array<string | number>, planType?: 'strict' | 'compact' | 'all_in_one', batches?: string[], invigilatorAssignments?: {[roomId: string]: number | null}, generatedDate?: string, batchConflictGroups?: string[][]) {
+  async generateSeatingPlans(examId: string | number, roomIds: Array<string | number>, planType?: 'strict' | 'compact' | 'all_in_one', batches?: string[], invigilatorAssignments?: {[roomId: string]: number | null}, generatedDate?: string, batchConflictGroups?: string[][]) {
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     if (!scopedSchoolId) throw new Error('No active school membership found.');
 
-    const resolvedExamId = this.resolveExamId(examId);
+    const resolvedExamId = await this.resolveExamUuidOrThrow(examId);
     const [roomsResponse, studentsResponse] = await Promise.all([
       this.listRooms(),
       this.listStudents(1, 0, 10000),
@@ -2335,26 +2354,26 @@ class ApiService {
     };
   }
 
-  async listPlans(roomId: number, examId?: number) {
+  async listPlans(roomId: number, examId?: string | number) {
     const response = await this.listAllPlans(examId);
     return {
       data: toArray<SeatingPlan>(response.data).filter((plan) => String(plan.room_id) === String(roomId)),
     } as { data: SeatingPlan[] };
   }
 
-  async listAllPlans(examId?: number) {
+  async listAllPlans(examId?: string | number) {
     const preferredSchoolId = this.getCurrentSupabaseSchoolId();
     const response = await this.api.get('/seating/plans', {
       params: {
         ...(preferredSchoolId ? { school_id: preferredSchoolId } : {}),
-        ...(examId !== undefined ? { exam_id: this.resolveExamId(examId) } : {}),
+        ...(examId !== undefined ? { exam_id: await this.resolveExamUuidOrThrow(examId) } : {}),
       },
     });
     return {
       data: toArray<any>(response.data).map((plan) => ({
         ...plan,
         id: typeof plan?.id === 'string' ? this.getLegacySeatingPlanId(plan.id) : Number(plan?.id || 0),
-        exam_id: typeof plan?.exam_id === 'string' ? this.getLegacyExamId(plan.exam_id) : Number(plan?.exam_id || 0),
+        exam_id: typeof plan?.exam_id === 'string' ? plan.exam_id : Number(plan?.exam_id || 0),
       })),
     } as { data: SeatingPlan[] };
   }
@@ -2410,9 +2429,9 @@ class ApiService {
     return { data: { message: 'All seating plans deleted successfully' } } as { data: { message: string } };
   }
 
-  async importSeatingPlan(formData: FormData, examId?: number) {
+  async importSeatingPlan(formData: FormData, examId?: string | number) {
     return this.api.post('/seating/import', formData, {
-      params: { exam_id: examId },
+      params: examId !== undefined ? { exam_id: examId } : undefined,
     });
   }
 
@@ -2467,18 +2486,20 @@ class ApiService {
     return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
   }
 
-  async updateExam(examId: number, examData: Partial<Exam>, _schoolId: number = 1) {
+  async updateExam(examId: string | number, examData: Partial<Exam>, _schoolId: number = 1) {
     const payload = this.serializeExamPayload(examData as Partial<Exam> & Record<string, any>);
     const preferredSchoolId = this.getCurrentSupabaseSchoolId();
-    const response = await this.api.put(`/exams/${examId}`, payload, {
+    const resolvedExamId = await this.resolveExamUuidOrThrow(examId);
+    const response = await this.api.put(`/exams/${resolvedExamId}`, payload, {
       params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
     });
     return { data: this.mapAnyExamToLegacy(response.data, 0, 0) } as { data: Exam };
   }
 
-  async deleteExam(examId: number, _schoolId: number = 1) {
+  async deleteExam(examId: string | number, _schoolId: number = 1) {
     const preferredSchoolId = this.getCurrentSupabaseSchoolId();
-    return this.api.delete(`/exams/${examId}`, {
+    const resolvedExamId = await this.resolveExamUuidOrThrow(examId);
+    return this.api.delete(`/exams/${resolvedExamId}`, {
       params: preferredSchoolId ? { school_id: preferredSchoolId } : undefined,
     });
   }
@@ -2497,8 +2518,9 @@ class ApiService {
     });
   }
 
-  async exportAllRoomsExcel(examId: number, planType?: 'strict' | 'compact' | 'all_in_one') {
-    return this.api.get(`/reports/excel/all-rooms/${examId}`, {
+  async exportAllRoomsExcel(examId: string | number, planType?: 'strict' | 'compact' | 'all_in_one') {
+    const resolvedExamId = await this.resolveExamUuidOrThrow(examId);
+    return this.api.get(`/reports/excel/all-rooms/${resolvedExamId}`, {
       params: { plan_type: planType },
       responseType: 'blob',
     });
