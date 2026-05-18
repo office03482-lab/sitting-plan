@@ -128,36 +128,68 @@ def create_exam(school_id: str, exam_data: dict[str, Any]) -> dict[str, Any]:
 def update_exam(school_id: str, exam_id: str, exam_data: dict[str, Any]) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
     payload = normalize_exam_payload(exam_data)
-    updated = (
+    existing = (
+        supabase
+        .schema("exam")
+        .table("exams")
+        .select("id")
+        .eq("id", exam_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+    )
+    if not list(existing.data or []):
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    (
         supabase
         .schema("exam")
         .table("exams")
         .update(payload)
         .eq("id", exam_id)
         .eq("school_id", school_id)
+        .execute()
+    )
+
+    updated_exam = (
+        supabase
+        .schema("exam")
+        .table("exams")
         .select("*")
+        .eq("id", exam_id)
+        .eq("school_id", school_id)
         .single()
         .execute()
     )
-    if not updated.data:
-        raise HTTPException(status_code=404, detail="Exam not found")
-    return serialize_exam_response(dict(updated.data))
+    if not updated_exam.data:
+        raise HTTPException(status_code=500, detail="Exam update could not be reloaded")
+    return serialize_exam_response(dict(updated_exam.data))
 
 
 def delete_exam(school_id: str, exam_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    deleted = (
+    existing = (
+        supabase
+        .schema("exam")
+        .table("exams")
+        .select("id")
+        .eq("id", exam_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+    )
+    if not list(existing.data or []):
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    (
         supabase
         .schema("exam")
         .table("exams")
         .delete()
         .eq("id", exam_id)
         .eq("school_id", school_id)
-        .select("id")
         .execute()
     )
-    if not list(deleted.data or []):
-        raise HTTPException(status_code=404, detail="Exam not found")
     return {"message": "Exam deleted successfully"}
 
 
