@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import logging
 from typing import Any
+from uuid import UUID
 
 from app.services.supabase_admin import get_supabase_admin_client
+
+logger = logging.getLogger(__name__)
 
 
 def _iso(value: Any) -> Any:
@@ -24,11 +28,23 @@ def _cf(value: Any) -> str:
     return _normalize(value).casefold()
 
 
-def _sanitize_lookup_ids(values: list[Any]) -> list[str]:
-    normalized = []
+def _is_valid_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+        return True
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _sanitize_lookup_ids(values: list[Any], *, require_uuid: bool = False) -> list[str]:
+    normalized: list[str] = []
     for value in values:
+        if isinstance(value, (list, tuple, set, dict)):
+            continue
         text = _normalize(value)
         if not text or text == "None":
+            continue
+        if require_uuid and not _is_valid_uuid(text):
             continue
         normalized.append(text)
     return sorted(set(normalized))
@@ -416,7 +432,18 @@ def list_student_records(
         and (not section or _cf(row.get("section")) == _cf(section))
         and (not student_name or _cf(student_name) in _cf(row.get("name")))
     ]
-    student_ids = _sanitize_lookup_ids([row.get("id") for row in filtered_students])
+    student_ids = _sanitize_lookup_ids(
+        [row.get("id") for row in filtered_students],
+        require_uuid=True,
+    )
+    logger.info(
+        "attendance.student_records.student_ids",
+        extra={
+            "count": len(student_ids),
+            "sample": student_ids[:5],
+            "school_id": school_id,
+        },
+    )
     if not student_ids:
         return []
     query = (
