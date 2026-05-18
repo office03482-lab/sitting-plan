@@ -96,18 +96,33 @@ def create_exam(school_id: str, exam_data: dict[str, Any]) -> dict[str, Any]:
     payload = normalize_exam_payload(exam_data)
     payload["school_id"] = school_id
     payload["exam_code"] = str(exam_data.get("exam_code") or "").strip() or build_exam_code(payload["name"])
-    created = (
+    insert_response = (
         supabase
         .schema("exam")
         .table("exams")
         .insert(payload)
+        .execute()
+    )
+    inserted_rows = list(insert_response.data or [])
+    if not inserted_rows:
+        raise HTTPException(status_code=500, detail="Exam save returned no row")
+    created_exam_id = inserted_rows[0].get("id")
+    if not created_exam_id:
+        raise HTTPException(status_code=500, detail="Exam save returned no id")
+
+    created_exam = (
+        supabase
+        .schema("exam")
+        .table("exams")
         .select("*")
+        .eq("id", created_exam_id)
+        .eq("school_id", school_id)
         .single()
         .execute()
     )
-    if not created.data:
-        raise HTTPException(status_code=500, detail="Exam save returned no row")
-    return serialize_exam_response(dict(created.data))
+    if not created_exam.data:
+        raise HTTPException(status_code=500, detail="Exam save could not be reloaded")
+    return serialize_exam_response(dict(created_exam.data))
 
 
 def update_exam(school_id: str, exam_id: str, exam_data: dict[str, Any]) -> dict[str, Any]:
