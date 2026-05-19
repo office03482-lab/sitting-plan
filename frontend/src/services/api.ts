@@ -294,6 +294,34 @@ class ApiService {
     return this.resolveLegacyInventoryId(this.seatingPlanIdMap, id);
   }
 
+  private async resolveSeatingPlanUuidOrThrow(planId: string | number) {
+    const requestedPlanId = String(planId ?? '').trim();
+    console.log('EXPORT_PLAN_ID', requestedPlanId);
+
+    const resolvedPlanId = String(this.resolveSeatingPlanId(planId) || '').trim();
+    const isResolvedUuid = this.isUuidLike(resolvedPlanId);
+    console.log('IS_UUID', isResolvedUuid);
+    if (isResolvedUuid) {
+      return resolvedPlanId;
+    }
+
+    try {
+      await this.listAllPlans();
+    } catch (error) {
+      console.warn('Failed to reload seating plans before export retry', error);
+    }
+
+    const refreshedPlanId = String(this.resolveSeatingPlanId(planId) || '').trim();
+    const isRefreshedUuid = this.isUuidLike(refreshedPlanId);
+    console.log('REFRESHED_EXPORT_PLAN_ID', refreshedPlanId);
+    console.log('REFRESHED_IS_UUID', isRefreshedUuid);
+    if (isRefreshedUuid) {
+      return refreshedPlanId;
+    }
+
+    throw new Error('Invalid seating plan UUID. Reload seating plans and try again.');
+  }
+
   private getLegacyTimetableEntryId(actualId?: string | null) {
     return this.getLegacyInventoryId(this.timetableEntryIdMap, this.timetableEntryReverseIdMap, 'timetable-entry', actualId);
   }
@@ -2507,14 +2535,14 @@ class ApiService {
   // ==================== Reports ====================
 
   async exportPDF(planId: number) {
-    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    const resolvedPlanId = await this.resolveSeatingPlanUuidOrThrow(planId);
     return this.api.get(`/reports/pdf/${resolvedPlanId}`, {
       responseType: 'blob',
     });
   }
 
   async exportExcel(planId: number) {
-    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    const resolvedPlanId = await this.resolveSeatingPlanUuidOrThrow(planId);
     return this.api.get(`/reports/excel/${resolvedPlanId}`, {
       responseType: 'blob',
     });

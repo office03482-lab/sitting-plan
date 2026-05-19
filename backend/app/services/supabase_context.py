@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException, Query, Depends, Request
 
@@ -23,6 +24,17 @@ def is_legacy_sqlite_mode() -> bool:
 
 def _normalize_school_id_candidate(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _is_valid_uuid(value: Any) -> bool:
+    candidate = _normalize_school_id_candidate(value)
+    if not candidate:
+        return False
+    try:
+        UUID(candidate)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return True
 
 
 def _is_placeholder_school_id(value: Any) -> bool:
@@ -239,6 +251,20 @@ def resolve_school_id_from_seating_plan_context(
             return candidate
 
     if not is_legacy_sqlite_mode():
+        if not _is_valid_uuid(plan_id):
+            logger.warning(
+                "auth.invalid_seating_plan_id",
+                extra={
+                    "path": str(request.url.path),
+                    "method": request.method,
+                    "actor_user_id": str(actor.get("user_id") or ""),
+                    "actor_profile_id": str(actor.get("profile_id") or ""),
+                    "actor_role": str(actor.get("role") or ""),
+                    "plan_id": _normalize_school_id_candidate(plan_id),
+                    "failure_reason": "invalid_seating_plan_uuid",
+                },
+            )
+            raise HTTPException(status_code=400, detail="Invalid seating plan UUID")
         candidate = _lookup_school_id_from_seating_plan(plan_id)
         if candidate and not _is_placeholder_school_id(candidate):
             return candidate
