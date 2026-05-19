@@ -12,7 +12,11 @@ from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import SeatingPlan, Student, Room, Invigilator, RoomInvigilator
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client
-from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_exam_context
+from app.services.supabase_context import (
+    is_legacy_sqlite_mode,
+    resolve_school_id_from_exam_context,
+    resolve_school_id_from_seating_plan_context,
+)
 from app.utils.excel import create_multi_room_seating_export_excel, create_seating_export_excel
 from app.utils.pdf import create_seating_report_pdf
 import json
@@ -197,6 +201,69 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
     return room_plans
 
 
+def _build_supabase_single_room_plan(school_id: str, plan_id: str) -> dict:
+    supabase = get_supabase_admin_client()
+    response = (
+        supabase
+        .schema("exam")
+        .table("seating_plans")
+        .select("id, exam_id, room_id, plan_name, plan_type, plan_metadata, batch_distribution")
+        .eq("id", plan_id)
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .single()
+        .execute()
+    )
+    row = response.data
+    if not row:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    metadata = row.get("plan_metadata") if isinstance(row.get("plan_metadata"), dict) else {}
+    room_lookup = {
+        str(item.get("id")): item
+        for item in fetch_all(
+            supabase,
+            "rooms",
+            select="id, name, capacity, length_feet, width_feet, num_benches",
+            filters={"school_id": school_id},
+        )
+    }
+    exam_lookup = {
+        str(item.get("id")): item
+        for item in fetch_all(
+            supabase,
+            "exams",
+            schema="exam",
+            select="id, name, metadata",
+            filters={"school_id": school_id},
+        )
+    }
+    room = room_lookup.get(str(row.get("room_id"))) or {}
+    exam = exam_lookup.get(str(row.get("exam_id"))) or {}
+    return {
+        "plan_data": {
+            "assignment": _get_supabase_plan_assignment(metadata),
+            "batches": _parse_supabase_batch_names(row.get("batch_distribution")),
+            "plan_type": metadata.get("ui_plan_type") or row.get("plan_type"),
+            "exam": {
+                "name": exam.get("name") or metadata.get("exam_name"),
+                "subject": (exam.get("metadata") or {}).get("subject_text") if isinstance(exam.get("metadata"), dict) else metadata.get("exam_subject"),
+            },
+        },
+        "room_data": {
+            "name": room.get("name") or metadata.get("room_name") or f"Room {row.get('room_id')}",
+            "capacity": room.get("capacity"),
+            "length_feet": room.get("length_feet"),
+            "width_feet": room.get("width_feet"),
+            "num_benches": room.get("num_benches"),
+            "plan_type": metadata.get("ui_plan_type") or row.get("plan_type"),
+            "exam_name": exam.get("name") or metadata.get("exam_name"),
+            "exam_subject": (exam.get("metadata") or {}).get("subject_text") if isinstance(exam.get("metadata"), dict) else metadata.get("exam_subject"),
+            "invigilator": None,
+        },
+    }
+
+
 def load_plan_data(plan: SeatingPlan) -> dict:
     raw_plan_data = getattr(plan, "plan_data", None)
     if raw_plan_data:
@@ -290,12 +357,22 @@ def build_enriched_room_plan(db: Session, plan: SeatingPlan) -> dict:
 
 @router.get("/pdf/{plan_id}")
 async def export_pdf(
-    plan_id: int,
+    plan_id: str,
+    school_id: str = Depends(resolve_school_id_from_seating_plan_context),
     db: Session = Depends(get_db),
 ):
     """
     Export seating plan as PDF
     """
+    if not is_legacy_sqlite_mode():
+        enriched_room_plan = _build_supabase_single_room_plan(school_id, plan_id)
+        pdf_buffer = create_seating_report_pdf(enriched_room_plan["plan_data"], enriched_room_plan["room_data"])
+        return StreamingResponse(
+            pdf_buffer,
+            media_type='application/pdf',
+            headers={"Content-Disposition": f'attachment; filename="seating-plan-{plan_id}.pdf"'}
+        )
+
     plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -381,12 +458,22 @@ async def export_pdf(
 
 @router.get("/excel/{plan_id}")
 async def export_excel(
-    plan_id: int,
+    plan_id: str,
+    school_id: str = Depends(resolve_school_id_from_seating_plan_context),
     db: Session = Depends(get_db),
 ):
     """
     Export seating plan as Excel file
     """
+    if not is_legacy_sqlite_mode():
+        enriched_room_plan = _build_supabase_single_room_plan(school_id, plan_id)
+        excel_buffer = create_seating_export_excel(enriched_room_plan["plan_data"], enriched_room_plan["room_data"])
+        return StreamingResponse(
+            excel_buffer,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={"Content-Disposition": f'attachment; filename="seating-plan-{plan_id}.xlsx"'}
+        )
+
     plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")

@@ -2507,13 +2507,15 @@ class ApiService {
   // ==================== Reports ====================
 
   async exportPDF(planId: number) {
-    return this.api.get(`/reports/pdf/${planId}`, {
+    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    return this.api.get(`/reports/pdf/${resolvedPlanId}`, {
       responseType: 'blob',
     });
   }
 
   async exportExcel(planId: number) {
-    return this.api.get(`/reports/excel/${planId}`, {
+    const resolvedPlanId = this.resolveSeatingPlanId(planId);
+    return this.api.get(`/reports/excel/${resolvedPlanId}`, {
       responseType: 'blob',
     });
   }
