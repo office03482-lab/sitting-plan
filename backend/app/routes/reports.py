@@ -2,6 +2,7 @@
 Report generation routes
 """
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,8 @@ from app.utils.pdf import create_seating_report_pdf
 import json
 router = APIRouter()
 logger = logging.getLogger(__name__)
+EXPORT_ALL_ROOMS_WARN_ROOM_COUNT = 75
+EXPORT_ALL_ROOMS_WARN_STUDENT_COUNT = 5000
 
 
 def parse_plan_batches(plan: SeatingPlan) -> list[str]:
@@ -45,6 +48,38 @@ def _parse_supabase_batch_names(batch_distribution: Any) -> list[str]:
     return []
 
 
+def _count_assigned_students(assignment: Any) -> int:
+    if not isinstance(assignment, dict):
+        return 0
+    total = 0
+    for students in assignment.values():
+        if isinstance(students, list):
+            total += len(students)
+    return total
+
+
+def _log_export_timing(
+    *,
+    step: str,
+    started_at: float,
+    exam_id: str,
+    room_count: int = 0,
+    student_count: int = 0,
+    mode: str = "",
+) -> None:
+    logger.info(
+        "reports.export_all_rooms_excel.timing",
+        extra={
+            "step": step,
+            "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "exam_id": exam_id,
+            "room_count": room_count,
+            "student_count": student_count,
+            "mode": mode,
+        },
+    )
+
+
 def _get_supabase_plan_assignment(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return {}
@@ -60,6 +95,7 @@ def _get_effective_supabase_plan_type(plan_row: dict[str, Any]) -> str:
 
 
 def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | None = None) -> list[dict[str, Any]]:
+    fetch_started_at = time.perf_counter()
     supabase = get_supabase_admin_client()
     rows = fetch_all(
         supabase,
@@ -73,9 +109,24 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
     if normalized_plan_type:
         rows = [row for row in rows if _get_effective_supabase_plan_type(row) == normalized_plan_type]
 
+    room_count = len(rows)
+    student_count = sum(
+        _count_assigned_students(_get_supabase_plan_assignment(row.get("plan_metadata")))
+        for row in rows
+    )
+    _log_export_timing(
+        step="supabase_fetch_seating_plans",
+        started_at=fetch_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="supabase_native",
+    )
+
     if not rows:
         return []
 
+    room_fetch_started_at = time.perf_counter()
     room_lookup = {
         str(item.get("id")): item
         for item in fetch_all(
@@ -95,7 +146,16 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
             filters={"school_id": school_id},
         )
     }
+    _log_export_timing(
+        step="supabase_fetch_rooms_and_exams",
+        started_at=room_fetch_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="supabase_native",
+    )
 
+    transform_started_at = time.perf_counter()
     room_plans: list[dict[str, Any]] = []
     for row in rows:
         metadata = row.get("plan_metadata") if isinstance(row.get("plan_metadata"), dict) else {}
@@ -126,6 +186,14 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
             }
         )
 
+    _log_export_timing(
+        step="supabase_transform_room_plans",
+        started_at=transform_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="supabase_native",
+    )
     return room_plans
 
 
@@ -344,6 +412,7 @@ async def export_all_rooms_excel(
     db: Session = Depends(get_db),
 ):
     """Export all seating plans for an exam into one workbook, one sheet per room."""
+    request_started_at = time.perf_counter()
     logger.info(
         "reports.export_all_rooms_excel.request",
         extra={
@@ -356,8 +425,25 @@ async def export_all_rooms_excel(
             "mode": "legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
         },
     )
+    _log_export_timing(
+        step="route_entry",
+        started_at=request_started_at,
+        exam_id=exam_id,
+        mode="legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+    )
     if not is_legacy_sqlite_mode():
+        fetch_started_at = time.perf_counter()
         room_plans = _build_supabase_room_plans(school_id, exam_id, plan_type)
+        room_count = len(room_plans)
+        student_count = sum(_count_assigned_students((item.get("plan_data") or {}).get("assignment")) for item in room_plans)
+        _log_export_timing(
+            step="build_supabase_room_plans_total",
+            started_at=fetch_started_at,
+            exam_id=exam_id,
+            room_count=room_count,
+            student_count=student_count,
+            mode="supabase_native",
+        )
         if not room_plans:
             logger.warning(
                 "reports.export_all_rooms_excel.not_found",
@@ -371,6 +457,7 @@ async def export_all_rooms_excel(
             )
             raise HTTPException(status_code=404, detail="No seating plans found for this exam")
     else:
+        fetch_started_at = time.perf_counter()
         normalized_exam_id = int(exam_id) if str(exam_id).isdigit() else None
         if normalized_exam_id is None:
             logger.warning(
@@ -404,11 +491,62 @@ async def export_all_rooms_excel(
             raise HTTPException(status_code=404, detail="No seating plans found for this exam")
 
         room_plans = [build_enriched_room_plan(db, plan) for plan in plans]
+        room_count = len(room_plans)
+        student_count = sum(_count_assigned_students((item.get("plan_data") or {}).get("assignment")) for item in room_plans)
+        _log_export_timing(
+            step="build_legacy_room_plans_total",
+            started_at=fetch_started_at,
+            exam_id=exam_id,
+            room_count=room_count,
+            student_count=student_count,
+            mode="legacy_sqlite",
+        )
 
+    room_count = len(room_plans)
+    student_count = sum(_count_assigned_students((item.get("plan_data") or {}).get("assignment")) for item in room_plans)
+    if room_count >= EXPORT_ALL_ROOMS_WARN_ROOM_COUNT or student_count >= EXPORT_ALL_ROOMS_WARN_STUDENT_COUNT:
+        logger.warning(
+            "reports.export_all_rooms_excel.large_export",
+            extra={
+                "exam_id": exam_id,
+                "room_count": room_count,
+                "student_count": student_count,
+                "plan_type": plan_type or "",
+                "mode": "legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+            },
+        )
+
+    excel_started_at = time.perf_counter()
     excel_buffer = create_multi_room_seating_export_excel(room_plans)
+    _log_export_timing(
+        step="excel_generation",
+        started_at=excel_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+    )
     suffix = f"-{plan_type}" if plan_type else ""
-    return StreamingResponse(
+    response_started_at = time.perf_counter()
+    response = StreamingResponse(
         excel_buffer,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={"Content-Disposition": f'attachment; filename="seating-plan-all-rooms-exam-{exam_id}{suffix}.xlsx"'}
     )
+    _log_export_timing(
+        step="response_ready",
+        started_at=response_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+    )
+    _log_export_timing(
+        step="route_total",
+        started_at=request_started_at,
+        exam_id=exam_id,
+        room_count=room_count,
+        student_count=student_count,
+        mode="legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+    )
+    return response

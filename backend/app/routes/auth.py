@@ -43,10 +43,22 @@ logger = logging.getLogger(__name__)
 
 
 def require_user_management_access(
+    request: Request,
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if user.role == UserRole.ADMIN or user_has_permission(user, "admin_office.access_control"):
         return user
+    logger.warning(
+        "auth.user_management_access_denied",
+        extra={
+            "path": str(request.url.path),
+            "method": request.method,
+            "user_id": str(getattr(user, "id", "")),
+            "role": str(getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))),
+            "granted_permissions": getattr(user, "permissions", "") or "",
+            "failure_reason": "missing_access_control_permission",
+        },
+    )
     raise HTTPException(status_code=403, detail="Only admin or access-control users can manage users")
 
 ALLOWED_USER_TYPES = {"teaching", "non_teaching"}
@@ -454,6 +466,16 @@ async def login_password(payload: PasswordLoginRequest, request: Request, db: Se
             request=request,
         )
         db.commit()
+        logger.warning(
+            "auth.user_inactive",
+            extra={
+                "path": str(request.url.path),
+                "method": request.method,
+                "user_id": str(user.id),
+                "role": str(user.role.value if hasattr(user.role, "value") else user.role),
+                "failure_reason": "inactive_user",
+            },
+        )
         raise HTTPException(status_code=403, detail="User is inactive")
 
     reset_failures(db, action="login_password", email=normalized_login_id, request=request)

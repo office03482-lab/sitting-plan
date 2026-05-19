@@ -907,6 +907,7 @@ def create_multi_room_seating_export_excel(room_plans: List[Dict]) -> BytesIO:
         first_room = room_plans[0].get("room_data") or {}
         title_override = first_room.get("exam_name") or "SITTING PLAN"
 
+    _ensure_room_students_cache(room_plans)
     _build_roomwise_seating_sheet(worksheet, room_plans, title_override=title_override)
     _build_room_summary_sheet(summary_sheet, room_plans, title_override=title_override)
 
@@ -941,6 +942,14 @@ def _normalize_room_students(plan_data: Dict) -> List[Dict]:
     for index, row in enumerate(normalized_rows, start=1):
         row["sequence"] = index
     return normalized_rows
+
+
+def _ensure_room_students_cache(room_plans: List[Dict]) -> None:
+    for room_plan in room_plans:
+        if "_normalized_students" in room_plan:
+            continue
+        plan_data = room_plan.get("plan_data") or {}
+        room_plan["_normalized_students"] = _normalize_room_students(plan_data)
 
 
 def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_override: str = "") -> None:
@@ -994,7 +1003,7 @@ def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_overr
             cell.border = thin_border
 
         current_row += 1
-        room_students = _normalize_room_students(plan_data)
+        room_students = room_plan.get("_normalized_students") or _normalize_room_students(plan_data)
         for row in room_students:
             values = [
                 row["sequence"],
@@ -1058,7 +1067,7 @@ def _build_room_summary_sheet(worksheet, room_plans: List[Dict], title_override:
         room_data = room_plan.get("room_data") or {}
         plan_data = room_plan.get("plan_data") or {}
         room_name = str(room_data.get("name") or "").strip() or "ROOM"
-        room_students = _normalize_room_students(plan_data)
+        room_students = room_plan.get("_normalized_students") or _normalize_room_students(plan_data)
 
         batch_counts: Dict[str, int] = {}
         for student in room_students:

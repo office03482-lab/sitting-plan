@@ -273,7 +273,21 @@ def user_has_permission(user: User, permission: str) -> bool:
 def require_permissions(*permissions: str) -> Callable[[User], User]:
     normalized = [item.strip().lower() for item in permissions if item and item.strip()]
 
-    def dependency(user: User = Depends(get_authenticated_user)) -> User:
+    def dependency(request: Request, user: User = Depends(get_authenticated_user)) -> User:
+        granted_permissions = decode_user_permissions(user)
+        logger.info(
+            "auth.permission_check",
+            extra={
+                "path": str(request.url.path),
+                "method": request.method,
+                "user_id": str(getattr(user, "id", "")),
+                "role": str(getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))),
+                "required_permissions": normalized,
+                "granted_permissions": granted_permissions,
+                "username": getattr(user, "username", "") or "",
+                "email": getattr(user, "email", "") or "",
+            },
+        )
         if user.role == UserRole.ADMIN:
             return user
         if not normalized:
@@ -283,12 +297,15 @@ def require_permissions(*permissions: str) -> Callable[[User], User]:
         logger.warning(
             "auth.permission_denied",
             extra={
+                "path": str(request.url.path),
+                "method": request.method,
                 "user_id": str(getattr(user, "id", "")),
                 "role": str(getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))),
                 "required_permissions": normalized,
-                "granted_permissions": decode_user_permissions(user),
+                "granted_permissions": granted_permissions,
                 "username": getattr(user, "username", "") or "",
                 "email": getattr(user, "email", "") or "",
+                "failure_reason": "missing_required_permission",
             },
         )
         raise HTTPException(
@@ -300,8 +317,20 @@ def require_permissions(*permissions: str) -> Callable[[User], User]:
 
 
 def require_admin_actor(
+    request: Request,
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ) -> Dict[str, str]:
     if actor["role"] != UserRole.ADMIN.value:
+        logger.warning(
+            "auth.admin_actor_denied",
+            extra={
+                "path": str(request.url.path),
+                "method": request.method,
+                "actor_user_id": str(actor.get("user_id") or ""),
+                "actor_profile_id": str(actor.get("profile_id") or ""),
+                "actor_role": str(actor.get("role") or ""),
+                "failure_reason": "actor_not_admin",
+            },
+        )
         raise HTTPException(status_code=403, detail="Only admin can manage users")
     return actor

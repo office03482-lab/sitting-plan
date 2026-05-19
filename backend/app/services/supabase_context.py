@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import HTTPException, Query, Depends
+from fastapi import HTTPException, Query, Depends, Request
 
 from app.config import settings
 from app.services.supabase_admin import get_supabase_admin_client
 from app.middleware.auth import get_authenticated_actor_context
 
+logger = logging.getLogger(__name__)
 
 LEGACY_SCHOOL_FALLBACK = "1"
 _PLACEHOLDER_SCHOOL_IDS = {"", "1", "none", "null", "undefined"}
@@ -83,7 +85,8 @@ def _lookup_school_id_from_memberships(profile_id: str) -> str:
 
 def resolve_school_id_from_actor(
     explicit_school_id: Any = Query(None, alias="school_id"),
-    actor: dict[str, Any] = Depends(get_authenticated_actor_context)
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    request: Request | None = None,
 ) -> str:
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
@@ -106,6 +109,19 @@ def resolve_school_id_from_actor(
     if is_legacy_sqlite_mode():
         return LEGACY_SCHOOL_FALLBACK
 
+    logger.warning(
+        "auth.school_context_denied",
+        extra={
+            "path": str(request.url.path) if request else "",
+            "method": request.method if request else "",
+            "actor_user_id": str(actor.get("user_id") or ""),
+            "actor_profile_id": str(actor.get("profile_id") or ""),
+            "actor_role": str(actor.get("role") or ""),
+            "actor_school_id": str(actor.get("school_id") or ""),
+            "explicit_school_id": _normalize_school_id_candidate(explicit_school_id),
+            "failure_reason": "valid_uuid_school_id_missing_from_context",
+        },
+    )
     raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
 
 
