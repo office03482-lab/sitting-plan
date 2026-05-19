@@ -144,11 +144,11 @@ def build_inventory_code(prefix: str, *parts: Optional[str]) -> str:
     return f"{prefix}-{base or prefix.lower()}-{uuid4().hex[:8]}"
 
 
-def ensure_school_context(db: Session, school_id: int = 1) -> School:
+def ensure_school_context(db: Session, school_id: int = 1) -> int:
     """Create a default admin user and school when running in local mode."""
-    school = db.query(School).filter(School.id == school_id).first()
-    if school:
-        return school
+    school_row = db.query(School.id).filter(School.id == school_id).first()
+    if school_row:
+        return school_id
 
     admin = db.query(User).filter(User.id == 1).first()
     if not admin:
@@ -173,8 +173,7 @@ def ensure_school_context(db: Session, school_id: int = 1) -> School:
     )
     db.add(school)
     db.commit()
-    db.refresh(school)
-    return school
+    return school_id
 
 
 def require_inventory_write(actor: Dict[str, str] = Depends(get_authenticated_actor_context)) -> Dict[str, str]:

@@ -338,10 +338,10 @@ def day_end(value: date | datetime) -> datetime:
     return datetime.combine(value, dt_time.max)
 
 
-def ensure_school_context(db: Session, school_id: int = 1) -> School:
-    school = db.query(School).filter(School.id == school_id).first()
-    if school:
-        return school
+def ensure_school_context(db: Session, school_id: int = 1) -> int:
+    school_row = db.query(School.id).filter(School.id == school_id).first()
+    if school_row:
+        return school_id
 
     admin = db.query(User).filter(User.id == 1).first()
     if not admin:
@@ -363,8 +363,7 @@ def ensure_school_context(db: Session, school_id: int = 1) -> School:
     )
     db.add(school)
     db.commit()
-    db.refresh(school)
-    return school
+    return school_id
 
 
 def resolve_teacher_for_actor(

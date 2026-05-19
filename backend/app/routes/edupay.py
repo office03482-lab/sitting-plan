@@ -73,9 +73,9 @@ def ensure_school_context(school_id: str):
 
         db = SessionLocal()
         try:
-            school = db.query(School).filter(School.id == school_id).first()
-            if school:
-                return school
+            school_row = db.query(School.id).filter(School.id == school_id).first()
+            if school_row:
+                return school_id
             raise HTTPException(status_code=404, detail="School not found")
         finally:
             db.close()

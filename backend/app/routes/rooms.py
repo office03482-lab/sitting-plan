@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def ensure_school_exists(db: Session, school_id: str) -> School:
+def ensure_school_exists(db: Session, school_id: str) -> str:
     """Bootstrap a default school/admin so room creation works on a fresh database."""
-    school = db.query(School).filter(School.id == school_id).first()
-    if school:
-        return school
+    school_row = db.query(School.id).filter(School.id == school_id).first()
+    if school_row:
+        return school_id
 
     admin_user = db.query(User).filter(User.id == 1).first()
     if not admin_user:
@@ -44,8 +44,7 @@ def ensure_school_exists(db: Session, school_id: str) -> School:
     )
     db.add(school)
     db.commit()
-    db.refresh(school)
-    return school
+    return school_id
 
 
 def serialize_room(room: Room) -> RoomResponse:

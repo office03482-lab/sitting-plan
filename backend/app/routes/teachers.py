@@ -27,8 +27,8 @@ async def create_teacher(
     Create a new teacher
     """
     # Ensure school exists
-    school = db.query(School).filter(School.id == school_id).first()
-    if not school:
+    school_row = db.query(School.id).filter(School.id == school_id).first()
+    if not school_row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="School not found"

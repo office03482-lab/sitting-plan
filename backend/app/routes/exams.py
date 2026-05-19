@@ -62,10 +62,10 @@ def serialize_legacy_exam_response(exam: Any) -> dict[str, Any]:
 
 
 
-def ensure_school_exists(db: Session, school_id: Any) -> School:
-    school = db.query(School).filter(School.id == school_id).first()
-    if school:
-        return school
+def ensure_school_exists(db: Session, school_id: Any) -> Any:
+    school_row = db.query(School.id).filter(School.id == school_id).first()
+    if school_row:
+        return school_id
 
     admin_user = db.query(User).filter(User.id == 1).first()
     if not admin_user:
@@ -84,8 +84,7 @@ def ensure_school_exists(db: Session, school_id: Any) -> School:
     school = School(id=school_id, name="Default School", admin_id=admin_user.id, is_active=True)
     db.add(school)
     db.commit()
-    db.refresh(school)
-    return school
+    return school_id
 
 
 def parse_legacy_exam_date(value: Any):
