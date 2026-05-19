@@ -158,7 +158,7 @@ app.include_router(
     tags=["Reports"],
     dependencies=[
         Depends(get_authenticated_user),
-        Depends(require_permissions("admin_office.reports", "admin_office.seating_plans")),
+        Depends(require_permissions("admin_office.reports", "admin_office.seating_generation", "admin_office.seating_plans")),
     ],
 )
 app.include_router(

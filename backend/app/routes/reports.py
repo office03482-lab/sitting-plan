@@ -1,12 +1,14 @@
 """
 Report generation routes
 """
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.middleware.auth import get_authenticated_actor_context
 from app.models import SeatingPlan, Student, Room, Invigilator, RoomInvigilator
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client
 from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
@@ -14,6 +16,7 @@ from app.utils.excel import create_multi_room_seating_export_excel, create_seati
 from app.utils.pdf import create_seating_report_pdf
 import json
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def parse_plan_batches(plan: SeatingPlan) -> list[str]:
@@ -337,16 +340,49 @@ async def export_all_rooms_excel(
     exam_id: str,
     plan_type: str | None = None,
     school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     """Export all seating plans for an exam into one workbook, one sheet per room."""
+    logger.info(
+        "reports.export_all_rooms_excel.request",
+        extra={
+            "school_id": school_id,
+            "actor_user_id": str(actor.get("user_id") or ""),
+            "actor_profile_id": str(actor.get("profile_id") or ""),
+            "actor_role": str(actor.get("role") or ""),
+            "exam_id": exam_id,
+            "plan_type": plan_type or "",
+            "mode": "legacy_sqlite" if is_legacy_sqlite_mode() else "supabase_native",
+        },
+    )
     if not is_legacy_sqlite_mode():
         room_plans = _build_supabase_room_plans(school_id, exam_id, plan_type)
         if not room_plans:
+            logger.warning(
+                "reports.export_all_rooms_excel.not_found",
+                extra={
+                    "school_id": school_id,
+                    "actor_user_id": str(actor.get("user_id") or ""),
+                    "exam_id": exam_id,
+                    "plan_type": plan_type or "",
+                    "failure_reason": "no_supabase_room_plans",
+                },
+            )
             raise HTTPException(status_code=404, detail="No seating plans found for this exam")
     else:
         normalized_exam_id = int(exam_id) if str(exam_id).isdigit() else None
         if normalized_exam_id is None:
+            logger.warning(
+                "reports.export_all_rooms_excel.not_found",
+                extra={
+                    "school_id": school_id,
+                    "actor_user_id": str(actor.get("user_id") or ""),
+                    "exam_id": exam_id,
+                    "plan_type": plan_type or "",
+                    "failure_reason": "invalid_legacy_exam_id",
+                },
+            )
             raise HTTPException(status_code=404, detail="No seating plans found for this exam")
 
         query = db.query(SeatingPlan).filter(SeatingPlan.exam_id == normalized_exam_id)
@@ -355,6 +391,16 @@ async def export_all_rooms_excel(
         plans = query.order_by(SeatingPlan.room_id.asc(), SeatingPlan.id.asc()).all()
 
         if not plans:
+            logger.warning(
+                "reports.export_all_rooms_excel.not_found",
+                extra={
+                    "school_id": school_id,
+                    "actor_user_id": str(actor.get("user_id") or ""),
+                    "exam_id": exam_id,
+                    "plan_type": plan_type or "",
+                    "failure_reason": "no_legacy_room_plans",
+                },
+            )
             raise HTTPException(status_code=404, detail="No seating plans found for this exam")
 
         room_plans = [build_enriched_room_plan(db, plan) for plan in plans]

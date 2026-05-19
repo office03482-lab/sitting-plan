@@ -1,6 +1,7 @@
 """
 Middleware and shared auth helpers.
 """
+import logging
 from typing import Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, UserRole
 from app.utils.auth import decode_token
+
+logger = logging.getLogger(__name__)
 
 
 async def verify_token(request: Request) -> dict:
@@ -277,6 +280,17 @@ def require_permissions(*permissions: str) -> Callable[[User], User]:
             return user
         if any(user_has_permission(user, permission) for permission in normalized):
             return user
+        logger.warning(
+            "auth.permission_denied",
+            extra={
+                "user_id": str(getattr(user, "id", "")),
+                "role": str(getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))),
+                "required_permissions": normalized,
+                "granted_permissions": decode_user_permissions(user),
+                "username": getattr(user, "username", "") or "",
+                "email": getattr(user, "email", "") or "",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this resource",
