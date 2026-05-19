@@ -84,9 +84,9 @@ def _lookup_school_id_from_memberships(profile_id: str) -> str:
 
 
 def resolve_school_id_from_actor(
+    request: Request,
     explicit_school_id: Any = Query(None, alias="school_id"),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
-    request: Request,
 ) -> str:
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
