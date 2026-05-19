@@ -1,13 +1,49 @@
 """
 PDF Report generation utilities
 """
+import json
+import logging
+from datetime import datetime
 from io import BytesIO
+from xml.sax.saxutils import escape
+
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib import colors
-from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _escape_paragraph_text(value) -> str:
+    return escape(_safe_text(value))
+
+
+def _safe_paragraph(elements: list, value, style, context: str) -> None:
+    try:
+        elements.append(Paragraph(_escape_paragraph_text(value), style))
+    except Exception:
+        logger.exception(
+            "reports.pdf.paragraph_failure",
+            extra={
+                "context": context,
+                "raw_type": type(value).__name__,
+                "raw_preview": _safe_text(value)[:500],
+            },
+        )
+        raise
 
 
 def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
@@ -49,12 +85,17 @@ def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
     )
     
     # Title
-    elements.append(Paragraph(f"Exam Seating Plan Report", title_style))
-    elements.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+    _safe_paragraph(elements, "Exam Seating Plan Report", title_style, "report_title")
+    _safe_paragraph(
+        elements,
+        f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        styles['Normal'],
+        "report_generated_at",
+    )
     elements.append(Spacer(1, 0.3*inch))
     
     # Room Information
-    elements.append(Paragraph("Exam and Room Details", heading_style))
+    _safe_paragraph(elements, "Exam and Room Details", heading_style, "exam_room_heading")
     batches = plan_data.get('batches') or []
     if not batches:
         batches = sorted({
@@ -65,24 +106,24 @@ def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
         })
 
     room_info = [
-        ['Exam', room_data.get('exam_name') or plan_data.get('exam', {}).get('name') or 'N/A'],
-        ['Exam Type/Subject', room_data.get('exam_subject') or plan_data.get('exam', {}).get('subject') or 'N/A'],
-        ['Plan Type', str(room_data.get('plan_type') or plan_data.get('plan_type') or 'N/A').title()],
-        ['Batches', ', '.join(batches) if batches else 'N/A'],
-        ['Room Name', room_data.get('name', 'N/A')],
-        ['Capacity', str(room_data.get('capacity', 'N/A'))],
-        ['Dimensions', f"{room_data.get('length_feet', 0)} ft x {room_data.get('width_feet', 0)} ft"],
-        ['Total Desks', str(room_data.get('num_benches', 'N/A'))],
+        [_safe_text('Exam'), _safe_text(room_data.get('exam_name') or plan_data.get('exam', {}).get('name') or 'N/A')],
+        [_safe_text('Exam Type/Subject'), _safe_text(room_data.get('exam_subject') or plan_data.get('exam', {}).get('subject') or 'N/A')],
+        [_safe_text('Plan Type'), _safe_text(str(room_data.get('plan_type') or plan_data.get('plan_type') or 'N/A').title())],
+        [_safe_text('Batches'), _safe_text(', '.join(_safe_text(batch) for batch in batches) if batches else 'N/A')],
+        [_safe_text('Room Name'), _safe_text(room_data.get('name', 'N/A'))],
+        [_safe_text('Capacity'), _safe_text(room_data.get('capacity', 'N/A'))],
+        [_safe_text('Dimensions'), _safe_text(f"{room_data.get('length_feet', 0)} ft x {room_data.get('width_feet', 0)} ft")],
+        [_safe_text('Total Desks'), _safe_text(room_data.get('num_benches', 'N/A'))],
     ]
     
     # Add invigilator information if available
     invigilator_data = room_data.get('invigilator')
     if invigilator_data:
         room_info.extend([
-            ['Invigilator', invigilator_data.get('name', 'Not Assigned')],
-            ['Staff ID', invigilator_data.get('staff_id', '')],
-            ['Phone', invigilator_data.get('phone', '')],
-            ['Email', invigilator_data.get('email', '')],
+            [_safe_text('Invigilator'), _safe_text(invigilator_data.get('name', 'Not Assigned'))],
+            [_safe_text('Staff ID'), _safe_text(invigilator_data.get('staff_id', ''))],
+            [_safe_text('Phone'), _safe_text(invigilator_data.get('phone', ''))],
+            [_safe_text('Email'), _safe_text(invigilator_data.get('email', ''))],
         ])
     
     room_table = Table(room_info, colWidths=[2*inch, 4*inch])
@@ -99,10 +140,16 @@ def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
     elements.append(Spacer(1, 0.3*inch))
     
     # Seating Details
-    elements.append(Paragraph("Seating Assignment", heading_style))
+    _safe_paragraph(elements, "Seating Assignment", heading_style, "seating_assignment_heading")
     
     # Build seating table
-    seating_data = [['Desk', 'Seat 1 (Name/Roll)', 'Batch', 'Seat 2 (Name/Roll)', 'Batch']]
+    seating_data = [[
+        _safe_text('Desk'),
+        _safe_text('Seat 1 (Name/Roll)'),
+        _safe_text('Batch'),
+        _safe_text('Seat 2 (Name/Roll)'),
+        _safe_text('Batch'),
+    ]]
     
     for i, (desk_id, students) in enumerate(plan_data.get('assignment', {}).items(), 1):
         if len(students) >= 1:
@@ -120,11 +167,11 @@ def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
             seat2_batch = '-'
 
         seating_data.append([
-            f"Desk {i}",
-            seat1_name[:25],  # Truncate for space
-            seat1_batch,
-            seat2_name[:25],
-            seat2_batch,
+            _safe_text(f"Desk {i}"),
+            _safe_text(seat1_name[:25]),  # Truncate for space
+            _safe_text(seat1_batch),
+            _safe_text(seat2_name[:25]),
+            _safe_text(seat2_batch),
         ])    
     # Create table - limited to 50 rows per page
     if len(seating_data) > 50:
@@ -151,6 +198,14 @@ def create_seating_report_pdf(plan_data: dict, room_data: dict) -> BytesIO:
         elements.append(table)
     
     # Build PDF
+    logger.info(
+        "reports.pdf.element_debug",
+        extra={
+            "element_count": len(elements),
+            "plan_id": _safe_text(plan_data.get("id") or room_data.get("plan_id")),
+            "room_id": _safe_text(room_data.get("id") or plan_data.get("room_id")),
+        },
+    )
     doc.build(elements)
     buffer.seek(0)
     
