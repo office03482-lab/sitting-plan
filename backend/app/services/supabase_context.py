@@ -86,7 +86,7 @@ def _lookup_school_id_from_memberships(profile_id: str) -> str:
 def resolve_school_id_from_actor(
     explicit_school_id: Any = Query(None, alias="school_id"),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
-    request: Request | None = None,
+    request: Request,
 ) -> str:
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
@@ -112,8 +112,8 @@ def resolve_school_id_from_actor(
     logger.warning(
         "auth.school_context_denied",
         extra={
-            "path": str(request.url.path) if request else "",
-            "method": request.method if request else "",
+            "path": str(request.url.path),
+            "method": request.method,
             "actor_user_id": str(actor.get("user_id") or ""),
             "actor_profile_id": str(actor.get("profile_id") or ""),
             "actor_role": str(actor.get("role") or ""),
