@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import logging
+import time
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +13,9 @@ from app.services.supabase_admin import get_supabase_admin_client
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
+MAX_STUDENT_LOOKUP = 5000
+ATTENDANCE_CHUNK_RETRY_COUNT = 2
+ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS = 0.35
 
 
 def _iso(value: Any) -> Any:
@@ -57,6 +61,63 @@ def _chunk_values(values: list[str], chunk_size: int) -> list[list[str]]:
         values[index : index + chunk_size]
         for index in range(0, len(values), chunk_size)
     ]
+
+
+def _execute_student_attendance_chunk(
+    school_id: str,
+    chunk_ids: list[str],
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    for attempt in range(1, ATTENDANCE_CHUNK_RETRY_COUNT + 1):
+        start = time.monotonic()
+        try:
+            query = (
+                get_supabase_admin_client()
+                .schema("attendance")
+                .table("student_attendance")
+                .select("id, school_id, student_id, subject_id, attendance_date, status, absence_reason, metadata, created_at")
+                .eq("school_id", school_id)
+            )
+            if date_from:
+                query = query.gte("attendance_date", date_from[:10])
+            if date_to:
+                query = query.lte("attendance_date", date_to[:10])
+            response = query.in_("student_id", chunk_ids).order("attendance_date", desc=True).execute()
+            duration_ms = round((time.monotonic() - start) * 1000)
+            rows = list(response.data or [])
+            logger.info(
+                "attendance.chunk.complete",
+                extra={
+                    "chunk_size": len(chunk_ids),
+                    "duration_ms": duration_ms,
+                    "row_count": len(rows),
+                    "attempt": attempt,
+                    "school_id": school_id,
+                },
+            )
+            return rows
+        except Exception as exc:
+            duration_ms = round((time.monotonic() - start) * 1000)
+            last_error = exc
+            logger.warning(
+                "attendance.chunk.failed",
+                extra={
+                    "chunk_size": len(chunk_ids),
+                    "duration_ms": duration_ms,
+                    "attempt": attempt,
+                    "school_id": school_id,
+                    "sample": chunk_ids[:3],
+                    "error_type": type(exc).__name__,
+                },
+            )
+            if attempt < ATTENDANCE_CHUNK_RETRY_COUNT:
+                time.sleep(ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS)
+    if last_error:
+        raise last_error
+    return []
 
 
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
@@ -431,7 +492,7 @@ def list_student_records(
     skip: int = 0,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    students = _fetch_students(school_id, limit=5000)
+    students = _fetch_students(school_id, limit=MAX_STUDENT_LOOKUP)
     batches = _fetch_batches(school_id)
     student_rows = [_serialize_student(row, batches) for row in students]
     filtered_students = [
@@ -455,6 +516,16 @@ def list_student_records(
     )
     if not student_ids:
         return []
+    if len(student_ids) > MAX_STUDENT_LOOKUP:
+        logger.warning(
+            "attendance.student_records.lookup_cap_reached",
+            extra={
+                "student_count": len(student_ids),
+                "max_student_lookup": MAX_STUDENT_LOOKUP,
+                "school_id": school_id,
+            },
+        )
+        student_ids = student_ids[:MAX_STUDENT_LOOKUP]
     student_id_chunks = _chunk_values(student_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE)
     logger.info(
         "attendance.student_records.chunking",
@@ -466,20 +537,27 @@ def list_student_records(
         },
     )
     rows: list[dict[str, Any]] = []
+    failed_chunks = 0
     for chunk in student_id_chunks:
-        query = (
-            get_supabase_admin_client()
-            .schema("attendance")
-            .table("student_attendance")
-            .select("id, school_id, student_id, subject_id, attendance_date, status, absence_reason, metadata, created_at")
-            .eq("school_id", school_id)
-        )
-        if date_from:
-            query = query.gte("attendance_date", date_from[:10])
-        if date_to:
-            query = query.lte("attendance_date", date_to[:10])
-        response = query.in_("student_id", chunk).order("attendance_date", desc=True).execute()
-        rows.extend(list(response.data or []))
+        try:
+            rows.extend(
+                _execute_student_attendance_chunk(
+                    school_id,
+                    chunk,
+                    date_from=date_from,
+                    date_to=date_to,
+                )
+            )
+        except Exception:
+            failed_chunks += 1
+            logger.exception(
+                "attendance.chunk.give_up",
+                extra={
+                    "chunk_size": len(chunk),
+                    "school_id": school_id,
+                    "sample": chunk[:3],
+                },
+            )
     subjects = {str(item.get("id")): item for item in _fetch_subjects(school_id)}
     student_lookup = {str(item.get("id")): item for item in filtered_students}
     payload = [
@@ -500,6 +578,15 @@ def list_student_records(
         }
         for row in rows
     ]
+    logger.info(
+        "attendance.student_records.response_size",
+        extra={
+            "student_count": len(student_ids),
+            "record_count": len(payload),
+            "failed_chunks": failed_chunks,
+            "school_id": school_id,
+        },
+    )
     return payload[skip : skip + limit]
 
 
