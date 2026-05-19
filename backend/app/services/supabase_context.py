@@ -83,6 +83,28 @@ def _lookup_school_id_from_memberships(profile_id: str) -> str:
     return ""
 
 
+def _lookup_school_id_from_exam(exam_id: str) -> str:
+    normalized_exam_id = _normalize_school_id_candidate(exam_id)
+    if not normalized_exam_id:
+        return ""
+    supabase = get_supabase_admin_client()
+    exam_response = (
+        supabase
+        .schema("exam")
+        .table("exams")
+        .select("id, school_id")
+        .eq("id", normalized_exam_id)
+        .limit(1)
+        .execute()
+    )
+    exams = list(exam_response.data or [])
+    if exams:
+        candidate = _normalize_school_id_candidate(exams[0].get("school_id"))
+        if candidate and not _is_placeholder_school_id(candidate):
+            return candidate
+    return ""
+
+
 def resolve_school_id_from_actor(
     request: Request,
     explicit_school_id: Any = Query(None, alias="school_id"),
@@ -123,6 +145,55 @@ def resolve_school_id_from_actor(
         },
     )
     raise HTTPException(status_code=403, detail="Valid UUID school_id missing from context")
+
+
+def resolve_school_id_from_exam_context(
+    request: Request,
+    exam_id: str,
+    explicit_school_id: Any = Query(None, alias="school_id"),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+) -> str:
+    actor_school_id = _resolve_school_id_from_actor_claims(actor)
+    if actor_school_id:
+        return actor_school_id
+
+    profile_id = _resolve_profile_id(actor)
+    if profile_id:
+        candidate = _lookup_school_id_from_profile(profile_id)
+        if candidate and not _is_placeholder_school_id(candidate):
+            return candidate
+
+        candidate = _lookup_school_id_from_memberships(profile_id)
+        if candidate and not _is_placeholder_school_id(candidate):
+            return candidate
+
+    if not is_legacy_sqlite_mode():
+        candidate = _lookup_school_id_from_exam(exam_id)
+        if candidate and not _is_placeholder_school_id(candidate):
+            return candidate
+
+    candidate = _normalize_school_id_candidate(explicit_school_id)
+    if candidate and not _is_placeholder_school_id(candidate):
+        return candidate
+
+    if is_legacy_sqlite_mode():
+        return LEGACY_SCHOOL_FALLBACK
+
+    logger.warning(
+        "auth.exam_school_context_denied",
+        extra={
+            "path": str(request.url.path),
+            "method": request.method,
+            "actor_user_id": str(actor.get("user_id") or ""),
+            "actor_profile_id": str(actor.get("profile_id") or ""),
+            "actor_role": str(actor.get("role") or ""),
+            "actor_school_id": str(actor.get("school_id") or ""),
+            "explicit_school_id": _normalize_school_id_candidate(explicit_school_id),
+            "exam_id": _normalize_school_id_candidate(exam_id),
+            "failure_reason": "unable_to_resolve_school_id_from_exam_context",
+        },
+    )
+    raise HTTPException(status_code=403, detail="Valid UUID school_id missing from exam context")
 
 
 def ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:

@@ -12,7 +12,7 @@ from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import SeatingPlan, Student, Room, Invigilator, RoomInvigilator
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client
-from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
+from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_exam_context
 from app.utils.excel import create_multi_room_seating_export_excel, create_seating_export_excel
 from app.utils.pdf import create_seating_report_pdf
 import json
@@ -407,7 +407,7 @@ async def export_excel(
 async def export_all_rooms_excel(
     exam_id: str,
     plan_type: str | None = None,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    school_id: str = Depends(resolve_school_id_from_exam_context),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
