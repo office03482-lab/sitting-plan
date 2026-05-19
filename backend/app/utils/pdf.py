@@ -27,13 +27,26 @@ def _safe_text(value) -> str:
     return str(value)
 
 
-def _escape_paragraph_text(value) -> str:
-    return escape(_safe_text(value))
+def safe_pdf_text(value) -> str:
+    text = _safe_text(value)
+    text = text.replace("\x00", "")
+    text = text.replace("\r", " ")
+    lines = [escape(segment) for segment in text.split("\n")]
+    return "<br/>".join(lines)
 
 
 def _safe_paragraph(elements: list, value, style, context: str) -> None:
+    sanitized_value = safe_pdf_text(value)
+    logger.info(
+        "reports.pdf.paragraph_payload",
+        extra={
+            "context": context,
+            "raw_type": type(value).__name__,
+            "preview": _safe_text(value)[:200],
+        },
+    )
     try:
-        elements.append(Paragraph(_escape_paragraph_text(value), style))
+        elements.append(Paragraph(sanitized_value, style))
     except Exception:
         logger.exception(
             "reports.pdf.paragraph_failure",
@@ -41,6 +54,7 @@ def _safe_paragraph(elements: list, value, style, context: str) -> None:
                 "context": context,
                 "raw_type": type(value).__name__,
                 "raw_preview": _safe_text(value)[:500],
+                "sanitized_preview": sanitized_value[:500],
             },
         )
         raise
