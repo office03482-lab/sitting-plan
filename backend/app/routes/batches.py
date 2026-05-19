@@ -9,10 +9,15 @@ from app.database import get_db
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.models import BatchTable, Student
 from app.schemas import BatchCreate, BatchUpdate, BatchResponse, BatchWithStudentCount, BatchReorderRequest
+from app.utils.academic_batches import looks_like_academic_batch_name
 # from app.middleware.auth import get_current_user  # Temporarily disabled
 from typing import List
 
 router = APIRouter(prefix="/api/batches", tags=["batches"])
+
+
+def _is_invalid_class_name(name: str | None, category: str | None) -> bool:
+    return (category or "batch").strip().lower() == "class" and looks_like_academic_batch_name(name)
 
 
 def _serialize_batch(batch: BatchTable, student_count: int) -> dict:
@@ -48,6 +53,11 @@ def create_batch(
     """
     # Check if batch already exists (case-insensitive)
     normalized_category = (batch.category or "batch").strip().lower() or "batch"
+    if _is_invalid_class_name(batch.name, normalized_category):
+        raise HTTPException(
+            status_code=400,
+            detail="Coaching batch names cannot be created as classes"
+        )
     existing_batch = db.query(BatchTable).filter(
         BatchTable.school_id == school_id,
         BatchTable.category == normalized_category,
@@ -113,6 +123,7 @@ def list_batches(
         batches = [
             batch for batch in batches
             if batch.name.strip().lower() not in regular_batch_names
+            and not looks_like_academic_batch_name(batch.name)
         ]
     
     result = []
@@ -183,6 +194,14 @@ def update_batch(
     try:
         old_name = batch.name
         previous_category = batch.category or "batch"
+        next_category = (batch_update.category or batch.category or "batch").strip().lower() or "batch"
+        next_name = batch_update.name.strip() if batch_update.name else batch.name
+
+        if _is_invalid_class_name(next_name, next_category):
+            raise HTTPException(
+                status_code=400,
+                detail="Coaching batch names cannot be saved as classes"
+            )
 
         # Check if new name already exists (if name is being changed)
         if batch_update.name and batch_update.name.strip() != batch.name:
@@ -190,7 +209,7 @@ def update_batch(
             existing = db.query(BatchTable).filter(
                 BatchTable.school_id == school_id,
                 BatchTable.id != batch_id,
-                BatchTable.category == (batch_update.category or batch.category or "batch"),
+                BatchTable.category == next_category,
                 BatchTable.name.ilike(normalized_name)
             ).first()
             
@@ -230,7 +249,7 @@ def update_batch(
                 )
 
         if batch_update.category is not None:
-            batch.category = (batch_update.category or "batch").strip().lower() or "batch"
+            batch.category = next_category
         
         if batch_update.syllabus is not None:
             batch.syllabus = batch_update.syllabus.strip() if batch_update.syllabus else None

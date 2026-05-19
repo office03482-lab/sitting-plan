@@ -28,6 +28,11 @@ from app.schemas import (
     StudentResponse,
     StudentUpdate,
 )
+from app.utils.academic_batches import (
+    is_class_only_upload_name,
+    looks_like_academic_batch_name,
+    split_batch_to_class_section,
+)
 from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 import re
@@ -40,55 +45,6 @@ def build_batch_code(batch_name: str, fallback_index: int) -> str:
     normalized = re.sub(r"[^A-Z0-9]+", "_", (batch_name or "").strip().upper()).strip("_")
     normalized = normalized[:32] if normalized else ""
     return normalized or f"BATCH_{fallback_index}"
-
-
-def looks_like_academic_batch_name(value: str | None) -> bool:
-    normalized = (value or "").strip().lower()
-    if not normalized:
-        return False
-
-    coaching_keywords = [
-        "med",
-        "medical",
-        "non med",
-        "non medical",
-        "newton",
-        "aiims",
-        "neet",
-        "jee",
-        "advance",
-        "adv",
-        "ssb",
-        "sure selection",
-        "dropper",
-        "pcm",
-        "pcb",
-        "batch",
-    ]
-    return any(keyword in normalized for keyword in coaching_keywords)
-
-
-def split_batch_to_class_section(batch_name: str | None) -> tuple[str | None, str | None]:
-    normalized = (batch_name or "").strip()
-    if not normalized:
-        return None, None
-
-    if "|" in normalized:
-        class_part, section_part = normalized.split("|", 1)
-        return class_part.strip() or None, section_part.strip() or None
-
-    if looks_like_academic_batch_name(normalized):
-        return None, None
-
-    simple_class_match = normalized.lower().replace(" ", "")
-    if (
-        simple_class_match in {"nursery", "lkg", "ukg"}
-        or simple_class_match.rstrip("abcdefghijklmnopqrstuvwxyz") != simple_class_match
-        or any(token in simple_class_match for token in ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th", "12th"])
-    ):
-        return normalized, None
-
-    return None, None
 
 
 def format_bulk_import_exception(exc: Exception) -> str:
@@ -430,7 +386,16 @@ async def import_students(
                 detail=f"Failed to load existing students or batches from Supabase: {format_bulk_import_exception(exc)}",
             ) from exc
 
-        batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches if batch.get("name")}
+        batch_by_name = {
+            str(batch["name"]).strip().lower(): batch
+            for batch in existing_batches
+            if batch.get("name") and str(batch.get("category") or "batch").strip().lower() != "class"
+        }
+        class_by_name = {
+            str(batch["name"]).strip().lower(): batch
+            for batch in existing_batches
+            if batch.get("name") and str(batch.get("category") or "").strip().lower() == "class"
+        }
         existing_roll_numbers = {
             str(student["roll_number"]).strip().lower()
             for student in existing_students
@@ -444,14 +409,46 @@ async def import_students(
 
         pending_batch_names: list[str] = []
         pending_batch_rows: list[dict[str, Any]] = []
+        pending_class_names: list[str] = []
+        pending_class_rows: list[dict[str, Any]] = []
 
         for student_data in valid_students:
             batch_name = str(student_data.get("batch") or "").strip()
             normalized_batch_name = batch_name.lower()
-            if not batch_name or normalized_batch_name in batch_by_name or normalized_batch_name in pending_batch_names:
+            if not batch_name:
                 continue
 
             class_name, section = split_batch_to_class_section(batch_name)
+            if is_class_only_upload_name(batch_name) and class_name:
+                normalized_class_name = class_name.lower()
+                if normalized_class_name in class_by_name or normalized_class_name in pending_class_names:
+                    continue
+
+                pending_class_names.append(normalized_class_name)
+                pending_class_rows.append(
+                    {
+                        "school_id": school_id,
+                        "batch_code": build_batch_code(class_name, len(pending_class_rows) + 1),
+                        "name": class_name,
+                        "category": "class",
+                        "class_name": class_name,
+                        "section": section,
+                        "academic_session": student_data.get("academic_session") or None,
+                        "stream": None,
+                        "syllabus": None,
+                        "display_order": len(existing_batches) + len(pending_batch_rows) + len(pending_class_rows),
+                        "metadata": {
+                            "source": "student_bulk_upload",
+                            "source_batch_value": batch_name,
+                        },
+                        "is_active": True,
+                    }
+                )
+                continue
+
+            if normalized_batch_name in batch_by_name or normalized_batch_name in pending_batch_names:
+                continue
+
             pending_batch_names.append(normalized_batch_name)
             pending_batch_rows.append(
                 {
@@ -474,8 +471,8 @@ async def import_students(
                 }
             )
 
-        if pending_batch_rows:
-            for batch_row in pending_batch_rows:
+        if pending_batch_rows or pending_class_rows:
+            for batch_row in [*pending_batch_rows, *pending_class_rows]:
                 batch_name = str(batch_row.get("name") or "").strip()
                 try:
                     insert_rows(supabase, "batches", [batch_row])
@@ -491,9 +488,14 @@ async def import_students(
                         batch_by_name = {
                             str(batch["name"]).strip().lower(): batch
                             for batch in existing_batches
-                            if batch.get("name")
+                            if batch.get("name") and str(batch.get("category") or "batch").strip().lower() != "class"
                         }
-                        if batch_name.lower() in batch_by_name:
+                        class_by_name = {
+                            str(batch["name"]).strip().lower(): batch
+                            for batch in existing_batches
+                            if batch.get("name") and str(batch.get("category") or "").strip().lower() == "class"
+                        }
+                        if batch_name.lower() in batch_by_name or batch_name.lower() in class_by_name:
                             continue
                     except Exception:
                         pass
@@ -509,7 +511,11 @@ async def import_students(
                 select="id,name,batch_code,class_name,section,category",
                 filters={"school_id": school_id},
             )
-            batch_by_name = {str(batch["name"]).strip().lower(): batch for batch in existing_batches if batch.get("name")}
+            batch_by_name = {
+                str(batch["name"]).strip().lower(): batch
+                for batch in existing_batches
+                if batch.get("name") and str(batch.get("category") or "batch").strip().lower() != "class"
+            }
 
         pending_students: list[dict[str, Any]] = []
         pending_admission_numbers: set[str] = set()
@@ -542,6 +548,8 @@ async def import_students(
             batch_name = str(student_data.get("batch") or "").strip()
             matched_batch = batch_by_name.get(batch_name.lower())
             class_name, section = split_batch_to_class_section(batch_name)
+            if is_class_only_upload_name(batch_name) and class_name:
+                matched_batch = None
 
             pending_students.append(
                 {

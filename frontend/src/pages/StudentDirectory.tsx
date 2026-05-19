@@ -5,6 +5,7 @@ import { Camera, ChevronLeft, Eye, Pencil, Search, Trash2, X } from 'lucide-reac
 import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
 import type { Batch, Student } from '@types';
+import { getSafeStudentClassName, looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
   readEduPayAdmissionRequests,
   readEduPayStudentProfiles,
@@ -35,36 +36,6 @@ type EditFormState = {
 };
 
 const safeText = (value: unknown) => (value == null ? '' : String(value).trim());
-const looksLikeBatchName = (value: string) => {
-  const normalized = safeText(value).toLowerCase();
-  if (!normalized) return false;
-  return [
-    'med',
-    'medical',
-    'non med',
-    'non medical',
-    'newton',
-    'aiims',
-    'neet',
-    'jee',
-    'advance',
-    'adv',
-    'ssb',
-    'sure selection',
-    'dropper',
-    'pcm',
-    'pcb',
-    'batch',
-  ].some((keyword) => normalized.includes(keyword));
-};
-const getSafeStudentClassName = (student: Pick<Student, 'class_name' | 'batch'>) => {
-  const className = safeText(student.class_name);
-  const batchName = safeText(student.batch);
-  if (!className) return '';
-  if (looksLikeBatchName(className)) return '';
-  if (batchName && className.toLowerCase() === batchName.toLowerCase()) return '';
-  return className;
-};
 const getStudentClassLabel = (student: Pick<Student, 'class_name' | 'section' | 'batch'>) =>
   [getSafeStudentClassName(student), safeText(student.section)].filter(Boolean).join(' | ');
 
@@ -190,9 +161,11 @@ export default function StudentDirectory() {
       const regularBatchNames = new Set(
         (Array.isArray(batchResponse.data) ? batchResponse.data : []).map((batch) => safeText(batch.name).toLowerCase()),
       );
-      const nextClassBatches = (Array.isArray(classResponse.data) ? classResponse.data : []).filter(
-        (batch) => !regularBatchNames.has(safeText(batch.name).toLowerCase()),
-      );
+        const nextClassBatches = (Array.isArray(classResponse.data) ? classResponse.data : []).filter(
+          (batch) =>
+            !regularBatchNames.has(safeText(batch.name).toLowerCase()) &&
+            !looksLikeAcademicBatchName(batch.name),
+        );
       setClassBatches(nextClassBatches);
     } catch {
       setClassBatches([]);

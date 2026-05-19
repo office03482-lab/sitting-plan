@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
 import { apiService } from '@services/api';
 import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
+import { looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
   readEduPayAdmissionRequests,
   upsertEduPayAdmissionRequest,
@@ -1401,7 +1402,11 @@ export default function StudentManagement() {
         batches
           .filter((batch) => batch.category === 'class')
           .map((batch) => batch.name)
-          .filter((name) => !regularBatchNamesLower.has(name.trim().toLowerCase()))
+          .filter(
+            (name) =>
+              !regularBatchNamesLower.has(name.trim().toLowerCase()) &&
+              !looksLikeAcademicBatchName(name)
+          )
       )
     )
   );
