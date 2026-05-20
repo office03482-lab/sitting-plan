@@ -62,6 +62,9 @@ const studentRecordStatusBaseClass =
   'inline-flex w-fit items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold leading-none';
 const deleteAllButtonClass = 'rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700';
 const attendanceStudentListPageSize = 200;
+const attendanceStudentRecordPageSize = 100;
+const attendanceStudentDashboardPageSize = 200;
+const attendanceUiDebounceMs = 350;
 
 const initialHolidayForm = { title: '', holiday_date: '', description: '' };
 const initialLeaveForm = {
@@ -662,7 +665,6 @@ function AttendanceManagementContent() {
       setStudents(nextStudents);
       setSubjects(toArray<AttendanceSubject>(subjectsRes.data));
       setStudentRecords(toArray<StudentAttendanceRecord>(recordsRes.data));
-      void loadTodayStudentDashboard(studentFilters.dashboard_date);
       if (overview) {
         hydrateDefaults(
           overview,
@@ -810,7 +812,10 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (activeTab !== 'student' || !loadedTabs.student) return;
-    loadTodayStudentDashboard(studentFilters.dashboard_date);
+    const timeoutId = window.setTimeout(() => {
+      void loadTodayStudentDashboard(studentFilters.dashboard_date);
+    }, attendanceUiDebounceMs);
+    return () => window.clearTimeout(timeoutId);
   }, [studentFilters.dashboard_date, activeTab, loadedTabs.student]);
 
   useEffect(() => {
@@ -974,12 +979,18 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (activeTab !== 'student' || !loadedTabs.student) return;
-    void loadBatchAttendanceContext();
+    const timeoutId = window.setTimeout(() => {
+      void loadBatchAttendanceContext();
+    }, attendanceUiDebounceMs);
+    return () => window.clearTimeout(timeoutId);
   }, [activeTab, loadedTabs.student, selectedBatchParts.className, selectedBatchParts.section, studentFilters.date]);
 
   useEffect(() => {
     if (activeTab !== 'student' || !loadedTabs.student) return;
-    void loadStudentRecords();
+    const timeoutId = window.setTimeout(() => {
+      void loadStudentRecords();
+    }, attendanceUiDebounceMs);
+    return () => window.clearTimeout(timeoutId);
   }, [
     activeTab,
     loadedTabs.student,
@@ -1007,7 +1018,10 @@ function AttendanceManagementContent() {
       setStudentCalendarRecords([]);
       return;
     }
-    void loadStudentCalendarRecords();
+    const timeoutId = window.setTimeout(() => {
+      void loadStudentCalendarRecords();
+    }, attendanceUiDebounceMs);
+    return () => window.clearTimeout(timeoutId);
   }, [
     activeTab,
     loadedTabs.student,
@@ -1551,7 +1565,7 @@ function AttendanceManagementContent() {
         class_name: recordBatchParts.className || undefined,
         section: recordBatchParts.section || undefined,
         student_name: studentFilters.recordStudentName || undefined,
-        limit: 500,
+        limit: attendanceStudentRecordPageSize,
       });
       setStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
@@ -1573,7 +1587,7 @@ function AttendanceManagementContent() {
         section: calendarBatchParts.section,
         date_from: monthRange.from || undefined,
         date_to: monthRange.to || undefined,
-        limit: 500,
+        limit: attendanceStudentDashboardPageSize,
       });
       const exactMatchRecords = toArray<StudentAttendanceRecord>(response.data);
       if (exactMatchRecords.length) {
@@ -1581,32 +1595,8 @@ function AttendanceManagementContent() {
         setStudentCalendarRecords(exactMatchRecords);
         return;
       }
-
-      const fallbackRows: StudentAttendanceRecord[] = [];
-      let skip = 0;
-      while (true) {
-        const fallbackResponse = await apiService.listStudentAttendanceRecords({
-          school_id: 1,
-          date_from: monthRange.from || undefined,
-          date_to: monthRange.to || undefined,
-          skip,
-          limit: 500,
-        });
-        const chunk = toArray<StudentAttendanceRecord>(fallbackResponse.data);
-        if (!chunk.length) break;
-        fallbackRows.push(...chunk);
-        if (chunk.length < 500) break;
-        skip += 500;
-      }
-
-      const normalizedBatchKey = normalizeBatchComparisonKey(calendarBatchLabel);
-      const matchedFallbackRows = fallbackRows.filter((record) => {
-        if (!normalizedBatchKey) return true;
-        return normalizeBatchComparisonKey(`${record.class_name} | ${record.section}`) === normalizedBatchKey;
-      });
-      const useMonthFallback = matchedFallbackRows.length === 0 && fallbackRows.length > 0;
-      setStudentCalendarUsingMonthFallback(useMonthFallback);
-      setStudentCalendarRecords(useMonthFallback ? fallbackRows : matchedFallbackRows);
+      setStudentCalendarUsingMonthFallback(false);
+      setStudentCalendarRecords([]);
     } catch (error: any) {
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
@@ -1616,22 +1606,13 @@ function AttendanceManagementContent() {
 
   const loadTodayStudentDashboard = async (targetDate: string = studentFilters.dashboard_date) => {
     try {
-      const rows: StudentAttendanceRecord[] = [];
-      let skip = 0;
-      while (true) {
-        const response = await apiService.listStudentAttendanceRecords({
-          school_id: 1,
-          date_from: targetDate,
-          date_to: targetDate,
-          skip,
-          limit: 500,
-        });
-        const chunk = toArray<StudentAttendanceRecord>(response.data);
-        rows.push(...chunk);
-        if (chunk.length < 500) break;
-        skip += 500;
-      }
-      setTodayStudentRecords(rows);
+      const response = await apiService.listStudentAttendanceRecords({
+        school_id: 1,
+        date_from: targetDate,
+        date_to: targetDate,
+        limit: attendanceStudentDashboardPageSize,
+      });
+      setTodayStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Aaj ka batch dashboard load nahi hua.') });
     }

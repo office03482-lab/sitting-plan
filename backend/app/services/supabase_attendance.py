@@ -9,16 +9,22 @@ from typing import Any
 from uuid import UUID
 
 from app.attendance.contracts import sanitize_response_payload
+from app.config import settings
 from app.services.supabase_admin import get_supabase_admin_client
 
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
-MAX_STUDENT_LOOKUP = 5000
+MAX_STUDENT_LOOKUP = 1000
+MAX_STAFF_LOOKUP = 1000
 ATTENDANCE_CHUNK_RETRY_COUNT = 2
 ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS = 0.35
 BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS = 45
 BATCH_CURRENT_CLASS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+ATTENDANCE_OVERVIEW_CACHE_TTL_SECONDS = 60
+ATTENDANCE_OVERVIEW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS = 120
+ATTENDANCE_SUBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _iso(value: Any) -> Any:
@@ -289,6 +295,25 @@ def _set_cached_batch_current_class(cache_key: str, payload: dict[str, Any]) -> 
         time.monotonic() + BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS,
         dict(payload),
     )
+
+
+def _get_ttl_cache_entry(cache: dict[str, tuple[float, Any]], cache_key: str) -> Any | None:
+    cached = cache.get(cache_key)
+    if not cached:
+        return None
+    expires_at, payload = cached
+    if expires_at <= time.monotonic():
+        cache.pop(cache_key, None)
+        return None
+    if isinstance(payload, dict):
+        return dict(payload)
+    if isinstance(payload, list):
+        return list(payload)
+    return payload
+
+
+def _set_ttl_cache_entry(cache: dict[str, tuple[float, Any]], cache_key: str, payload: Any, ttl_seconds: int) -> None:
+    cache[cache_key] = (time.monotonic() + ttl_seconds, payload)
 
 
 def _fetch_timetable_candidates_from_normalized_batches(
@@ -639,6 +664,79 @@ def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
     return {str(item["id"]): item for item in list(response.data or [])}
 
 
+def _count_active_rows(
+    table_name: str,
+    school_id: str,
+    *,
+    schema_name: str | None = None,
+) -> int:
+    client = get_supabase_admin_client()
+    query = (
+        (client.schema(schema_name).table(table_name) if schema_name else client.table(table_name))
+        .select("id", count="exact")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .limit(1)
+    )
+    response = query.execute()
+    return int(getattr(response, "count", 0) or 0)
+
+
+def get_students_count(school_id: str) -> int:
+    return _count_active_rows("students", school_id)
+
+
+def get_staff_count(school_id: str) -> int:
+    return _count_active_rows("staff_members", school_id)
+
+
+def get_student_batch_summary(school_id: str) -> list[dict[str, Any]]:
+    response = (
+        get_supabase_admin_client()
+        .table("batches")
+        .select("id, name, class_name, section")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("class_name")
+        .order("section")
+        .execute()
+    )
+    rows = list(response.data or [])
+    seen: set[tuple[str, str]] = set()
+    summary: list[dict[str, Any]] = []
+    for row in rows:
+        class_name = _normalize(row.get("class_name")) or split_batch_to_class_section(row.get("name"))[0]
+        section = _normalize(row.get("section")) or split_batch_to_class_section(row.get("name"))[1]
+        key = (_cf(class_name), _cf(section))
+        if not class_name or key in seen:
+            continue
+        seen.add(key)
+        summary.append(
+            {
+                "class_name": class_name,
+                "section": section or "A",
+                "batch_name": row.get("name") or f"{class_name} | {section or 'A'}",
+            }
+        )
+    return summary
+
+
+def _fetch_department_options(school_id: str) -> list[str]:
+    response = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .select("department, designation")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .execute()
+    )
+    values = {
+        _normalize(row.get("department")) or _normalize(row.get("designation"))
+        for row in list(response.data or [])
+    }
+    return sorted(item for item in values if item)
+
+
 def _fetch_staff_members(
     school_id: str,
     *,
@@ -648,41 +746,33 @@ def _fetch_staff_members(
     skip: int = 0,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    response = (
+    safe_skip = max(skip, 0)
+    safe_limit = max(limit, 1)
+    query = (
         get_supabase_admin_client()
         .table("staff_members")
         .select("id, school_id, employee_code, full_name, email, phone, staff_type, department, designation, is_active, created_at, updated_at")
         .eq("school_id", school_id)
         .eq("is_active", True)
         .order("full_name")
-        .execute()
     )
-    rows = list(response.data or [])
-    search_term = _cf(search)
-    department_term = _cf(department)
-    source_value = _cf(source or "all")
-    filtered: list[dict[str, Any]] = []
-    for row in rows:
-        staff_type = _cf(row.get("staff_type"))
-        if source_value == "teachers" and staff_type != "teaching":
-            continue
-        if source_value == "invigilators" and staff_type not in {"invigilator", "non_teaching", "admin", "contract"}:
-            continue
-        if search_term:
-            haystack = " ".join(
-                [
-                    _normalize(row.get("full_name")),
-                    _normalize(row.get("employee_code")),
-                    _normalize(row.get("department")),
-                    _normalize(row.get("designation")),
-                ]
-            ).casefold()
-            if search_term not in haystack:
-                continue
-        if department_term and department_term not in _cf(row.get("department")) and department_term not in _cf(row.get("designation")):
-            continue
-        filtered.append(row)
-    return filtered[skip : skip + limit]
+    normalized_search = _normalize(search)
+    if normalized_search:
+        escaped = _escape_postgrest_like(normalized_search)
+        query = query.or_(
+            f"full_name.ilike.%{escaped}%,employee_code.ilike.%{escaped}%,department.ilike.%{escaped}%,designation.ilike.%{escaped}%"
+        )
+    normalized_department = _normalize(department)
+    if normalized_department:
+        escaped_department = _escape_postgrest_like(normalized_department)
+        query = query.or_(f"department.ilike.%{escaped_department}%,designation.ilike.%{escaped_department}%")
+    normalized_source = _cf(source or "all")
+    if normalized_source == "teachers":
+        query = query.eq("staff_type", "teaching")
+    elif normalized_source == "invigilators":
+        query = query.in_("staff_type", ["invigilator", "non_teaching", "admin", "contract"])
+    response = query.range(safe_skip, safe_skip + safe_limit - 1).execute()
+    return list(response.data or [])
 
 
 def _fetch_subjects(school_id: str) -> list[dict[str, Any]]:
@@ -841,29 +931,42 @@ def _serialize_staff(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_overview(school_id: str) -> dict[str, Any]:
-    students = _fetch_students(school_id, limit=5000)
-    staff = _fetch_staff_members(school_id, limit=5000)
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_OVERVIEW_CACHE, school_id)
+    if cached_payload:
+        logger.info("attendance.overview.cache_hit", extra={"school_id": school_id})
+        return cached_payload
+
+    started_at = time.monotonic()
     batches = _fetch_batches(school_id)
-    subjects = _fetch_subjects(school_id)
-    notifications = _fetch_notifications(school_id)
-    holidays = _fetch_holidays(school_id)
-    settings = _fetch_settings(school_id)
-
-    class_options = sorted({item["class_name"] for item in [_serialize_student(row, batches) for row in students] if item["class_name"]})
-    section_options = sorted({item["section"] for item in [_serialize_student(row, batches) for row in students] if item["section"]})
-    department_options = sorted({_serialize_staff(row)["department"] for row in staff if _serialize_staff(row)["department"]})
-
-    return {
-        "student_count": len(students),
-        "staff_count": len(staff),
-        "class_options": class_options,
-        "section_options": section_options,
-        "subject_options": [_serialize_subject(row, batches) for row in subjects],
-        "department_options": department_options,
-        "notifications": [_serialize_notification(row) for row in notifications],
-        "holidays": [_serialize_holiday(row) for row in holidays],
-        "settings": settings,
+    batch_summary = get_student_batch_summary(school_id)
+    subjects = list_subjects(school_id)
+    notifications = [_serialize_notification(row) for row in _fetch_notifications(school_id)]
+    holidays = [_serialize_holiday(row) for row in _fetch_holidays(school_id)]
+    settings_payload = _fetch_settings(school_id)
+    payload = {
+        "student_count": get_students_count(school_id),
+        "staff_count": get_staff_count(school_id),
+        "class_options": sorted({item["class_name"] for item in batch_summary if item.get("class_name")}),
+        "section_options": sorted({item["section"] for item in batch_summary if item.get("section")}),
+        "subject_options": subjects,
+        "department_options": _fetch_department_options(school_id),
+        "notifications": notifications,
+        "holidays": holidays,
+        "settings": settings_payload,
     }
+    _set_ttl_cache_entry(ATTENDANCE_OVERVIEW_CACHE, school_id, payload, ATTENDANCE_OVERVIEW_CACHE_TTL_SECONDS)
+    logger.info(
+        "attendance.overview.complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "student_count": payload["student_count"],
+            "staff_count": payload["staff_count"],
+            "batch_count": len(batch_summary),
+            "subject_count": len(subjects),
+        },
+    )
+    return payload
 
 
 def list_students(school_id: str, *, skip: int = 0, limit: int = 100, search: str | None = None) -> list[dict[str, Any]]:
@@ -898,11 +1001,17 @@ def list_staff(
 
 
 def list_subjects(school_id: str) -> list[dict[str, Any]]:
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_SUBJECTS_CACHE, school_id)
+    if cached_payload:
+        logger.info("attendance.subjects.cache_hit", extra={"school_id": school_id})
+        return cached_payload
     batches = _fetch_batches(school_id)
-    return sanitize_response_payload(
+    payload = sanitize_response_payload(
         [_serialize_subject(row, batches) for row in _fetch_subjects(school_id)],
         log_label="attendance.list_subjects",
     )
+    _set_ttl_cache_entry(ATTENDANCE_SUBJECTS_CACHE, school_id, payload, ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS)
+    return payload
 
 
 def get_student_marking(
@@ -1071,6 +1180,8 @@ def list_student_records(
                 "has_batch_filters": bool(batch_filters),
             },
         )
+        if settings.is_production:
+            raise
 
     students = _fetch_students(school_id, limit=MAX_STUDENT_LOOKUP)
     batches = _fetch_batches(school_id)
@@ -1192,7 +1303,14 @@ def list_staff_records(
     skip: int = 0,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    staff_rows = list_staff(school_id, skip=0, limit=5000, department=department)
+    lookup_limit = max(min(max(skip + limit, 200), MAX_STAFF_LOOKUP), limit)
+    staff_rows = list_staff(
+        school_id,
+        skip=0,
+        limit=lookup_limit,
+        search=staff_name,
+        department=department,
+    )
     filtered_staff = [
         row
         for row in staff_rows
@@ -1248,7 +1366,7 @@ def get_staff_dashboard(
         date_from=date_from,
         date_to=date_to,
         skip=0,
-        limit=5000,
+        limit=1000,
     )
     present_count = sum(1 for row in records if row.get("status") == "present")
     absent_count = sum(1 for row in records if row.get("status") == "absent")
