@@ -1719,6 +1719,21 @@ class ApiService {
     return { data: students } as { data: Student[] };
   }
 
+  async getStudentsCount() {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: 0 } as { data: number };
+    }
+
+    const { count, error } = await supabase
+      .from('students')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', scopedSchoolId);
+
+    if (error) throw error;
+    return { data: Number(count || 0) } as { data: number };
+  }
+
   async getStudent(studentId: number) {
     const resolvedId = this.resolveMappedId('student', studentId);
     const { data, error } = await supabase
@@ -2204,6 +2219,26 @@ class ApiService {
     return { data: (data || []).map((room: any) => this.mapSupabaseRoomToLegacy(room)) } as { data: Room[] };
   }
 
+  async getRoomsSummary() {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: { count: 0, totalCapacity: 0 } } as { data: { count: number; totalCapacity: number } };
+    }
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('capacity')
+      .eq('school_id', scopedSchoolId);
+    if (error) throw error;
+
+    const rooms = Array.isArray(data) ? data : [];
+    return {
+      data: {
+        count: rooms.length,
+        totalCapacity: rooms.reduce((sum: number, room: any) => sum + Number(room?.capacity || 0), 0),
+      },
+    } as { data: { count: number; totalCapacity: number } };
+  }
+
   async getRoom(roomId: number) {
     return this.api.get<Room>(`/rooms/${roomId}`);
   }
@@ -2621,6 +2656,22 @@ class ApiService {
     return { data: (data || []).map((item: any) => this.mapSupabaseTeacherToLegacy(item)) } as { data: Teacher[] };
   }
 
+  async getTeachersCount() {
+    const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: 0 } as { data: number };
+    }
+
+    const { count, error } = await supabase
+      .from('staff_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', scopedSchoolId)
+      .eq('staff_type', 'teaching');
+
+    if (error) throw error;
+    return { data: Number(count || 0) } as { data: number };
+  }
+
   async getTeacher(teacherId: number) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
     const { data, error } = await supabase.from('staff_members').select('*').eq('id', resolvedId).single();
@@ -2743,6 +2794,23 @@ class ApiService {
       },
     });
     return { data: toArray<any>(response.data).map((item) => this.mapTimetableViewToClient(item)) } as { data: TimetableView[] };
+  }
+
+  async getTimetableEntriesCount() {
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
+    if (!scopedSchoolId) {
+      return { data: 0 } as { data: number };
+    }
+
+    const { count, error } = await supabase
+      .schema('scheduling')
+      .from('timetable_entries')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', scopedSchoolId)
+      .eq('is_active', true);
+
+    if (error) throw error;
+    return { data: Number(count || 0) } as { data: number };
   }
 
   async exportTimetableReport(params: {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Upload, Download, CheckCircle, XCircle, Eye, Users, MapPin, AlertTriangle, Trash2 } from 'lucide-react';
 import { apiService } from '@services/api';
-import type { RoomLayout, SeatingPlan, Student } from '@types';
+import type { Batch, RoomLayout, SeatingPlan } from '@types';
 
 
 interface ImportResult {
@@ -26,7 +26,8 @@ export default function SeatingPlanManagement() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [students, setStudents] = useState<Student[]>([]);
+  const [studentCount, setStudentCount] = useState(0);
+  const [batchCount, setBatchCount] = useState(0);
   const [plans, setPlans] = useState<SeatingPlan[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<SeatingPlan | null>(null);
   const [previewLayout, setPreviewLayout] = useState<RoomLayout | null>(null);
@@ -38,17 +39,40 @@ export default function SeatingPlanManagement() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    loadStudents();
+    loadSummary();
     loadPlans();
   }, []);
 
-  const loadStudents = async () => {
+  const loadSummary = async () => {
     setUploading(true);
     try {
-      const response = await apiService.listStudents();
-      setStudents(response.data);
+      const [studentsRes, batchesRes] = await Promise.allSettled([
+        apiService.getStudentsCount(),
+        apiService.listBatches(),
+      ]);
+
+      if (studentsRes.status === 'fulfilled') {
+        setStudentCount(Number(studentsRes.value.data || 0));
+      } else {
+        console.error('Failed to load students count:', studentsRes.reason);
+        setStudentCount(0);
+      }
+
+      if (batchesRes.status === 'fulfilled') {
+        const rows = Array.isArray(batchesRes.value.data) ? batchesRes.value.data : [];
+        const uniqueBatchNames = new Set(
+          rows
+            .filter((batch: Batch) => batch.is_active !== false)
+            .map((batch: Batch) => String(batch.name || '').trim())
+            .filter(Boolean)
+        );
+        setBatchCount(uniqueBatchNames.size);
+      } else {
+        console.error('Failed to load batches summary:', batchesRes.reason);
+        setBatchCount(0);
+      }
     } catch (error) {
-      console.error('Failed to load students:', error);
+      console.error('Failed to load seating summary:', error);
     } finally {
       setUploading(false);
     }
@@ -169,7 +193,7 @@ export default function SeatingPlanManagement() {
       }
 
       // If successful, reload students and show success
-      await loadStudents();
+      await loadSummary();
       await loadPlans();
       setImportResult(response.data);
       setSelectedFile(null);
@@ -298,11 +322,11 @@ export default function SeatingPlanManagement() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-white rounded-lg shadow-md p-5">
             <p className="text-sm text-gray-600">Available Students</p>
-            <p className="text-2xl font-bold text-gray-900">{students.length}</p>
+            <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
           </div>
           <div className="bg-white rounded-lg shadow-md p-5">
             <p className="text-sm text-gray-600">Batches</p>
-            <p className="text-2xl font-bold text-gray-900">{new Set(students.map((student) => student.batch)).size}</p>
+            <p className="text-2xl font-bold text-gray-900">{batchCount}</p>
           </div>
           <div className="bg-white rounded-lg shadow-md p-5">
             <p className="text-sm text-gray-600">Seat Source</p>

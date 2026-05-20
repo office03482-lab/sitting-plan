@@ -19,6 +19,8 @@ const Reports: React.FC = () => {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [seatingPlans, setSeatingPlans] = useState<SeatingPlan[]>([]);
+  const [teacherCount, setTeacherCount] = useState(0);
+  const [studentCount, setStudentCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -49,27 +51,27 @@ const Reports: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [teachersRes, studentsRes, plansRes] = await Promise.allSettled([
-        apiService.listTeachers(),
-        apiService.listStudents(),
+      const [teachersCountRes, studentsCountRes, plansRes] = await Promise.allSettled([
+        apiService.getTeachersCount(),
+        apiService.getStudentsCount(),
         apiService.listAllPlans(),
       ]);
 
       const failedSections: string[] = [];
 
-      if (teachersRes.status === 'fulfilled') {
-        setTeachers(teachersRes.value.data);
+      if (teachersCountRes.status === 'fulfilled') {
+        setTeacherCount(Number(teachersCountRes.value.data || 0));
       } else {
-        console.error('Error loading teachers:', teachersRes.reason);
-        setTeachers([]);
+        console.error('Error loading teachers count:', teachersCountRes.reason);
+        setTeacherCount(0);
         failedSections.push('teachers');
       }
 
-      if (studentsRes.status === 'fulfilled') {
-        setStudents(studentsRes.value.data);
+      if (studentsCountRes.status === 'fulfilled') {
+        setStudentCount(Number(studentsCountRes.value.data || 0));
       } else {
-        console.error('Error loading students:', studentsRes.reason);
-        setStudents([]);
+        console.error('Error loading students count:', studentsCountRes.reason);
+        setStudentCount(0);
         failedSections.push('students');
       }
 
@@ -83,8 +85,8 @@ const Reports: React.FC = () => {
 
       if (failedSections.length > 0) {
         const detailedFailures = [
-          teachersRes.status !== 'fulfilled' ? `Teachers: ${getRequestErrorMessage(teachersRes.reason, 'Teachers report data load nahi hua.')}` : null,
-          studentsRes.status !== 'fulfilled' ? `Students: ${getRequestErrorMessage(studentsRes.reason, 'Students report data load nahi hua.')}` : null,
+          teachersCountRes.status !== 'fulfilled' ? `Teachers: ${getRequestErrorMessage(teachersCountRes.reason, 'Teachers report data load nahi hua.')}` : null,
+          studentsCountRes.status !== 'fulfilled' ? `Students: ${getRequestErrorMessage(studentsCountRes.reason, 'Students report data load nahi hua.')}` : null,
           plansRes.status !== 'fulfilled' ? `Seating Plans: ${getRequestErrorMessage(plansRes.reason, 'Seating plan report data load nahi hua.')}` : null,
         ].filter(Boolean);
         setAlert({
@@ -97,6 +99,20 @@ const Reports: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const ensureTeachersLoaded = async () => {
+    if (teachers.length > 0) return teachers;
+    const response = await apiService.listTeachers();
+    setTeachers(response.data);
+    return response.data;
+  };
+
+  const ensureStudentsLoaded = async () => {
+    if (students.length > 0) return students;
+    const response = await apiService.listStudents();
+    setStudents(response.data);
+    return response.data;
   };
 
   const downloadBlob = (blob: Blob, filename: string) => {
@@ -117,12 +133,13 @@ const Reports: React.FC = () => {
 
   const exportTextReport = async (type: 'teachers' | 'students') => {
     if (type === 'teachers') {
+      const teacherRows = await ensureTeachersLoaded();
       const content = `TEACHERS REPORT
 Generated: ${new Date().toLocaleDateString()}
 
-Total Teachers: ${teachers.length}
+Total Teachers: ${teacherRows.length}
 
-${teachers
+${teacherRows
   .map(
     (teacher) => `Name: ${teacher.name}
 Subject: ${teacher.subject}
@@ -134,14 +151,15 @@ Phone: ${teacher.phone || 'N/A'}
   .join('\n')}`;
       downloadFile(content, 'teachers-report.txt', 'text/plain');
       return;
-    }
+  }
 
-    const content = `STUDENTS REPORT
+  const studentRows = await ensureStudentsLoaded();
+  const content = `STUDENTS REPORT
 Generated: ${new Date().toLocaleDateString()}
 
-Total Students: ${students.length}
+Total Students: ${studentRows.length}
 
-${students
+${studentRows
   .map(
     (student) => `Name: ${student.name}
 Roll Number: ${student.roll_number}
@@ -158,8 +176,9 @@ Phone: ${student.phone || 'N/A'}
 
   const exportCsvReport = async (type: 'teachers' | 'students') => {
     if (type === 'teachers') {
+      const teacherRows = await ensureTeachersLoaded();
       const csv = `Name,Subject,Email,Phone
-${teachers
+${teacherRows
   .map(
     (teacher) =>
       `"${teacher.name}","${teacher.subject}","${teacher.email || ''}","${teacher.phone || ''}"`
@@ -169,8 +188,9 @@ ${teachers
       return;
     }
 
+    const studentRows = await ensureStudentsLoaded();
     const csv = `Name,Roll Number,Batch,Class,Email,Phone
-${students
+${studentRows
   .map(
     (student) =>
       `"${student.name}","${student.roll_number}","${student.batch}","${[student.class_name, student.section].filter(Boolean).join(' | ')}","${student.email || ''}","${student.phone || ''}"`
@@ -263,7 +283,7 @@ ${students
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Teachers</p>
-              <p className="text-2xl font-bold text-gray-900">{teachers.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{teacherCount}</p>
             </div>
           </div>
         </div>
@@ -275,7 +295,7 @@ ${students
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Students</p>
-              <p className="text-2xl font-bold text-gray-900">{students.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
             </div>
           </div>
         </div>

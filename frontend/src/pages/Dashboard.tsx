@@ -227,34 +227,9 @@ export default function Dashboard() {
   const [inventorySnapshot, setInventorySnapshot] = useState<any>(null);
   const [eduPayDashboardData, setEduPayDashboardData] = useState<any>(null);
 
-  const loadTodayStudentAttendance = async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const allRecords: any[] = [];
-    let skip = 0;
-    const limit = 500;
-
-    while (true) {
-      const response = await apiService.listStudentAttendanceRecords({
-        school_id: 1,
-        date_from: today,
-        date_to: today,
-        skip,
-        limit,
-      });
-      const records = Array.isArray(response.data) ? response.data : [];
-      allRecords.push(...records);
-      if (records.length < limit) {
-        break;
-      }
-      skip += limit;
-    }
-
-    return allRecords;
-  };
-
   useEffect(() => {
     loadStatistics();
-  }, [canViewInventory, showDetailedDashboard]);
+  }, [canViewEduPay, canViewInventory, showDetailedDashboard]);
 
   const loadStatistics = async () => {
     if (!showDetailedDashboard) {
@@ -295,105 +270,126 @@ export default function Dashboard() {
       setLoadError(null);
       const today = new Date().toISOString().slice(0, 10);
       const [
-        studentsRes,
-        teachersRes,
-        roomsRes,
-        timetableRes,
-        inventoryRes,
-        eduPayDashboardRes,
-        eduPayPaymentsRes,
+        studentCountRes,
+        teacherCountRes,
+        roomsSummaryRes,
+        timetableCountRes,
         attendanceOverviewRes,
-        staffAttendanceRes,
-        studentAttendanceRes,
       ] = await Promise.allSettled([
-        apiService.listStudents(1, 0, 10000),
-        apiService.listTeachers(),
-        apiService.listRooms(),
-        apiService.listTimetableEntries(),
-        canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
-        canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
-        canViewEduPay ? apiService.listEduPayPayments() : Promise.resolve({ data: [] }),
+        apiService.getStudentsCount(),
+        apiService.getTeachersCount(),
+        apiService.getRoomsSummary(),
+        apiService.getTimetableEntriesCount(),
         apiService.getIntegratedAttendanceOverview(1),
-        apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
-        loadTodayStudentAttendance(),
       ]);
 
-      const students = studentsRes.status === 'fulfilled' ? studentsRes.value.data : [];
-      const teachers = teachersRes.status === 'fulfilled' ? teachersRes.value.data : [];
-      const rooms = roomsRes.status === 'fulfilled' ? roomsRes.value.data : [];
-      const timetableEntries = timetableRes.status === 'fulfilled' ? timetableRes.value.data : [];
-      const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
-      const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
-      const eduPayPayments = eduPayPaymentsRes.status === 'fulfilled' && Array.isArray(eduPayPaymentsRes.value.data)
-        ? eduPayPaymentsRes.value.data
-        : [];
       const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
-      const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
-      const studentAttendanceRecords = studentAttendanceRes.status === 'fulfilled' && Array.isArray(studentAttendanceRes.value)
-        ? studentAttendanceRes.value
-        : [];
-      const todayKey = new Date().toISOString().slice(0, 10);
-      const todayCollection = eduPayPayments.reduce((sum: number, payment: any) => {
-        const paymentDate = String(payment?.payment_date || '').slice(0, 10);
-        return paymentDate === todayKey ? sum + Number(payment?.amount || 0) : sum;
-      }, 0);
-      const pendingAmount = Number(
-        eduPayDashboard?.pending_amount ??
-        eduPayDashboard?.total_pending ??
-        0
-      );
-      const totalCollected = Number(
-        eduPayDashboard?.total_collected ?? 0
-      );
-      const overdueAmount = Number(
-        eduPayDashboard?.overdue_amount ?? 0
-      );
-      const studentPresent = studentAttendanceRecords.filter((item: any) => item?.status === 'present').length;
-      const studentLate = studentAttendanceRecords.filter((item: any) => item?.status === 'late').length;
-      const studentAbsent = studentAttendanceRecords.filter((item: any) => item?.status === 'absent').length;
+      const studentCount = studentCountRes.status === 'fulfilled' ? Number(studentCountRes.value.data || 0) : 0;
+      const teacherCount = teacherCountRes.status === 'fulfilled' ? Number(teacherCountRes.value.data || 0) : 0;
+      const roomsSummary =
+        roomsSummaryRes.status === 'fulfilled'
+          ? roomsSummaryRes.value.data
+          : { count: 0, totalCapacity: 0 };
+      const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
       const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
       const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
-      const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
-      const recentActivity = [
-        ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
-        ...recentPayments.slice(0, 2).map((item: any) => `${item.student_name || 'Payment'} paid ${formatCompactCurrency(Number(item.amount || 0))}`).filter(Boolean),
-        ...(inventoryDashboard?.low_stock_alert_count ? [`${inventoryDashboard.low_stock_alert_count} low stock alerts`] : []),
-      ].slice(0, 5);
-
       const roomUtilization =
-        rooms.length > 0
-          ? Math.round((rooms.reduce((sum: number, room) => sum + room.capacity, 0) / (rooms.length * 50)) * 100)
+        roomsSummary.count > 0
+          ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
           : 0;
 
       setStats({
-        totalStudents: students.length,
-        totalTeachers: teachers.length,
-        totalRooms: rooms.length,
-        totalTimetableEntries: timetableEntries.length,
+        totalStudents: studentCount,
+        totalTeachers: teacherCount,
+        totalRooms: Number(roomsSummary.count || 0),
+        totalTimetableEntries: timetableCount,
         roomUtilization,
-        inventoryStock: inventoryDashboard?.current_stock_available || 0,
-        recentActivity,
-      });
-      setEduPaySummary({
-        totalCollected,
-        pendingAmount,
-        todayCollection,
-        overdueAmount,
+        inventoryStock: 0,
+        recentActivity: notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
       });
       setAttendanceToday({
-        studentPresent,
-        studentLate,
-        studentAbsent,
-        studentMarked: studentAttendanceRecords.length,
-        staffPresent: Number(staffAttendance?.present_count ?? 0),
-        staffLate: Number(staffAttendance?.late_count ?? 0),
-        staffHalfDay: Number(staffAttendance?.half_day_count ?? 0),
-        staffAbsent: Number(staffAttendance?.absent_count ?? 0),
+        studentPresent: 0,
+        studentLate: 0,
+        studentAbsent: 0,
+        studentMarked: 0,
+        staffPresent: 0,
+        staffLate: 0,
+        staffHalfDay: 0,
+        staffAbsent: 0,
         notifications,
         holidays,
       });
-      setInventorySnapshot(inventoryDashboard);
-      setEduPayDashboardData(eduPayDashboard);
+
+      if (
+        studentCountRes.status === 'rejected' &&
+        teacherCountRes.status === 'rejected' &&
+        roomsSummaryRes.status === 'rejected' &&
+        timetableCountRes.status === 'rejected' &&
+        attendanceOverviewRes.status === 'rejected'
+      ) {
+        throw new Error('Primary dashboard requests failed');
+      }
+
+      void Promise.allSettled([
+        canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
+        canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
+        canViewEduPay ? apiService.listEduPayPayments() : Promise.resolve({ data: [] }),
+        apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
+        apiService.listStudentAttendanceRecords({
+          school_id: 1,
+          date_from: today,
+          date_to: today,
+          skip: 0,
+          limit: 5000,
+        }),
+      ]).then(([inventoryRes, eduPayDashboardRes, eduPayPaymentsRes, staffAttendanceRes, studentAttendanceRes]) => {
+        const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
+        const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
+        const eduPayPayments = eduPayPaymentsRes.status === 'fulfilled' && Array.isArray(eduPayPaymentsRes.value.data)
+          ? eduPayPaymentsRes.value.data
+          : [];
+        const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
+        const studentAttendanceRecords =
+          studentAttendanceRes.status === 'fulfilled' && Array.isArray(studentAttendanceRes.value.data)
+            ? studentAttendanceRes.value.data
+            : [];
+        const todayKey = new Date().toISOString().slice(0, 10);
+        const todayCollection = eduPayPayments.reduce((sum: number, payment: any) => {
+          const paymentDate = String(payment?.payment_date || '').slice(0, 10);
+          return paymentDate === todayKey ? sum + Number(payment?.amount || 0) : sum;
+        }, 0);
+        const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
+        const recentActivity = [
+          ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
+          ...recentPayments.slice(0, 2).map((item: any) => `${item.student_name || 'Payment'} paid ${formatCompactCurrency(Number(item.amount || 0))}`).filter(Boolean),
+          ...(inventoryDashboard?.low_stock_alert_count ? [`${inventoryDashboard.low_stock_alert_count} low stock alerts`] : []),
+        ].slice(0, 5);
+
+        setStats((current) => ({
+          ...current,
+          inventoryStock: inventoryDashboard?.current_stock_available || 0,
+          recentActivity,
+        }));
+        setEduPaySummary({
+          totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
+          pendingAmount: Number(eduPayDashboard?.pending_amount ?? eduPayDashboard?.total_pending ?? 0),
+          todayCollection,
+          overdueAmount: Number(eduPayDashboard?.overdue_amount ?? 0),
+        });
+        setAttendanceToday((current) => ({
+          ...current,
+          studentPresent: studentAttendanceRecords.filter((item: any) => item?.status === 'present').length,
+          studentLate: studentAttendanceRecords.filter((item: any) => item?.status === 'late').length,
+          studentAbsent: studentAttendanceRecords.filter((item: any) => item?.status === 'absent').length,
+          studentMarked: studentAttendanceRecords.length,
+          staffPresent: Number(staffAttendance?.present_count ?? 0),
+          staffLate: Number(staffAttendance?.late_count ?? 0),
+          staffHalfDay: Number(staffAttendance?.half_day_count ?? 0),
+          staffAbsent: Number(staffAttendance?.absent_count ?? 0),
+        }));
+        setInventorySnapshot(inventoryDashboard);
+        setEduPayDashboardData(eduPayDashboard);
+      });
     } catch (error) {
       console.warn('Backend not available, using default statistics:', error);
       setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
