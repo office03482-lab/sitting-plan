@@ -5,13 +5,39 @@ import logging
 from typing import Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models import User, UserRole
 from app.utils.auth import decode_token
 
 logger = logging.getLogger(__name__)
+
+
+def decode_supabase_token(token: str) -> Optional[dict]:
+    secret = (settings.supabase_jwt_secret or "").strip()
+    if not secret:
+        return None
+
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+    except JWTError:
+        return None
+
+    issuer = str(payload.get("iss") or "").strip()
+    if settings.supabase_url:
+        expected_issuer = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+        if issuer and issuer != expected_issuer:
+            return None
+
+    return payload
 
 
 async def verify_token(request: Request) -> dict:
@@ -68,7 +94,18 @@ def extract_token_payload(authorization: Optional[str]) -> Optional[dict]:
     if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
 
-    return decode_token(parts[1])
+    token = parts[1]
+    payload = decode_token(token)
+    if payload:
+        payload["_token_origin"] = "local"
+        return payload
+
+    payload = decode_supabase_token(token)
+    if payload:
+        payload["_token_origin"] = "supabase"
+        return payload
+
+    return None
 
 
 def build_actor_context(
@@ -152,6 +189,7 @@ def get_authenticated_user(
             is_verified=True,
         )
 
+    auth_header_present = bool((authorization or "").strip())
     payload = extract_token_payload(authorization)
     if payload:
         if payload.get("type") not in {None, "access"}:
@@ -161,21 +199,68 @@ def get_authenticated_user(
             )
 
         user_id_raw = payload.get("sub")
-        try:
-            user_id = int(str(user_id_raw))
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication token payload",
-            )
+        token_origin = str(payload.get("_token_origin") or "local")
 
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authenticated user is inactive or missing",
-            )
-        return user
+        if token_origin == "local":
+            try:
+                user_id = int(str(user_id_raw))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication token payload",
+                )
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authenticated user is inactive or missing",
+                )
+            return user
+
+        fallback_role = (x_user_role or str(payload.get("role") or "viewer")).strip().lower()
+        fallback_name = (
+            (x_user_name or "")
+            or str(payload.get("full_name") or payload.get("name") or payload.get("email") or payload.get("sub") or "Authenticated User")
+        ).strip()
+        fallback_email = (x_user_email or str(payload.get("email") or "")).strip().lower()
+        fallback_permissions = ",".join(
+            item.strip().lower()
+            for item in (x_user_permissions or "").split(",")
+            if item and item.strip()
+        )
+        role_aliases = {
+            "platform_admin": UserRole.ADMIN.value,
+            "school_admin": UserRole.ADMIN.value,
+            "authenticated": UserRole.VIEWER.value,
+        }
+        normalized_role = role_aliases.get(fallback_role, fallback_role or UserRole.VIEWER.value)
+        try:
+            resolved_role = UserRole(normalized_role)
+        except ValueError:
+            resolved_role = UserRole.VIEWER
+
+        logger.info(
+            "auth.supabase_token_authenticated",
+            extra={
+                "sub": str(user_id_raw or ""),
+                "email": fallback_email,
+                "role": normalized_role,
+                "has_permissions": bool(fallback_permissions),
+            },
+        )
+        return User(
+            id=0,
+            username=fallback_email.split("@")[0] if fallback_email and "@" in fallback_email else fallback_name.lower().replace(" ", "_"),
+            email=fallback_email or None,
+            full_name=fallback_name or "Authenticated User",
+            password_hash="",
+            role=resolved_role,
+            user_type="non_teaching",
+            permissions=fallback_permissions,
+            is_active=True,
+            is_verified=True,
+        )
 
     fallback_role = (x_user_role or "").strip().lower()
     fallback_name = (x_user_name or "").strip()
@@ -187,6 +272,18 @@ def get_authenticated_user(
     )
 
     if not fallback_role or not fallback_name:
+        logger.warning(
+            "auth.missing_identity",
+            extra={
+                "has_authorization": auth_header_present,
+                "authorization_prefix": (authorization or "").split(" ", 1)[0] if authorization else "",
+                "has_x_user_role": bool((x_user_role or "").strip()),
+                "has_x_user_name": bool((x_user_name or "").strip()),
+                "has_x_user_email": bool((x_user_email or "").strip()),
+                "path": str(request.url.path),
+                "method": request.method,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",

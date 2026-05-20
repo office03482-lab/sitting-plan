@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_jwt_secret: str | None = None
     supabase_service_role_key: str | None = None
     use_supabase_native_services: bool | None = None
 

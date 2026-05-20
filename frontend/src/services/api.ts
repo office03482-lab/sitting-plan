@@ -130,7 +130,12 @@ class ApiService {
   private studentIssueReverseIdMap = new Map<string, number>();
 
   private getAccessToken() {
-    return typeof window === 'undefined' ? null : localStorage.getItem('auth_token');
+    const storeToken = useAuthStore.getState().token;
+    if (storeToken) {
+      return storeToken;
+    }
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('auth_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
   }
 
   private async waitForAuthInitialization(timeoutMs: number = 1800) {
