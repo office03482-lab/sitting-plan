@@ -8,6 +8,7 @@ import time
 from typing import Any
 from uuid import UUID
 
+from app.attendance.contracts import sanitize_response_payload
 from app.services.supabase_admin import get_supabase_admin_client
 
 logger = logging.getLogger(__name__)
@@ -586,7 +587,7 @@ def _fetch_students(
     query = (
         get_supabase_admin_client()
         .table("students")
-        .select("id, school_id, roll_number, full_name, class_name, section, is_active")
+        .select("id, school_id, roll_number, full_name, class_name, section, is_active, created_at, updated_at")
         .eq("school_id", school_id)
         .eq("is_active", True)
         .order("full_name")
@@ -867,7 +868,10 @@ def get_overview(school_id: str) -> dict[str, Any]:
 
 def list_students(school_id: str, *, skip: int = 0, limit: int = 100, search: str | None = None) -> list[dict[str, Any]]:
     rows = _fetch_students(school_id, search=search, skip=skip, limit=limit)
-    return [_serialize_student(row) for row in rows]
+    return sanitize_response_payload(
+        [_serialize_student(row) for row in rows],
+        log_label="attendance.list_students",
+    )
 
 
 def list_staff(
@@ -887,12 +891,18 @@ def list_staff(
         skip=skip,
         limit=limit,
     )
-    return [_serialize_staff(row) for row in rows]
+    return sanitize_response_payload(
+        [_serialize_staff(row) for row in rows],
+        log_label="attendance.list_staff",
+    )
 
 
 def list_subjects(school_id: str) -> list[dict[str, Any]]:
     batches = _fetch_batches(school_id)
-    return [_serialize_subject(row, batches) for row in _fetch_subjects(school_id)]
+    return sanitize_response_payload(
+        [_serialize_subject(row, batches) for row in _fetch_subjects(school_id)],
+        log_label="attendance.list_subjects",
+    )
 
 
 def get_student_marking(
@@ -998,7 +1008,10 @@ def list_integrated_students(
 ) -> list[dict[str, Any]]:
     batches = _fetch_batches(school_id)
     rows = _fetch_students(school_id, search=search, batch=batch, skip=skip, limit=limit)
-    return [_serialize_student(row, batches) for row in rows]
+    return sanitize_response_payload(
+        [_serialize_student(row, batches) for row in rows],
+        log_label="attendance.list_integrated_students",
+    )
 
 
 def list_integrated_staff(

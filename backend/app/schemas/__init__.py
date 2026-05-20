@@ -1,7 +1,7 @@
 """
 Pydantic validation schemas
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, validator
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -1273,11 +1273,10 @@ class AttendanceStudentResponse(AttendanceStudentCreate):
     id: int | str
     school_id: int | str
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AttendanceStaffCreate(BaseModel):
@@ -1294,11 +1293,10 @@ class AttendanceStaffResponse(AttendanceStaffCreate):
     id: int | str
     school_id: int | str
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AttendanceSubjectCreate(BaseModel):
@@ -1311,11 +1309,10 @@ class AttendanceSubjectResponse(AttendanceSubjectCreate):
     id: int | str
     school_id: int | str
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AttendanceSettingUpdate(BaseModel):
@@ -1340,11 +1337,10 @@ class AttendanceHolidayResponse(BaseModel):
     holiday_date: datetime
     description: Optional[str] = None
     school_id: int | str
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AttendanceNotificationResponse(BaseModel):
@@ -1355,11 +1351,10 @@ class AttendanceNotificationResponse(BaseModel):
     notification_type: str
     is_read: bool
     school_id: int | str
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AttendanceLeaveCreate(BaseModel):
@@ -1385,7 +1380,7 @@ class AttendanceLeaveResponse(BaseModel):
     reason: Optional[str] = None
     status: str
     approved_by: Optional[str] = None
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
 
 class StudentAttendanceMarkingRow(BaseModel):
