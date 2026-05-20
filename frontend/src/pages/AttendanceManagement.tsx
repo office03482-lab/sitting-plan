@@ -598,8 +598,13 @@ function AttendanceManagementContent() {
   const attendanceStudentsRefreshCooldownMs = 60_000;
   const lastManagedBatchRefreshAtRef = useRef(0);
   const managedBatchRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const lastOverviewRefreshAtRef = useRef(0);
 
   const loadOverviewData = async (initial = false) => {
+    const now = Date.now();
+    if (!initial && now - lastOverviewRefreshAtRef.current < 60_000) {
+      return;
+    }
     try {
       initial ? setLoading(true) : setTabLoading(true);
       let normalizedOverview: AttendanceOverview | null = null;
@@ -615,6 +620,7 @@ function AttendanceManagementContent() {
         setNotifications(normalizedOverview.notifications);
         setHolidays(normalizedOverview.holidays);
       }
+      lastOverviewRefreshAtRef.current = Date.now();
       setLoadedTabs((current) => ({ ...current, overview: true }));
     } catch (error: any) {
       console.error('Failed to load attendance module', error);
@@ -848,21 +854,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (activeTab !== 'overview' || !loadedTabs.overview) return;
-
-    const refreshOverview = () => {
-      if (document.visibilityState === 'hidden') return;
-      void loadOverviewData();
-    };
-
-    const intervalId = window.setInterval(refreshOverview, 15000);
-    window.addEventListener('focus', refreshOverview);
-    document.addEventListener('visibilitychange', refreshOverview);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', refreshOverview);
-      document.removeEventListener('visibilitychange', refreshOverview);
-    };
+    return;
   }, [activeTab, loadedTabs.overview]);
 
   useEffect(() => {

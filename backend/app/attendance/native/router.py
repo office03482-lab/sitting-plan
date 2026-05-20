@@ -43,7 +43,7 @@ def get_integrated_overview_route(
 def list_students_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
     service=Depends(get_attendance_service),
 ):
@@ -55,7 +55,7 @@ def list_students_route(
 def list_integrated_students_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
     batch: Optional[str] = Query(default=None),
     service=Depends(get_attendance_service),
@@ -74,7 +74,7 @@ def list_integrated_students_route(
 def list_staff_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
@@ -95,7 +95,7 @@ def list_staff_route(
 def list_integrated_staff_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
@@ -172,7 +172,7 @@ def list_student_records_route(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     service=Depends(get_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)
@@ -196,7 +196,7 @@ def list_staff_records_route(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=200),
     service=Depends(get_attendance_service),
 ):
     log_attendance_mode("staff-records", school_id)

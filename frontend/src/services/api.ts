@@ -87,6 +87,8 @@ const getPersistedUser = () => {
 
 class ApiService {
   private api: AxiosInstance;
+  private attendanceOverviewRequestPromise: Promise<{ data: AttendanceOverview }> | null = null;
+  private attendanceOverviewCache: { expiresAt: number; data: AttendanceOverview } | null = null;
   private attendanceStudentsRequestKey: string | null = null;
   private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
   private attendanceStudentsAbortController: AbortController | null = null;
@@ -95,6 +97,10 @@ class ApiService {
   private batchAttendanceContextRequestPromise: Promise<{ data: TeacherAttendanceContext }> | null = null;
   private batchAttendanceContextAbortController: AbortController | null = null;
   private batchAttendanceContextCache = new Map<string, { expiresAt: number; data: TeacherAttendanceContext }>();
+  private studentAttendanceRecordsRequestKey: string | null = null;
+  private studentAttendanceRecordsRequestPromise: Promise<{ data: StudentAttendanceRecord[] }> | null = null;
+  private studentAttendanceRecordsAbortController: AbortController | null = null;
+  private studentAttendanceRecordsCache = new Map<string, { expiresAt: number; data: StudentAttendanceRecord[] }>();
   private studentIdMap = new Map<number, string>();
   private studentReverseIdMap = new Map<string, number>();
   private teacherIdMap = new Map<number, string>();
@@ -4803,9 +4809,25 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load attendance overview');
     }
-    return this.api.get<AttendanceOverview>('/attendance/overview', {
+    const now = Date.now();
+    if (this.attendanceOverviewCache && this.attendanceOverviewCache.expiresAt > now) {
+      return { data: this.attendanceOverviewCache.data } as { data: AttendanceOverview };
+    }
+    if (this.attendanceOverviewRequestPromise) {
+      return this.attendanceOverviewRequestPromise;
+    }
+    this.attendanceOverviewRequestPromise = this.api.get<AttendanceOverview>('/attendance/overview', {
       params: { school_id: scopedSchoolId },
+    }).then((response) => {
+      this.attendanceOverviewCache = {
+        data: response.data,
+        expiresAt: Date.now() + 60_000,
+      };
+      return response;
+    }).finally(() => {
+      this.attendanceOverviewRequestPromise = null;
     });
+    return this.attendanceOverviewRequestPromise;
   }
 
   async listAttendanceStudents(params?: { school_id?: number | string; skip?: number; limit?: number; search?: string }) {
@@ -5059,12 +5081,41 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load student attendance records');
     }
+    const normalizedLimit = Math.min(Math.max(Number(params?.limit ?? 100) || 100, 1), 200);
     const scopedParams = {
       ...params,
       school_id: scopedSchoolId,
+      limit: normalizedLimit,
     };
+    const requestKey = JSON.stringify(scopedParams);
+    const now = Date.now();
+    const cached = this.studentAttendanceRecordsCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: StudentAttendanceRecord[] };
+    }
+    if (this.studentAttendanceRecordsRequestKey === requestKey && this.studentAttendanceRecordsRequestPromise) {
+      return this.studentAttendanceRecordsRequestPromise;
+    }
+    this.studentAttendanceRecordsAbortController?.abort();
+    this.studentAttendanceRecordsAbortController = new AbortController();
+    this.studentAttendanceRecordsRequestKey = requestKey;
+    this.studentAttendanceRecordsRequestPromise = this.api.get<StudentAttendanceRecord[]>('/attendance/student-records', {
+      params: scopedParams,
+      signal: this.studentAttendanceRecordsAbortController.signal,
+    }).then((response) => {
+      this.studentAttendanceRecordsCache.set(requestKey, {
+        data: Array.isArray(response.data) ? response.data : [],
+        expiresAt: Date.now() + 45_000,
+      });
+      return response;
+    }).finally(() => {
+      if (this.studentAttendanceRecordsRequestKey === requestKey) {
+        this.studentAttendanceRecordsRequestKey = null;
+        this.studentAttendanceRecordsRequestPromise = null;
+      }
+    });
     try {
-      return await this.api.get<StudentAttendanceRecord[]>('/attendance/student-records', { params: scopedParams });
+      return await this.studentAttendanceRecordsRequestPromise;
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error) || !params) throw error;
       const retryParams = {
