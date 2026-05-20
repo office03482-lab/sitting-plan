@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -226,12 +226,23 @@ export default function Dashboard() {
   });
   const [inventorySnapshot, setInventorySnapshot] = useState<any>(null);
   const [eduPayDashboardData, setEduPayDashboardData] = useState<any>(null);
+  const lastDashboardLoadAtRef = useRef(0);
+  const dashboardLoadInFlightRef = useRef<Promise<void> | null>(null);
+  const dashboardLoadFingerprintRef = useRef('');
+  const dashboardMountedRef = useRef(true);
 
   useEffect(() => {
-    loadStatistics();
+    void loadStatistics();
   }, [canViewEduPay, canViewInventory, showDetailedDashboard]);
 
-  const loadStatistics = async () => {
+  useEffect(() => {
+    return () => {
+      dashboardMountedRef.current = false;
+    };
+  }, []);
+
+  const loadStatistics = async (options?: { force?: boolean }) => {
+    const force = options?.force === true;
     if (!showDetailedDashboard) {
       setLoadError(null);
       setStats({
@@ -266,98 +277,106 @@ export default function Dashboard() {
       return;
     }
 
-    try {
-      setLoadError(null);
-      const today = new Date().toISOString().slice(0, 10);
-      const [
-        studentCountRes,
-        teacherCountRes,
-        roomsSummaryRes,
-        timetableCountRes,
-        attendanceOverviewRes,
-      ] = await Promise.allSettled([
-        apiService.getStudentsCount(),
-        apiService.getTeachersCount(),
-        apiService.getRoomsSummary(),
-        apiService.getTimetableEntriesCount(),
-        apiService.getIntegratedAttendanceOverview(1),
-      ]);
+    const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}`;
+    const now = Date.now();
+    if (!force && dashboardLoadFingerprintRef.current === requestFingerprint && now - lastDashboardLoadAtRef.current < 60_000) {
+      return;
+    }
+    if (dashboardLoadInFlightRef.current) {
+      return dashboardLoadInFlightRef.current;
+    }
 
-      const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
-      const studentCount = studentCountRes.status === 'fulfilled' ? Number(studentCountRes.value.data || 0) : 0;
-      const teacherCount = teacherCountRes.status === 'fulfilled' ? Number(teacherCountRes.value.data || 0) : 0;
-      const roomsSummary =
-        roomsSummaryRes.status === 'fulfilled'
-          ? roomsSummaryRes.value.data
-          : { count: 0, totalCapacity: 0 };
-      const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
-      const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
-      const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
-      const roomUtilization =
-        roomsSummary.count > 0
-          ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
-          : 0;
+    const loadPromise = (async () => {
+      try {
+        setLoadError(null);
+        const today = new Date().toISOString().slice(0, 10);
+        const [
+          studentCountRes,
+          teacherCountRes,
+          roomsSummaryRes,
+          timetableCountRes,
+          attendanceOverviewRes,
+        ] = await Promise.allSettled([
+          apiService.getStudentsCount(),
+          apiService.getTeachersCount(),
+          apiService.getRoomsSummary(),
+          apiService.getTimetableEntriesCount(),
+          apiService.getAttendanceOverview(1),
+        ]);
 
-      setStats({
-        totalStudents: studentCount,
-        totalTeachers: teacherCount,
-        totalRooms: Number(roomsSummary.count || 0),
-        totalTimetableEntries: timetableCount,
-        roomUtilization,
-        inventoryStock: 0,
-        recentActivity: notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
-      });
-      setAttendanceToday({
-        studentPresent: 0,
-        studentLate: 0,
-        studentAbsent: 0,
-        studentMarked: 0,
-        staffPresent: 0,
-        staffLate: 0,
-        staffHalfDay: 0,
-        staffAbsent: 0,
-        notifications,
-        holidays,
-      });
+        const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
+        const studentCount = studentCountRes.status === 'fulfilled' ? Number(studentCountRes.value.data || 0) : 0;
+        const teacherCount = teacherCountRes.status === 'fulfilled' ? Number(teacherCountRes.value.data || 0) : 0;
+        const roomsSummary =
+          roomsSummaryRes.status === 'fulfilled'
+            ? roomsSummaryRes.value.data
+            : { count: 0, totalCapacity: 0 };
+        const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
+        const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
+        const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
+        const roomUtilization =
+          roomsSummary.count > 0
+            ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
+            : 0;
 
-      if (
-        studentCountRes.status === 'rejected' &&
-        teacherCountRes.status === 'rejected' &&
-        roomsSummaryRes.status === 'rejected' &&
-        timetableCountRes.status === 'rejected' &&
-        attendanceOverviewRes.status === 'rejected'
-      ) {
-        throw new Error('Primary dashboard requests failed');
-      }
+        if (!dashboardMountedRef.current) return;
 
-      void Promise.allSettled([
-        canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
-        canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
-        canViewEduPay ? apiService.listEduPayPayments() : Promise.resolve({ data: [] }),
-        apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
-        apiService.listStudentAttendanceRecords({
-          school_id: 1,
-          date_from: today,
-          date_to: today,
-          skip: 0,
-          limit: 200,
-        }),
-      ]).then(([inventoryRes, eduPayDashboardRes, eduPayPaymentsRes, staffAttendanceRes, studentAttendanceRes]) => {
+        setStats({
+          totalStudents: studentCount,
+          totalTeachers: teacherCount,
+          totalRooms: Number(roomsSummary.count || 0),
+          totalTimetableEntries: timetableCount,
+          roomUtilization,
+          inventoryStock: 0,
+          recentActivity: notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
+        });
+        setAttendanceToday({
+          studentPresent: 0,
+          studentLate: 0,
+          studentAbsent: 0,
+          studentMarked: 0,
+          staffPresent: 0,
+          staffLate: 0,
+          staffHalfDay: 0,
+          staffAbsent: 0,
+          notifications,
+          holidays,
+        });
+
+        if (
+          studentCountRes.status === 'rejected' &&
+          teacherCountRes.status === 'rejected' &&
+          roomsSummaryRes.status === 'rejected' &&
+          timetableCountRes.status === 'rejected' &&
+          attendanceOverviewRes.status === 'rejected'
+        ) {
+          throw new Error('Primary dashboard requests failed');
+        }
+
+        lastDashboardLoadAtRef.current = Date.now();
+        dashboardLoadFingerprintRef.current = requestFingerprint;
+
+        const [inventoryRes, eduPayDashboardRes, staffAttendanceRes, studentAttendanceRes] = await Promise.allSettled([
+          canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
+          canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
+          apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
+          apiService.listStudentAttendanceRecords({
+            school_id: 1,
+            date_from: today,
+            date_to: today,
+            skip: 0,
+            limit: 100,
+          }),
+        ]);
+        if (!dashboardMountedRef.current) return;
+
         const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
         const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
-        const eduPayPayments = eduPayPaymentsRes.status === 'fulfilled' && Array.isArray(eduPayPaymentsRes.value.data)
-          ? eduPayPaymentsRes.value.data
-          : [];
         const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
         const studentAttendanceRecords =
           studentAttendanceRes.status === 'fulfilled' && Array.isArray(studentAttendanceRes.value.data)
             ? studentAttendanceRes.value.data
             : [];
-        const todayKey = new Date().toISOString().slice(0, 10);
-        const todayCollection = eduPayPayments.reduce((sum: number, payment: any) => {
-          const paymentDate = String(payment?.payment_date || '').slice(0, 10);
-          return paymentDate === todayKey ? sum + Number(payment?.amount || 0) : sum;
-        }, 0);
         const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
         const recentActivity = [
           ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
@@ -373,7 +392,7 @@ export default function Dashboard() {
         setEduPaySummary({
           totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
           pendingAmount: Number(eduPayDashboard?.pending_amount ?? eduPayDashboard?.total_pending ?? 0),
-          todayCollection,
+          todayCollection: Number(eduPayDashboard?.today_collection ?? 0),
           overdueAmount: Number(eduPayDashboard?.overdue_amount ?? 0),
         });
         setAttendanceToday((current) => ({
@@ -389,40 +408,45 @@ export default function Dashboard() {
         }));
         setInventorySnapshot(inventoryDashboard);
         setEduPayDashboardData(eduPayDashboard);
-      });
-    } catch (error) {
-      console.warn('Backend not available, using default statistics:', error);
-      setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
-      setStats({
-        totalStudents: 0,
-        totalTeachers: 0,
-        totalRooms: 0,
-        totalTimetableEntries: 0,
-        roomUtilization: 0,
-        inventoryStock: 0,
-        recentActivity: ['Backend not available - using offline mode'],
-      });
-      setEduPaySummary({
-        totalCollected: 0,
-        pendingAmount: 0,
-        todayCollection: 0,
-        overdueAmount: 0,
-      });
-      setAttendanceToday({
-        studentPresent: 0,
-        studentLate: 0,
-        studentAbsent: 0,
-        studentMarked: 0,
-        staffPresent: 0,
-        staffLate: 0,
-        staffHalfDay: 0,
-        staffAbsent: 0,
-        notifications: [],
-        holidays: [],
-      });
-      setInventorySnapshot(null);
-      setEduPayDashboardData(null);
-    }
+      } catch (error) {
+        console.warn('Backend not available, using default statistics:', error);
+        if (!dashboardMountedRef.current) return;
+        setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
+        setStats({
+          totalStudents: 0,
+          totalTeachers: 0,
+          totalRooms: 0,
+          totalTimetableEntries: 0,
+          roomUtilization: 0,
+          inventoryStock: 0,
+          recentActivity: ['Backend not available - using offline mode'],
+        });
+        setEduPaySummary({
+          totalCollected: 0,
+          pendingAmount: 0,
+          todayCollection: 0,
+          overdueAmount: 0,
+        });
+        setAttendanceToday({
+          studentPresent: 0,
+          studentLate: 0,
+          studentAbsent: 0,
+          studentMarked: 0,
+          staffPresent: 0,
+          staffLate: 0,
+          staffHalfDay: 0,
+          staffAbsent: 0,
+          notifications: [],
+          holidays: [],
+        });
+        setInventorySnapshot(null);
+        setEduPayDashboardData(null);
+      }
+    })().finally(() => {
+      dashboardLoadInFlightRef.current = null;
+    });
+    dashboardLoadInFlightRef.current = loadPromise;
+    return loadPromise;
   };
 
   const moduleCards = [

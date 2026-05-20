@@ -442,7 +442,10 @@ function AttendanceManagementContent() {
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const permissionList = user?.permissions || [];
   const hasExactPermission = (permission: string) => user?.role === 'admin' || permissionList.includes(permission);
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const initialHashTab = location.hash.replace('#', '').trim();
+  const [activeTab, setActiveTab] = useState<TabKey>(
+    tabs.some((tab) => tab.key === initialHashTab) ? (initialHashTab as TabKey) : 'overview'
+  );
   const [loading, setLoading] = useState(true);
   const [tabLoading, setTabLoading] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string } | null>(null);
@@ -599,40 +602,61 @@ function AttendanceManagementContent() {
   const lastManagedBatchRefreshAtRef = useRef(0);
   const managedBatchRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const lastOverviewRefreshAtRef = useRef(0);
+  const overviewRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const studentTabLoadInFlightRef = useRef<Promise<void> | null>(null);
+  const staffTabLoadInFlightRef = useRef<Promise<void> | null>(null);
+  const overviewPendingRefreshRef = useRef(false);
+  const teacherContextRequestKeyRef = useRef('');
 
-  const loadOverviewData = async (initial = false) => {
-    const now = Date.now();
-    if (!initial && now - lastOverviewRefreshAtRef.current < 60_000) {
+  const isOverviewTabVisible = activeTab === 'overview' && canViewOverviewTab && !isTeacherSelfView;
+  const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
+  const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
+
+  const loadOverviewData = async (options?: { initial?: boolean; force?: boolean }) => {
+    const initial = options?.initial === true;
+    const force = options?.force === true;
+    if (!initial && !isOverviewTabVisible) {
+      overviewPendingRefreshRef.current = true;
       return;
     }
-    try {
-      initial ? setLoading(true) : setTabLoading(true);
-      let normalizedOverview: AttendanceOverview | null = null;
-      try {
-        const overviewRes = await apiService.getAttendanceOverview();
-        normalizedOverview = normalizeOverview(overviewRes.data);
-      } catch (error) {
-        const fallbackRes = await apiService.getIntegratedAttendanceOverview(1);
-        normalizedOverview = normalizeOverview(fallbackRes.data);
-      }
-      setOverview(normalizedOverview);
-      if (normalizedOverview) {
-        setNotifications(normalizedOverview.notifications);
-        setHolidays(normalizedOverview.holidays);
-      }
-      lastOverviewRefreshAtRef.current = Date.now();
-      setLoadedTabs((current) => ({ ...current, overview: true }));
-    } catch (error: any) {
-      console.error('Failed to load attendance module', error);
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Attendance module load nahi ho paaya.') });
-    } finally {
-      initial ? setLoading(false) : setTabLoading(false);
+    if (overviewRefreshInFlightRef.current) {
+      return overviewRefreshInFlightRef.current;
     }
+    const refreshPromise = (async () => {
+      const now = Date.now();
+      if (!initial && !force && now - lastOverviewRefreshAtRef.current < 60_000) {
+        return;
+      }
+      try {
+        initial ? setLoading(true) : setTabLoading(true);
+        let normalizedOverview: AttendanceOverview | null = null;
+        try {
+          const overviewRes = await apiService.getAttendanceOverview();
+          normalizedOverview = normalizeOverview(overviewRes.data);
+        } catch (error) {
+          const fallbackRes = await apiService.getIntegratedAttendanceOverview(1);
+          normalizedOverview = normalizeOverview(fallbackRes.data);
+        }
+        setOverview(normalizedOverview);
+        if (normalizedOverview) {
+          setNotifications(normalizedOverview.notifications);
+          setHolidays(normalizedOverview.holidays);
+        }
+        lastOverviewRefreshAtRef.current = Date.now();
+        overviewPendingRefreshRef.current = false;
+        setLoadedTabs((current) => ({ ...current, overview: true }));
+      } catch (error: any) {
+        console.error('Failed to load attendance module', error);
+        setAlert({ type: 'error', message: getApiErrorMessage(error, 'Attendance module load nahi ho paaya.') });
+      } finally {
+        initial ? setLoading(false) : setTabLoading(false);
+      }
+    })().finally(() => {
+      overviewRefreshInFlightRef.current = null;
+    });
+    overviewRefreshInFlightRef.current = refreshPromise;
+    return refreshPromise;
   };
-
-  useEffect(() => {
-    loadOverviewData(true);
-  }, []);
 
   useEffect(() => {
     const hashValue = location.hash.replace('#', '').trim();
@@ -656,34 +680,41 @@ function AttendanceManagementContent() {
   }, [isTeacherSelfView, leaveForm.staff_member_id, staffMembers]);
 
   const loadStudentTab = async () => {
-    try {
-      setTabLoading(true);
-      const [studentsRes, subjectsRes, recordsRes] = await Promise.all([
-        apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }).catch(() =>
-          apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize })
-        ),
-        apiService.listAttendanceSubjects().catch(() => ({ data: [] })),
-        apiService.listStudentAttendanceRecords({ school_id: 1, limit: 100 }).catch(() => ({ data: [] })),
-      ]);
-      const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
-      const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
-      setManagedBatches(normalizedBatches);
-      setStudents(nextStudents);
-      setSubjects(toArray<AttendanceSubject>(subjectsRes.data));
-      setStudentRecords(toArray<StudentAttendanceRecord>(recordsRes.data));
-      if (overview) {
-        hydrateDefaults(
-          overview,
-          nextStudents,
-          normalizedBatches
-        );
-      }
-      setLoadedTabs((current) => ({ ...current, student: true }));
-    } catch (error: any) {
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance load nahi hua.') });
-    } finally {
-      setTabLoading(false);
+    if (studentTabLoadInFlightRef.current) {
+      return studentTabLoadInFlightRef.current;
     }
+    const loadPromise = (async () => {
+      try {
+        setTabLoading(true);
+        const [studentsRes, subjectsRes] = await Promise.all([
+          apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }).catch(() =>
+            apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize })
+          ),
+          apiService.listAttendanceSubjects().catch(() => ({ data: [] })),
+        ]);
+        const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
+        const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
+        setManagedBatches(normalizedBatches);
+        setStudents(nextStudents);
+        setSubjects(toArray<AttendanceSubject>(subjectsRes.data));
+        if (overview) {
+          hydrateDefaults(
+            overview,
+            nextStudents,
+            normalizedBatches
+          );
+        }
+        setLoadedTabs((current) => ({ ...current, student: true }));
+      } catch (error: any) {
+        setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance load nahi hua.') });
+      } finally {
+        setTabLoading(false);
+      }
+    })().finally(() => {
+      studentTabLoadInFlightRef.current = null;
+    });
+    studentTabLoadInFlightRef.current = loadPromise;
+    return loadPromise;
   };
 
   const loadManagedBatches = async (options?: { force?: boolean }) => {
@@ -727,30 +758,34 @@ function AttendanceManagementContent() {
   };
 
   const loadStaffTab = async () => {
-    try {
-      setTabLoading(true);
-      const [staffRes, recordsRes, dashboardRes, approvedLeavesRes] = await Promise.all([
-        apiService.listAttendanceStaff({ school_id: 1, limit: 500 }).catch(() =>
-          apiService.listIntegratedStaff({ school_id: 1, limit: 500 })
-        ),
-        apiService.listStaffAttendanceRecords({ school_id: 1, limit: 200 }).catch(() => ({ data: [] })),
-        apiService.getStaffAttendanceDashboard({ school_id: 1 }).catch(() => ({ data: null })),
-        apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' }).catch(() => ({ data: [] })),
-      ]);
-      setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
-      setStaffApprovedLeaves(toArray<AttendanceLeave>(approvedLeavesRes.data));
-      const nextRecords = toArray<StaffAttendanceRecord>(recordsRes.data);
-      setStaffRecords(nextRecords);
-      setStaffDashboard(normalizeStaffDashboard(dashboardRes.data, nextRecords));
-      if (staffFilters.department) {
-        void loadStaffMarking();
-      }
-      setLoadedTabs((current) => ({ ...current, staff: true }));
-    } catch (error: any) {
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance load nahi hua.') });
-    } finally {
-      setTabLoading(false);
+    if (staffTabLoadInFlightRef.current) {
+      return staffTabLoadInFlightRef.current;
     }
+    const loadPromise = (async () => {
+      try {
+        setTabLoading(true);
+        const [staffRes, approvedLeavesRes] = await Promise.all([
+          apiService.listAttendanceStaff({ school_id: 1, limit: 200 }).catch(() =>
+            apiService.listIntegratedStaff({ school_id: 1, limit: 200 })
+          ),
+          apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' }).catch(() => ({ data: [] })),
+        ]);
+        setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
+        setStaffApprovedLeaves(toArray<AttendanceLeave>(approvedLeavesRes.data));
+        if (staffFilters.department) {
+          void loadStaffMarking();
+        }
+        setLoadedTabs((current) => ({ ...current, staff: true }));
+      } catch (error: any) {
+        setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance load nahi hua.') });
+      } finally {
+        setTabLoading(false);
+      }
+    })().finally(() => {
+      staffTabLoadInFlightRef.current = null;
+    });
+    staffTabLoadInFlightRef.current = loadPromise;
+    return loadPromise;
   };
 
   const refreshApprovedStaffLeaves = async () => {
@@ -765,7 +800,7 @@ function AttendanceManagementContent() {
   const refreshStaffLeaveViews = async () => {
     await refreshApprovedStaffLeaves();
 
-    if (loadedTabs.staff) {
+    if (isStaffTabVisible) {
       await loadStaffCalendarRecords();
       if (staffFilters.department) {
         await loadStaffMarking();
@@ -778,7 +813,7 @@ function AttendanceManagementContent() {
       setTabLoading(true);
       const [leavesRes, staffRes] = await Promise.all([
         apiService.listAttendanceLeaves({ school_id: 1 }),
-        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: 1, limit: 500 }),
+        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: 1, limit: 200 }),
       ]);
       setLeaves(toArray<AttendanceLeave>(leavesRes.data));
       setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
@@ -793,6 +828,10 @@ function AttendanceManagementContent() {
   useEffect(() => {
     if (tabLoading || loadedTabs[activeTab] || tabAutoLoadDone[activeTab]) return;
     setTabAutoLoadDone((current) => ({ ...current, [activeTab]: true }));
+    if (activeTab === 'overview') {
+      void loadOverviewData({ initial: true, force: true });
+      return;
+    }
     if (activeTab === 'student') {
       void loadStudentTab();
       return;
@@ -817,45 +856,24 @@ function AttendanceManagementContent() {
   }, [studentFilters.batch_name, studentFilters.date, studentFilters.subject_id]);
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student) return;
+    if (!isStudentTabVisible) return;
     const timeoutId = window.setTimeout(() => {
       void loadTodayStudentDashboard(studentFilters.dashboard_date);
     }, attendanceUiDebounceMs);
     return () => window.clearTimeout(timeoutId);
-  }, [studentFilters.dashboard_date, activeTab, loadedTabs.student]);
+  }, [studentFilters.dashboard_date, isStudentTabVisible]);
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student || user?.role !== 'teacher' || !canViewStudentTab) return;
+    if (!isStudentTabVisible || user?.role !== 'teacher' || !canViewStudentTab) return;
     void loadTeacherAttendanceContext();
-  }, [activeTab, loadedTabs.student, user?.role, studentFilters.date, canViewStudentTab]);
+  }, [isStudentTabVisible, user?.role, studentFilters.date, canViewStudentTab]);
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student) return;
-
-    void loadManagedBatches({ force: false });
-
-    const handleFocus = () => {
-      if (document.visibilityState === 'hidden') return;
-      void loadManagedBatches({ force: false });
-    };
-
-    window.addEventListener('focus', handleFocus);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
-      void loadManagedBatches({ force: false });
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [activeTab, loadedTabs.student]);
-
-  useEffect(() => {
-    if (activeTab !== 'overview' || !loadedTabs.overview) return;
-    return;
-  }, [activeTab, loadedTabs.overview]);
+    if (!isOverviewTabVisible) return;
+    if (!loadedTabs.overview || overviewPendingRefreshRef.current) {
+      void loadOverviewData({ initial: !loadedTabs.overview, force: overviewPendingRefreshRef.current });
+    }
+  }, [isOverviewTabVisible, loadedTabs.overview]);
 
   useEffect(() => {
     if (staffFilters.department) {
@@ -864,11 +882,10 @@ function AttendanceManagementContent() {
   }, [staffFilters.department, staffFilters.date]);
 
   useEffect(() => {
-    if (activeTab !== 'staff' || !loadedTabs.staff) return;
+    if (!isStaffTabVisible) return;
     void loadStaffRecords();
   }, [
-    activeTab,
-    loadedTabs.staff,
+    isStaffTabVisible,
     staffFilters.recordDepartment,
     staffFilters.recordStaffName,
     staffFilters.recordDate,
@@ -877,11 +894,10 @@ function AttendanceManagementContent() {
   ]);
 
   useEffect(() => {
-    if (activeTab !== 'staff' || !loadedTabs.staff) return;
+    if (!isStaffTabVisible) return;
     void loadStaffCalendarRecords();
   }, [
-    activeTab,
-    loadedTabs.staff,
+    isStaffTabVisible,
     staffFilters.department,
     staffFilters.date,
   ]);
@@ -970,22 +986,21 @@ function AttendanceManagementContent() {
   );
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student) return;
+    if (!isStudentTabVisible) return;
     const timeoutId = window.setTimeout(() => {
       void loadBatchAttendanceContext();
     }, attendanceUiDebounceMs);
     return () => window.clearTimeout(timeoutId);
-  }, [activeTab, loadedTabs.student, selectedBatchParts.className, selectedBatchParts.section, studentFilters.date]);
+  }, [isStudentTabVisible, selectedBatchParts.className, selectedBatchParts.section, studentFilters.date]);
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student) return;
+    if (!isStudentTabVisible) return;
     const timeoutId = window.setTimeout(() => {
       void loadStudentRecords();
     }, attendanceUiDebounceMs);
     return () => window.clearTimeout(timeoutId);
   }, [
-    activeTab,
-    loadedTabs.student,
+    isStudentTabVisible,
     recordBatchParts.className,
     recordBatchParts.section,
     studentFilters.recordStudentName,
@@ -1005,7 +1020,7 @@ function AttendanceManagementContent() {
   }, [studentRecords, studentFilters.date_from, studentFilters.date_to]);
 
   useEffect(() => {
-    if (activeTab !== 'student' || !loadedTabs.student) return;
+    if (!isStudentTabVisible) return;
     if (!calendarBatchParts.className || !calendarBatchParts.section) {
       setStudentCalendarRecords([]);
       return;
@@ -1015,8 +1030,7 @@ function AttendanceManagementContent() {
     }, attendanceUiDebounceMs);
     return () => window.clearTimeout(timeoutId);
   }, [
-    activeTab,
-    loadedTabs.student,
+    isStudentTabVisible,
     calendarBatchParts.className,
     calendarBatchParts.section,
     studentFilters.dashboard_date,
@@ -1499,6 +1513,11 @@ function AttendanceManagementContent() {
 
   const loadTeacherAttendanceContext = async () => {
     if (user?.role !== 'teacher') return;
+    const requestKey = `${studentFilters.date}:${getCurrentTimeHHMM().slice(0, 4)}`;
+    if (teacherContextRequestKeyRef.current === requestKey) {
+      return;
+    }
+    teacherContextRequestKeyRef.current = requestKey;
     try {
       const response = await apiService.getTeacherAttendanceContext({
         target_date: studentFilters.date,
@@ -1520,6 +1539,12 @@ function AttendanceManagementContent() {
     } catch (error: any) {
       setTeacherAttendanceContext(null);
       setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Teacher timetable se class auto-load nahi hui.') });
+    } finally {
+      window.setTimeout(() => {
+        if (teacherContextRequestKeyRef.current === requestKey) {
+          teacherContextRequestKeyRef.current = '';
+        }
+      }, 5_000);
     }
   };
 
@@ -1610,6 +1635,27 @@ function AttendanceManagementContent() {
     }
   };
 
+  const refreshStudentTabViews = async (options?: { includeOverview?: boolean; forceOverview?: boolean }) => {
+    if (isStudentTabVisible) {
+      await loadStudentRecords();
+      await loadStudentCalendarRecords();
+      await loadTodayStudentDashboard(studentFilters.dashboard_date);
+    }
+    if (options?.includeOverview) {
+      await loadOverviewData({ force: options.forceOverview });
+    }
+  };
+
+  const refreshStaffTabViews = async (options?: { includeOverview?: boolean; forceOverview?: boolean }) => {
+    if (isStaffTabVisible) {
+      await loadStaffRecords();
+      await loadStaffCalendarRecords();
+    }
+    if (options?.includeOverview) {
+      await loadOverviewData({ force: options.forceOverview });
+    }
+  };
+
   const loadStaffMarking = async () => {
     if (!staffFilters.department) return;
     try {
@@ -1652,7 +1698,7 @@ function AttendanceManagementContent() {
           staff_name: staffFilters.recordStaffName || undefined,
           date_from: staffFilters.recordDate || undefined,
           date_to: staffFilters.recordDate || undefined,
-          limit: 300,
+          limit: 200,
         }),
         dashboardPromise,
       ]);
@@ -1672,7 +1718,7 @@ function AttendanceManagementContent() {
         department: staffFilters.department || undefined,
         date_from: monthRange.from || undefined,
         date_to: monthRange.to || undefined,
-        limit: 500,
+        limit: 200,
       });
       setStaffCalendarRecords(toArray<StaffAttendanceRecord>(response.data));
     } catch {
@@ -1694,12 +1740,7 @@ function AttendanceManagementContent() {
         })),
       });
       setAlert({ type: 'success', message: 'Student attendance save ho gayi.' });
-      await Promise.all([
-        loadStudentRecords(),
-        loadStudentCalendarRecords(),
-        loadTodayStudentDashboard(studentFilters.dashboard_date),
-        loadOverviewData(),
-      ]);
+      await refreshStudentTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance save nahi hui.') });
     }
@@ -1719,11 +1760,7 @@ function AttendanceManagementContent() {
         })),
       });
       setAlert({ type: 'success', message: 'Staff attendance save ho gayi.' });
-      await Promise.all([
-        loadStaffRecords(),
-        loadStaffCalendarRecords(),
-        loadOverviewData(),
-      ]);
+      await refreshStaffTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance save nahi hui.') });
     }
@@ -1739,7 +1776,7 @@ function AttendanceManagementContent() {
       });
       setHolidayForm(initialHolidayForm);
       setAlert({ type: 'success', message: 'Holiday add ho gayi.' });
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: error?.response?.data?.detail || 'Holiday add nahi hui.' });
     }
@@ -1760,7 +1797,7 @@ function AttendanceManagementContent() {
       const response = await apiService.listAttendanceLeaves({ school_id: 1 });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: error?.response?.data?.detail || 'Leave apply nahi hui.' });
     }
@@ -1776,7 +1813,7 @@ function AttendanceManagementContent() {
       const response = await apiService.listAttendanceLeaves({ school_id: 1 });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: error?.response?.data?.detail || 'Leave decision save nahi hua.' });
     }
@@ -1787,7 +1824,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAttendanceNotification(notificationId);
       setAlert({ type: 'success', message: 'Notification delete ho gayi.' });
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Notification delete nahi hui.') });
     }
@@ -1798,7 +1835,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAttendanceHoliday(holidayId);
       setAlert({ type: 'success', message: 'Holiday delete ho gayi.' });
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Holiday delete nahi hui.') });
     }
@@ -1809,10 +1846,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteStudentAttendanceRecord(recordId);
       setAlert({ type: 'success', message: 'Student attendance record delete ho gaya.' });
-      await Promise.all([
-        loadStudentTab(),
-        loadOverviewData(),
-      ]);
+      await refreshStudentTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance record delete nahi hua.') });
     }
@@ -1823,8 +1857,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteStaffAttendanceRecord(recordId);
       setAlert({ type: 'success', message: 'Staff attendance record delete ho gaya.' });
-      await loadStaffRecords();
-      await loadOverviewData();
+      await refreshStaffTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance record delete nahi hua.') });
     }
@@ -1838,7 +1871,7 @@ function AttendanceManagementContent() {
       const response = await apiService.listAttendanceLeaves({ school_id: 1 });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Leave request delete nahi hui.') });
     }
@@ -1849,7 +1882,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAllAttendanceNotifications();
       setAlert({ type: 'success', message: 'All notifications delete ho gayi.' });
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'All notifications delete nahi hui.') });
     }
@@ -1860,7 +1893,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAllAttendanceHolidays();
       setAlert({ type: 'success', message: 'All holidays delete ho gayi.' });
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'All holidays delete nahi hui.') });
     }
@@ -1881,10 +1914,7 @@ function AttendanceManagementContent() {
         date_to: studentFilters.date_to || undefined,
       });
       setAlert({ type: 'success', message: 'Filtered student attendance records delete ho gaye.' });
-      await Promise.all([
-        loadStudentTab(),
-        loadOverviewData(),
-      ]);
+      await refreshStudentTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance records delete nahi hue.') });
     }
@@ -1901,8 +1931,7 @@ function AttendanceManagementContent() {
         date_to: staffFilters.recordDate || undefined,
       });
       setAlert({ type: 'success', message: 'Filtered staff attendance records delete ho gaye.' });
-      await loadStaffRecords();
-      await loadOverviewData();
+      await refreshStaffTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance records delete nahi hue.') });
     }
@@ -1916,7 +1945,7 @@ function AttendanceManagementContent() {
       const response = await apiService.listAttendanceLeaves({ school_id: 1 });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
-      await loadOverviewData();
+      await loadOverviewData({ force: true });
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'All leave requests delete nahi hui.') });
     }
