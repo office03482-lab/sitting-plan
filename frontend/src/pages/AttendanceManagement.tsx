@@ -995,9 +995,52 @@ function AttendanceManagementContent() {
       return;
     }
     if (activeTab === 'reports') {
+      debugAttendanceLoader('effect.autoload.reports');
       setLoadedTabs((current) => ({ ...current, [activeTab]: true }));
+      setLoading(false);
     }
   }, [activeTab, loading, loadedTabs, tabLoading, tabAutoLoadDone, canRunAttendanceRequests]);
+
+  useEffect(() => {
+    if (!loading) return;
+    if (authLoading || !authInitialized) return;
+
+    if (!visibleTabs.length) {
+      debugAttendanceLoader('effect.loading_recovery.no_visible_tabs');
+      setLoading(false);
+      return;
+    }
+
+    if (!visibleTabs.some((tab) => tab.key === activeTab)) {
+      debugAttendanceLoader('effect.loading_recovery.waiting_for_visible_tab');
+      return;
+    }
+
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('effect.loading_recovery.auth_settled_without_session');
+      setLoading(false);
+      return;
+    }
+
+    if (loadedTabs[activeTab]) {
+      debugAttendanceLoader('effect.loading_recovery.active_tab_loaded');
+      setLoading(false);
+      return;
+    }
+
+    if (activeTab === 'reports') {
+      debugAttendanceLoader('effect.loading_recovery.reports');
+      setLoading(false);
+    }
+  }, [
+    activeTab,
+    authInitialized,
+    authLoading,
+    canRunAttendanceRequests,
+    loadedTabs,
+    loading,
+    visibleTabs,
+  ]);
 
   useEffect(() => {
     if (studentFilters.batch_name) {
