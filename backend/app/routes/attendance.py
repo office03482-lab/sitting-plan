@@ -1567,6 +1567,7 @@ def get_batch_current_class(
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
+    reject_legacy_attendance_request()
     seed_attendance_data(db, school_id)
     selected_date = target_date or datetime.now().date()
     weekday = day_of_week_for_date(selected_date)

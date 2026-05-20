@@ -1,4 +1,5 @@
 from app.services.supabase_attendance import (
+    get_batch_current_class,
     get_integrated_overview,
     get_overview,
     get_student_marking,
@@ -14,6 +15,23 @@ from app.services.supabase_attendance import (
 
 
 class NativeAttendanceService:
+    def get_batch_current_class(
+        self,
+        *,
+        school_id: str,
+        class_name: str,
+        section: str,
+        target_date: str | None = None,
+        current_time: str | None = None,
+    ):
+        return get_batch_current_class(
+            school_id,
+            class_name=class_name,
+            section=section,
+            target_date=target_date,
+            current_time=current_time,
+        )
+
     def get_overview(self, *, school_id: str):
         return get_overview(school_id)
 
@@ -77,4 +95,3 @@ class NativeAttendanceService:
 
     def get_staff_dashboard(self, **kwargs):
         return get_staff_dashboard(**kwargs)
-

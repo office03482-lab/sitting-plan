@@ -14,6 +14,7 @@ from app.schemas import (
     StaffAttendanceRecordResponse,
     StudentAttendanceMarkingResponse,
     StudentAttendanceRecordResponse,
+    TeacherAttendanceContextResponse,
 )
 from app.services.supabase_context import resolve_school_id_from_actor
 
@@ -120,6 +121,26 @@ def list_subjects_route(
     return service.list_subjects(school_id=school_id)
 
 
+@router.get("/batch-current-class", response_model=TeacherAttendanceContextResponse)
+def get_batch_current_class_route(
+    class_name: str = Query(...),
+    section: str = Query(...),
+    target_date: Optional[date] = Query(default=None),
+    current_time: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("batch-current-class", school_id)
+    payload = service.get_batch_current_class(
+        school_id=school_id,
+        class_name=class_name,
+        section=section,
+        target_date=target_date.isoformat() if target_date else None,
+        current_time=current_time,
+    )
+    return TeacherAttendanceContextResponse(**payload)
+
+
 @router.get("/student-marking", response_model=StudentAttendanceMarkingResponse)
 def get_student_marking_route(
     date: date = Query(...),
@@ -207,4 +228,3 @@ def get_staff_dashboard_route(
             date_to=date_to.isoformat() if date_to else None,
         )
     )
-

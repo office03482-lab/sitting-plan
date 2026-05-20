@@ -91,6 +91,10 @@ class ApiService {
   private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
   private attendanceStudentsAbortController: AbortController | null = null;
   private attendanceStudentsCache = new Map<string, { expiresAt: number; data: AttendanceStudent[] }>();
+  private batchAttendanceContextRequestKey: string | null = null;
+  private batchAttendanceContextRequestPromise: Promise<{ data: TeacherAttendanceContext }> | null = null;
+  private batchAttendanceContextAbortController: AbortController | null = null;
+  private batchAttendanceContextCache = new Map<string, { expiresAt: number; data: TeacherAttendanceContext }>();
   private studentIdMap = new Map<number, string>();
   private studentReverseIdMap = new Map<string, number>();
   private teacherIdMap = new Map<number, string>();
@@ -4953,12 +4957,44 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load batch attendance context');
     }
-    return this.api.get<TeacherAttendanceContext>('/attendance/batch-current-class', {
-      params: {
-        ...params,
-        school_id: scopedSchoolId,
-      },
-    });
+    const requestParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
+    const requestKey = JSON.stringify(requestParams);
+    const now = Date.now();
+    const cached = this.batchAttendanceContextCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: TeacherAttendanceContext };
+    }
+
+    if (this.batchAttendanceContextRequestKey === requestKey && this.batchAttendanceContextRequestPromise) {
+      return this.batchAttendanceContextRequestPromise;
+    }
+
+    this.batchAttendanceContextAbortController?.abort();
+    this.batchAttendanceContextAbortController = new AbortController();
+    this.batchAttendanceContextRequestKey = requestKey;
+    this.batchAttendanceContextRequestPromise = this.api
+      .get<TeacherAttendanceContext>('/attendance/batch-current-class', {
+        params: requestParams,
+        signal: this.batchAttendanceContextAbortController.signal,
+      })
+      .then((response) => {
+        this.batchAttendanceContextCache.set(requestKey, {
+          data: response.data,
+          expiresAt: Date.now() + 45_000,
+        });
+        return response;
+      })
+      .finally(() => {
+        if (this.batchAttendanceContextRequestKey === requestKey) {
+          this.batchAttendanceContextRequestKey = null;
+          this.batchAttendanceContextRequestPromise = null;
+        }
+      });
+
+    return this.batchAttendanceContextRequestPromise;
   }
 
   async getStudentAttendanceMarking(params: {

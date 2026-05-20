@@ -16,6 +16,8 @@ ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
 MAX_STUDENT_LOOKUP = 5000
 ATTENDANCE_CHUNK_RETRY_COUNT = 2
 ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS = 0.35
+BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS = 45
+BATCH_CURRENT_CLASS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _iso(value: Any) -> Any:
@@ -208,6 +210,367 @@ def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
         left, right = normalized.split("-", 1)
         return left.strip() or "General", right.strip() or "A"
     return normalized, "A"
+
+
+def _split_timetable_batches(value: str | None) -> list[str]:
+    normalized = _normalize(value)
+    if not normalized:
+        return []
+    return [item.strip() for item in normalized.split(",") if item.strip()]
+
+
+def _batch_matches_timetable_entry(class_name: str, section: str, timetable_class_name: str | None) -> bool:
+    wanted_class = _cf(class_name)
+    wanted_section = _cf(section)
+    if not wanted_class or not wanted_section:
+        return False
+    for batch_name in _split_timetable_batches(timetable_class_name):
+        entry_class_name, entry_section = split_batch_to_class_section(batch_name)
+        if _cf(entry_class_name) == wanted_class and _cf(entry_section) == wanted_section:
+            return True
+    return False
+
+
+def _day_of_week_value(target_date: date) -> str:
+    return ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][target_date.weekday()]
+
+
+def _normalize_time_hhmm(value: Any) -> str:
+    return _normalize(value)[:5]
+
+
+def _choose_timetable_row(
+    entries: list[dict[str, Any]],
+    current_time: str | None = None,
+) -> tuple[dict[str, Any] | None, bool]:
+    normalized_current_time = _normalize_time_hhmm(current_time)
+    if normalized_current_time:
+        for entry in entries:
+            start_time = _normalize_time_hhmm(entry.get("start_time"))
+            end_time = _normalize_time_hhmm(entry.get("end_time"))
+            if start_time and end_time and start_time <= normalized_current_time <= end_time:
+                return entry, True
+    return (entries[0], False) if entries else (None, False)
+
+
+def _batch_current_class_cache_key(
+    school_id: str,
+    class_name: str,
+    section: str,
+    target_date: date,
+    current_time: str | None,
+) -> str:
+    time_bucket = _normalize_time_hhmm(current_time) or "00:00"
+    return "|".join(
+        [
+            school_id,
+            _cf(class_name),
+            _cf(section),
+            target_date.isoformat(),
+            time_bucket,
+        ]
+    )
+
+
+def _get_cached_batch_current_class(cache_key: str) -> dict[str, Any] | None:
+    cached = BATCH_CURRENT_CLASS_CACHE.get(cache_key)
+    if not cached:
+        return None
+    expires_at, payload = cached
+    if expires_at <= time.monotonic():
+        BATCH_CURRENT_CLASS_CACHE.pop(cache_key, None)
+        return None
+    return dict(payload)
+
+
+def _set_cached_batch_current_class(cache_key: str, payload: dict[str, Any]) -> None:
+    BATCH_CURRENT_CLASS_CACHE[cache_key] = (
+        time.monotonic() + BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS,
+        dict(payload),
+    )
+
+
+def _fetch_timetable_candidates_from_normalized_batches(
+    school_id: str,
+    *,
+    weekday: str,
+    class_name: str,
+    section: str,
+) -> list[dict[str, Any]]:
+    batch_rows = (
+        get_supabase_admin_client()
+        .schema("scheduling")
+        .table("timetable_entry_batches")
+        .select("timetable_entry_id")
+        .eq("school_id", school_id)
+        .eq("class_name", class_name)
+        .eq("section", section)
+        .execute()
+    )
+    entry_ids = _sanitize_lookup_ids([row.get("timetable_entry_id") for row in list(batch_rows.data or [])])
+    if not entry_ids:
+        return []
+
+    response = (
+        get_supabase_admin_client()
+        .schema("scheduling")
+        .table("timetable_entries")
+        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
+        .eq("school_id", school_id)
+        .eq("day_of_week", weekday)
+        .eq("is_active", True)
+        .in_("id", entry_ids)
+        .order("start_time")
+        .order("id")
+        .execute()
+    )
+    return list(response.data or [])
+
+
+def _fetch_timetable_candidates_from_legacy_batches(
+    school_id: str,
+    *,
+    weekday: str,
+    class_name: str,
+    section: str,
+) -> list[dict[str, Any]]:
+    normalized_class = _normalize(class_name)
+    normalized_section = _normalize(section)
+    escaped_pipe = _escape_postgrest_like(f"{normalized_class} | {normalized_section}")
+    escaped_dash = _escape_postgrest_like(f"{normalized_class}-{normalized_section}")
+    escaped_class = _escape_postgrest_like(normalized_class)
+    response = (
+        get_supabase_admin_client()
+        .schema("scheduling")
+        .table("timetable_entries")
+        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
+        .eq("school_id", school_id)
+        .eq("day_of_week", weekday)
+        .eq("is_active", True)
+        .or_(
+            ",".join(
+                [
+                    f"class_name.ilike.%{escaped_pipe}%",
+                    f"class_name.ilike.%{escaped_dash}%",
+                    f"class_name.ilike.%{escaped_class}%",
+                    f"section.eq.{_escape_postgrest_like(normalized_section)}",
+                ]
+            )
+        )
+        .order("start_time")
+        .order("id")
+        .execute()
+    )
+    return list(response.data or [])
+
+
+def _fetch_staff_member_name(school_id: str, staff_member_id: str | None) -> str:
+    if not staff_member_id:
+        return ""
+    response = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .select("full_name")
+        .eq("school_id", school_id)
+        .eq("id", staff_member_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return _normalize(rows[0].get("full_name")) if rows else ""
+
+
+def _resolve_subject_for_batch_context(
+    school_id: str,
+    *,
+    class_name: str,
+    section: str,
+    subject_name: str | None,
+) -> dict[str, Any] | None:
+    normalized_subject_name = _normalize(subject_name)
+    if not normalized_subject_name:
+        return None
+
+    batch_rows = (
+        get_supabase_admin_client()
+        .table("batches")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .eq("class_name", class_name)
+        .eq("section", section)
+        .execute()
+    )
+    batch_ids = {str(row.get("id")) for row in list(batch_rows.data or []) if row.get("id")}
+
+    subject_rows = (
+        get_supabase_admin_client()
+        .table("subjects")
+        .select("id, name, class_name, batch_id, metadata")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .ilike("name", normalized_subject_name)
+        .limit(25)
+        .execute()
+    )
+    candidates = list(subject_rows.data or [])
+    best_fallback: dict[str, Any] | None = None
+    for row in candidates:
+        metadata = row.get("metadata") or {}
+        metadata_section = _normalize(metadata.get("section")) if isinstance(metadata, dict) else ""
+        row_class_name = _normalize(row.get("class_name"))
+        if row_class_name and _cf(row_class_name) == _cf(class_name):
+            if metadata_section and _cf(metadata_section) == _cf(section):
+                return row
+            if not best_fallback:
+                best_fallback = row
+        if batch_ids and str(row.get("batch_id")) in batch_ids:
+            return row
+    return best_fallback
+
+
+def get_batch_current_class(
+    school_id: str,
+    *,
+    class_name: str,
+    section: str,
+    target_date: str | None = None,
+    current_time: str | None = None,
+) -> dict[str, Any]:
+    selected_date = datetime.fromisoformat(target_date[:10]).date() if target_date else datetime.now().date()
+    weekday = _day_of_week_value(selected_date)
+    cache_key = _batch_current_class_cache_key(school_id, class_name, section, selected_date, current_time)
+    cached_payload = _get_cached_batch_current_class(cache_key)
+    if cached_payload:
+        logger.info(
+            "attendance.batch_current_class.cache_hit",
+            extra={"school_id": school_id, "class_name": class_name, "section": section, "target_date": selected_date.isoformat()},
+        )
+        return cached_payload
+
+    logger.info(
+        "attendance.batch_current_class.start",
+        extra={
+            "school_id": school_id,
+            "class_name": class_name,
+            "section": section,
+            "target_date": selected_date.isoformat(),
+            "current_time": _normalize_time_hhmm(current_time),
+            "weekday": weekday,
+        },
+    )
+
+    started_at = time.monotonic()
+    join_rows: list[dict[str, Any]] = []
+    used_join_table = False
+    try:
+        join_started_at = time.monotonic()
+        join_rows = _fetch_timetable_candidates_from_normalized_batches(
+            school_id,
+            weekday=weekday,
+            class_name=class_name,
+            section=section,
+        )
+        used_join_table = True
+        logger.info(
+            "attendance.batch_current_class.join_lookup_complete",
+            extra={
+                "school_id": school_id,
+                "row_count": len(join_rows),
+                "duration_ms": round((time.monotonic() - join_started_at) * 1000),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "attendance.batch_current_class.join_lookup_failed",
+            extra={"school_id": school_id, "class_name": class_name, "section": section},
+        )
+
+    query_started_at = time.monotonic()
+    rows = join_rows or _fetch_timetable_candidates_from_legacy_batches(
+        school_id,
+        weekday=weekday,
+        class_name=class_name,
+        section=section,
+    )
+    logger.info(
+        "attendance.batch_current_class.timetable_query_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(rows),
+            "duration_ms": round((time.monotonic() - query_started_at) * 1000),
+            "used_join_table": used_join_table,
+        },
+    )
+
+    candidate_rows = [
+        row
+        for row in rows
+        if _normalize(((row.get("metadata") or {}).get("ui_session_type") if isinstance(row.get("metadata"), dict) else row.get("session_type"))) not in {"break_time", "self_study"}
+        and _batch_matches_timetable_entry(class_name, section, row.get("class_name"))
+    ]
+    matched_row, matched_by_current_time = _choose_timetable_row(candidate_rows, current_time)
+
+    if not matched_row:
+        payload = {
+            "teacher_id": "",
+            "teacher_name": "",
+            "date": datetime.combine(selected_date, datetime.min.time()).isoformat(),
+            "class_name": class_name,
+            "section": section,
+            "matched_by_current_time": False,
+        }
+        _set_cached_batch_current_class(cache_key, payload)
+        logger.info(
+            "attendance.batch_current_class.no_match",
+            extra={
+                "school_id": school_id,
+                "class_name": class_name,
+                "section": section,
+                "candidate_count": len(candidate_rows),
+                "duration_ms": round((time.monotonic() - started_at) * 1000),
+            },
+        )
+        return payload
+
+    metadata = matched_row.get("metadata") or {}
+    subject_name = _normalize(metadata.get("subject")) if isinstance(metadata, dict) else ""
+    staff_member_id = str(matched_row.get("staff_member_id") or "")
+    teacher_name = _fetch_staff_member_name(school_id, staff_member_id)
+    subject_row = _resolve_subject_for_batch_context(
+        school_id,
+        class_name=class_name,
+        section=section,
+        subject_name=subject_name,
+    )
+
+    payload = {
+        "teacher_id": staff_member_id,
+        "teacher_name": teacher_name,
+        "date": datetime.combine(selected_date, datetime.min.time()).isoformat(),
+        "class_name": class_name,
+        "section": section,
+        "subject": subject_name or None,
+        "subject_id": (subject_row or {}).get("id"),
+        "start_time": _normalize_time_hhmm(matched_row.get("start_time")) or None,
+        "end_time": _normalize_time_hhmm(matched_row.get("end_time")) or None,
+        "timetable_entry_id": matched_row.get("id"),
+        "matched_by_current_time": matched_by_current_time,
+    }
+    _set_cached_batch_current_class(cache_key, payload)
+    logger.info(
+        "attendance.batch_current_class.complete",
+        extra={
+            "school_id": school_id,
+            "class_name": class_name,
+            "section": section,
+            "candidate_count": len(candidate_rows),
+            "matched_by_current_time": matched_by_current_time,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "cache_ttl_seconds": BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS,
+        },
+    )
+    return payload
 
 
 def _fetch_students(
