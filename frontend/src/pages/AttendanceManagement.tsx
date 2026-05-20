@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectHTMLAttributes } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -591,6 +591,9 @@ function AttendanceManagementContent() {
       }));
     }
   };
+  const attendanceStudentsRefreshCooldownMs = 60_000;
+  const lastManagedBatchRefreshAtRef = useRef(0);
+  const managedBatchRefreshInFlightRef = useRef<Promise<void> | null>(null);
 
   const loadOverviewData = async (initial = false) => {
     try {
@@ -674,29 +677,46 @@ function AttendanceManagementContent() {
     }
   };
 
-  const loadManagedBatches = async () => {
-    try {
-      const response = await apiService.listAttendanceStudents({ school_id: 1, limit: 500 }).catch(() =>
-        apiService.listIntegratedStudents({ school_id: 1, limit: 500 })
-      );
-      const nextStudents = toArray<AttendanceStudent>(response.data);
-      setStudents(nextStudents);
-      const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
-      setManagedBatches(normalizedBatches);
-      setStudentFilters((current) => ({
-        ...current,
-        batch_name:
-          current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
-            ? current.batch_name
-            : normalizedBatches[0]?.name || '',
-        record_batch_name:
-          current.record_batch_name && normalizedBatches.some((item) => item.name === current.record_batch_name)
-            ? current.record_batch_name
-            : '',
-      }));
-    } catch {
-      // Keep current batch options if refresh fails.
+  const loadManagedBatches = async (options?: { force?: boolean }) => {
+    const force = options?.force === true;
+    const now = Date.now();
+    if (!force && now - lastManagedBatchRefreshAtRef.current < attendanceStudentsRefreshCooldownMs) {
+      return;
     }
+    if (managedBatchRefreshInFlightRef.current) {
+      return managedBatchRefreshInFlightRef.current;
+    }
+
+    const refreshPromise = (async () => {
+      lastManagedBatchRefreshAtRef.current = Date.now();
+      try {
+        const response = await apiService.listAttendanceStudents({ school_id: 1, limit: 500 }).catch(() =>
+          apiService.listIntegratedStudents({ school_id: 1, limit: 500 })
+        );
+        const nextStudents = toArray<AttendanceStudent>(response.data);
+        setStudents(nextStudents);
+        const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
+        setManagedBatches(normalizedBatches);
+        setStudentFilters((current) => ({
+          ...current,
+          batch_name:
+            current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
+              ? current.batch_name
+              : normalizedBatches[0]?.name || '',
+          record_batch_name:
+            current.record_batch_name && normalizedBatches.some((item) => item.name === current.record_batch_name)
+              ? current.record_batch_name
+              : '',
+        }));
+      } catch {
+        // Keep current batch options if refresh fails.
+      } finally {
+        managedBatchRefreshInFlightRef.current = null;
+      }
+    })();
+
+    managedBatchRefreshInFlightRef.current = refreshPromise;
+    return refreshPromise;
   };
 
   const loadStaffTab = async () => {
@@ -802,23 +822,23 @@ function AttendanceManagementContent() {
   useEffect(() => {
     if (activeTab !== 'student' || !loadedTabs.student) return;
 
-    void loadManagedBatches();
-
-    const intervalId = window.setInterval(() => {
-      void loadManagedBatches();
-    }, 15000);
+    void loadManagedBatches({ force: false });
 
     const handleFocus = () => {
-      void loadManagedBatches();
+      if (document.visibilityState === 'hidden') return;
+      void loadManagedBatches({ force: false });
     };
 
     window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      void loadManagedBatches({ force: false });
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [activeTab, loadedTabs.student]);
 
@@ -873,7 +893,7 @@ function AttendanceManagementContent() {
   useEffect(() => {
     if (activeTab !== 'reports') return;
     if (managedBatches.length) return;
-    void loadManagedBatches();
+    void loadManagedBatches({ force: false });
   }, [activeTab, managedBatches.length]);
 
   const batchOptions = useMemo(

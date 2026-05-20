@@ -1,0 +1,2 @@
+"""Attendance architecture helpers."""
+

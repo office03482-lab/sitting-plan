@@ -87,6 +87,10 @@ const getPersistedUser = () => {
 
 class ApiService {
   private api: AxiosInstance;
+  private attendanceStudentsRequestKey: string | null = null;
+  private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
+  private attendanceStudentsAbortController: AbortController | null = null;
+  private attendanceStudentsCache = new Map<string, { expiresAt: number; data: AttendanceStudent[] }>();
   private studentIdMap = new Map<number, string>();
   private studentReverseIdMap = new Map<string, number>();
   private teacherIdMap = new Map<number, string>();
@@ -4805,12 +4809,44 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load attendance students');
     }
-    return this.api.get<AttendanceStudent[]>('/attendance/students', {
-      params: {
-        ...params,
-        school_id: scopedSchoolId,
-      },
-    });
+    const requestParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
+    const requestKey = JSON.stringify(requestParams);
+    const now = Date.now();
+    const cached = this.attendanceStudentsCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: AttendanceStudent[] };
+    }
+
+    if (this.attendanceStudentsRequestKey === requestKey && this.attendanceStudentsRequestPromise) {
+      return this.attendanceStudentsRequestPromise;
+    }
+
+    this.attendanceStudentsAbortController?.abort();
+    this.attendanceStudentsAbortController = new AbortController();
+    this.attendanceStudentsRequestKey = requestKey;
+    this.attendanceStudentsRequestPromise = this.api
+      .get<AttendanceStudent[]>('/attendance/students', {
+        params: requestParams,
+        signal: this.attendanceStudentsAbortController.signal,
+      })
+      .then((response) => {
+        this.attendanceStudentsCache.set(requestKey, {
+          data: Array.isArray(response.data) ? response.data : [],
+          expiresAt: Date.now() + 60_000,
+        });
+        return response;
+      })
+      .finally(() => {
+        if (this.attendanceStudentsRequestKey === requestKey) {
+          this.attendanceStudentsRequestKey = null;
+          this.attendanceStudentsRequestPromise = null;
+        }
+      });
+
+    return this.attendanceStudentsRequestPromise;
   }
 
   async createAttendanceStudent(

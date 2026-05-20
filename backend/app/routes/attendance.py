@@ -18,6 +18,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.attendance.guards import reject_legacy_attendance_request
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import (
     AttendanceHoliday,
@@ -544,6 +545,7 @@ def serialize_staff_attendance(
 
 
 def get_settings(db: Session, school_id: int) -> AttendanceSetting:
+    reject_legacy_attendance_request()
     settings = (
         db.query(AttendanceSetting)
         .filter(AttendanceSetting.school_id == school_id)
@@ -590,6 +592,7 @@ def log_attendance_sync_warning(exc: Exception) -> None:
 
 
 def seed_attendance_data(db: Session, school_id: int = 1, force: bool = False) -> None:
+    reject_legacy_attendance_request()
     last_seed_at = LAST_SEED_AT.get(school_id)
     now = datetime.now()
     if not force and last_seed_at and (now - last_seed_at).total_seconds() < SEED_CACHE_SECONDS:

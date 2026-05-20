@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 import logging
 import traceback
 from sqlalchemy import text
+from app.attendance.guards import ensure_native_attendance_mode
+from app.attendance.schema_checks import verify_attendance_schema
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
@@ -30,6 +32,9 @@ async def lifespan(app: FastAPI):
         settings.debug,
         settings.reload,
     )
+    if settings.is_production:
+        ensure_native_attendance_mode()
+        verify_attendance_schema()
     
     yield
     
@@ -73,6 +78,8 @@ async def readiness_check():
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
+        if settings.is_production:
+            verify_attendance_schema()
         return {
             "status": "ready",
             "service": "Dr. GIRISH APP",
@@ -123,7 +130,8 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, attendance
+from app.attendance.native.router import router as attendance_native_router
+from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, attendance as legacy_attendance_router
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -202,7 +210,11 @@ app.include_router(
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("edupay"))],
 )
 app.include_router(
-    attendance.router,
+    attendance_native_router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
+)
+app.include_router(
+    legacy_attendance_router.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
 )
 
