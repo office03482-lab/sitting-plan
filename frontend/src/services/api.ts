@@ -133,6 +133,18 @@ class ApiService {
     return typeof window === 'undefined' ? null : localStorage.getItem('auth_token');
   }
 
+  private async waitForAuthInitialization(timeoutMs: number = 1800) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const authState = useAuthStore.getState();
+      if (authState.auth_initialized || !authState.auth_loading) {
+        return authState;
+      }
+      await delay(50);
+    }
+    return useAuthStore.getState();
+  }
+
   private isRefreshExcluded(url?: string) {
     if (!url) return false;
     return [
@@ -1371,6 +1383,17 @@ class ApiService {
 
     // Ensure multipart uploads do not send a JSON content type header.
     this.api.interceptors.request.use(async (config) => {
+      if (!this.isRefreshExcluded(config.url)) {
+        const authState = await this.waitForAuthInitialization();
+        console.debug('[auth-sync]', 'api.request.auth_gate', {
+          url: config.url || '',
+          auth_initialized: authState.auth_initialized,
+          auth_loading: authState.auth_loading,
+          hasToken: Boolean(authState.token || this.getAccessToken()),
+          userId: authState.user?.id || null,
+        });
+      }
+
       if (config.data instanceof FormData) {
         if (config.headers) {
           delete config.headers['Content-Type'];

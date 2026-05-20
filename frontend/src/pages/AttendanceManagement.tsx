@@ -17,6 +17,7 @@ import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService } from '@services/api';
 import { useAuthStore } from '@store/auth';
+import { useAuth } from '@/contexts/AuthProvider';
 import type {
   Batch,
   AttendanceHoliday,
@@ -439,6 +440,7 @@ function AttendanceManagementContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAuthStore((state) => state.user);
+  const { authReady, sessionReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const permissionList = user?.permissions || [];
   const hasExactPermission = (permission: string) => user?.role === 'admin' || permissionList.includes(permission);
@@ -617,11 +619,16 @@ function AttendanceManagementContent() {
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
   const integratedPanelEnabled = activeTab === ('integrated' as TabKey);
+  const canRunAttendanceRequests = authReady && sessionReady && !!session;
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[attendance-loader]', source, {
       activeTab,
       integratedPanelEnabled,
+      authReady,
+      sessionReady,
+      authInitialized,
+      authLoading,
       ...details,
     });
   };
@@ -644,6 +651,10 @@ function AttendanceManagementContent() {
   const loadOverviewData = async (options?: { initial?: boolean; force?: boolean }) => {
     const initial = options?.initial === true;
     const force = options?.force === true;
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadOverviewData.skipped.auth_not_ready', { initial, force });
+      return;
+    }
     if (!initial && !isOverviewTabVisible) {
       debugAttendanceLoader('loadOverviewData.skipped.hidden_tab', { initial, force });
       overviewPendingRefreshRef.current = true;
@@ -709,6 +720,10 @@ function AttendanceManagementContent() {
   }, [isTeacherSelfView, leaveForm.staff_member_id, staffMembers]);
 
   const loadStudentTab = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStudentTab.skipped.auth_not_ready');
+      return;
+    }
     if (studentTabLoadInFlightRef.current) {
       debugAttendanceLoader('loadStudentTab.reused_inflight');
       return studentTabLoadInFlightRef.current;
@@ -749,6 +764,10 @@ function AttendanceManagementContent() {
 
   const loadManagedBatches = async (options?: { force?: boolean }) => {
     const force = options?.force === true;
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadManagedBatches.skipped.auth_not_ready', { force });
+      return;
+    }
     const now = Date.now();
     if (!force && now - lastManagedBatchRefreshAtRef.current < attendanceStudentsRefreshCooldownMs) {
       debugAttendanceLoader('loadManagedBatches.skipped.cooldown', { force });
@@ -792,6 +811,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStaffTab = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStaffTab.skipped.auth_not_ready');
+      return;
+    }
     if (staffTabLoadInFlightRef.current) {
       debugAttendanceLoader('loadStaffTab.reused_inflight');
       return staffTabLoadInFlightRef.current;
@@ -824,6 +847,10 @@ function AttendanceManagementContent() {
   };
 
   const loadIntegratedOverviewManually = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadIntegratedOverviewManually.skipped.auth_not_ready');
+      return;
+    }
     if (!integratedPanelEnabled && !window.confirm('Integrated attendance snapshot manually load karna hai?')) {
       return;
     }
@@ -840,6 +867,10 @@ function AttendanceManagementContent() {
   };
 
   const loadIntegratedStudentsManually = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadIntegratedStudentsManually.skipped.auth_not_ready');
+      return;
+    }
     if (!integratedPanelEnabled && !window.confirm('Integrated students manually load karne hain?')) {
       return;
     }
@@ -856,6 +887,10 @@ function AttendanceManagementContent() {
   };
 
   const refreshApprovedStaffLeaves = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('refreshApprovedStaffLeaves.skipped.auth_not_ready');
+      return;
+    }
     try {
       const response = await apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' });
       setStaffApprovedLeaves(toArray<AttendanceLeave>(response.data));
@@ -876,6 +911,10 @@ function AttendanceManagementContent() {
   };
 
   const loadLeavesTab = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadLeavesTab.skipped.auth_not_ready');
+      return;
+    }
     try {
       debugAttendanceLoader('loadLeavesTab.start');
       setTabLoading(true);
@@ -895,6 +934,7 @@ function AttendanceManagementContent() {
   };
 
   useEffect(() => {
+    if (!canRunAttendanceRequests) return;
     if (tabLoading || loadedTabs[activeTab] || tabAutoLoadDone[activeTab]) return;
     setTabAutoLoadDone((current) => ({ ...current, [activeTab]: true }));
     if (activeTab === 'overview') {
@@ -920,7 +960,7 @@ function AttendanceManagementContent() {
     if (activeTab === 'reports') {
       setLoadedTabs((current) => ({ ...current, [activeTab]: true }));
     }
-  }, [activeTab, loading, loadedTabs, tabLoading, tabAutoLoadDone]);
+  }, [activeTab, loading, loadedTabs, tabLoading, tabAutoLoadDone, canRunAttendanceRequests]);
 
   useEffect(() => {
     if (studentFilters.batch_name) {
@@ -1597,6 +1637,10 @@ function AttendanceManagementContent() {
   };
 
   const loadTeacherAttendanceContext = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadTeacherAttendanceContext.skipped.auth_not_ready');
+      return;
+    }
     if (user?.role !== 'teacher') return;
     const requestKey = `${studentFilters.date}:${getCurrentTimeHHMM().slice(0, 4)}`;
     if (teacherContextRequestKeyRef.current === requestKey) {
@@ -1636,6 +1680,10 @@ function AttendanceManagementContent() {
   };
 
   const loadBatchAttendanceContext = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadBatchAttendanceContext.skipped.auth_not_ready');
+      return;
+    }
     if (!selectedBatchParts.className || !selectedBatchParts.section) {
       setBatchAttendanceContext(null);
       return;
@@ -1672,6 +1720,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStudentRecords = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStudentRecords.skipped.auth_not_ready');
+      return;
+    }
     try {
       debugAttendanceLoader('loadStudentRecords.start', {
         className: recordBatchParts.className,
@@ -1696,6 +1748,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStudentCalendarRecords = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStudentCalendarRecords.skipped.auth_not_ready');
+      return;
+    }
     if (!calendarBatchParts.className || !calendarBatchParts.section) {
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
@@ -1736,6 +1792,10 @@ function AttendanceManagementContent() {
   };
 
   const loadTodayStudentDashboard = async (targetDate: string = studentFilters.dashboard_date) => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadTodayStudentDashboard.skipped.auth_not_ready', { targetDate });
+      return;
+    }
     try {
       debugAttendanceLoader('loadTodayStudentDashboard.start', { targetDate });
       const response = await apiService.listStudentAttendanceRecords({
@@ -1774,6 +1834,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStaffMarking = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStaffMarking.skipped.auth_not_ready');
+      return;
+    }
     if (!staffFilters.department) return;
     try {
       const response = await apiService.getStaffAttendanceMarking({
@@ -1799,6 +1863,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStaffRecords = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStaffRecords.skipped.auth_not_ready');
+      return;
+    }
     try {
       debugAttendanceLoader('loadStaffRecords.start');
       const dashboardPromise = staffFilters.dashboardDate
@@ -1831,6 +1899,10 @@ function AttendanceManagementContent() {
   };
 
   const loadStaffCalendarRecords = async () => {
+    if (!canRunAttendanceRequests) {
+      debugAttendanceLoader('loadStaffCalendarRecords.skipped.auth_not_ready');
+      return;
+    }
     try {
       debugAttendanceLoader('loadStaffCalendarRecords.start');
       const monthRange = getMonthRange(staffFilters.date);

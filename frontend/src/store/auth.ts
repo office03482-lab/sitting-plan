@@ -5,6 +5,7 @@ interface AuthStore extends AuthState {
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   setRefreshToken: (refreshToken: string | null) => void;
+  setAuthLifecycle: (payload: { auth_initialized: boolean; auth_loading: boolean }) => void;
   login: (token: string, user: User, refreshToken?: string | null) => void;
   hydrate: (payload: { token: string | null; refreshToken?: string | null; user: User | null }) => void;
   logout: () => void;
@@ -31,13 +32,15 @@ const isJwtActive = (token: string) => {
   return exp > now;
 };
 
-const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_token' | 'is_authenticated'> => {
+const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_token' | 'is_authenticated' | 'auth_initialized' | 'auth_loading'> => {
   if (typeof window === 'undefined') {
     return {
       user: null,
       token: null,
       refresh_token: null,
       is_authenticated: false,
+      auth_initialized: false,
+      auth_loading: true,
     };
   }
 
@@ -61,6 +64,8 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_tok
           token: null,
           refresh_token: null,
           is_authenticated: false,
+          auth_initialized: false,
+          auth_loading: true,
         };
       }
       const activeAccessToken = storedToken && isJwtActive(storedToken) ? storedToken : null;
@@ -71,6 +76,8 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_tok
           token: null,
           refresh_token: null,
           is_authenticated: false,
+          auth_initialized: false,
+          auth_loading: true,
         };
       }
       return {
@@ -78,6 +85,8 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_tok
         token: activeAccessToken,
         refresh_token: storedRefreshToken,
         is_authenticated: true,
+        auth_initialized: false,
+        auth_loading: true,
       };
     } catch {
       clearAuthStorage();
@@ -89,6 +98,8 @@ const loadInitialAuthState = (): Pick<AuthStore, 'user' | 'token' | 'refresh_tok
     token: null,
     refresh_token: null,
     is_authenticated: false,
+    auth_initialized: false,
+    auth_loading: true,
   };
 };
 
@@ -120,6 +131,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   token: initialAuthState.token,
   refresh_token: initialAuthState.refresh_token,
   is_authenticated: initialAuthState.is_authenticated,
+  auth_initialized: initialAuthState.auth_initialized,
+  auth_loading: initialAuthState.auth_loading,
 
   setUser: (user) =>
     set((state) => {
@@ -144,6 +157,18 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
     set({ refresh_token: refreshToken, is_authenticated: !!(get().token || refreshToken) });
   },
+
+  setAuthLifecycle: ({ auth_initialized, auth_loading }) =>
+    set((state) => {
+      if (state.auth_initialized === auth_initialized && state.auth_loading === auth_loading) {
+        return state;
+      }
+      return {
+        ...state,
+        auth_initialized,
+        auth_loading,
+      };
+    }),
 
   hydrate: ({ token, refreshToken = null, user }) => {
     const current = get();
@@ -182,6 +207,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       refresh_token: refreshToken,
       user: normalizedUser,
       is_authenticated: nextIsAuthenticated,
+      auth_initialized: current.auth_initialized,
+      auth_loading: current.auth_loading,
     });
   },
 
@@ -193,14 +220,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       localStorage.removeItem('refresh_token');
     }
     localStorage.setItem('user', JSON.stringify(user));
-    set({ token, refresh_token: refreshToken, user, is_authenticated: true });
+    set({ token, refresh_token: refreshToken, user, is_authenticated: true, auth_initialized: true, auth_loading: false });
   },
 
   logout: () => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
-    set({ token: null, refresh_token: null, user: null, is_authenticated: false });
+    set({ token: null, refresh_token: null, user: null, is_authenticated: false, auth_initialized: true, auth_loading: false });
   },
 
   isLoggedIn: () => {

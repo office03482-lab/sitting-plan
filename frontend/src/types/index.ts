@@ -75,6 +75,8 @@ export interface AuthState {
   token: string | null;
   refresh_token: string | null;
   is_authenticated: boolean;
+  auth_initialized: boolean;
+  auth_loading: boolean;
 }
 
 export interface AuthResponse {

@@ -32,6 +32,8 @@ type MembershipRecord = {
 type AuthContextValue = {
   loading: boolean;
   initialized: boolean;
+  authReady: boolean;
+  sessionReady: boolean;
   user: User | null;
   session: Session | null;
   authError: string | null;
@@ -210,6 +212,7 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const hydrate = useAuthStore((state) => state.hydrate);
   const logoutStore = useAuthStore((state) => state.logout);
+  const setAuthLifecycle = useAuthStore((state) => state.setAuthLifecycle);
   const storeUser = useAuthStore((state) => state.user);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
@@ -235,6 +238,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     currentSessionFingerprintRef.current = getSessionFingerprint(session);
   }, [session]);
+
+  useEffect(() => {
+    setAuthLifecycle({
+      auth_initialized: initialized,
+      auth_loading: loading,
+    });
+  }, [initialized, loading, setAuthLifecycle]);
 
   const getSessionFingerprint = (value: Session | null) => {
     if (!value?.user?.id || !value?.access_token) return null;
@@ -450,6 +460,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       loading,
       initialized,
+      authReady: initialized && !loading && !!storeUser && !!session,
+      sessionReady: initialized && !loading && !!session,
       user: storeUser,
       session,
       authError,

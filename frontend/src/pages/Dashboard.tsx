@@ -176,7 +176,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
-  const { signOut } = useAuth();
+  const { signOut, authReady, sessionReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
   const isAdmin = user?.role === 'admin';
 
   const canViewAdminOffice = isAdmin || hasPermission('admin_office');
@@ -232,11 +232,16 @@ export default function Dashboard() {
   const dashboardMountedRef = useRef(true);
   const authIdentityFingerprintRef = useRef('');
   const integratedPanelEnabled = false;
+  const canRunDashboardRequests = authReady && sessionReady && !!session;
 
   const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[dashboard-attendance-loader]', source, {
       integratedPanelEnabled,
       showDetailedDashboard,
+      authReady,
+      sessionReady,
+      authInitialized,
+      authLoading,
       ...details,
     });
   };
@@ -257,9 +262,10 @@ export default function Dashboard() {
   }, [user?.id, user?.school_id, user?.role, user?.role_key]);
 
   useEffect(() => {
+    if (!canRunDashboardRequests) return;
     debugDashboardLoader('effect.loadStatistics');
     void loadStatistics();
-  }, [canViewEduPay, canViewInventory, showDetailedDashboard]);
+  }, [canViewEduPay, canViewInventory, showDetailedDashboard, canRunDashboardRequests]);
 
   useEffect(() => {
     return () => {
@@ -269,6 +275,10 @@ export default function Dashboard() {
 
   const loadStatistics = async (options?: { force?: boolean }) => {
     const force = options?.force === true;
+    if (!canRunDashboardRequests) {
+      debugDashboardLoader('loadStatistics.skipped.auth_not_ready', { force });
+      return;
+    }
     if (!showDetailedDashboard) {
       debugDashboardLoader('loadStatistics.skipped.hidden_dashboard');
       setLoadError(null);
