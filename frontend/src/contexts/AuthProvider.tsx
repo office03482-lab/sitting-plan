@@ -221,6 +221,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const storeUserRef = useRef(storeUser);
   const authErrorRef = useRef(authError);
   const activeSyncFingerprintRef = useRef<string | null>(null);
+  const currentSessionFingerprintRef = useRef<string | null>(null);
+  const tokenRefreshDebounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     storeUserRef.current = storeUser;
@@ -229,6 +231,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     authErrorRef.current = authError;
   }, [authError]);
+
+  useEffect(() => {
+    currentSessionFingerprintRef.current = getSessionFingerprint(session);
+  }, [session]);
 
   const getSessionFingerprint = (value: Session | null) => {
     if (!value?.user?.id || !value?.access_token) return null;
@@ -255,9 +261,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       nextSession: Session | null,
       options?: {
         bootstrapProfile?: boolean;
+        silentTokenRefresh?: boolean;
+        origin?: string;
       },
     ) => {
       if (!isMounted) return;
+
+      const origin = options?.origin || 'unknown';
+      const currentFingerprint = currentSessionFingerprintRef.current;
+      const nextFingerprint = getSessionFingerprint(nextSession);
+      console.debug('[auth-sync]', 'syncSession.request', {
+        origin,
+        currentFingerprint,
+        nextFingerprint,
+        bootstrapProfile: options?.bootstrapProfile,
+        silentTokenRefresh: options?.silentTokenRefresh,
+      });
 
       if (!nextSession) {
         clearAuthState();
@@ -269,7 +288,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const nextFingerprint = getSessionFingerprint(nextSession);
       const shouldBootstrapProfile =
         options?.bootstrapProfile ??
         (
@@ -292,6 +310,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (options?.silentTokenRefresh && storeUserRef.current && storeUserRef.current.id === nextSession.user.id) {
+        failedSessionFingerprintRef.current = null;
+        useAuthStore.getState().hydrate({
+          token: nextSession.access_token,
+          refreshToken: nextSession.refresh_token,
+          user: storeUserRef.current,
+        });
+        console.debug('[auth-sync]', 'syncSession.silent_refresh_applied', {
+          origin,
+          nextFingerprint,
+          userId: nextSession.user.id,
+        });
+        return;
+      }
+
+      if (currentFingerprint && nextFingerprint && currentFingerprint === nextFingerprint && !shouldBootstrapProfile) {
+        console.debug('[auth-sync]', 'syncSession.noop_same_fingerprint', {
+          origin,
+          nextFingerprint,
+        });
+        return;
+      }
+
       if (!shouldBootstrapProfile) {
         setSession(nextSession);
         setAuthError(null);
@@ -304,10 +345,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         setInitialized(true);
         initializedRef.current = true;
+        console.debug('[auth-sync]', 'syncSession.fast_path_complete', {
+          origin,
+          nextFingerprint,
+        });
         return;
       }
 
       if (nextFingerprint && activeSyncFingerprintRef.current === nextFingerprint) {
+        console.debug('[auth-sync]', 'syncSession.skipped_active_duplicate', {
+          origin,
+          nextFingerprint,
+        });
         return;
       }
 
@@ -326,6 +375,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: appUser,
         });
+        console.debug('[auth-sync]', 'syncSession.bootstrap_complete', {
+          origin,
+          nextFingerprint,
+          userId: nextSession.user.id,
+        });
       } catch (error) {
         console.error('Failed to build authenticated ERP user from Supabase session.', error);
         if (!isMounted) return;
@@ -341,6 +395,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: null,
         });
+        console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
+          origin,
+          nextFingerprint,
+          userId: nextSession.user.id,
+        });
       } finally {
         if (isMounted) {
           activeSyncFingerprintRef.current = null;
@@ -354,18 +413,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, nextSession: Session | null) => {
+      console.debug('[auth-sync]', 'onAuthStateChange', {
+        event,
+        fingerprint: getSessionFingerprint(nextSession),
+      });
       if (event === 'TOKEN_REFRESHED') {
-        void syncSession(nextSession, { bootstrapProfile: false });
+        if (tokenRefreshDebounceRef.current) {
+          window.clearTimeout(tokenRefreshDebounceRef.current);
+        }
+        tokenRefreshDebounceRef.current = window.setTimeout(() => {
+          void syncSession(nextSession, {
+            bootstrapProfile: false,
+            silentTokenRefresh: true,
+            origin: 'TOKEN_REFRESHED',
+          });
+        }, 400);
         return;
       }
 
       void syncSession(nextSession, {
         bootstrapProfile: event === 'SIGNED_IN' || event === 'USER_UPDATED' || !initializedRef.current,
+        origin: event,
       });
     });
 
     return () => {
       isMounted = false;
+      if (tokenRefreshDebounceRef.current) {
+        window.clearTimeout(tokenRefreshDebounceRef.current);
+      }
       subscription.unsubscribe();
     };
   }, []);

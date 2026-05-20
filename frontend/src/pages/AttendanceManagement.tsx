@@ -510,6 +510,7 @@ function AttendanceManagementContent() {
     date_to: '',
   });
   const [reportBatchPicker, setReportBatchPicker] = useState('');
+  const authIdentityFingerprintRef = useRef('');
 
   useEffect(() => {
     if (!alert || alert.type !== 'success') return;
@@ -624,6 +625,21 @@ function AttendanceManagementContent() {
       ...details,
     });
   };
+
+  useEffect(() => {
+    const nextFingerprint = `${user?.id || 'anon'}:${user?.school_id || ''}:${user?.role || ''}:${user?.role_key || ''}`;
+    if (authIdentityFingerprintRef.current === nextFingerprint) {
+      return;
+    }
+    authIdentityFingerprintRef.current = nextFingerprint;
+    debugAttendanceLoader('auth.identity.changed', {
+      userId: user?.id || null,
+      schoolId: user?.school_id || null,
+      role: user?.role || null,
+      roleKey: user?.role_key || null,
+      origin: 'auth-store',
+    });
+  }, [user?.id, user?.school_id, user?.role, user?.role_key]);
 
   const loadOverviewData = async (options?: { initial?: boolean; force?: boolean }) => {
     const initial = options?.initial === true;

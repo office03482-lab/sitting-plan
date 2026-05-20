@@ -230,6 +230,7 @@ export default function Dashboard() {
   const dashboardLoadInFlightRef = useRef<Promise<void> | null>(null);
   const dashboardLoadFingerprintRef = useRef('');
   const dashboardMountedRef = useRef(true);
+  const authIdentityFingerprintRef = useRef('');
   const integratedPanelEnabled = false;
 
   const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
@@ -239,6 +240,21 @@ export default function Dashboard() {
       ...details,
     });
   };
+
+  useEffect(() => {
+    const nextFingerprint = `${user?.id || 'anon'}:${user?.school_id || ''}:${user?.role || ''}:${user?.role_key || ''}`;
+    if (authIdentityFingerprintRef.current === nextFingerprint) {
+      return;
+    }
+    authIdentityFingerprintRef.current = nextFingerprint;
+    debugDashboardLoader('auth.identity.changed', {
+      userId: user?.id || null,
+      schoolId: user?.school_id || null,
+      role: user?.role || null,
+      roleKey: user?.role_key || null,
+      origin: 'auth-store',
+    });
+  }, [user?.id, user?.school_id, user?.role, user?.role_key]);
 
   useEffect(() => {
     debugDashboardLoader('effect.loadStatistics');

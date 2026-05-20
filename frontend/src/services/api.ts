@@ -1328,9 +1328,15 @@ class ApiService {
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session?.access_token) {
+        console.debug('[auth-sync]', 'api.getLatestSessionAccessToken.miss', {
+          hasError: Boolean(error),
+        });
         return null;
       }
 
+      console.debug('[auth-sync]', 'api.getLatestSessionAccessToken.hit', {
+        userId: data.session.user?.id || null,
+      });
       useAuthStore.getState().hydrate({
         token: data.session.access_token,
         refreshToken: data.session.refresh_token,
