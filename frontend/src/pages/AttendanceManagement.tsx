@@ -61,6 +61,7 @@ const studentRecordDeleteButtonClass =
 const studentRecordStatusBaseClass =
   'inline-flex w-fit items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold leading-none';
 const deleteAllButtonClass = 'rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700';
+const attendanceStudentListPageSize = 200;
 
 const initialHolidayForm = { title: '', holiday_date: '', description: '' };
 const initialLeaveForm = {
@@ -649,8 +650,8 @@ function AttendanceManagementContent() {
     try {
       setTabLoading(true);
       const [studentsRes, subjectsRes, recordsRes] = await Promise.all([
-        apiService.listAttendanceStudents({ school_id: 1, limit: 500 }).catch(() =>
-          apiService.listIntegratedStudents({ school_id: 1, limit: 500 })
+        apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }).catch(() =>
+          apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize })
         ),
         apiService.listAttendanceSubjects().catch(() => ({ data: [] })),
         apiService.listStudentAttendanceRecords({ school_id: 1, limit: 100 }).catch(() => ({ data: [] })),
@@ -690,12 +691,10 @@ function AttendanceManagementContent() {
     const refreshPromise = (async () => {
       lastManagedBatchRefreshAtRef.current = Date.now();
       try {
-        const response = await apiService.listAttendanceStudents({ school_id: 1, limit: 500 }).catch(() =>
-          apiService.listIntegratedStudents({ school_id: 1, limit: 500 })
-        );
-        const nextStudents = toArray<AttendanceStudent>(response.data);
-        setStudents(nextStudents);
-        const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
+        const response = await apiService.listBatches(1, true, 'batch').catch(() => apiService.listBatches(1, true));
+        const normalizedBatches = toArray<Batch>(response.data)
+          .filter((item) => String(item.name || '').trim())
+          .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' }));
         setManagedBatches(normalizedBatches);
         setStudentFilters((current) => ({
           ...current,

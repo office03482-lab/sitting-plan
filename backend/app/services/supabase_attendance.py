@@ -34,6 +34,17 @@ def _cf(value: Any) -> str:
     return _normalize(value).casefold()
 
 
+def _escape_postgrest_like(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+        .replace(",", "\\,")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+    )
+
+
 def _is_valid_uuid(value: str) -> bool:
     try:
         UUID(value)
@@ -207,38 +218,49 @@ def _fetch_students(
     skip: int = 0,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
+    safe_skip = max(skip, 0)
+    safe_limit = max(limit, 1)
     query = (
         get_supabase_admin_client()
         .table("students")
-        .select("id, school_id, batch_id, admission_no, roll_number, full_name, father_name, phone, class_name, section, is_active, created_at, updated_at")
+        .select("id, school_id, roll_number, full_name, class_name, section, is_active")
         .eq("school_id", school_id)
         .eq("is_active", True)
         .order("full_name")
     )
-    response = query.execute()
+
+    normalized_search = _normalize(search)
+    if normalized_search:
+        escaped = _escape_postgrest_like(normalized_search)
+        query = query.or_(
+            f"full_name.ilike.%{escaped}%,roll_number.ilike.%{escaped}%,father_name.ilike.%{escaped}%"
+        )
+
+    normalized_batch = _normalize(batch)
+    if normalized_batch:
+        class_name, section = split_batch_to_class_section(normalized_batch)
+        if class_name:
+            query = query.eq("class_name", class_name)
+        if section:
+            query = query.eq("section", section)
+
+    started_at = time.monotonic()
+    response = query.range(safe_skip, safe_skip + safe_limit - 1).execute()
+    duration_ms = round((time.monotonic() - started_at) * 1000)
     rows = list(response.data or [])
-    search_term = _cf(search)
-    batch_term = _cf(batch)
-    filtered: list[dict[str, Any]] = []
-    for row in rows:
-        class_name = _normalize(row.get("class_name"))
-        section = _normalize(row.get("section"))
-        batch_label = f"{class_name} | {section}" if class_name else ""
-        if search_term:
-            haystack = " ".join(
-                [
-                    _normalize(row.get("full_name")),
-                    _normalize(row.get("roll_number")),
-                    _normalize(row.get("father_name")),
-                    batch_label,
-                ]
-            ).casefold()
-            if search_term not in haystack:
-                continue
-        if batch_term and batch_term not in batch_label.casefold():
-            continue
-        filtered.append(row)
-    return filtered[skip : skip + limit]
+    logger.info(
+        "attendance.students.fetch_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(rows),
+            "duration_ms": duration_ms,
+            "skip": safe_skip,
+            "limit": safe_limit,
+            "has_search": bool(normalized_search),
+            "has_batch": bool(normalized_batch),
+        },
+    )
+    return rows
 
 
 def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
@@ -416,8 +438,8 @@ def _serialize_holiday(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _serialize_student(row: dict[str, Any], batch_lookup: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    batch = batch_lookup.get(str(row.get("batch_id")) or "")
+def _serialize_student(row: dict[str, Any], batch_lookup: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    batch = (batch_lookup or {}).get(str(row.get("batch_id")) or "")
     class_name = _normalize(row.get("class_name")) or _normalize((batch or {}).get("class_name"))
     section = _normalize(row.get("section")) or _normalize((batch or {}).get("section"))
     if not class_name and batch:
@@ -481,9 +503,8 @@ def get_overview(school_id: str) -> dict[str, Any]:
 
 
 def list_students(school_id: str, *, skip: int = 0, limit: int = 100, search: str | None = None) -> list[dict[str, Any]]:
-    batches = _fetch_batches(school_id)
     rows = _fetch_students(school_id, search=search, skip=skip, limit=limit)
-    return [_serialize_student(row, batches) for row in rows]
+    return [_serialize_student(row) for row in rows]
 
 
 def list_staff(
