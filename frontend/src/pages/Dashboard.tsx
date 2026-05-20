@@ -340,7 +340,7 @@ export default function Dashboard() {
           date_from: today,
           date_to: today,
           skip: 0,
-          limit: 5000,
+          limit: 200,
         }),
       ]).then(([inventoryRes, eduPayDashboardRes, eduPayPaymentsRes, staffAttendanceRes, studentAttendanceRes]) => {
         const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;

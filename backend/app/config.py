@@ -101,6 +101,8 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "https://sitting-plan-frontend.onrender.com",
+        "https://sitting-plan.onrender.com",
     ]
 
     @field_validator("debug", "reload", "use_supabase_native_services", mode="before")

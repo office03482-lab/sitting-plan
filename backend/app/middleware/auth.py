@@ -130,6 +130,7 @@ def get_actor_context(
 
 
 def get_authenticated_user(
+    request: Request,
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     x_user_role: Optional[str] = Header(default=None),
     x_user_name: Optional[str] = Header(default=None),
@@ -137,6 +138,20 @@ def get_authenticated_user(
     x_user_permissions: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
+    if request.method == "OPTIONS":
+        return User(
+            id=0,
+            username="preflight",
+            email=None,
+            full_name="CORS Preflight",
+            password_hash="",
+            role=UserRole.ADMIN,
+            user_type="non_teaching",
+            permissions="*",
+            is_active=True,
+            is_verified=True,
+        )
+
     payload = extract_token_payload(authorization)
     if payload:
         if payload.get("type") not in {None, "access"}:
@@ -220,10 +235,23 @@ def build_authenticated_actor_context(user: User) -> Dict[str, str]:
 
 
 def get_authenticated_actor_context(
+    request: Request,
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     x_user_role: Optional[str] = Header(default=None),
     x_user_name: Optional[str] = Header(default=None),
 ) -> Dict[str, str]:
+    if request.method == "OPTIONS":
+        return {
+            "role": UserRole.ADMIN.value,
+            "name": "CORS Preflight",
+            "email": "",
+            "username": "preflight",
+            "user_id": "0",
+            "profile_id": "0",
+            "school_id": "",
+            "auth_source": "preflight",
+        }
+
     actor = build_actor_context(authorization, x_user_role, x_user_name)
     has_verified_jwt = actor.get("auth_source") == "jwt"
     has_fallback_identity = bool((x_user_role or "").strip()) and bool((x_user_name or "").strip())
@@ -274,6 +302,8 @@ def require_permissions(*permissions: str) -> Callable[[User], User]:
     normalized = [item.strip().lower() for item in permissions if item and item.strip()]
 
     def dependency(request: Request, user: User = Depends(get_authenticated_user)) -> User:
+        if request.method == "OPTIONS":
+            return user
         granted_permissions = decode_user_permissions(user)
         logger.info(
             "auth.permission_check",

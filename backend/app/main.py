@@ -1,7 +1,7 @@
 """FastAPI main application setup."""
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from contextlib import asynccontextmanager
 import logging
 import traceback
@@ -56,9 +56,27 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    allow_headers=[
+        "Accept",
+        "Authorization",
+        "Content-Type",
+        "Origin",
+        "X-Requested-With",
+        "X-User-Role",
+        "X-User-Name",
+        "X-User-Email",
+        "X-User-Permissions",
+    ],
+    expose_headers=["Content-Length", "Content-Type"],
     max_age=86400,
 )
+
+
+@app.middleware("http")
+async def bypass_preflight_requests(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+    return await call_next(request)
 
 
 # Health check endpoint
