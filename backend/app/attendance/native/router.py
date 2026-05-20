@@ -172,7 +172,7 @@ def list_student_records_route(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=200),
+    limit: int = Query(default=100, ge=1, le=100),
     service=Depends(get_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)

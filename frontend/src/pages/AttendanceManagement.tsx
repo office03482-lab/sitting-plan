@@ -756,9 +756,14 @@ function AttendanceManagementContent() {
         }
         setLoadedTabs((current) => ({ ...current, student: true }));
       } catch (error: any) {
+        if (isRequestCanceled(error)) {
+          debugAttendanceLoader('loadStudentTab.canceled');
+          return;
+        }
         setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance load nahi hua.') });
       } finally {
         debugAttendanceLoader('loadStudentTab.end');
+        setLoading(false);
         setTabLoading(false);
       }
     })().finally(() => {
@@ -856,9 +861,14 @@ function AttendanceManagementContent() {
         }
         setLoadedTabs((current) => ({ ...current, staff: true }));
       } catch (error: any) {
+        if (isRequestCanceled(error)) {
+          debugAttendanceLoader('loadStaffTab.canceled');
+          return;
+        }
         setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance load nahi hua.') });
       } finally {
         debugAttendanceLoader('loadStaffTab.end');
+        setLoading(false);
         setTabLoading(false);
       }
     })().finally(() => {
@@ -948,9 +958,14 @@ function AttendanceManagementContent() {
       setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
       setLoadedTabs((current) => ({ ...current, leaves: true }));
     } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadLeavesTab.canceled');
+        return;
+      }
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Leave module load nahi hua.') });
     } finally {
       debugAttendanceLoader('loadLeavesTab.end');
+      setLoading(false);
       setTabLoading(false);
     }
   };

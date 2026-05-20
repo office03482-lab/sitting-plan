@@ -27,6 +27,8 @@ ATTENDANCE_BATCHES_CACHE_TTL_SECONDS = 60
 ATTENDANCE_BATCHES_CACHE: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS = 120
 ATTENDANCE_SUBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+ATTENDANCE_STUDENT_RECORDS_CACHE_TTL_SECONDS = 60
+ATTENDANCE_STUDENT_RECORDS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS = 45
 ATTENDANCE_STAFF_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -109,6 +111,38 @@ def _normalize_batch_filters(
             payload["section"] = normalized_section
         normalized.append(payload)
     return normalized
+
+
+def _student_records_cache_key(
+    school_id: str,
+    *,
+    class_name: str | None = None,
+    section: str | None = None,
+    student_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    skip: int = 0,
+    limit: int = 100,
+    batch_filters: list[tuple[str, str | None]] | None = None,
+) -> str:
+    normalized_batch_filters = _normalize_batch_filters(batch_filters)
+    normalized_batch_filter_key = ",".join(
+        f"{item.get('class_name','')}|{item.get('section','')}"
+        for item in normalized_batch_filters
+    )
+    return "|".join(
+        [
+            school_id,
+            _cf(class_name),
+            _cf(section),
+            _cf(student_name),
+            (date_from or "")[:10],
+            (date_to or "")[:10],
+            str(max(skip, 0)),
+            str(max(min(limit, 100), 1)),
+            normalized_batch_filter_key,
+        ]
+    )
 
 
 def _rpc_list_student_records(
@@ -1199,25 +1233,70 @@ def list_student_records(
     limit: int = 100,
     batch_filters: list[tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
+    safe_skip = max(skip, 0)
+    safe_limit = max(min(limit, 100), 1)
+    cache_key = _student_records_cache_key(
+        school_id,
+        class_name=class_name,
+        section=section,
+        student_name=student_name,
+        date_from=date_from,
+        date_to=date_to,
+        skip=safe_skip,
+        limit=safe_limit,
+        batch_filters=batch_filters,
+    )
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_STUDENT_RECORDS_CACHE, cache_key)
+    if cached_payload:
+        logger.info(
+            "attendance.student_records.cache_hit",
+            extra={
+                "school_id": school_id,
+                "skip": safe_skip,
+                "limit": safe_limit,
+                "payload_size": len(cached_payload),
+            },
+        )
+        return cached_payload
+
+    started_at = time.monotonic()
     try:
-        return _rpc_list_student_records(
+        payload = _rpc_list_student_records(
             school_id,
             class_name=class_name,
             section=section,
             student_name=student_name,
             date_from=date_from,
             date_to=date_to,
-            skip=skip,
-            limit=limit,
+            skip=safe_skip,
+            limit=safe_limit,
             batch_filters=batch_filters,
         )
+        _set_ttl_cache_entry(
+            ATTENDANCE_STUDENT_RECORDS_CACHE,
+            cache_key,
+            payload,
+            ATTENDANCE_STUDENT_RECORDS_CACHE_TTL_SECONDS,
+        )
+        logger.info(
+            "attendance.student_records.complete",
+            extra={
+                "school_id": school_id,
+                "duration_ms": round((time.monotonic() - started_at) * 1000),
+                "skip": safe_skip,
+                "limit": safe_limit,
+                "payload_size": len(payload),
+                "source": "rpc",
+            },
+        )
+        return payload
     except Exception:
         logger.exception(
             "attendance.student_records.rpc_failed_fallback",
             extra={
                 "school_id": school_id,
-                "skip": skip,
-                "limit": limit,
+                "skip": safe_skip,
+                "limit": safe_limit,
                 "has_batch_filters": bool(batch_filters),
             },
         )
@@ -1331,7 +1410,25 @@ def list_student_records(
             "school_id": school_id,
         },
     )
-    return payload[skip : skip + limit]
+    paginated_payload = payload[safe_skip : safe_skip + safe_limit]
+    _set_ttl_cache_entry(
+        ATTENDANCE_STUDENT_RECORDS_CACHE,
+        cache_key,
+        paginated_payload,
+        ATTENDANCE_STUDENT_RECORDS_CACHE_TTL_SECONDS,
+    )
+    logger.info(
+        "attendance.student_records.complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "skip": safe_skip,
+            "limit": safe_limit,
+            "payload_size": len(paginated_payload),
+            "source": "fallback",
+        },
+    )
+    return paginated_payload
 
 
 def list_staff_records(

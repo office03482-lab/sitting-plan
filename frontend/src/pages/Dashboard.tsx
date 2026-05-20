@@ -399,15 +399,8 @@ export default function Dashboard() {
         dashboardLoadFingerprintRef.current = requestFingerprint;
 
         await wait(150);
-        const [staffAttendanceRes, studentAttendanceRes] = await Promise.allSettled([
+        const [staffAttendanceRes] = await Promise.allSettled([
           apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
-          apiService.listStudentAttendanceRecords({
-            school_id: 1,
-            date_from: today,
-            date_to: today,
-            skip: 0,
-            limit: 100,
-          }),
         ]);
         await wait(150);
         const [inventoryRes, eduPayDashboardRes] = await Promise.allSettled([
@@ -419,10 +412,6 @@ export default function Dashboard() {
         const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
         const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
         const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
-        const studentAttendanceRecords =
-          studentAttendanceRes.status === 'fulfilled' && Array.isArray(studentAttendanceRes.value.data)
-            ? studentAttendanceRes.value.data
-            : [];
         const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
         const recentActivity = [
           ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
@@ -443,10 +432,6 @@ export default function Dashboard() {
         });
         setAttendanceToday((current) => ({
           ...current,
-          studentPresent: studentAttendanceRecords.filter((item: any) => item?.status === 'present').length,
-          studentLate: studentAttendanceRecords.filter((item: any) => item?.status === 'late').length,
-          studentAbsent: studentAttendanceRecords.filter((item: any) => item?.status === 'absent').length,
-          studentMarked: studentAttendanceRecords.length,
           staffPresent: Number(staffAttendance?.present_count ?? 0),
           staffLate: Number(staffAttendance?.late_count ?? 0),
           staffHalfDay: Number(staffAttendance?.half_day_count ?? 0),
