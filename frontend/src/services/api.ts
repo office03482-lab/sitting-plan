@@ -89,10 +89,18 @@ class ApiService {
   private api: AxiosInstance;
   private attendanceOverviewRequestPromise: Promise<{ data: AttendanceOverview }> | null = null;
   private attendanceOverviewCache: { expiresAt: number; data: AttendanceOverview } | null = null;
+  private attendanceSubjectsRequestPromise: Promise<{ data: AttendanceSubject[] }> | null = null;
+  private attendanceSubjectsCache: { expiresAt: number; data: AttendanceSubject[] } | null = null;
   private attendanceStudentsRequestKey: string | null = null;
   private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
   private attendanceStudentsAbortController: AbortController | null = null;
   private attendanceStudentsCache = new Map<string, { expiresAt: number; data: AttendanceStudent[] }>();
+  private attendanceStaffDashboardRequestKey: string | null = null;
+  private attendanceStaffDashboardRequestPromise: Promise<{ data: StaffDashboard }> | null = null;
+  private attendanceStaffDashboardCache = new Map<string, { expiresAt: number; data: StaffDashboard }>();
+  private batchListRequestKey: string | null = null;
+  private batchListRequestPromise: Promise<{ data: Batch[] }> | null = null;
+  private batchListCache = new Map<string, { expiresAt: number; data: Batch[] }>();
   private batchAttendanceContextRequestKey: string | null = null;
   private batchAttendanceContextRequestPromise: Promise<{ data: TeacherAttendanceContext }> | null = null;
   private batchAttendanceContextAbortController: AbortController | null = null;
@@ -128,6 +136,17 @@ class ApiService {
   private stockOutReverseIdMap = new Map<string, number>();
   private studentIssueIdMap = new Map<number, string>();
   private studentIssueReverseIdMap = new Map<string, number>();
+
+  private clearAttendanceSubjectsCache() {
+    this.attendanceSubjectsCache = null;
+    this.attendanceSubjectsRequestPromise = null;
+  }
+
+  private clearBatchListCache() {
+    this.batchListCache.clear();
+    this.batchListRequestKey = null;
+    this.batchListRequestPromise = null;
+  }
 
   private getAccessToken() {
     const storeToken = useAuthStore.getState().token;
@@ -2921,9 +2940,36 @@ class ApiService {
   // ==================== Batch Management ====================
 
   async listBatches(_schoolId: number = 1, isActive?: boolean, category?: string) {
-    const batches = await this.listSupabaseBatches(category, isActive !== false);
-    const filtered = isActive === undefined ? batches : batches.filter((batch) => batch.is_active === isActive);
-    return { data: filtered } as { data: Batch[] };
+    const requestKey = JSON.stringify({
+      school_id: this.getCurrentSupabaseSchoolId() || 'current',
+      is_active: isActive,
+      category: category || '',
+    });
+    const now = Date.now();
+    const cached = this.batchListCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: Batch[] };
+    }
+    if (this.batchListRequestKey === requestKey && this.batchListRequestPromise) {
+      return this.batchListRequestPromise;
+    }
+    this.batchListRequestKey = requestKey;
+    this.batchListRequestPromise = this.listSupabaseBatches(category, isActive !== false)
+      .then((batches) => {
+        const filtered = isActive === undefined ? batches : batches.filter((batch) => batch.is_active === isActive);
+        this.batchListCache.set(requestKey, {
+          data: filtered,
+          expiresAt: Date.now() + 60_000,
+        });
+        return { data: filtered } as { data: Batch[] };
+      })
+      .finally(() => {
+        if (this.batchListRequestKey === requestKey) {
+          this.batchListRequestKey = null;
+          this.batchListRequestPromise = null;
+        }
+      });
+    return this.batchListRequestPromise;
   }
 
   async getBatch(batchId: string | number, _schoolId: number = 1) {
@@ -2963,6 +3009,7 @@ class ApiService {
 
     if (error) throw error;
 
+    this.clearBatchListCache();
     const batches = await this.listSupabaseBatches(category, true, scopedSchoolId);
     return { data: batches.find((item) => String(item.id) === String(created.id)) as Batch } as { data: Batch };
   }
@@ -2989,6 +3036,7 @@ class ApiService {
 
     if (error) throw error;
 
+    this.clearBatchListCache();
     const batches = await this.listSupabaseBatches(nextCategory, true);
     return { data: batches.find((item) => String(item.id) === String(updated.id)) as Batch } as { data: Batch };
   }
@@ -3003,6 +3051,7 @@ class ApiService {
       if (error) throw error;
     }
 
+    this.clearBatchListCache();
     const batches = await this.listSupabaseBatches(category, true);
     return { data: batches } as { data: Batch[] };
   }
@@ -3015,6 +3064,7 @@ class ApiService {
 
     const { error } = await supabase.from('batches').delete().eq('id', batchId);
     if (error) throw error;
+    this.clearBatchListCache();
     return { data: { message: 'Batch deleted successfully' } } as { data: { message: string } };
   }
 
@@ -3032,6 +3082,7 @@ class ApiService {
     const ids = batches.map((batch) => batch.id);
     const { error } = await supabase.from('batches').delete().in('id', ids);
     if (error) throw error;
+    this.clearBatchListCache();
     return { data: { success: true, deleted_count: ids.length } } as { data: { success: boolean; deleted_count: number } };
   }
 
@@ -4967,9 +5018,25 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load attendance subjects');
     }
-    return this.api.get<AttendanceSubject[]>('/attendance/subjects', {
+    const now = Date.now();
+    if (this.attendanceSubjectsCache && this.attendanceSubjectsCache.expiresAt > now) {
+      return { data: this.attendanceSubjectsCache.data } as { data: AttendanceSubject[] };
+    }
+    if (this.attendanceSubjectsRequestPromise) {
+      return this.attendanceSubjectsRequestPromise;
+    }
+    this.attendanceSubjectsRequestPromise = this.api.get<AttendanceSubject[]>('/attendance/subjects', {
       params: { school_id: scopedSchoolId },
+    }).then((response) => {
+      this.attendanceSubjectsCache = {
+        data: Array.isArray(response.data) ? response.data : [],
+        expiresAt: Date.now() + 60_000,
+      };
+      return response;
+    }).finally(() => {
+      this.attendanceSubjectsRequestPromise = null;
     });
+    return this.attendanceSubjectsRequestPromise;
   }
 
   async createAttendanceSubject(
@@ -4982,6 +5049,9 @@ class ApiService {
     }
     return this.api.post<AttendanceSubject>('/attendance/subjects', data, {
       params: { school_id: scopedSchoolId },
+    }).then((response) => {
+      this.clearAttendanceSubjectsCache();
+      return response;
     });
   }
 
@@ -5324,8 +5394,32 @@ class ApiService {
       ...params,
       school_id: scopedSchoolId,
     };
+    const requestKey = JSON.stringify(scopedParams);
+    const now = Date.now();
+    const cached = this.attendanceStaffDashboardCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: StaffDashboard };
+    }
+    if (this.attendanceStaffDashboardRequestKey === requestKey && this.attendanceStaffDashboardRequestPromise) {
+      return this.attendanceStaffDashboardRequestPromise;
+    }
     try {
-      return await this.api.get<StaffDashboard>('/attendance/staff-dashboard', { params: scopedParams });
+      this.attendanceStaffDashboardRequestKey = requestKey;
+      this.attendanceStaffDashboardRequestPromise = this.api.get<StaffDashboard>('/attendance/staff-dashboard', { params: scopedParams })
+        .then((response) => {
+          this.attendanceStaffDashboardCache.set(requestKey, {
+            data: response.data,
+            expiresAt: Date.now() + 60_000,
+          });
+          return response;
+        })
+        .finally(() => {
+          if (this.attendanceStaffDashboardRequestKey === requestKey) {
+            this.attendanceStaffDashboardRequestKey = null;
+            this.attendanceStaffDashboardRequestPromise = null;
+          }
+        });
+      return await this.attendanceStaffDashboardRequestPromise;
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error) || !params) throw error;
       const retryParams = {

@@ -732,10 +732,11 @@ function AttendanceManagementContent() {
       try {
         debugAttendanceLoader('loadStudentTab.start');
         setTabLoading(true);
-        const [studentsRes, subjectsRes] = await Promise.all([
-          apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }),
-          apiService.listAttendanceSubjects().catch(() => ({ data: [] })),
-        ]);
+        const studentsRes = await apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize });
+        const subjectsRes =
+          subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
+            ? ({ data: subjects.length ? subjects : toArray<AttendanceSubject>(overview?.subject_options) } as { data: AttendanceSubject[] })
+            : await apiService.listAttendanceSubjects().catch(() => ({ data: [] }));
         const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
         const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
         setManagedBatches(normalizedBatches);
@@ -782,6 +783,22 @@ function AttendanceManagementContent() {
       lastManagedBatchRefreshAtRef.current = Date.now();
       try {
         debugAttendanceLoader('loadManagedBatches.start', { force });
+        if (students.length) {
+          const normalizedBatches = buildAttendanceBatches(students, 1);
+          setManagedBatches(normalizedBatches);
+          setStudentFilters((current) => ({
+            ...current,
+            batch_name:
+              current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
+                ? current.batch_name
+                : normalizedBatches[0]?.name || '',
+            record_batch_name:
+              current.record_batch_name && normalizedBatches.some((item) => item.name === current.record_batch_name)
+                ? current.record_batch_name
+                : '',
+          }));
+          return;
+        }
         const response = await apiService.listBatches(1, true, 'batch').catch(() => apiService.listBatches(1, true));
         const normalizedBatches = toArray<Batch>(response.data)
           .filter((item) => String(item.name || '').trim())
@@ -1869,28 +1886,27 @@ function AttendanceManagementContent() {
     }
     try {
       debugAttendanceLoader('loadStaffRecords.start');
-      const dashboardPromise = staffFilters.dashboardDate
-        ? apiService.getStaffAttendanceDashboard({
-            school_id: 1,
-            department: staffFilters.dashboardDepartment || undefined,
-            date_from: staffFilters.dashboardDate || undefined,
-            date_to: staffFilters.dashboardDate || undefined,
-          })
-        : Promise.resolve({ data: null });
-      const [recordsRes, dashboardRes] = await Promise.all([
-        apiService.listStaffAttendanceRecords({
-          school_id: 1,
-          department: staffFilters.recordDepartment || undefined,
-          staff_name: staffFilters.recordStaffName || undefined,
-          date_from: staffFilters.recordDate || undefined,
-          date_to: staffFilters.recordDate || undefined,
-          limit: 200,
-        }),
-        dashboardPromise,
-      ]);
+      const recordsRes = await apiService.listStaffAttendanceRecords({
+        school_id: 1,
+        department: staffFilters.recordDepartment || undefined,
+        staff_name: staffFilters.recordStaffName || undefined,
+        date_from: staffFilters.recordDate || undefined,
+        date_to: staffFilters.recordDate || undefined,
+        limit: 200,
+      });
       const nextRecords = toArray<StaffAttendanceRecord>(recordsRes.data);
       setStaffRecords(nextRecords);
-      setStaffDashboard(staffFilters.dashboardDate ? normalizeStaffDashboard(dashboardRes.data, nextRecords) : null);
+      if (!staffFilters.dashboardDate) {
+        setStaffDashboard(null);
+        return;
+      }
+      const dashboardRes = await apiService.getStaffAttendanceDashboard({
+        school_id: 1,
+        department: staffFilters.dashboardDepartment || undefined,
+        date_from: staffFilters.dashboardDate || undefined,
+        date_to: staffFilters.dashboardDate || undefined,
+      });
+      setStaffDashboard(normalizeStaffDashboard(dashboardRes.data, nextRecords));
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff records load nahi hue.') });
     } finally {

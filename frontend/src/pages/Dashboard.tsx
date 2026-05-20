@@ -99,6 +99,8 @@ function formatPercent(value: number) {
   return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
 }
 
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 function MetricTile({
   title,
   primaryLabel,
@@ -396,9 +398,8 @@ export default function Dashboard() {
         lastDashboardLoadAtRef.current = Date.now();
         dashboardLoadFingerprintRef.current = requestFingerprint;
 
-        const [inventoryRes, eduPayDashboardRes, staffAttendanceRes, studentAttendanceRes] = await Promise.allSettled([
-          canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
-          canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
+        await wait(150);
+        const [staffAttendanceRes, studentAttendanceRes] = await Promise.allSettled([
           apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
           apiService.listStudentAttendanceRecords({
             school_id: 1,
@@ -407,6 +408,11 @@ export default function Dashboard() {
             skip: 0,
             limit: 100,
           }),
+        ]);
+        await wait(150);
+        const [inventoryRes, eduPayDashboardRes] = await Promise.allSettled([
+          canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
+          canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
         ]);
         if (!dashboardMountedRef.current) return;
 

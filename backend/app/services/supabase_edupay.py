@@ -114,7 +114,37 @@ def _fetch_students(school_id: str) -> list[dict[str, Any]]:
         .table("students")
         .select("id, school_id, batch_id, admission_no, roll_number, full_name, father_name, email, phone, guardian_name, guardian_phone, class_name, section, is_active, created_at, updated_at")
         .eq("school_id", school_id)
+        .eq("is_active", True)
         .order("created_at", desc=True)
+        .execute()
+    )
+    return list(response.data or [])
+
+
+def _count_students(school_id: str) -> int:
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id", count="exact")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    return int(getattr(response, "count", 0) or 0)
+
+
+def _fetch_student_lookup(school_id: str, student_ids: list[str]) -> list[dict[str, Any]]:
+    ids = _sanitize_lookup_ids(student_ids)
+    if not ids:
+        return []
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id, full_name")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .in_("id", ids)
         .execute()
     )
     return list(response.data or [])
@@ -351,11 +381,17 @@ def list_payments(school_id: str) -> list[dict[str, Any]]:
 
 def get_dashboard(school_id: str) -> dict[str, Any]:
     now = datetime.utcnow()
-    students = _fetch_students(school_id)
     fee_structures = _fetch_fee_structures(school_id)
     assignments = _fetch_assignments(school_id)
     payments = _fetch_payments(school_id)
-    student_names = _student_name_lookup(students)
+    relevant_student_ids = _sanitize_lookup_ids(
+        [
+            *[item.get("student_id") for item in assignments[:100]],
+            *[item.get("student_id") for item in payments[:50]],
+        ]
+    )
+    student_names = _student_name_lookup(_fetch_student_lookup(school_id, relevant_student_ids))
+    total_students = _count_students(school_id)
 
     pending_amount = 0.0
     overdue_amount = 0.0
@@ -428,7 +464,7 @@ def get_dashboard(school_id: str) -> dict[str, Any]:
         "pending_amount": round(pending_amount, 2),
         "overdue_amount": round(overdue_amount, 2),
         "upcoming_dues": upcoming_dues,
-        "total_students": len(students),
+        "total_students": total_students,
         "active_fee_structures": active_fee_structures,
         "reminders_queued": len(reminders),
         "collection_trend": trend_points,

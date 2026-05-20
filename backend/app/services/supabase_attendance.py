@@ -16,15 +16,19 @@ logger = logging.getLogger(__name__)
 
 ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
 MAX_STUDENT_LOOKUP = 1000
-MAX_STAFF_LOOKUP = 1000
+MAX_STAFF_LOOKUP = 200
 ATTENDANCE_CHUNK_RETRY_COUNT = 2
 ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS = 0.35
 BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS = 45
 BATCH_CURRENT_CLASS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ATTENDANCE_OVERVIEW_CACHE_TTL_SECONDS = 60
 ATTENDANCE_OVERVIEW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+ATTENDANCE_BATCHES_CACHE_TTL_SECONDS = 60
+ATTENDANCE_BATCHES_CACHE: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS = 120
 ATTENDANCE_SUBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS = 45
+ATTENDANCE_STAFF_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _iso(value: Any) -> Any:
@@ -653,6 +657,12 @@ def _fetch_students(
 
 
 def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_BATCHES_CACHE, school_id)
+    if cached_payload:
+        logger.info("attendance.batches.cache_hit", extra={"school_id": school_id})
+        return cached_payload
+
+    started_at = time.monotonic()
     response = (
         get_supabase_admin_client()
         .table("batches")
@@ -661,7 +671,17 @@ def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
         .eq("is_active", True)
         .execute()
     )
-    return {str(item["id"]): item for item in list(response.data or [])}
+    payload = {str(item["id"]): item for item in list(response.data or [])}
+    _set_ttl_cache_entry(ATTENDANCE_BATCHES_CACHE, school_id, payload, ATTENDANCE_BATCHES_CACHE_TTL_SECONDS)
+    logger.info(
+        "attendance.batches.fetch_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(payload),
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+        },
+    )
+    return payload
 
 
 def _count_active_rows(
@@ -691,17 +711,13 @@ def get_staff_count(school_id: str) -> int:
 
 
 def get_student_batch_summary(school_id: str) -> list[dict[str, Any]]:
-    response = (
-        get_supabase_admin_client()
-        .table("batches")
-        .select("id, name, class_name, section")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .order("class_name")
-        .order("section")
-        .execute()
+    rows = sorted(
+        _fetch_batches(school_id).values(),
+        key=lambda item: (
+            _normalize(item.get("class_name")) or split_batch_to_class_section(item.get("name"))[0],
+            _normalize(item.get("section")) or split_batch_to_class_section(item.get("name"))[1],
+        ),
     )
-    rows = list(response.data or [])
     seen: set[tuple[str, str]] = set()
     summary: list[dict[str, Any]] = []
     for row in rows:
@@ -722,6 +738,7 @@ def get_student_batch_summary(school_id: str) -> list[dict[str, Any]]:
 
 
 def _fetch_department_options(school_id: str) -> list[str]:
+    started_at = time.monotonic()
     response = (
         get_supabase_admin_client()
         .table("staff_members")
@@ -734,7 +751,16 @@ def _fetch_department_options(school_id: str) -> list[str]:
         _normalize(row.get("department")) or _normalize(row.get("designation"))
         for row in list(response.data or [])
     }
-    return sorted(item for item in values if item)
+    payload = sorted(item for item in values if item)
+    logger.info(
+        "attendance.departments.fetch_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(payload),
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+        },
+    )
+    return payload
 
 
 def _fetch_staff_members(
@@ -744,7 +770,7 @@ def _fetch_staff_members(
     department: str | None = None,
     source: str | None = None,
     skip: int = 0,
-    limit: int = 500,
+    limit: int = 200,
 ) -> list[dict[str, Any]]:
     safe_skip = max(skip, 0)
     safe_limit = max(limit, 1)
@@ -771,8 +797,24 @@ def _fetch_staff_members(
         query = query.eq("staff_type", "teaching")
     elif normalized_source == "invigilators":
         query = query.in_("staff_type", ["invigilator", "non_teaching", "admin", "contract"])
+    started_at = time.monotonic()
     response = query.range(safe_skip, safe_skip + safe_limit - 1).execute()
-    return list(response.data or [])
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    rows = list(response.data or [])
+    logger.info(
+        "attendance.staff.fetch_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(rows),
+            "duration_ms": duration_ms,
+            "skip": safe_skip,
+            "limit": safe_limit,
+            "has_search": bool(normalized_search),
+            "has_department": bool(normalized_department),
+            "source": normalized_source,
+        },
+    )
+    return rows
 
 
 def _fetch_subjects(school_id: str) -> list[dict[str, Any]]:
@@ -937,7 +979,6 @@ def get_overview(school_id: str) -> dict[str, Any]:
         return cached_payload
 
     started_at = time.monotonic()
-    batches = _fetch_batches(school_id)
     batch_summary = get_student_batch_summary(school_id)
     subjects = list_subjects(school_id)
     notifications = [_serialize_notification(row) for row in _fetch_notifications(school_id)]
@@ -1303,7 +1344,7 @@ def list_staff_records(
     skip: int = 0,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    lookup_limit = max(min(max(skip + limit, 200), MAX_STAFF_LOOKUP), limit)
+    lookup_limit = max(min(max(skip + limit, 100), MAX_STAFF_LOOKUP), limit)
     staff_rows = list_staff(
         school_id,
         skip=0,
@@ -1353,6 +1394,77 @@ def list_staff_records(
     return payload[skip : skip + limit]
 
 
+def _staff_dashboard_cache_key(
+    school_id: str,
+    *,
+    department: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> str:
+    return "|".join(
+        [
+            school_id,
+            _cf(department),
+            (date_from or "")[:10],
+            (date_to or "")[:10],
+        ]
+    )
+
+
+def _rpc_staff_dashboard(
+    school_id: str,
+    *,
+    department: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    params = {
+        "p_school_id": school_id,
+        "p_department": _normalize(department) or None,
+        "p_date_from": date_from[:10] if date_from else None,
+        "p_date_to": date_to[:10] if date_to else None,
+    }
+    started_at = time.monotonic()
+    response = get_supabase_admin_client().rpc("attendance_staff_dashboard_summary", params).execute()
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    rows = list(response.data or [])
+    row = rows[0] if rows else {}
+    department_summary = row.get("department_summary") or []
+    if not isinstance(department_summary, list):
+        department_summary = []
+    payload = {
+        "present_count": int(row.get("present_count") or 0),
+        "absent_count": int(row.get("absent_count") or 0),
+        "late_count": int(row.get("late_count") or 0),
+        "half_day_count": int(row.get("half_day_count") or 0),
+        "monthly_attendance_percentage": round(
+            (
+                (
+                    int(row.get("present_count") or 0)
+                    + int(row.get("late_count") or 0)
+                    + int(row.get("half_day_count") or 0) * 0.5
+                )
+                / max(int(row.get("total_count") or 0), 1)
+            )
+            * 100,
+            2,
+        ),
+        "department_summary": department_summary,
+    }
+    logger.info(
+        "attendance.staff_dashboard.rpc_complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": duration_ms,
+            "department": _normalize(department) or None,
+            "date_from": params["p_date_from"],
+            "date_to": params["p_date_to"],
+            "department_count": len(department_summary),
+        },
+    )
+    return payload
+
+
 def get_staff_dashboard(
     school_id: str,
     *,
@@ -1360,40 +1472,92 @@ def get_staff_dashboard(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> dict[str, Any]:
-    records = list_staff_records(
+    cache_key = _staff_dashboard_cache_key(
         school_id,
         department=department,
         date_from=date_from,
         date_to=date_to,
-        skip=0,
-        limit=1000,
     )
-    present_count = sum(1 for row in records if row.get("status") == "present")
-    absent_count = sum(1 for row in records if row.get("status") == "absent")
-    late_count = sum(1 for row in records if row.get("status") == "late")
-    half_day_count = sum(1 for row in records if row.get("status") == "half_day")
-    total = len(records) or 1
-    department_summary_map: dict[str, dict[str, Any]] = {}
-    for row in records:
-        department_name = _normalize(row.get("department")) or "General"
-        bucket = department_summary_map.setdefault(
-            department_name,
-            {"department": department_name, "present_count": 0, "absent_count": 0, "late_count": 0, "half_day_count": 0},
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_STAFF_DASHBOARD_CACHE, cache_key)
+    if cached_payload:
+        logger.info("attendance.staff_dashboard.cache_hit", extra={"school_id": school_id, "cache_key": cache_key})
+        return cached_payload
+
+    started_at = time.monotonic()
+    try:
+        payload = _rpc_staff_dashboard(
+            school_id,
+            department=department,
+            date_from=date_from,
+            date_to=date_to,
         )
-        status_value = row.get("status")
-        if status_value == "present":
-            bucket["present_count"] += 1
-        elif status_value == "absent":
-            bucket["absent_count"] += 1
-        elif status_value == "late":
-            bucket["late_count"] += 1
-        elif status_value == "half_day":
-            bucket["half_day_count"] += 1
-    return {
-        "present_count": present_count,
-        "absent_count": absent_count,
-        "late_count": late_count,
-        "half_day_count": half_day_count,
-        "monthly_attendance_percentage": round((present_count / total) * 100, 2),
-        "department_summary": list(department_summary_map.values()),
-    }
+    except Exception:
+        logger.exception(
+            "attendance.staff_dashboard.rpc_failed_fallback",
+            extra={
+                "school_id": school_id,
+                "department": _normalize(department) or None,
+                "date_from": date_from,
+                "date_to": date_to,
+            },
+        )
+        if settings.is_production:
+            raise
+        records = list_staff_records(
+            school_id,
+            department=department,
+            date_from=date_from,
+            date_to=date_to,
+            skip=0,
+            limit=MAX_STAFF_LOOKUP,
+        )
+        present_count = sum(1 for row in records if row.get("status") == "present")
+        absent_count = sum(1 for row in records if row.get("status") == "absent")
+        late_count = sum(1 for row in records if row.get("status") == "late")
+        half_day_count = sum(1 for row in records if row.get("status") == "half_day")
+        total = len(records) or 1
+        department_summary_map: dict[str, dict[str, Any]] = {}
+        for row in records:
+            department_name = _normalize(row.get("department")) or "General"
+            bucket = department_summary_map.setdefault(
+                department_name,
+                {"department": department_name, "present": 0, "absent": 0, "late": 0, "half_day": 0},
+            )
+            status_value = row.get("status")
+            if status_value == "present":
+                bucket["present"] += 1
+            elif status_value == "absent":
+                bucket["absent"] += 1
+            elif status_value == "late":
+                bucket["late"] += 1
+            elif status_value == "half_day":
+                bucket["half_day"] += 1
+        payload = {
+            "present_count": present_count,
+            "absent_count": absent_count,
+            "late_count": late_count,
+            "half_day_count": half_day_count,
+            "monthly_attendance_percentage": round(
+                (((present_count + late_count + half_day_count * 0.5) / total) * 100),
+                2,
+            ),
+            "department_summary": list(department_summary_map.values()),
+        }
+
+    _set_ttl_cache_entry(
+        ATTENDANCE_STAFF_DASHBOARD_CACHE,
+        cache_key,
+        payload,
+        ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS,
+    )
+    logger.info(
+        "attendance.staff_dashboard.complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "department": _normalize(department) or None,
+            "date_from": date_from,
+            "date_to": date_to,
+        },
+    )
+    return payload
