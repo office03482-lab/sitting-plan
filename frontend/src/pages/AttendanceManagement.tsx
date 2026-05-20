@@ -15,7 +15,7 @@ import {
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { apiService } from '@services/api';
+import { apiService, isRequestCanceled } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
 import type {
@@ -536,7 +536,7 @@ function AttendanceManagementContent() {
   });
 
   const getApiErrorMessage = (error: any, fallback: string) =>
-    error?.response?.data?.detail || error?.message || fallback;
+    isRequestCanceled(error) ? '' : error?.response?.data?.detail || error?.message || fallback;
 
   const upsertAttendanceSubject = (context: TeacherAttendanceContext | null | undefined) => {
     if (!context?.subject_id || !context.class_name || !context.section || !context.subject) return;
@@ -612,6 +612,11 @@ function AttendanceManagementContent() {
   const staffTabLoadInFlightRef = useRef<Promise<void> | null>(null);
   const overviewPendingRefreshRef = useRef(false);
   const teacherContextRequestKeyRef = useRef('');
+  const batchContextRequestKeyRef = useRef('');
+  const studentRecordsRequestKeyRef = useRef('');
+  const studentCalendarRequestKeyRef = useRef('');
+  const todayDashboardRequestKeyRef = useRef('');
+  const staffRecordsRequestKeyRef = useRef('');
   const integratedOverviewManualEnabledRef = useRef(false);
   const integratedStudentsManualEnabledRef = useRef(false);
 
@@ -1705,10 +1710,13 @@ function AttendanceManagementContent() {
       setBatchAttendanceContext(null);
       return;
     }
+    const requestKey = `${selectedBatchParts.className}|${selectedBatchParts.section}|${studentFilters.date}|${getCurrentTimeHHMM().slice(0, 4)}`;
+    batchContextRequestKeyRef.current = requestKey;
     try {
       debugAttendanceLoader('loadBatchAttendanceContext.start', {
         className: selectedBatchParts.className,
         section: selectedBatchParts.section,
+        requestKey,
       });
       const response = await apiService.getBatchAttendanceContext({
         class_name: selectedBatchParts.className,
@@ -1717,6 +1725,7 @@ function AttendanceManagementContent() {
         current_time: getCurrentTimeHHMM(),
         school_id: 1,
       });
+      if (batchContextRequestKeyRef.current !== requestKey) return;
       const context = response.data;
       setBatchAttendanceContext(context);
       upsertAttendanceSubject(context);
@@ -1726,12 +1735,17 @@ function AttendanceManagementContent() {
           subject_id: String(context.subject_id),
         }));
       }
-    } catch {
+    } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadBatchAttendanceContext.canceled', { requestKey });
+        return;
+      }
       setBatchAttendanceContext(null);
     } finally {
       debugAttendanceLoader('loadBatchAttendanceContext.end', {
         className: selectedBatchParts.className,
         section: selectedBatchParts.section,
+        requestKey,
       });
     }
   };
@@ -1741,10 +1755,13 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStudentRecords.skipped.auth_not_ready');
       return;
     }
+    const requestKey = `${recordBatchParts.className}|${recordBatchParts.section}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
+    studentRecordsRequestKeyRef.current = requestKey;
     try {
       debugAttendanceLoader('loadStudentRecords.start', {
         className: recordBatchParts.className,
         section: recordBatchParts.section,
+        requestKey,
       });
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
@@ -1753,13 +1770,19 @@ function AttendanceManagementContent() {
         student_name: studentFilters.recordStudentName || undefined,
         limit: attendanceStudentRecordPageSize,
       });
+      if (studentRecordsRequestKeyRef.current !== requestKey) return;
       setStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadStudentRecords.canceled', { requestKey });
+        return;
+      }
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student records load nahi hue.') });
     } finally {
       debugAttendanceLoader('loadStudentRecords.end', {
         className: recordBatchParts.className,
         section: recordBatchParts.section,
+        requestKey,
       });
     }
   };
@@ -1774,12 +1797,15 @@ function AttendanceManagementContent() {
       setStudentCalendarUsingMonthFallback(false);
       return;
     }
+    const monthRange = getMonthRange(studentFilters.dashboard_date);
+    const requestKey = `${calendarBatchParts.className}|${calendarBatchParts.section}|${monthRange.from}|${monthRange.to}|${attendanceStudentDashboardPageSize}`;
+    studentCalendarRequestKeyRef.current = requestKey;
     try {
       debugAttendanceLoader('loadStudentCalendarRecords.start', {
         className: calendarBatchParts.className,
         section: calendarBatchParts.section,
+        requestKey,
       });
-      const monthRange = getMonthRange(studentFilters.dashboard_date);
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
         class_name: calendarBatchParts.className,
@@ -1788,6 +1814,7 @@ function AttendanceManagementContent() {
         date_to: monthRange.to || undefined,
         limit: attendanceStudentDashboardPageSize,
       });
+      if (studentCalendarRequestKeyRef.current !== requestKey) return;
       const exactMatchRecords = toArray<StudentAttendanceRecord>(response.data);
       if (exactMatchRecords.length) {
         setStudentCalendarUsingMonthFallback(false);
@@ -1797,6 +1824,10 @@ function AttendanceManagementContent() {
       setStudentCalendarUsingMonthFallback(false);
       setStudentCalendarRecords([]);
     } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadStudentCalendarRecords.canceled', { requestKey });
+        return;
+      }
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Calendar dates load nahi hui.') });
@@ -1804,6 +1835,7 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStudentCalendarRecords.end', {
         className: calendarBatchParts.className,
         section: calendarBatchParts.section,
+        requestKey,
       });
     }
   };
@@ -1813,19 +1845,26 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadTodayStudentDashboard.skipped.auth_not_ready', { targetDate });
       return;
     }
+    const requestKey = `${targetDate}|${attendanceStudentDashboardPageSize}`;
+    todayDashboardRequestKeyRef.current = requestKey;
     try {
-      debugAttendanceLoader('loadTodayStudentDashboard.start', { targetDate });
+      debugAttendanceLoader('loadTodayStudentDashboard.start', { targetDate, requestKey });
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
         date_from: targetDate,
         date_to: targetDate,
         limit: attendanceStudentDashboardPageSize,
       });
+      if (todayDashboardRequestKeyRef.current !== requestKey) return;
       setTodayStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadTodayStudentDashboard.canceled', { targetDate, requestKey });
+        return;
+      }
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Aaj ka batch dashboard load nahi hua.') });
     } finally {
-      debugAttendanceLoader('loadTodayStudentDashboard.end', { targetDate });
+      debugAttendanceLoader('loadTodayStudentDashboard.end', { targetDate, requestKey });
     }
   };
 
@@ -1884,8 +1923,10 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStaffRecords.skipped.auth_not_ready');
       return;
     }
+    const requestKey = `${staffFilters.recordDepartment}|${staffFilters.recordStaffName}|${staffFilters.recordDate}|${staffFilters.dashboardDepartment}|${staffFilters.dashboardDate}`;
+    staffRecordsRequestKeyRef.current = requestKey;
     try {
-      debugAttendanceLoader('loadStaffRecords.start');
+      debugAttendanceLoader('loadStaffRecords.start', { requestKey });
       const recordsRes = await apiService.listStaffAttendanceRecords({
         school_id: 1,
         department: staffFilters.recordDepartment || undefined,
@@ -1894,6 +1935,7 @@ function AttendanceManagementContent() {
         date_to: staffFilters.recordDate || undefined,
         limit: 200,
       });
+      if (staffRecordsRequestKeyRef.current !== requestKey) return;
       const nextRecords = toArray<StaffAttendanceRecord>(recordsRes.data);
       setStaffRecords(nextRecords);
       if (!staffFilters.dashboardDate) {
@@ -1906,11 +1948,16 @@ function AttendanceManagementContent() {
         date_from: staffFilters.dashboardDate || undefined,
         date_to: staffFilters.dashboardDate || undefined,
       });
+      if (staffRecordsRequestKeyRef.current !== requestKey) return;
       setStaffDashboard(normalizeStaffDashboard(dashboardRes.data, nextRecords));
     } catch (error: any) {
+      if (isRequestCanceled(error)) {
+        debugAttendanceLoader('loadStaffRecords.canceled', { requestKey });
+        return;
+      }
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff records load nahi hue.') });
     } finally {
-      debugAttendanceLoader('loadStaffRecords.end');
+      debugAttendanceLoader('loadStaffRecords.end', { requestKey });
     }
   };
 

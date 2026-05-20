@@ -53,7 +53,16 @@ export const getApiBaseUrl = () => {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+export const isRequestCanceled = (error: any) =>
+  axios.isCancel(error) ||
+  error?.code === 'ERR_CANCELED' ||
+  error?.name === 'CanceledError' ||
+  String(error?.message || '').trim().toLowerCase() === 'canceled';
+
 export const getRequestErrorMessage = (error: any, fallback: string) => {
+  if (isRequestCanceled(error)) {
+    return '';
+  }
   const detail = error?.response?.data?.detail || error?.response?.data?.error;
   if (typeof detail === 'string' && detail.trim()) {
     return detail;
@@ -93,7 +102,6 @@ class ApiService {
   private attendanceSubjectsCache: { expiresAt: number; data: AttendanceSubject[] } | null = null;
   private attendanceStudentsRequestKey: string | null = null;
   private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
-  private attendanceStudentsAbortController: AbortController | null = null;
   private attendanceStudentsCache = new Map<string, { expiresAt: number; data: AttendanceStudent[] }>();
   private attendanceStaffDashboardRequestKey: string | null = null;
   private attendanceStaffDashboardRequestPromise: Promise<{ data: StaffDashboard }> | null = null;
@@ -103,11 +111,9 @@ class ApiService {
   private batchListCache = new Map<string, { expiresAt: number; data: Batch[] }>();
   private batchAttendanceContextRequestKey: string | null = null;
   private batchAttendanceContextRequestPromise: Promise<{ data: TeacherAttendanceContext }> | null = null;
-  private batchAttendanceContextAbortController: AbortController | null = null;
   private batchAttendanceContextCache = new Map<string, { expiresAt: number; data: TeacherAttendanceContext }>();
   private studentAttendanceRecordsRequestKey: string | null = null;
   private studentAttendanceRecordsRequestPromise: Promise<{ data: StudentAttendanceRecord[] }> | null = null;
-  private studentAttendanceRecordsAbortController: AbortController | null = null;
   private studentAttendanceRecordsCache = new Map<string, { expiresAt: number; data: StudentAttendanceRecord[] }>();
   private studentIdMap = new Map<number, string>();
   private studentReverseIdMap = new Map<string, number>();
@@ -4935,13 +4941,10 @@ class ApiService {
       return this.attendanceStudentsRequestPromise;
     }
 
-    this.attendanceStudentsAbortController?.abort();
-    this.attendanceStudentsAbortController = new AbortController();
     this.attendanceStudentsRequestKey = requestKey;
     this.attendanceStudentsRequestPromise = this.api
       .get<AttendanceStudent[]>('/attendance/students', {
         params: requestParams,
-        signal: this.attendanceStudentsAbortController.signal,
       })
       .then((response) => {
         this.attendanceStudentsCache.set(requestKey, {
@@ -5098,13 +5101,10 @@ class ApiService {
       return this.batchAttendanceContextRequestPromise;
     }
 
-    this.batchAttendanceContextAbortController?.abort();
-    this.batchAttendanceContextAbortController = new AbortController();
     this.batchAttendanceContextRequestKey = requestKey;
     this.batchAttendanceContextRequestPromise = this.api
       .get<TeacherAttendanceContext>('/attendance/batch-current-class', {
         params: requestParams,
-        signal: this.batchAttendanceContextAbortController.signal,
       })
       .then((response) => {
         this.batchAttendanceContextCache.set(requestKey, {
@@ -5185,7 +5185,7 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to load student attendance records');
     }
-    const normalizedLimit = Math.min(Math.max(Number(params?.limit ?? 100) || 100, 1), 200);
+    const normalizedLimit = Math.min(Math.max(Number(params?.limit ?? 100) || 100, 1), 100);
     const scopedParams = {
       ...params,
       school_id: scopedSchoolId,
@@ -5200,16 +5200,13 @@ class ApiService {
     if (this.studentAttendanceRecordsRequestKey === requestKey && this.studentAttendanceRecordsRequestPromise) {
       return this.studentAttendanceRecordsRequestPromise;
     }
-    this.studentAttendanceRecordsAbortController?.abort();
-    this.studentAttendanceRecordsAbortController = new AbortController();
     this.studentAttendanceRecordsRequestKey = requestKey;
     this.studentAttendanceRecordsRequestPromise = this.api.get<StudentAttendanceRecord[]>('/attendance/student-records', {
       params: scopedParams,
-      signal: this.studentAttendanceRecordsAbortController.signal,
     }).then((response) => {
       this.studentAttendanceRecordsCache.set(requestKey, {
         data: Array.isArray(response.data) ? response.data : [],
-        expiresAt: Date.now() + 45_000,
+        expiresAt: Date.now() + 60_000,
       });
       return response;
     }).finally(() => {
