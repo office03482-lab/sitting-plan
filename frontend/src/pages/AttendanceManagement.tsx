@@ -474,9 +474,6 @@ function AttendanceManagementContent() {
   const [reportData, setReportData] = useState<AttendanceReportResponse | null>(null);
   const [teacherAttendanceContext, setTeacherAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
   const [batchAttendanceContext, setBatchAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
-  const [integratedOverviewData, setIntegratedOverviewData] = useState<AttendanceOverview | null>(null);
-  const [integratedStudentsData, setIntegratedStudentsData] = useState<AttendanceStudent[]>([]);
-
   const [holidayForm, setHolidayForm] = useState(initialHolidayForm);
   const [leaveForm, setLeaveForm] = useState(initialLeaveForm);
 
@@ -617,19 +614,15 @@ function AttendanceManagementContent() {
   const studentCalendarRequestKeyRef = useRef('');
   const todayDashboardRequestKeyRef = useRef('');
   const staffRecordsRequestKeyRef = useRef('');
-  const integratedOverviewManualEnabledRef = useRef(false);
-  const integratedStudentsManualEnabledRef = useRef(false);
-
   const isOverviewTabVisible = activeTab === 'overview' && canViewOverviewTab && !isTeacherSelfView;
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
-  const integratedPanelEnabled = activeTab === ('integrated' as TabKey);
   const canRunAttendanceRequests = authReady && sessionReady && !!session;
+  const currentSchoolId = user?.school_id || 1;
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[attendance-loader]', source, {
       activeTab,
-      integratedPanelEnabled,
       authReady,
       sessionReady,
       authInitialized,
@@ -737,13 +730,13 @@ function AttendanceManagementContent() {
       try {
         debugAttendanceLoader('loadStudentTab.start');
         setTabLoading(true);
-        const studentsRes = await apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize });
+        const studentsRes = await apiService.listAttendanceStudents({ school_id: currentSchoolId, limit: attendanceStudentListPageSize });
         const subjectsRes =
           subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
             ? ({ data: subjects.length ? subjects : toArray<AttendanceSubject>(overview?.subject_options) } as { data: AttendanceSubject[] })
             : await apiService.listAttendanceSubjects().catch(() => ({ data: [] }));
         const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
-        const normalizedBatches = buildAttendanceBatches(nextStudents, 1);
+        const normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
         setManagedBatches(normalizedBatches);
         setStudents(nextStudents);
         setSubjects(toArray<AttendanceSubject>(subjectsRes.data));
@@ -794,7 +787,7 @@ function AttendanceManagementContent() {
       try {
         debugAttendanceLoader('loadManagedBatches.start', { force });
         if (students.length) {
-          const normalizedBatches = buildAttendanceBatches(students, 1);
+          const normalizedBatches = buildAttendanceBatches(students, Number(currentSchoolId) || 1);
           setManagedBatches(normalizedBatches);
           setStudentFilters((current) => ({
             ...current,
@@ -876,46 +869,6 @@ function AttendanceManagementContent() {
     });
     staffTabLoadInFlightRef.current = loadPromise;
     return loadPromise;
-  };
-
-  const loadIntegratedOverviewManually = async () => {
-    if (!canRunAttendanceRequests) {
-      debugAttendanceLoader('loadIntegratedOverviewManually.skipped.auth_not_ready');
-      return;
-    }
-    if (!integratedPanelEnabled && !window.confirm('Integrated attendance snapshot manually load karna hai?')) {
-      return;
-    }
-    integratedOverviewManualEnabledRef.current = true;
-    debugAttendanceLoader('loadIntegratedOverviewManually.start');
-    try {
-      const response = await apiService.getIntegratedAttendanceOverview(1);
-      setIntegratedOverviewData(normalizeOverview(response.data));
-    } catch (error: any) {
-      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Integrated overview manually load nahi hua.') });
-    } finally {
-      debugAttendanceLoader('loadIntegratedOverviewManually.end');
-    }
-  };
-
-  const loadIntegratedStudentsManually = async () => {
-    if (!canRunAttendanceRequests) {
-      debugAttendanceLoader('loadIntegratedStudentsManually.skipped.auth_not_ready');
-      return;
-    }
-    if (!integratedPanelEnabled && !window.confirm('Integrated students manually load karne hain?')) {
-      return;
-    }
-    integratedStudentsManualEnabledRef.current = true;
-    debugAttendanceLoader('loadIntegratedStudentsManually.start');
-    try {
-      const response = await apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize });
-      setIntegratedStudentsData(toArray<AttendanceStudent>(response.data));
-    } catch (error: any) {
-      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Integrated students manually load nahi hue.') });
-    } finally {
-      debugAttendanceLoader('loadIntegratedStudentsManually.end');
-    }
   };
 
   const refreshApprovedStaffLeaves = async () => {
@@ -2373,32 +2326,6 @@ function AttendanceManagementContent() {
               <StatCard label="Holidays" value={`${holidays.length}`} icon={CalendarDays} tone="rose" />
             </section>
 
-            <section className={sectionClass}>
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">Integrated Attendance Disabled</h2>
-                  <p className="mt-2 text-sm text-slate-500">
-                    Integrated overview auto-loading temporarily band hai. Native overview hi auto-load hoga; integrated data sirf manual action se aayega.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void loadIntegratedOverviewManually()}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Load Integrated Overview
-                </button>
-              </div>
-              {integratedOverviewData ? (
-                <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <SmallMetricCard label="Integrated Students" value={`${integratedOverviewData.student_count || 0}`} tone="indigo" />
-                  <SmallMetricCard label="Integrated Staff" value={`${integratedOverviewData.staff_count || 0}`} tone="emerald" />
-                  <SmallMetricCard label="Integrated Holidays" value={`${integratedOverviewData.holidays.length}`} tone="rose" />
-                  <SmallMetricCard label="Integrated Notifications" value={`${integratedOverviewData.notifications.length}`} tone="amber" />
-                </div>
-              ) : null}
-            </section>
-
             <section className="grid gap-6 xl:grid-cols-2">
               <div className={sectionClass}>
                 <h2 className="text-2xl font-bold text-slate-900">Student Overview</h2>
@@ -2498,13 +2425,6 @@ function AttendanceManagementContent() {
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void loadIntegratedStudentsManually()}
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Load Integrated Students
-                    </button>
                     {user?.role === 'teacher' ? (
                       <button
                         type="button"
