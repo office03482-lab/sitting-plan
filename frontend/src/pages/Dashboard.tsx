@@ -230,8 +230,18 @@ export default function Dashboard() {
   const dashboardLoadInFlightRef = useRef<Promise<void> | null>(null);
   const dashboardLoadFingerprintRef = useRef('');
   const dashboardMountedRef = useRef(true);
+  const integratedPanelEnabled = false;
+
+  const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
+    console.debug('[dashboard-attendance-loader]', source, {
+      integratedPanelEnabled,
+      showDetailedDashboard,
+      ...details,
+    });
+  };
 
   useEffect(() => {
+    debugDashboardLoader('effect.loadStatistics');
     void loadStatistics();
   }, [canViewEduPay, canViewInventory, showDetailedDashboard]);
 
@@ -244,6 +254,7 @@ export default function Dashboard() {
   const loadStatistics = async (options?: { force?: boolean }) => {
     const force = options?.force === true;
     if (!showDetailedDashboard) {
+      debugDashboardLoader('loadStatistics.skipped.hidden_dashboard');
       setLoadError(null);
       setStats({
         totalStudents: 0,
@@ -280,14 +291,17 @@ export default function Dashboard() {
     const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}`;
     const now = Date.now();
     if (!force && dashboardLoadFingerprintRef.current === requestFingerprint && now - lastDashboardLoadAtRef.current < 60_000) {
+      debugDashboardLoader('loadStatistics.skipped.cooldown', { requestFingerprint });
       return;
     }
     if (dashboardLoadInFlightRef.current) {
+      debugDashboardLoader('loadStatistics.reused_inflight', { requestFingerprint });
       return dashboardLoadInFlightRef.current;
     }
 
     const loadPromise = (async () => {
       try {
+        debugDashboardLoader('loadStatistics.start', { requestFingerprint, force });
         setLoadError(null);
         const today = new Date().toISOString().slice(0, 10);
         const [
@@ -409,6 +423,10 @@ export default function Dashboard() {
         setInventorySnapshot(inventoryDashboard);
         setEduPayDashboardData(eduPayDashboard);
       } catch (error) {
+        debugDashboardLoader('loadStatistics.error', {
+          requestFingerprint,
+          message: error instanceof Error ? error.message : String(error),
+        });
         console.warn('Backend not available, using default statistics:', error);
         if (!dashboardMountedRef.current) return;
         setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
@@ -441,6 +459,8 @@ export default function Dashboard() {
         });
         setInventorySnapshot(null);
         setEduPayDashboardData(null);
+      } finally {
+        debugDashboardLoader('loadStatistics.end', { requestFingerprint, force });
       }
     })().finally(() => {
       dashboardLoadInFlightRef.current = null;

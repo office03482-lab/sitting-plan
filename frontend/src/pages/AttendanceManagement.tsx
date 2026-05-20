@@ -472,6 +472,8 @@ function AttendanceManagementContent() {
   const [reportData, setReportData] = useState<AttendanceReportResponse | null>(null);
   const [teacherAttendanceContext, setTeacherAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
   const [batchAttendanceContext, setBatchAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
+  const [integratedOverviewData, setIntegratedOverviewData] = useState<AttendanceOverview | null>(null);
+  const [integratedStudentsData, setIntegratedStudentsData] = useState<AttendanceStudent[]>([]);
 
   const [holidayForm, setHolidayForm] = useState(initialHolidayForm);
   const [leaveForm, setLeaveForm] = useState(initialLeaveForm);
@@ -607,36 +609,46 @@ function AttendanceManagementContent() {
   const staffTabLoadInFlightRef = useRef<Promise<void> | null>(null);
   const overviewPendingRefreshRef = useRef(false);
   const teacherContextRequestKeyRef = useRef('');
+  const integratedOverviewManualEnabledRef = useRef(false);
+  const integratedStudentsManualEnabledRef = useRef(false);
 
   const isOverviewTabVisible = activeTab === 'overview' && canViewOverviewTab && !isTeacherSelfView;
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
+  const integratedPanelEnabled = activeTab === ('integrated' as TabKey);
+
+  const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
+    console.debug('[attendance-loader]', source, {
+      activeTab,
+      integratedPanelEnabled,
+      ...details,
+    });
+  };
 
   const loadOverviewData = async (options?: { initial?: boolean; force?: boolean }) => {
     const initial = options?.initial === true;
     const force = options?.force === true;
     if (!initial && !isOverviewTabVisible) {
+      debugAttendanceLoader('loadOverviewData.skipped.hidden_tab', { initial, force });
       overviewPendingRefreshRef.current = true;
       return;
     }
     if (overviewRefreshInFlightRef.current) {
+      debugAttendanceLoader('loadOverviewData.reused_inflight', { initial, force });
       return overviewRefreshInFlightRef.current;
     }
     const refreshPromise = (async () => {
       const now = Date.now();
       if (!initial && !force && now - lastOverviewRefreshAtRef.current < 60_000) {
+        debugAttendanceLoader('loadOverviewData.skipped.cooldown', { initial, force });
         return;
       }
       try {
+        debugAttendanceLoader('loadOverviewData.start', { initial, force });
         initial ? setLoading(true) : setTabLoading(true);
         let normalizedOverview: AttendanceOverview | null = null;
-        try {
-          const overviewRes = await apiService.getAttendanceOverview();
-          normalizedOverview = normalizeOverview(overviewRes.data);
-        } catch (error) {
-          const fallbackRes = await apiService.getIntegratedAttendanceOverview(1);
-          normalizedOverview = normalizeOverview(fallbackRes.data);
-        }
+        const overviewRes = await apiService.getAttendanceOverview();
+        normalizedOverview = normalizeOverview(overviewRes.data);
         setOverview(normalizedOverview);
         if (normalizedOverview) {
           setNotifications(normalizedOverview.notifications);
@@ -649,6 +661,7 @@ function AttendanceManagementContent() {
         console.error('Failed to load attendance module', error);
         setAlert({ type: 'error', message: getApiErrorMessage(error, 'Attendance module load nahi ho paaya.') });
       } finally {
+        debugAttendanceLoader('loadOverviewData.end', { initial, force });
         initial ? setLoading(false) : setTabLoading(false);
       }
     })().finally(() => {
@@ -681,15 +694,15 @@ function AttendanceManagementContent() {
 
   const loadStudentTab = async () => {
     if (studentTabLoadInFlightRef.current) {
+      debugAttendanceLoader('loadStudentTab.reused_inflight');
       return studentTabLoadInFlightRef.current;
     }
     const loadPromise = (async () => {
       try {
+        debugAttendanceLoader('loadStudentTab.start');
         setTabLoading(true);
         const [studentsRes, subjectsRes] = await Promise.all([
-          apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }).catch(() =>
-            apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize })
-          ),
+          apiService.listAttendanceStudents({ school_id: 1, limit: attendanceStudentListPageSize }),
           apiService.listAttendanceSubjects().catch(() => ({ data: [] })),
         ]);
         const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
@@ -708,6 +721,7 @@ function AttendanceManagementContent() {
       } catch (error: any) {
         setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student attendance load nahi hua.') });
       } finally {
+        debugAttendanceLoader('loadStudentTab.end');
         setTabLoading(false);
       }
     })().finally(() => {
@@ -721,15 +735,18 @@ function AttendanceManagementContent() {
     const force = options?.force === true;
     const now = Date.now();
     if (!force && now - lastManagedBatchRefreshAtRef.current < attendanceStudentsRefreshCooldownMs) {
+      debugAttendanceLoader('loadManagedBatches.skipped.cooldown', { force });
       return;
     }
     if (managedBatchRefreshInFlightRef.current) {
+      debugAttendanceLoader('loadManagedBatches.reused_inflight', { force });
       return managedBatchRefreshInFlightRef.current;
     }
 
     const refreshPromise = (async () => {
       lastManagedBatchRefreshAtRef.current = Date.now();
       try {
+        debugAttendanceLoader('loadManagedBatches.start', { force });
         const response = await apiService.listBatches(1, true, 'batch').catch(() => apiService.listBatches(1, true));
         const normalizedBatches = toArray<Batch>(response.data)
           .filter((item) => String(item.name || '').trim())
@@ -749,6 +766,7 @@ function AttendanceManagementContent() {
       } catch {
         // Keep current batch options if refresh fails.
       } finally {
+        debugAttendanceLoader('loadManagedBatches.end', { force });
         managedBatchRefreshInFlightRef.current = null;
       }
     })();
@@ -759,15 +777,15 @@ function AttendanceManagementContent() {
 
   const loadStaffTab = async () => {
     if (staffTabLoadInFlightRef.current) {
+      debugAttendanceLoader('loadStaffTab.reused_inflight');
       return staffTabLoadInFlightRef.current;
     }
     const loadPromise = (async () => {
       try {
+        debugAttendanceLoader('loadStaffTab.start');
         setTabLoading(true);
         const [staffRes, approvedLeavesRes] = await Promise.all([
-          apiService.listAttendanceStaff({ school_id: 1, limit: 200 }).catch(() =>
-            apiService.listIntegratedStaff({ school_id: 1, limit: 200 })
-          ),
+          apiService.listAttendanceStaff({ school_id: 1, limit: 200 }),
           apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' }).catch(() => ({ data: [] })),
         ]);
         setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
@@ -779,6 +797,7 @@ function AttendanceManagementContent() {
       } catch (error: any) {
         setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff attendance load nahi hua.') });
       } finally {
+        debugAttendanceLoader('loadStaffTab.end');
         setTabLoading(false);
       }
     })().finally(() => {
@@ -786,6 +805,38 @@ function AttendanceManagementContent() {
     });
     staffTabLoadInFlightRef.current = loadPromise;
     return loadPromise;
+  };
+
+  const loadIntegratedOverviewManually = async () => {
+    if (!integratedPanelEnabled && !window.confirm('Integrated attendance snapshot manually load karna hai?')) {
+      return;
+    }
+    integratedOverviewManualEnabledRef.current = true;
+    debugAttendanceLoader('loadIntegratedOverviewManually.start');
+    try {
+      const response = await apiService.getIntegratedAttendanceOverview(1);
+      setIntegratedOverviewData(normalizeOverview(response.data));
+    } catch (error: any) {
+      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Integrated overview manually load nahi hua.') });
+    } finally {
+      debugAttendanceLoader('loadIntegratedOverviewManually.end');
+    }
+  };
+
+  const loadIntegratedStudentsManually = async () => {
+    if (!integratedPanelEnabled && !window.confirm('Integrated students manually load karne hain?')) {
+      return;
+    }
+    integratedStudentsManualEnabledRef.current = true;
+    debugAttendanceLoader('loadIntegratedStudentsManually.start');
+    try {
+      const response = await apiService.listIntegratedStudents({ school_id: 1, limit: attendanceStudentListPageSize });
+      setIntegratedStudentsData(toArray<AttendanceStudent>(response.data));
+    } catch (error: any) {
+      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Integrated students manually load nahi hue.') });
+    } finally {
+      debugAttendanceLoader('loadIntegratedStudentsManually.end');
+    }
   };
 
   const refreshApprovedStaffLeaves = async () => {
@@ -810,6 +861,7 @@ function AttendanceManagementContent() {
 
   const loadLeavesTab = async () => {
     try {
+      debugAttendanceLoader('loadLeavesTab.start');
       setTabLoading(true);
       const [leavesRes, staffRes] = await Promise.all([
         apiService.listAttendanceLeaves({ school_id: 1 }),
@@ -821,6 +873,7 @@ function AttendanceManagementContent() {
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Leave module load nahi hua.') });
     } finally {
+      debugAttendanceLoader('loadLeavesTab.end');
       setTabLoading(false);
     }
   };
@@ -829,18 +882,22 @@ function AttendanceManagementContent() {
     if (tabLoading || loadedTabs[activeTab] || tabAutoLoadDone[activeTab]) return;
     setTabAutoLoadDone((current) => ({ ...current, [activeTab]: true }));
     if (activeTab === 'overview') {
+      debugAttendanceLoader('effect.autoload.overview');
       void loadOverviewData({ initial: true, force: true });
       return;
     }
     if (activeTab === 'student') {
+      debugAttendanceLoader('effect.autoload.student');
       void loadStudentTab();
       return;
     }
     if (activeTab === 'staff') {
+      debugAttendanceLoader('effect.autoload.staff');
       void loadStaffTab();
       return;
     }
     if (activeTab === 'leaves') {
+      debugAttendanceLoader('effect.autoload.leaves');
       void loadLeavesTab();
       return;
     }
@@ -857,6 +914,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible) return;
+    debugAttendanceLoader('effect.student.dashboard');
     const timeoutId = window.setTimeout(() => {
       void loadTodayStudentDashboard(studentFilters.dashboard_date);
     }, attendanceUiDebounceMs);
@@ -865,12 +923,17 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible || user?.role !== 'teacher' || !canViewStudentTab) return;
+    debugAttendanceLoader('effect.student.teacher_context');
     void loadTeacherAttendanceContext();
   }, [isStudentTabVisible, user?.role, studentFilters.date, canViewStudentTab]);
 
   useEffect(() => {
     if (!isOverviewTabVisible) return;
     if (!loadedTabs.overview || overviewPendingRefreshRef.current) {
+      debugAttendanceLoader('effect.overview.visible_refresh', {
+        loaded: loadedTabs.overview,
+        pendingRefresh: overviewPendingRefreshRef.current,
+      });
       void loadOverviewData({ initial: !loadedTabs.overview, force: overviewPendingRefreshRef.current });
     }
   }, [isOverviewTabVisible, loadedTabs.overview]);
@@ -883,6 +946,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStaffTabVisible) return;
+    debugAttendanceLoader('effect.staff.records');
     void loadStaffRecords();
   }, [
     isStaffTabVisible,
@@ -895,6 +959,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStaffTabVisible) return;
+    debugAttendanceLoader('effect.staff.calendar');
     void loadStaffCalendarRecords();
   }, [
     isStaffTabVisible,
@@ -905,6 +970,7 @@ function AttendanceManagementContent() {
   useEffect(() => {
     if (activeTab !== 'reports') return;
     if (managedBatches.length) return;
+    debugAttendanceLoader('effect.reports.managed_batches');
     void loadManagedBatches({ force: false });
   }, [activeTab, managedBatches.length]);
 
@@ -987,6 +1053,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible) return;
+    debugAttendanceLoader('effect.student.batch_context');
     const timeoutId = window.setTimeout(() => {
       void loadBatchAttendanceContext();
     }, attendanceUiDebounceMs);
@@ -995,6 +1062,7 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible) return;
+    debugAttendanceLoader('effect.student.records');
     const timeoutId = window.setTimeout(() => {
       void loadStudentRecords();
     }, attendanceUiDebounceMs);
@@ -1025,6 +1093,7 @@ function AttendanceManagementContent() {
       setStudentCalendarRecords([]);
       return;
     }
+    debugAttendanceLoader('effect.student.calendar');
     const timeoutId = window.setTimeout(() => {
       void loadStudentCalendarRecords();
     }, attendanceUiDebounceMs);
@@ -1519,6 +1588,7 @@ function AttendanceManagementContent() {
     }
     teacherContextRequestKeyRef.current = requestKey;
     try {
+      debugAttendanceLoader('loadTeacherAttendanceContext.start', { requestKey });
       const response = await apiService.getTeacherAttendanceContext({
         target_date: studentFilters.date,
         current_time: getCurrentTimeHHMM(),
@@ -1540,6 +1610,7 @@ function AttendanceManagementContent() {
       setTeacherAttendanceContext(null);
       setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Teacher timetable se class auto-load nahi hui.') });
     } finally {
+      debugAttendanceLoader('loadTeacherAttendanceContext.end', { requestKey });
       window.setTimeout(() => {
         if (teacherContextRequestKeyRef.current === requestKey) {
           teacherContextRequestKeyRef.current = '';
@@ -1554,6 +1625,10 @@ function AttendanceManagementContent() {
       return;
     }
     try {
+      debugAttendanceLoader('loadBatchAttendanceContext.start', {
+        className: selectedBatchParts.className,
+        section: selectedBatchParts.section,
+      });
       const response = await apiService.getBatchAttendanceContext({
         class_name: selectedBatchParts.className,
         section: selectedBatchParts.section,
@@ -1572,11 +1647,20 @@ function AttendanceManagementContent() {
       }
     } catch {
       setBatchAttendanceContext(null);
+    } finally {
+      debugAttendanceLoader('loadBatchAttendanceContext.end', {
+        className: selectedBatchParts.className,
+        section: selectedBatchParts.section,
+      });
     }
   };
 
   const loadStudentRecords = async () => {
     try {
+      debugAttendanceLoader('loadStudentRecords.start', {
+        className: recordBatchParts.className,
+        section: recordBatchParts.section,
+      });
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
         class_name: recordBatchParts.className || undefined,
@@ -1587,6 +1671,11 @@ function AttendanceManagementContent() {
       setStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student records load nahi hue.') });
+    } finally {
+      debugAttendanceLoader('loadStudentRecords.end', {
+        className: recordBatchParts.className,
+        section: recordBatchParts.section,
+      });
     }
   };
 
@@ -1597,6 +1686,10 @@ function AttendanceManagementContent() {
       return;
     }
     try {
+      debugAttendanceLoader('loadStudentCalendarRecords.start', {
+        className: calendarBatchParts.className,
+        section: calendarBatchParts.section,
+      });
       const monthRange = getMonthRange(studentFilters.dashboard_date);
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
@@ -1618,11 +1711,17 @@ function AttendanceManagementContent() {
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Calendar dates load nahi hui.') });
+    } finally {
+      debugAttendanceLoader('loadStudentCalendarRecords.end', {
+        className: calendarBatchParts.className,
+        section: calendarBatchParts.section,
+      });
     }
   };
 
   const loadTodayStudentDashboard = async (targetDate: string = studentFilters.dashboard_date) => {
     try {
+      debugAttendanceLoader('loadTodayStudentDashboard.start', { targetDate });
       const response = await apiService.listStudentAttendanceRecords({
         school_id: 1,
         date_from: targetDate,
@@ -1632,6 +1731,8 @@ function AttendanceManagementContent() {
       setTodayStudentRecords(toArray<StudentAttendanceRecord>(response.data));
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Aaj ka batch dashboard load nahi hua.') });
+    } finally {
+      debugAttendanceLoader('loadTodayStudentDashboard.end', { targetDate });
     }
   };
 
@@ -1683,6 +1784,7 @@ function AttendanceManagementContent() {
 
   const loadStaffRecords = async () => {
     try {
+      debugAttendanceLoader('loadStaffRecords.start');
       const dashboardPromise = staffFilters.dashboardDate
         ? apiService.getStaffAttendanceDashboard({
             school_id: 1,
@@ -1707,11 +1809,14 @@ function AttendanceManagementContent() {
       setStaffDashboard(staffFilters.dashboardDate ? normalizeStaffDashboard(dashboardRes.data, nextRecords) : null);
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Staff records load nahi hue.') });
+    } finally {
+      debugAttendanceLoader('loadStaffRecords.end');
     }
   };
 
   const loadStaffCalendarRecords = async () => {
     try {
+      debugAttendanceLoader('loadStaffCalendarRecords.start');
       const monthRange = getMonthRange(staffFilters.date);
       const response = await apiService.listStaffAttendanceRecords({
         school_id: 1,
@@ -1723,6 +1828,8 @@ function AttendanceManagementContent() {
       setStaffCalendarRecords(toArray<StaffAttendanceRecord>(response.data));
     } catch {
       setStaffCalendarRecords([]);
+    } finally {
+      debugAttendanceLoader('loadStaffCalendarRecords.end');
     }
   };
 
@@ -2057,6 +2164,32 @@ function AttendanceManagementContent() {
               <StatCard label="Holidays" value={`${holidays.length}`} icon={CalendarDays} tone="rose" />
             </section>
 
+            <section className={sectionClass}>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">Integrated Attendance Disabled</h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Integrated overview auto-loading temporarily band hai. Native overview hi auto-load hoga; integrated data sirf manual action se aayega.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadIntegratedOverviewManually()}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Load Integrated Overview
+                </button>
+              </div>
+              {integratedOverviewData ? (
+                <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <SmallMetricCard label="Integrated Students" value={`${integratedOverviewData.student_count || 0}`} tone="indigo" />
+                  <SmallMetricCard label="Integrated Staff" value={`${integratedOverviewData.staff_count || 0}`} tone="emerald" />
+                  <SmallMetricCard label="Integrated Holidays" value={`${integratedOverviewData.holidays.length}`} tone="rose" />
+                  <SmallMetricCard label="Integrated Notifications" value={`${integratedOverviewData.notifications.length}`} tone="amber" />
+                </div>
+              ) : null}
+            </section>
+
             <section className="grid gap-6 xl:grid-cols-2">
               <div className={sectionClass}>
                 <h2 className="text-2xl font-bold text-slate-900">Student Overview</h2>
@@ -2156,6 +2289,13 @@ function AttendanceManagementContent() {
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void loadIntegratedStudentsManually()}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Load Integrated Students
+                    </button>
                     {user?.role === 'teacher' ? (
                       <button
                         type="button"
