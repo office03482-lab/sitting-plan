@@ -63,6 +63,72 @@ def _chunk_values(values: list[str], chunk_size: int) -> list[list[str]]:
     ]
 
 
+def _normalize_batch_filters(
+    batch_filters: list[tuple[str, str | None]] | None,
+) -> list[dict[str, str]]:
+    if not batch_filters:
+        return []
+
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for class_name, section in batch_filters:
+        normalized_class = _normalize(class_name)
+        normalized_section = _normalize(section)
+        if not normalized_class:
+            continue
+        key = (normalized_class.casefold(), normalized_section.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        payload = {"class_name": normalized_class}
+        if normalized_section:
+            payload["section"] = normalized_section
+        normalized.append(payload)
+    return normalized
+
+
+def _rpc_list_student_records(
+    school_id: str,
+    *,
+    class_name: str | None = None,
+    section: str | None = None,
+    student_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    skip: int = 0,
+    limit: int = 100,
+    batch_filters: list[tuple[str, str | None]] | None = None,
+) -> list[dict[str, Any]]:
+    batch_filter_payload = _normalize_batch_filters(batch_filters)
+    params = {
+        "p_school_id": school_id,
+        "p_class_name": _normalize(class_name) or None,
+        "p_section": _normalize(section) or None,
+        "p_student_name": _normalize(student_name) or None,
+        "p_date_from": date_from[:10] if date_from else None,
+        "p_date_to": date_to[:10] if date_to else None,
+        "p_skip": max(skip, 0),
+        "p_limit": max(limit, 1),
+        "p_batch_filters": batch_filter_payload or None,
+    }
+    started_at = time.monotonic()
+    response = get_supabase_admin_client().rpc("attendance_student_report_rows", params).execute()
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    rows = list(response.data or [])
+    logger.info(
+        "attendance.student_records.rpc_complete",
+        extra={
+            "school_id": school_id,
+            "row_count": len(rows),
+            "duration_ms": duration_ms,
+            "skip": skip,
+            "limit": limit,
+            "has_batch_filters": bool(batch_filter_payload),
+        },
+    )
+    return rows
+
+
 def _execute_student_attendance_chunk(
     school_id: str,
     chunk_ids: list[str],
@@ -491,16 +557,52 @@ def list_student_records(
     date_to: str | None = None,
     skip: int = 0,
     limit: int = 100,
+    batch_filters: list[tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
+    try:
+        return _rpc_list_student_records(
+            school_id,
+            class_name=class_name,
+            section=section,
+            student_name=student_name,
+            date_from=date_from,
+            date_to=date_to,
+            skip=skip,
+            limit=limit,
+            batch_filters=batch_filters,
+        )
+    except Exception:
+        logger.exception(
+            "attendance.student_records.rpc_failed_fallback",
+            extra={
+                "school_id": school_id,
+                "skip": skip,
+                "limit": limit,
+                "has_batch_filters": bool(batch_filters),
+            },
+        )
+
     students = _fetch_students(school_id, limit=MAX_STUDENT_LOOKUP)
     batches = _fetch_batches(school_id)
     student_rows = [_serialize_student(row, batches) for row in students]
+    normalized_batch_filters = _normalize_batch_filters(batch_filters)
     filtered_students = [
         row
         for row in student_rows
         if (not class_name or _cf(row.get("class_name")) == _cf(class_name))
         and (not section or _cf(row.get("section")) == _cf(section))
         and (not student_name or _cf(student_name) in _cf(row.get("name")))
+        and (
+            not normalized_batch_filters
+            or any(
+                _cf(row.get("class_name")) == _cf(filter_item.get("class_name"))
+                and (
+                    not filter_item.get("section")
+                    or _cf(row.get("section")) == _cf(filter_item.get("section"))
+                )
+                for filter_item in normalized_batch_filters
+            )
+        )
     ]
     student_ids = _sanitize_lookup_ids(
         [row.get("id") for row in filtered_students],

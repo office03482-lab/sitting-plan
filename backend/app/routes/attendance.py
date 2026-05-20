@@ -986,6 +986,18 @@ def collect_student_report_records(
     db: Session,
 ) -> List[StudentAttendanceRecordResponse]:
     parsed_batches = parse_batch_filters(batch_names)
+    if not is_legacy_sqlite_mode():
+        return list_supabase_student_records(
+            school_id,
+            class_name=class_name,
+            section=section,
+            student_name=None,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
+            skip=0,
+            limit=1000,
+            batch_filters=parsed_batches or None,
+        )
     if not parsed_batches:
         return list_student_records(
             school_id, class_name, section, None, date_from, date_to, 0, 1000, db
