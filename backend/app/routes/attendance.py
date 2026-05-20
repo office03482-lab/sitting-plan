@@ -75,6 +75,7 @@ from app.schemas import (
 )
 from app.schemas import DayOfWeek as TimetableDayOfWeek
 from app.services.supabase_attendance import (
+    get_student_marking as get_supabase_student_marking,
     get_integrated_overview as get_supabase_integrated_overview,
     get_overview as get_supabase_attendance_overview,
     get_staff_dashboard as get_supabase_staff_dashboard,
@@ -1643,11 +1644,26 @@ def get_student_marking(
     date: date = Query(...),
     class_name: str = Query(...),
     section: str = Query(...),
-    subject_id: int = Query(...),
+    subject_id: str = Query(...),
     search: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        try:
+            return StudentAttendanceMarkingResponse(
+                **get_supabase_student_marking(
+                    school_id,
+                    date_value=date.isoformat(),
+                    class_name=class_name,
+                    section=section,
+                    subject_id=str(subject_id),
+                    search=search,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     seed_attendance_data(db, school_id)
     target_date = day_start(date)
     subject = (

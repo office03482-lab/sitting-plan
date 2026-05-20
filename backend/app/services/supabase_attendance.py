@@ -511,6 +511,99 @@ def list_subjects(school_id: str) -> list[dict[str, Any]]:
     return [_serialize_subject(row, batches) for row in _fetch_subjects(school_id)]
 
 
+def get_student_marking(
+    school_id: str,
+    *,
+    date_value: str,
+    class_name: str,
+    section: str,
+    subject_id: str,
+    search: str | None = None,
+) -> dict[str, Any]:
+    students_response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id, full_name, roll_number, class_name, section")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .eq("class_name", class_name)
+        .eq("section", section)
+        .order("roll_number")
+        .execute()
+    )
+    students = list(students_response.data or [])
+    search_term = _cf(search)
+    if search_term:
+        students = [
+            row
+            for row in students
+            if search_term in _cf(row.get("full_name")) or search_term in _cf(row.get("roll_number"))
+        ]
+
+    subject_response = (
+        get_supabase_admin_client()
+        .table("subjects")
+        .select("id, name")
+        .eq("school_id", school_id)
+        .eq("id", subject_id)
+        .limit(1)
+        .execute()
+    )
+    subject_rows = list(subject_response.data or [])
+    if not subject_rows:
+        raise ValueError("Subject not found")
+    subject = subject_rows[0]
+
+    existing_by_student_id: dict[str, dict[str, Any]] = {}
+    student_ids = _sanitize_lookup_ids([row.get("id") for row in students], require_uuid=True)
+    if student_ids:
+        try:
+            attendance_response = (
+                get_supabase_admin_client()
+                .schema("attendance")
+                .table("student_attendance")
+                .select("student_id, status, absence_reason")
+                .eq("school_id", school_id)
+                .eq("subject_id", subject_id)
+                .eq("attendance_date", date_value[:10])
+                .in_("student_id", student_ids)
+                .execute()
+            )
+            existing_by_student_id = {
+                str(row.get("student_id")): row
+                for row in list(attendance_response.data or [])
+            }
+        except Exception:
+            logger.exception(
+                "attendance.student_marking.prefill_failed",
+                extra={
+                    "school_id": school_id,
+                    "class_name": class_name,
+                    "section": section,
+                    "subject_id": subject_id,
+                    "student_count": len(student_ids),
+                },
+            )
+
+    return {
+        "date": datetime.fromisoformat(f"{date_value[:10]}T00:00:00").isoformat(),
+        "class_name": class_name,
+        "section": section,
+        "subject_id": subject.get("id"),
+        "subject_name": subject.get("name") or "",
+        "students": [
+            {
+                "student_id": row.get("id"),
+                "roll_no": row.get("roll_number") or "",
+                "student_name": row.get("full_name") or "",
+                "status": (existing_by_student_id.get(str(row.get("id"))) or {}).get("status") or "present",
+                "absence_reason": (existing_by_student_id.get(str(row.get("id"))) or {}).get("absence_reason"),
+            }
+            for row in students
+        ],
+    }
+
+
 def list_integrated_students(
     school_id: str,
     *,
