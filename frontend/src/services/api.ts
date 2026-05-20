@@ -163,7 +163,7 @@ class ApiService {
     return localStorage.getItem('auth_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
   }
 
-  private async waitForAuthInitialization(timeoutMs: number = 1800) {
+  private async waitForAuthInitialization(timeoutMs: number = 4000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const authState = useAuthStore.getState();
@@ -1413,8 +1413,11 @@ class ApiService {
 
     // Ensure multipart uploads do not send a JSON content type header.
     this.api.interceptors.request.use(async (config) => {
-      if (!this.isRefreshExcluded(config.url)) {
-        const authState = await this.waitForAuthInitialization();
+      const refreshExcluded = this.isRefreshExcluded(config.url);
+      let authState = useAuthStore.getState();
+
+      if (!refreshExcluded) {
+        authState = await this.waitForAuthInitialization();
         console.debug('[auth-sync]', 'api.request.auth_gate', {
           url: config.url || '',
           auth_initialized: authState.auth_initialized,
@@ -1431,12 +1434,22 @@ class ApiService {
         }
       }
 
-      const token = this.getAccessToken();
+      let token = this.getAccessToken();
+      if (!token && !refreshExcluded) {
+        token = await this.getLatestSessionAccessToken();
+      }
       const currentUser = useAuthStore.getState().user || getPersistedUser();
       config.headers = (config.headers || {}) as any;
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+      } else if (!refreshExcluded) {
+        console.debug('[auth-sync]', 'api.request.missing_token', {
+          url: config.url || '',
+          auth_initialized: authState.auth_initialized,
+          auth_loading: authState.auth_loading,
+          userId: currentUser?.id || null,
+        });
       }
 
       if (currentUser?.role) {
