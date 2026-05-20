@@ -1006,6 +1006,50 @@ def _serialize_staff(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_actor_staff_member_id(school_id: str, actor: dict[str, Any] | None = None) -> str | None:
+    if not actor or _cf(actor.get("role")) != "teacher":
+        return None
+
+    email = _normalize(actor.get("email"))
+    name = _normalize(actor.get("name"))
+    query = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+    )
+
+    if email:
+        query = query.eq("email", email)
+    elif name:
+        query = query.ilike("full_name", name)
+    else:
+        return None
+
+    response = query.limit(1).execute()
+    rows = list(response.data or [])
+    return str(rows[0].get("id")) if rows and rows[0].get("id") else None
+
+
+def _serialize_leave(row: dict[str, Any], *, staff_names_by_id: dict[str, str]) -> dict[str, Any]:
+    staff_member_id = str(row.get("staff_member_id") or "")
+    from_date = _normalize(row.get("from_date"))
+    to_date = _normalize(row.get("to_date"))
+    return {
+        "id": row.get("id"),
+        "staff_member_id": staff_member_id,
+        "staff_name": staff_names_by_id.get(staff_member_id, ""),
+        "leave_type": _normalize(row.get("leave_type")) or "",
+        "from_date": f"{from_date}T00:00:00" if from_date else None,
+        "to_date": f"{to_date}T23:59:59" if to_date else None,
+        "reason": row.get("reason"),
+        "status": _normalize(row.get("status")) or "pending",
+        "approved_by": _normalize(row.get("approver_profile_id")) or None,
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
 def get_overview(school_id: str) -> dict[str, Any]:
     cached_payload = _get_ttl_cache_entry(ATTENDANCE_OVERVIEW_CACHE, school_id)
     if cached_payload:
@@ -1087,6 +1131,53 @@ def list_subjects(school_id: str) -> list[dict[str, Any]]:
     )
     _set_ttl_cache_entry(ATTENDANCE_SUBJECTS_CACHE, school_id, payload, ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS)
     return payload
+
+
+def list_leaves(
+    school_id: str,
+    *,
+    status_filter: str | None = None,
+    actor: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    actor_staff_member_id = _resolve_actor_staff_member_id(school_id, actor)
+    query = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("leave_requests")
+        .select("id, school_id, staff_member_id, approver_profile_id, leave_type, from_date, to_date, reason, status, created_at")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("created_at", desc=True)
+    )
+    if actor_staff_member_id:
+        query = query.eq("staff_member_id", actor_staff_member_id)
+    normalized_status = _normalize(status_filter)
+    if normalized_status:
+        query = query.eq("status", normalized_status)
+
+    response = query.execute()
+    rows = list(response.data or [])
+    staff_member_ids = _sanitize_lookup_ids([row.get("staff_member_id") for row in rows], require_uuid=True)
+    staff_names_by_id: dict[str, str] = {}
+    if staff_member_ids:
+        staff_response = (
+            get_supabase_admin_client()
+            .table("staff_members")
+            .select("id, full_name")
+            .eq("school_id", school_id)
+            .in_("id", staff_member_ids)
+            .execute()
+        )
+        staff_names_by_id = {
+            str(row.get("id")): _normalize(row.get("full_name")) or ""
+            for row in list(staff_response.data or [])
+            if row.get("id")
+        }
+
+    return sanitize_response_payload(
+        [_serialize_leave(row, staff_names_by_id=staff_names_by_id) for row in rows],
+        log_label="attendance.list_leaves",
+    )
 
 
 def get_student_marking(

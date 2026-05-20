@@ -78,6 +78,7 @@ from app.schemas import DayOfWeek as TimetableDayOfWeek
 from app.services.supabase_attendance import (
     get_student_marking as get_supabase_student_marking,
     get_integrated_overview as get_supabase_integrated_overview,
+    list_leaves as list_supabase_attendance_leaves,
     get_overview as get_supabase_attendance_overview,
     get_staff_dashboard as get_supabase_staff_dashboard,
     list_integrated_staff as list_supabase_integrated_staff,
@@ -2355,6 +2356,12 @@ def list_leaves(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return list_supabase_attendance_leaves(
+            school_id,
+            status_filter=status_filter.value if status_filter else None,
+            actor=actor,
+        )
     seed_attendance_data(db, school_id)
     query = db.query(AttendanceLeave).filter(AttendanceLeave.school_id == school_id)
     actor_staff = require_teacher_staff_for_actor(db, school_id, actor)
