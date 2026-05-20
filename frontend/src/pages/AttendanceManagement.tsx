@@ -593,12 +593,18 @@ function AttendanceManagementContent() {
     batchesData: Batch[]
   ) => {
     const firstBatch = batchesData[0]?.name || (studentsData[0] ? `${studentsData[0].class_name} | ${studentsData[0].section}` : '');
-    if (!studentFilters.batch_name && firstBatch) {
-      setStudentFilters((current) => ({
-        ...current,
-        batch_name: current.batch_name || firstBatch,
-      }));
-    }
+    if (!firstBatch) return;
+    setStudentFilters((current) => ({
+      ...current,
+      batch_name:
+        current.batch_name && batchesData.some((item) => item.name === current.batch_name)
+          ? current.batch_name
+          : firstBatch,
+      record_batch_name:
+        current.record_batch_name && batchesData.some((item) => item.name === current.record_batch_name)
+          ? current.record_batch_name
+          : current.record_batch_name || firstBatch,
+    }));
   };
   const attendanceStudentsRefreshCooldownMs = 60_000;
   const lastManagedBatchRefreshAtRef = useRef(0);
@@ -734,19 +740,23 @@ function AttendanceManagementContent() {
         const subjectsRes =
           subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
             ? ({ data: subjects.length ? subjects : toArray<AttendanceSubject>(overview?.subject_options) } as { data: AttendanceSubject[] })
-            : await apiService.listAttendanceSubjects().catch(() => ({ data: [] }));
+            : await apiService.listAttendanceSubjects(currentSchoolId).catch(() => ({ data: [] }));
         const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
-        const normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
+        let normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
+        if (!normalizedBatches.length) {
+          const batchResponse = await apiService
+            .listBatches(currentSchoolId, true, 'batch')
+            .catch(() => apiService.listBatches(currentSchoolId, true));
+          normalizedBatches = toArray<Batch>(batchResponse.data)
+            .filter((item) => String(item.name || '').trim())
+            .sort((left, right) =>
+              String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
+            );
+        }
         setManagedBatches(normalizedBatches);
         setStudents(nextStudents);
         setSubjects(toArray<AttendanceSubject>(subjectsRes.data));
-        if (overview) {
-          hydrateDefaults(
-            overview,
-            nextStudents,
-            normalizedBatches
-          );
-        }
+        hydrateDefaults(overview || normalizeOverview({}), nextStudents, normalizedBatches);
         setLoadedTabs((current) => ({ ...current, student: true }));
       } catch (error: any) {
         if (isRequestCanceled(error)) {
@@ -802,7 +812,9 @@ function AttendanceManagementContent() {
           }));
           return;
         }
-        const response = await apiService.listBatches(1, true, 'batch').catch(() => apiService.listBatches(1, true));
+        const response = await apiService
+          .listBatches(currentSchoolId, true, 'batch')
+          .catch(() => apiService.listBatches(currentSchoolId, true));
         const normalizedBatches = toArray<Batch>(response.data)
           .filter((item) => String(item.name || '').trim())
           .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' }));
