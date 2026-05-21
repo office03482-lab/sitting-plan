@@ -1358,7 +1358,7 @@ class AttendanceNotificationResponse(BaseModel):
 
 
 class AttendanceLeaveCreate(BaseModel):
-    staff_member_id: int
+    staff_member_id: int | str
     leave_type: LeaveType
     from_date: date
     to_date: date

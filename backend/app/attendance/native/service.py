@@ -1,4 +1,6 @@
 from app.services.supabase_attendance import (
+    delete_all_student_records,
+    delete_student_record,
     get_batch_current_class,
     get_integrated_overview,
     get_overview,
@@ -108,6 +110,12 @@ class NativeAttendanceService:
 
     def list_student_records(self, **kwargs):
         return list_student_records(**kwargs)
+
+    def delete_student_record(self, *, school_id: str, record_id: str):
+        return delete_student_record(school_id, record_id=record_id)
+
+    def delete_all_student_records(self, **kwargs):
+        return delete_all_student_records(**kwargs)
 
     def list_staff_records(self, **kwargs):
         return list_staff_records(**kwargs)

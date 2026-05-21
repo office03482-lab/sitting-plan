@@ -1726,6 +1726,97 @@ def list_staff_records(
     return payload[skip : skip + limit]
 
 
+def delete_student_record(school_id: str, *, record_id: str) -> dict[str, Any]:
+    normalized_record_id = _normalize(record_id)
+    if not normalized_record_id:
+        raise ValueError("Student attendance record id is required")
+
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("student_attendance")
+        .delete()
+        .eq("school_id", school_id)
+        .eq("id", normalized_record_id)
+        .execute()
+    )
+    deleted_rows = list(response.data or [])
+    if not deleted_rows:
+        raise ValueError("Student attendance record not found")
+    return {
+        "message": "Student attendance record deleted successfully",
+        "deleted_count": len(deleted_rows),
+    }
+
+
+def delete_all_student_records(
+    school_id: str,
+    *,
+    class_name: str | None = None,
+    section: str | None = None,
+    student_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    filtered_students = list_students(
+        school_id,
+        skip=0,
+        limit=MAX_STUDENT_LOOKUP,
+        search=student_name,
+    )
+    matching_students = [
+        row
+        for row in filtered_students
+        if (not class_name or _cf(row.get("class_name")) == _cf(class_name))
+        and (not section or _cf(row.get("section")) == _cf(section))
+        and (not student_name or _cf(student_name) in _cf(row.get("name")))
+    ]
+    student_ids = _sanitize_lookup_ids([row.get("id") for row in matching_students], require_uuid=True)
+    if not student_ids:
+        return {
+            "message": "0 student attendance record(s) deleted successfully",
+            "deleted_count": 0,
+        }
+
+    query = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("student_attendance")
+        .select("id")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+    )
+    if date_from:
+        query = query.gte("attendance_date", date_from[:10])
+    if date_to:
+        query = query.lte("attendance_date", date_to[:10])
+    candidate_rows = list(query.execute().data or [])
+    record_ids = _sanitize_lookup_ids([row.get("id") for row in candidate_rows], require_uuid=True)
+    if not record_ids:
+        return {
+            "message": "0 student attendance record(s) deleted successfully",
+            "deleted_count": 0,
+        }
+
+    deleted_count = 0
+    for chunk in _chunk_values(record_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE):
+        deleted_response = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("student_attendance")
+            .delete()
+            .eq("school_id", school_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        deleted_count += len(list(deleted_response.data or []))
+
+    return {
+        "message": f"{deleted_count} student attendance record(s) deleted successfully",
+        "deleted_count": deleted_count,
+    }
+
+
 def _staff_dashboard_cache_key(
     school_id: str,
     *,

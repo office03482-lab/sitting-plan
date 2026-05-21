@@ -192,6 +192,40 @@ def list_student_records_route(
     )
 
 
+@router.delete("/student-records/{record_id}")
+def delete_student_record_route(
+    record_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("student-records.delete", school_id)
+    return service.delete_student_record(
+        school_id=school_id,
+        record_id=record_id,
+    )
+
+
+@router.delete("/student-records")
+def delete_all_student_records_route(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    class_name: Optional[str] = Query(default=None),
+    section: Optional[str] = Query(default=None),
+    student_name: Optional[str] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("student-records.delete_all", school_id)
+    return service.delete_all_student_records(
+        school_id=school_id,
+        class_name=class_name,
+        section=section,
+        student_name=student_name,
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None,
+    )
+
+
 @router.get("/staff-records", response_model=List[StaffAttendanceRecordResponse])
 def list_staff_records_route(
     school_id: str = Depends(resolve_school_id_from_actor),
