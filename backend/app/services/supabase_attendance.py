@@ -823,7 +823,7 @@ def get_batch_current_class(
             class_name=class_name,
             section=section,
         )
-        used_join_table = True
+        used_join_table = bool(join_rows)
         logger.info(
             "attendance.batch_current_class.join_lookup_complete",
             extra={
@@ -859,7 +859,10 @@ def get_batch_current_class(
         row
         for row in rows
         if _normalize(((row.get("metadata") or {}).get("ui_session_type") if isinstance(row.get("metadata"), dict) else row.get("session_type"))) not in {"break_time", "self_study"}
-        and _batch_matches_timetable_entry(class_name, section, row.get("class_name"))
+        and (
+            used_join_table
+            or _batch_matches_timetable_entry(class_name, section, row.get("class_name"))
+        )
     ]
     matched_row, matched_by_current_time = _choose_timetable_row(candidate_rows, current_time)
 
