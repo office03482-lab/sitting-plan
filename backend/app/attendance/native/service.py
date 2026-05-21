@@ -2,14 +2,17 @@ from app.services.supabase_attendance import (
     get_batch_current_class,
     get_integrated_overview,
     get_overview,
+    get_staff_marking,
     get_student_marking,
     list_integrated_staff,
     list_integrated_students,
+    list_leaves,
     list_staff,
     list_staff_records,
     list_student_records,
     list_students,
     list_subjects,
+    save_staff_marking,
     get_staff_dashboard,
 )
 
@@ -87,6 +90,22 @@ class NativeAttendanceService:
             search=search,
         )
 
+    def get_staff_marking(self, *, school_id: str, date_value: str, department: str, search: str | None = None):
+        return get_staff_marking(
+            school_id,
+            date_value=date_value,
+            department=department,
+            search=search,
+        )
+
+    def save_staff_marking(self, *, school_id: str, date_value: str, marked_by: str | None = None, entries: list[dict] | None = None):
+        return save_staff_marking(
+            school_id,
+            date_value=date_value,
+            marked_by=marked_by,
+            entries=entries or [],
+        )
+
     def list_student_records(self, **kwargs):
         return list_student_records(**kwargs)
 
@@ -95,3 +114,10 @@ class NativeAttendanceService:
 
     def get_staff_dashboard(self, **kwargs):
         return get_staff_dashboard(**kwargs)
+
+    def list_leaves(self, *, school_id: str, status_filter: str | None = None, actor: dict | None = None):
+        return list_leaves(
+            school_id,
+            status_filter=status_filter,
+            actor=actor,
+        )

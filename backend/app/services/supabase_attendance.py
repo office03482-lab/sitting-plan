@@ -1273,6 +1273,122 @@ def get_student_marking(
     }
 
 
+def get_staff_marking(
+    school_id: str,
+    *,
+    date_value: str,
+    department: str,
+    search: str | None = None,
+) -> dict[str, Any]:
+    staff_rows = list_staff(
+        school_id,
+        skip=0,
+        limit=100,
+        search=search,
+        department=department,
+    )
+    staff_ids = _sanitize_lookup_ids([row.get("id") for row in staff_rows], require_uuid=True)
+    attendance_by_staff_id: dict[str, dict[str, Any]] = {}
+    if staff_ids:
+        attendance_response = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("staff_attendance")
+            .select("staff_member_id, status, check_in, check_out")
+            .eq("school_id", school_id)
+            .eq("attendance_date", date_value[:10])
+            .in_("staff_member_id", staff_ids)
+            .execute()
+        )
+        attendance_by_staff_id = {
+            str(row.get("staff_member_id")): row
+            for row in list(attendance_response.data or [])
+            if row.get("staff_member_id")
+        }
+
+    approved_leave_by_staff_id: dict[str, dict[str, Any]] = {}
+    if staff_ids:
+        leave_response = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("leave_requests")
+            .select("staff_member_id, leave_type, reason")
+            .eq("school_id", school_id)
+            .eq("status", "approved")
+            .eq("is_active", True)
+            .lte("from_date", date_value[:10])
+            .gte("to_date", date_value[:10])
+            .in_("staff_member_id", staff_ids)
+            .execute()
+        )
+        approved_leave_by_staff_id = {
+            str(row.get("staff_member_id")): row
+            for row in list(leave_response.data or [])
+            if row.get("staff_member_id")
+        }
+
+    return {
+        "date": datetime.fromisoformat(f"{date_value[:10]}T00:00:00").isoformat(),
+        "department": department,
+        "staff": [
+            {
+                "staff_member_id": row.get("id"),
+                "staff_id": row.get("staff_id") or "",
+                "staff_name": row.get("name") or "",
+                "department": row.get("department") or "",
+                "designation": row.get("designation"),
+                "status": (
+                    (attendance_by_staff_id.get(str(row.get("id"))) or {}).get("status")
+                    or ("absent" if approved_leave_by_staff_id.get(str(row.get("id"))) else "present")
+                ),
+                "check_in": _normalize((attendance_by_staff_id.get(str(row.get("id"))) or {}).get("check_in")) or None,
+                "check_out": _normalize((attendance_by_staff_id.get(str(row.get("id"))) or {}).get("check_out")) or None,
+                "is_on_approved_leave": approved_leave_by_staff_id.get(str(row.get("id"))) is not None,
+                "leave_type": _normalize((approved_leave_by_staff_id.get(str(row.get("id"))) or {}).get("leave_type")) or None,
+                "leave_reason": (approved_leave_by_staff_id.get(str(row.get("id"))) or {}).get("reason"),
+            }
+            for row in staff_rows
+        ],
+    }
+
+
+def save_staff_marking(
+    school_id: str,
+    *,
+    date_value: str,
+    marked_by: str | None = None,
+    entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    normalized_entries = []
+    for entry in entries or []:
+        staff_member_id = _normalize(entry.get("staff_member_id"))
+        if not staff_member_id:
+            continue
+        normalized_entries.append(
+            {
+                "school_id": school_id,
+                "staff_member_id": staff_member_id,
+                "attendance_date": date_value[:10],
+                "status": _normalize(entry.get("status")) or "present",
+                "check_in": _normalize(entry.get("check_in")) or None,
+                "check_out": _normalize(entry.get("check_out")) or None,
+                "metadata": {"marked_by": marked_by or "HR Admin"},
+            }
+        )
+
+    if not normalized_entries:
+        return {"message": "Staff attendance saved successfully"}
+
+    (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("staff_attendance")
+        .upsert(normalized_entries, on_conflict="staff_member_id,attendance_date")
+        .execute()
+    )
+    return {"message": "Staff attendance saved successfully"}
+
+
 def list_integrated_students(
     school_id: str,
     *,

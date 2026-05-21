@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, Query
 from app.attendance.factory import get_attendance_service
 from app.attendance.logging_utils import log_attendance_mode
 from app.schemas import (
+    StaffAttendanceMarkRequest,
+    StaffAttendanceMarkingResponse,
     AttendanceOverviewResponse,
+    AttendanceLeaveResponse,
     AttendanceStaffResponse,
     AttendanceStudentResponse,
     AttendanceSubjectResponse,
@@ -16,6 +19,7 @@ from app.schemas import (
     StudentAttendanceRecordResponse,
     TeacherAttendanceContextResponse,
 )
+from app.middleware.auth import get_authenticated_actor_context
 from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
@@ -227,4 +231,52 @@ def get_staff_dashboard_route(
             date_from=date_from.isoformat() if date_from else None,
             date_to=date_to.isoformat() if date_to else None,
         )
+    )
+
+
+@router.get("/staff-marking", response_model=StaffAttendanceMarkingResponse)
+def get_staff_marking_route(
+    date: date = Query(...),
+    department: str = Query(...),
+    search: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("staff-marking", school_id)
+    payload = service.get_staff_marking(
+        school_id=school_id,
+        date_value=date.isoformat(),
+        department=department,
+        search=search,
+    )
+    return StaffAttendanceMarkingResponse(**payload)
+
+
+@router.post("/staff-marking")
+def save_staff_marking_route(
+    payload: StaffAttendanceMarkRequest,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("staff-marking.save", school_id)
+    return service.save_staff_marking(
+        school_id=school_id,
+        date_value=payload.date.isoformat(),
+        marked_by=payload.marked_by,
+        entries=[entry.model_dump() for entry in payload.entries],
+    )
+
+
+@router.get("/leaves", response_model=List[AttendanceLeaveResponse])
+def list_leaves_route(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    status: Optional[str] = Query(default=None),
+    actor: dict = Depends(get_authenticated_actor_context),
+    service=Depends(get_attendance_service),
+):
+    log_attendance_mode("leaves", school_id)
+    return service.list_leaves(
+        school_id=school_id,
+        status_filter=status,
+        actor=actor,
     )
