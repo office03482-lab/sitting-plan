@@ -132,6 +132,7 @@ const normalizeStudentToAttendanceStudent = (student: Student): AttendanceStuden
   name: String(student.name || '').trim(),
   class_name: String(student.class_name || '').trim(),
   section: String(student.section || '').trim(),
+  batch_name: String(student.batch || '').trim() || undefined,
   roll_no: String(student.roll_number || '').trim(),
   parent_contact: String(student.phone || student.reference_number || '').trim() || undefined,
 });
@@ -671,6 +672,8 @@ function AttendanceManagementContent() {
   const lastOverviewRefreshAtRef = useRef(0);
   const overviewRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const studentTabLoadInFlightRef = useRef<Promise<void> | null>(null);
+  const batchStudentFallbackRequestKeyRef = useRef('');
+  const batchStudentFallbackPromiseRef = useRef<Promise<void> | null>(null);
   const staffTabLoadInFlightRef = useRef<Promise<void> | null>(null);
   const overviewPendingRefreshRef = useRef(false);
   const teacherContextRequestKeyRef = useRef('');
@@ -1447,6 +1450,71 @@ function AttendanceManagementContent() {
     [selectedBatchRosterStudents]
   );
 
+  const loadSelectedBatchStudentsFallback = useCallback(async () => {
+    const batchLabel = String(studentFilters.batch_name || '').trim();
+    if (!batchLabel || !canRunAttendanceRequests) return;
+    const requestKey = `${currentSchoolId}|${batchLabel}|${attendanceStudentListPageSize}`;
+    if (
+      batchStudentFallbackRequestKeyRef.current === requestKey &&
+      batchStudentFallbackPromiseRef.current
+    ) {
+      return batchStudentFallbackPromiseRef.current;
+    }
+
+    batchStudentFallbackRequestKeyRef.current = requestKey;
+    const loadPromise = (async () => {
+      debugAttendanceLoader('loadSelectedBatchStudentsFallback.start', { batchLabel, requestKey });
+      try {
+        const genericStudentsRes = await apiService.listStudents(
+          1,
+          0,
+          attendanceStudentListPageSize,
+          batchLabel,
+        ).catch(() => ({ data: [] as Student[] }));
+
+        let fallbackStudents = toArray<Student>(genericStudentsRes.data)
+          .map(normalizeStudentToAttendanceStudent)
+          .filter((student) => student.name);
+
+        if (!fallbackStudents.length) {
+          const broadStudentsRes = await apiService.listStudents(
+            1,
+            0,
+            attendanceStudentListPageSize,
+          ).catch(() => ({ data: [] as Student[] }));
+          fallbackStudents = toArray<Student>(broadStudentsRes.data)
+            .map(normalizeStudentToAttendanceStudent)
+            .filter((student) => student.name && studentMatchesBatchSelection(student, batchLabel));
+        }
+
+        if (!fallbackStudents.length) {
+          debugAttendanceLoader('loadSelectedBatchStudentsFallback.empty', { batchLabel, requestKey });
+          return;
+        }
+
+        setStudents((current) => {
+          const merged = new Map<string, AttendanceStudent>();
+          for (const student of current) {
+            merged.set(String(student.id), student);
+          }
+          for (const student of fallbackStudents) {
+            merged.set(String(student.id), student);
+          }
+          return Array.from(merged.values());
+        });
+      } finally {
+        debugAttendanceLoader('loadSelectedBatchStudentsFallback.end', { batchLabel, requestKey });
+      }
+    })().finally(() => {
+      if (batchStudentFallbackRequestKeyRef.current === requestKey) {
+        batchStudentFallbackPromiseRef.current = null;
+      }
+    });
+
+    batchStudentFallbackPromiseRef.current = loadPromise;
+    return loadPromise;
+  }, [attendanceStudentListPageSize, canRunAttendanceRequests, currentSchoolId, studentFilters.batch_name]);
+
   useEffect(() => {
     if (!selectedBatchParts.className || !selectedBatchParts.section) return;
 
@@ -1464,6 +1532,17 @@ function AttendanceManagementContent() {
       }));
     }
   }, [batchSubjectOptions, selectedBatchParts.className, selectedBatchParts.section, studentFilters.subject_id]);
+
+  useEffect(() => {
+    if (!isStudentTabVisible || !studentFilters.batch_name) return;
+    if (selectedBatchRosterStudents.length) return;
+    void loadSelectedBatchStudentsFallback();
+  }, [
+    isStudentTabVisible,
+    loadSelectedBatchStudentsFallback,
+    selectedBatchRosterStudents.length,
+    studentFilters.batch_name,
+  ]);
 
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
