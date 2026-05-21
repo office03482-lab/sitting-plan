@@ -30,6 +30,7 @@ import type {
   AttendanceStaff,
   AttendanceSubject,
   AttendanceStudent,
+  Student,
   StaffAttendanceMarkingResponse,
   StaffAttendanceMarkingRow,
   StaffAttendanceRecord,
@@ -120,6 +121,15 @@ const buildAttendanceBatches = (students: AttendanceStudent[], schoolId: number 
       student_count: studentCount,
     }));
 };
+
+const normalizeStudentToAttendanceStudent = (student: Student): AttendanceStudent => ({
+  id: Number(student.id),
+  name: String(student.name || '').trim(),
+  class_name: String(student.class_name || '').trim() || 'General',
+  section: String(student.section || '').trim() || 'A',
+  roll_no: String(student.roll_number || '').trim(),
+  parent_contact: String(student.phone || student.reference_number || '').trim() || undefined,
+});
 
 const normalizeOverview = (value: unknown): AttendanceOverview | null => {
   if (!value || typeof value !== 'object') return null;
@@ -741,7 +751,20 @@ function AttendanceManagementContent() {
           subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
             ? ({ data: subjects.length ? subjects : toArray<AttendanceSubject>(overview?.subject_options) } as { data: AttendanceSubject[] })
             : await apiService.listAttendanceSubjects(currentSchoolId).catch(() => ({ data: [] }));
-        const nextStudents = toArray<AttendanceStudent>(studentsRes.data);
+        let nextStudents = toArray<AttendanceStudent>(studentsRes.data);
+        if (!nextStudents.length) {
+          debugAttendanceLoader('loadStudentTab.empty_attendance_students_fallback', {
+            schoolId: currentSchoolId,
+          });
+          const genericStudentsRes = await apiService.listStudents(
+            1,
+            0,
+            attendanceStudentListPageSize,
+          ).catch(() => ({ data: [] as Student[] }));
+          nextStudents = toArray<Student>(genericStudentsRes.data)
+            .map(normalizeStudentToAttendanceStudent)
+            .filter((student) => student.name && student.class_name && student.section);
+        }
         let normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
         if (!normalizedBatches.length) {
           const batchResponse = await apiService
