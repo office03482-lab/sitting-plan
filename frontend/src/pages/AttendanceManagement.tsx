@@ -329,7 +329,7 @@ function splitBatchLabel(value?: string) {
     const [classNameRaw, sectionRaw] = normalized.split('|', 1 + 1);
     return {
       className: (classNameRaw || '').trim(),
-      section: (sectionRaw || '').trim() || 'A',
+      section: (sectionRaw || '').trim(),
     };
   }
 
@@ -337,19 +337,10 @@ function splitBatchLabel(value?: string) {
     const [classNameRaw, sectionRaw] = normalized.split('-', 1 + 1);
     return {
       className: (classNameRaw || '').trim(),
-      section: (sectionRaw || '').trim() || 'A',
+      section: (sectionRaw || '').trim(),
     };
   }
-
-  const spacedMatch = normalized.match(/^(.*\S)\s+([A-Za-z])$/);
-  if (spacedMatch) {
-    return {
-      className: spacedMatch[1].trim(),
-      section: spacedMatch[2].trim().toUpperCase() || 'A',
-    };
-  }
-
-  return { className: normalized, section: 'A' };
+  return { className: '', section: '' };
 }
 
 function normalizeBatchComparisonKey(value?: string) {
@@ -372,6 +363,59 @@ function normalizeBatchComparisonKey(value?: string) {
   }
 
   return normalized.toLowerCase();
+}
+
+function getAttendanceStudentBatchName(student: AttendanceStudent) {
+  return String((student as AttendanceStudent & { batch_name?: string; batch?: string }).batch_name
+    || (student as AttendanceStudent & { batch?: string }).batch
+    || '')
+    .trim();
+}
+
+function studentMatchesBatchSelection(student: AttendanceStudent, selectedBatchLabel?: string) {
+  const selectedKey = normalizeBatchComparisonKey(selectedBatchLabel);
+  if (!selectedKey) return false;
+
+  const candidateKeys = new Set<string>();
+  const className = String(student.class_name || '').trim();
+  const section = String(student.section || '').trim();
+  const batchName = getAttendanceStudentBatchName(student);
+
+  if (batchName) {
+    candidateKeys.add(normalizeBatchComparisonKey(batchName));
+    candidateKeys.add(batchName.toLowerCase());
+  }
+  if (className && section) {
+    candidateKeys.add(normalizeBatchComparisonKey(`${className} | ${section}`));
+  }
+  if (className) {
+    candidateKeys.add(className.toLowerCase());
+  }
+
+  return candidateKeys.has(selectedKey) || candidateKeys.has(String(selectedBatchLabel || '').trim().toLowerCase());
+}
+
+function inferBatchPartsFromStudents(selectedBatchLabel: string, students: AttendanceStudent[]) {
+  const matchingStudents = students.filter((student) => studentMatchesBatchSelection(student, selectedBatchLabel));
+  const uniquePairs = Array.from(
+    new Set(
+      matchingStudents
+        .map((student) => {
+          const className = String(student.class_name || '').trim();
+          const section = String(student.section || '').trim();
+          if (!className || !section) return '';
+          return `${className}|||${section}`;
+        })
+        .filter(Boolean)
+    )
+  );
+
+  if (uniquePairs.length === 1) {
+    const [className, section] = uniquePairs[0].split('|||');
+    return { className, section };
+  }
+
+  return { className: '', section: '' };
 }
 
 function summarizeStudentDayRecords(records: StudentAttendanceRecord[]) {
@@ -1194,12 +1238,20 @@ function AttendanceManagementContent() {
   };
 
   const selectedBatchParts = useMemo(() => {
-    return splitBatchLabel(studentFilters.batch_name);
-  }, [studentFilters.batch_name]);
+    const parsed = splitBatchLabel(studentFilters.batch_name);
+    if (parsed.className && parsed.section) {
+      return parsed;
+    }
+    return inferBatchPartsFromStudents(studentFilters.batch_name, students);
+  }, [studentFilters.batch_name, students]);
 
   const recordBatchParts = useMemo(() => {
-    return splitBatchLabel(studentFilters.record_batch_name);
-  }, [studentFilters.record_batch_name]);
+    const parsed = splitBatchLabel(studentFilters.record_batch_name);
+    if (parsed.className && parsed.section) {
+      return parsed;
+    }
+    return inferBatchPartsFromStudents(studentFilters.record_batch_name, students);
+  }, [studentFilters.record_batch_name, students]);
 
   const calendarBatchParts = useMemo(
     () => selectedBatchParts,
@@ -1268,6 +1320,11 @@ function AttendanceManagementContent() {
     [subjects, selectedBatchParts.className, selectedBatchParts.section]
   );
 
+  const selectedBatchRosterStudents = useMemo(
+    () => students.filter((student) => studentMatchesBatchSelection(student, studentFilters.batch_name)),
+    [studentFilters.batch_name, students]
+  );
+
   const selectedBatchSubject = useMemo(
     () =>
       batchSubjectOptions.find((item) => String(item.id) === studentFilters.subject_id) ||
@@ -1284,14 +1341,8 @@ function AttendanceManagementContent() {
       toArray<StudentAttendanceMarkingRow>(studentMarking?.students).map((row) => [String(row.student_id), row])
     );
 
-    const matchingStudents = students
+    const matchingStudents = selectedBatchRosterStudents
       .filter((student) => {
-        if (
-          String(student.class_name || '').trim() !== selectedBatchParts.className ||
-          String(student.section || '').trim() !== selectedBatchParts.section
-        ) {
-          return false;
-        }
         if (!normalizedSearch) return true;
         const name = String(student.name || '').trim().toLowerCase();
         const rollNo = String(student.roll_no || '').trim().toLowerCase();
@@ -1326,7 +1377,7 @@ function AttendanceManagementContent() {
     studentFilters.date,
     studentFilters.search,
     studentMarking?.students,
-    students,
+    selectedBatchRosterStudents,
   ]);
 
   const visibleStudentMarkingRows = useMemo(
@@ -1362,13 +1413,8 @@ function AttendanceManagementContent() {
   }, [studentRecords, selectedBatchParts.className, selectedBatchParts.section]);
 
   const selectedBatchStudentCount = useMemo(
-    () =>
-      students.filter(
-        (student) =>
-          student.class_name === selectedBatchParts.className &&
-          student.section === selectedBatchParts.section
-      ).length,
-    [students, selectedBatchParts.className, selectedBatchParts.section]
+    () => selectedBatchRosterStudents.length,
+    [selectedBatchRosterStudents]
   );
 
   useEffect(() => {
