@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectHTMLAttributes } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -123,7 +123,12 @@ const buildAttendanceBatches = (students: AttendanceStudent[], schoolId: number 
 };
 
 const normalizeStudentToAttendanceStudent = (student: Student): AttendanceStudent => ({
-  id: Number(student.id),
+  id:
+    typeof student.id === 'string'
+      ? student.id.trim()
+      : Number.isFinite(Number(student.id))
+        ? Number(student.id)
+        : String(student.id ?? '').trim(),
   name: String(student.name || '').trim(),
   class_name: String(student.class_name || '').trim() || 'General',
   section: String(student.section || '').trim() || 'A',
@@ -1285,6 +1290,64 @@ function AttendanceManagementContent() {
     [batchSubjectOptions, studentFilters.subject_id]
   );
 
+  const buildFallbackStudentMarking = useCallback((): StudentAttendanceMarkingResponse | null => {
+    if (!selectedBatchParts.className || !selectedBatchParts.section) return null;
+
+    const normalizedSearch = String(studentFilters.search || '').trim().toLowerCase();
+    const previousRows = new Map(
+      toArray<StudentAttendanceMarkingRow>(studentMarking?.students).map((row) => [String(row.student_id), row])
+    );
+
+    const matchingStudents = students
+      .filter((student) => {
+        if (
+          String(student.class_name || '').trim() !== selectedBatchParts.className ||
+          String(student.section || '').trim() !== selectedBatchParts.section
+        ) {
+          return false;
+        }
+        if (!normalizedSearch) return true;
+        const name = String(student.name || '').trim().toLowerCase();
+        const rollNo = String(student.roll_no || '').trim().toLowerCase();
+        return name.includes(normalizedSearch) || rollNo.includes(normalizedSearch);
+      })
+      .map((student) => {
+        const previous = previousRows.get(String(student.id));
+        return {
+          student_id: student.id,
+          student_name: student.name,
+          roll_no: student.roll_no,
+          class_name: student.class_name,
+          section: student.section,
+          status: previous?.status || 'present',
+          absence_reason: previous?.absence_reason,
+        } satisfies StudentAttendanceMarkingRow;
+      });
+
+    return {
+      date: studentFilters.date,
+      class_name: selectedBatchParts.className,
+      section: selectedBatchParts.section,
+      subject_id: selectedBatchSubject?.id,
+      subject_name: selectedBatchSubject?.name,
+      students: matchingStudents,
+    };
+  }, [
+    selectedBatchParts.className,
+    selectedBatchParts.section,
+    selectedBatchSubject?.id,
+    selectedBatchSubject?.name,
+    studentFilters.date,
+    studentFilters.search,
+    studentMarking?.students,
+    students,
+  ]);
+
+  const visibleStudentMarkingRows = useMemo(
+    () => buildFallbackStudentMarking()?.students || [],
+    [buildFallbackStudentMarking]
+  );
+
   useEffect(() => {
     const dateFromKey = studentFilters.date_from || '';
     const dateToKey = studentFilters.date_to || '';
@@ -1316,10 +1379,10 @@ function AttendanceManagementContent() {
     () =>
       students.filter(
         (student) =>
-          student.class_name === recordBatchParts.className &&
-          student.section === recordBatchParts.section
+          student.class_name === selectedBatchParts.className &&
+          student.section === selectedBatchParts.section
       ).length,
-    [students, recordBatchParts.className, recordBatchParts.section]
+    [students, selectedBatchParts.className, selectedBatchParts.section]
   );
 
   useEffect(() => {
@@ -1833,9 +1896,10 @@ function AttendanceManagementContent() {
 
   const loadStudentMarking = async () => {
     if (!selectedBatchParts.className || !selectedBatchParts.section) return;
+    const fallbackMarking = buildFallbackStudentMarking();
     const subjectId = selectedBatchSubject?.id || (batchSubjectOptions[0] ? batchSubjectOptions[0].id : undefined);
     if (!subjectId) {
-      setStudentMarking(null);
+      setStudentMarking(fallbackMarking);
       return;
     }
     try {
@@ -1849,17 +1913,28 @@ function AttendanceManagementContent() {
       });
       const payload = response.data;
       if (!payload || typeof payload !== 'object') {
-        setStudentMarking(null);
+        setStudentMarking(fallbackMarking);
         return;
       }
-      setStudentMarking({
+      const nextMarking = {
         ...(payload as StudentAttendanceMarkingResponse),
+        subject_id: (payload as StudentAttendanceMarkingResponse).subject_id ?? subjectId,
+        subject_name: (payload as StudentAttendanceMarkingResponse).subject_name ?? selectedBatchSubject?.name,
         students: toArray<StudentAttendanceMarkingRow>(
           (payload as StudentAttendanceMarkingResponse).students
         ),
-      });
+      };
+      if (!nextMarking.students.length) {
+        setStudentMarking(fallbackMarking);
+        return;
+      }
+      setStudentMarking(nextMarking);
     } catch (error: any) {
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Student marking load nahi hua.') });
+      if (isRequestCanceled(error)) {
+        return;
+      }
+      setStudentMarking(fallbackMarking);
+      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Live marking load nahi hua, roster fallback dikhaya gaya hai.') });
     }
   };
 
@@ -2275,6 +2350,10 @@ function AttendanceManagementContent() {
 
   const handleSaveStudentAttendance = async () => {
     if (!studentMarking) return;
+    if (!studentMarking.subject_id) {
+      setAlert({ type: 'warning', message: 'Subject select hone ke baad hi student attendance save ho sakti hai.' });
+      return;
+    }
     try {
       await apiService.saveStudentAttendance({
         date: studentFilters.date,
@@ -2793,11 +2872,11 @@ function AttendanceManagementContent() {
                     <span>Student Name</span>
                     <span>Attendance Status / Remark</span>
                   </div>
-                  <div className="divide-y divide-slate-100">
-                    {studentMarking?.students?.length ? studentMarking.students.map((student) => (
-                      <div key={student.student_id} className="grid min-w-[46rem] grid-cols-[0.8fr_1.3fr_1.7fr] gap-4 px-4 py-4 text-sm text-slate-700">
-                        <span>{student.roll_no}</span>
-                        <span>{student.student_name}</span>
+                    <div className="divide-y divide-slate-100">
+                      {visibleStudentMarkingRows.length ? visibleStudentMarkingRows.map((student) => (
+                        <div key={student.student_id} className="grid min-w-[46rem] grid-cols-[0.8fr_1.3fr_1.7fr] gap-4 px-4 py-4 text-sm text-slate-700">
+                          <span>{student.roll_no}</span>
+                          <span>{student.student_name}</span>
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-2">
                             {(['present', 'absent'] as StudentAttendanceStatus[]).map((status) => (
@@ -2854,10 +2933,12 @@ function AttendanceManagementContent() {
                         </div>
                       </div>
                     )) : (
-                      <div className="px-4 py-8 text-center text-sm text-slate-500">
-                        Student attendance data load nahi hua. Batch select karke `Load` dabayein.
-                      </div>
-                    )}
+                        <div className="px-4 py-8 text-center text-sm text-slate-500">
+                          {studentFilters.batch_name
+                            ? 'Selected batch me abhi koi student visible nahi hai.'
+                            : 'Student attendance dekhne ke liye batch select karein.'}
+                        </div>
+                      )}
                   </div>
                 </div>
 

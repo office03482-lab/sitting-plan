@@ -461,7 +461,7 @@ export interface AttendanceSubject {
 }
 
 export interface AttendanceStudent {
-  id: number;
+  id: string | number;
   name: string;
   class_name: string;
   section: string;
@@ -485,7 +485,7 @@ export interface AttendanceStaff {
 }
 
 export interface StudentAttendanceMarkingRow {
-  student_id: number;
+  student_id: string | number;
   student_name: string;
   roll_no: string;
   class_name?: string;
@@ -499,7 +499,7 @@ export interface StudentAttendanceMarkingResponse {
   date: string;
   class_name: string;
   section: string;
-  subject_id?: number;
+  subject_id?: string | number;
   subject_name?: string;
   students: StudentAttendanceMarkingRow[];
 }

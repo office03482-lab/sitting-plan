@@ -5216,9 +5216,9 @@ class ApiService {
   async saveStudentAttendance(
     data: {
       date: string;
-      subject_id: number;
+      subject_id: string | number;
       marked_by?: string;
-      entries: Array<{ student_id: number; status: 'present' | 'absent' | 'late'; absence_reason?: string }>;
+      entries: Array<{ student_id: string | number; status: 'present' | 'absent' | 'late'; absence_reason?: string }>;
     },
     schoolId: number | string = 1
   ) {
