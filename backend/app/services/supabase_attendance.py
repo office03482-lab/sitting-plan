@@ -1042,12 +1042,14 @@ def _serialize_subject(row: dict[str, Any], batch_lookup: dict[str, dict[str, An
     if not section and batch:
         section = _normalize(batch.get("section"))
     class_name = _normalize(row.get("class_name")) or _normalize((batch or {}).get("class_name"))
+    batch_name = _normalize((batch or {}).get("name"))
     return {
         "id": row.get("id"),
         "school_id": row.get("school_id"),
         "name": row.get("name") or "",
-        "class_name": class_name or "General",
-        "section": section or "A",
+        "class_name": class_name,
+        "section": section,
+        "batch_name": batch_name,
         "is_active": bool(row.get("is_active", True)),
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
@@ -1087,11 +1089,13 @@ def _serialize_student(row: dict[str, Any], batch_lookup: dict[str, dict[str, An
     section = _normalize(row.get("section")) or _normalize((batch or {}).get("section"))
     if not class_name and batch:
         class_name, section = split_batch_to_class_section(batch.get("name"))
+    batch_name = _normalize((batch or {}).get("name"))
     return {
         "id": row.get("id"),
         "name": row.get("full_name") or "",
-        "class_name": class_name or "General",
-        "section": section or "A",
+        "class_name": class_name,
+        "section": section,
+        "batch_name": batch_name,
         "roll_no": row.get("roll_number") or "",
         "parent_contact": row.get("phone"),
         "school_id": row.get("school_id"),
