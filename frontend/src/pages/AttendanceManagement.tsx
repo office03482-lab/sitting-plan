@@ -64,6 +64,7 @@ const studentRecordStatusBaseClass =
   'inline-flex w-fit items-center justify-center rounded-full border px-3 py-1 text-xs font-semibold leading-none';
 const deleteAllButtonClass = 'rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700';
 const attendanceStudentListPageSize = 200;
+const attendanceStudentBatchFallbackPageSize = 10000;
 const attendanceStudentRecordPageSize = 100;
 const attendanceStudentDashboardPageSize = 200;
 const attendanceUiDebounceMs = 350;
@@ -1418,6 +1419,21 @@ function AttendanceManagementContent() {
     [buildFallbackStudentMarking]
   );
 
+  const updateStudentMarking = useCallback(
+    (
+      updater: (current: StudentAttendanceMarkingResponse) => StudentAttendanceMarkingResponse
+    ) => {
+      setStudentMarking((current) => {
+        const base = current || buildFallbackStudentMarking();
+        if (!base) {
+          return current;
+        }
+        return updater(base);
+      });
+    },
+    [buildFallbackStudentMarking]
+  );
+
   useEffect(() => {
     const dateFromKey = studentFilters.date_from || '';
     const dateToKey = studentFilters.date_to || '';
@@ -1453,7 +1469,7 @@ function AttendanceManagementContent() {
   const loadSelectedBatchStudentsFallback = useCallback(async () => {
     const batchLabel = String(studentFilters.batch_name || '').trim();
     if (!batchLabel || !canRunAttendanceRequests) return;
-    const requestKey = `${currentSchoolId}|${batchLabel}|${attendanceStudentListPageSize}`;
+    const requestKey = `${currentSchoolId}|${batchLabel}|${attendanceStudentBatchFallbackPageSize}`;
     if (
       batchStudentFallbackRequestKeyRef.current === requestKey &&
       batchStudentFallbackPromiseRef.current
@@ -1468,7 +1484,7 @@ function AttendanceManagementContent() {
         const genericStudentsRes = await apiService.listStudents(
           1,
           0,
-          attendanceStudentListPageSize,
+          attendanceStudentBatchFallbackPageSize,
           batchLabel,
         ).catch(() => ({ data: [] as Student[] }));
 
@@ -1480,7 +1496,7 @@ function AttendanceManagementContent() {
           const broadStudentsRes = await apiService.listStudents(
             1,
             0,
-            attendanceStudentListPageSize,
+            attendanceStudentBatchFallbackPageSize,
           ).catch(() => ({ data: [] as Student[] }));
           fallbackStudents = toArray<Student>(broadStudentsRes.data)
             .map(normalizeStudentToAttendanceStudent)
@@ -1513,7 +1529,7 @@ function AttendanceManagementContent() {
 
     batchStudentFallbackPromiseRef.current = loadPromise;
     return loadPromise;
-  }, [attendanceStudentListPageSize, canRunAttendanceRequests, currentSchoolId, studentFilters.batch_name]);
+  }, [attendanceStudentBatchFallbackPageSize, canRunAttendanceRequests, currentSchoolId, studentFilters.batch_name]);
 
   useEffect(() => {
     if (!selectedBatchParts.className || !selectedBatchParts.section) return;
@@ -1543,6 +1559,39 @@ function AttendanceManagementContent() {
     selectedBatchRosterStudents.length,
     studentFilters.batch_name,
   ]);
+
+  useEffect(() => {
+    if (!isStudentTabVisible || !studentFilters.batch_name) return;
+    const fallbackMarking = buildFallbackStudentMarking();
+    if (!fallbackMarking?.students.length) return;
+    setStudentMarking((current) => {
+      if (!current) {
+        return fallbackMarking;
+      }
+      const sameBatch =
+        String(current.class_name || '').trim() === String(fallbackMarking.class_name || '').trim()
+        && String(current.section || '').trim() === String(fallbackMarking.section || '').trim();
+      if (!sameBatch || !current.students.length || current.students.length < fallbackMarking.students.length) {
+        const currentRows = new Map(current.students.map((row) => [String(row.student_id), row]));
+        return {
+          ...fallbackMarking,
+          subject_id: current.subject_id ?? fallbackMarking.subject_id,
+          subject_name: current.subject_name ?? fallbackMarking.subject_name,
+          students: fallbackMarking.students.map((row) => {
+            const existing = currentRows.get(String(row.student_id));
+            return existing
+              ? {
+                  ...row,
+                  status: existing.status || row.status,
+                  absence_reason: existing.absence_reason ?? row.absence_reason,
+                }
+              : row;
+          }),
+        };
+      }
+      return current;
+    });
+  }, [buildFallbackStudentMarking, isStudentTabVisible, studentFilters.batch_name]);
 
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
@@ -2490,17 +2539,18 @@ function AttendanceManagementContent() {
   };
 
   const handleSaveStudentAttendance = async () => {
-    if (!studentMarking) return;
-    if (!studentMarking.subject_id) {
+    const markingPayload = studentMarking || buildFallbackStudentMarking();
+    if (!markingPayload) return;
+    if (!markingPayload.subject_id) {
       setAlert({ type: 'warning', message: 'Subject select hone ke baad hi student attendance save ho sakti hai.' });
       return;
     }
     try {
       await apiService.saveStudentAttendance({
         date: studentFilters.date,
-        subject_id: studentMarking.subject_id,
+        subject_id: markingPayload.subject_id,
         marked_by: visibleAttendanceContext?.teacher_name || user?.full_name || 'Attendance Department',
-        entries: studentMarking.students.map((item) => ({
+        entries: markingPayload.students.map((item) => ({
           student_id: item.student_id,
           status: item.status,
           absence_reason: item.status === 'absent' ? item.absence_reason : undefined,
@@ -2935,18 +2985,14 @@ function AttendanceManagementContent() {
                     <button
                       type="button"
                       onClick={() =>
-                        setStudentMarking((current) =>
-                          current
-                            ? {
-                                ...current,
-                                students: current.students.map((student) => ({
-                                  ...student,
-                                  status: 'present',
-                                  absence_reason: undefined,
-                                })),
-                              }
-                            : current
-                        )
+                        updateStudentMarking((current) => ({
+                          ...current,
+                          students: current.students.map((student) => ({
+                            ...student,
+                            status: 'present',
+                            absence_reason: undefined,
+                          })),
+                        }))
                       }
                       className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
                     >
@@ -3020,55 +3066,47 @@ function AttendanceManagementContent() {
                           <span>{student.student_name}</span>
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-2">
-                            {(['present', 'absent'] as StudentAttendanceStatus[]).map((status) => (
-                              <button
-                                key={status}
-                                type="button"
-                                onClick={() =>
-                                  setStudentMarking((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          students: current.students.map((row) =>
-                                            row.student_id === student.student_id
-                                              ? {
-                                                  ...row,
-                                                  status,
-                                                  absence_reason: status === 'absent' ? row.absence_reason || '' : undefined,
-                                                }
-                                              : row
-                                          ),
-                                        }
-                                      : current
-                                  )
-                                }
-                                className={`${statusButtonBase} ${
-                                  student.status === status ? studentStatusClass(status) : 'bg-slate-100 text-slate-600'
+                              {(['present', 'absent'] as StudentAttendanceStatus[]).map((status) => (
+                                <button
+                                  key={status}
+                                  type="button"
+                                  onClick={() =>
+                                    updateStudentMarking((current) => ({
+                                      ...current,
+                                      students: current.students.map((row) =>
+                                        row.student_id === student.student_id
+                                          ? {
+                                              ...row,
+                                              status,
+                                              absence_reason: status === 'absent' ? row.absence_reason || '' : undefined,
+                                            }
+                                          : row
+                                      ),
+                                    }))
+                                  }
+                                  className={`${statusButtonBase} ${
+                                    student.status === status ? studentStatusClass(status) : 'bg-slate-100 text-slate-600'
                                 }`}
                               >
                                 {status}
                               </button>
                             ))}
                           </div>
-                          {student.status === 'absent' ? (
-                            <input
-                              value={student.absence_reason || ''}
-                              onChange={(e) =>
-                                setStudentMarking((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        students: current.students.map((row) =>
-                                          row.student_id === student.student_id
-                                            ? { ...row, absence_reason: e.target.value }
-                                            : row
-                                        ),
-                                      }
-                                    : current
-                                )
-                              }
-                              className="w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-400"
-                              placeholder="Absent reason / remark"
+                            {student.status === 'absent' ? (
+                              <input
+                                value={student.absence_reason || ''}
+                                onChange={(e) =>
+                                  updateStudentMarking((current) => ({
+                                    ...current,
+                                    students: current.students.map((row) =>
+                                      row.student_id === student.student_id
+                                        ? { ...row, absence_reason: e.target.value }
+                                        : row
+                                    ),
+                                  }))
+                                }
+                                className="w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-400"
+                                placeholder="Absent reason / remark"
                             />
                           ) : null}
                         </div>
