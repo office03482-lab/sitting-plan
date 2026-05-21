@@ -41,6 +41,23 @@ def _iso(value: Any) -> Any:
     return value
 
 
+def _iso_datetime(value: Any, *, end_of_day: bool = False) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        base_time = datetime.max.time().replace(microsecond=0) if end_of_day else datetime.min.time()
+        return datetime.combine(value, base_time).isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        if len(text) == 10:
+            try:
+                parsed_date = datetime.strptime(text, "%Y-%m-%d").date()
+            except ValueError:
+                return value
+            return _iso_datetime(parsed_date, end_of_day=end_of_day)
+    return value
+
+
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
@@ -1598,7 +1615,7 @@ def list_student_records(
             "roll_no": student_lookup.get(str(row.get("student_id")), {}).get("roll_no", ""),
             "class_name": student_lookup.get(str(row.get("student_id")), {}).get("class_name", ""),
             "section": student_lookup.get(str(row.get("student_id")), {}).get("section", ""),
-            "date": _iso(row.get("attendance_date")),
+            "date": _iso_datetime(row.get("attendance_date")),
             "subject_id": row.get("subject_id"),
             "subject_name": subjects.get(str(row.get("subject_id")), {}).get("name", ""),
             "status": row.get("status") or "present",
@@ -1615,6 +1632,8 @@ def list_student_records(
             "record_count": len(payload),
             "failed_chunks": failed_chunks,
             "school_id": school_id,
+            "first_date_value": payload[0].get("date") if payload else None,
+            "first_date_type": type(rows[0].get("attendance_date")).__name__ if rows else None,
         },
     )
     paginated_payload = payload[safe_skip : safe_skip + safe_limit]
@@ -1686,7 +1705,7 @@ def list_staff_records(
             "staff_name": staff_lookup.get(str(row.get("staff_member_id")), {}).get("name", ""),
             "department": staff_lookup.get(str(row.get("staff_member_id")), {}).get("department", ""),
             "designation": staff_lookup.get(str(row.get("staff_member_id")), {}).get("designation"),
-            "date": _iso(row.get("attendance_date")),
+            "date": _iso_datetime(row.get("attendance_date")),
             "status": row.get("status") or "present",
             "check_in": _normalize(row.get("check_in")) or None,
             "check_out": _normalize(row.get("check_out")) or None,
@@ -1695,6 +1714,15 @@ def list_staff_records(
         }
         for row in rows
     ]
+    logger.info(
+        "attendance.staff_records.response_size",
+        extra={
+            "school_id": school_id,
+            "record_count": len(payload),
+            "first_date_value": payload[0].get("date") if payload else None,
+            "first_date_type": type(rows[0].get("attendance_date")).__name__ if rows else None,
+        },
+    )
     return payload[skip : skip + limit]
 
 
