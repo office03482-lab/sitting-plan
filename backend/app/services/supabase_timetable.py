@@ -164,7 +164,8 @@ def list_timetable_entries(
     supabase = get_supabase_admin_client()
     query = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .select("*")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -195,7 +196,8 @@ def get_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
     response = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .select("*")
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -244,7 +246,8 @@ def check_teacher_conflicts(
     supabase = get_supabase_admin_client()
     query = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .select("*")
         .eq("school_id", school_id)
         .eq("staff_member_id", teacher_id)
@@ -313,7 +316,8 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
     supabase = get_supabase_admin_client()
     created = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .insert(payload)
         .execute()
     )
@@ -382,7 +386,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
     supabase = get_supabase_admin_client()
     updated = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .update(payload)
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -398,7 +403,8 @@ def delete_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
     updated = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .update({"is_active": False})
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -414,7 +420,8 @@ def delete_all_timetable_entries(school_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
     existing = (
         supabase
-        .table("scheduling.timetable_entries")
+        .schema("scheduling")
+        .table("timetable_entries")
         .select("id")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -424,7 +431,8 @@ def delete_all_timetable_entries(school_id: str) -> dict[str, Any]:
     if rows:
         (
             supabase
-            .table("scheduling.timetable_entries")
+            .schema("scheduling")
+            .table("timetable_entries")
             .update({"is_active": False})
             .eq("school_id", school_id)
             .eq("is_active", True)
