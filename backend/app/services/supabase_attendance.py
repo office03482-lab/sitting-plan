@@ -557,6 +557,45 @@ def _fetch_staff_member_name(school_id: str, staff_member_id: str | None) -> str
     return _normalize(rows[0].get("full_name")) if rows else ""
 
 
+def _find_teaching_staff_member_for_actor(school_id: str, actor: dict[str, Any]) -> dict[str, Any] | None:
+    actor_email = _normalize(actor.get("email")).casefold()
+    actor_name = _normalize(actor.get("name"))
+
+    if actor_email:
+        response = (
+            get_supabase_admin_client()
+            .table("staff_members")
+            .select("id, full_name, email, staff_type, is_active")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .eq("staff_type", "teaching")
+            .ilike("email", actor_email)
+            .limit(1)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if rows:
+            return rows[0]
+
+    if actor_name:
+        response = (
+            get_supabase_admin_client()
+            .table("staff_members")
+            .select("id, full_name, email, staff_type, is_active")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .eq("staff_type", "teaching")
+            .ilike("full_name", actor_name)
+            .limit(5)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if rows:
+            return rows[0]
+
+    return None
+
+
 def _resolve_subject_for_batch_context(
     school_id: str,
     *,
@@ -571,14 +610,16 @@ def _resolve_subject_for_batch_context(
     batch_rows = (
         get_supabase_admin_client()
         .table("batches")
-        .select("id")
+        .select("id, name, class_name, section")
         .eq("school_id", school_id)
         .eq("is_active", True)
         .eq("class_name", class_name)
         .eq("section", section)
         .execute()
     )
-    batch_ids = {str(row.get("id")) for row in list(batch_rows.data or []) if row.get("id")}
+    batch_rows_list = list(batch_rows.data or [])
+    primary_batch = batch_rows_list[0] if batch_rows_list else None
+    batch_ids = {str(row.get("id")) for row in batch_rows_list if row.get("id")}
 
     subject_rows = (
         get_supabase_admin_client()
@@ -603,7 +644,141 @@ def _resolve_subject_for_batch_context(
                 best_fallback = row
         if batch_ids and str(row.get("batch_id")) in batch_ids:
             return row
-    return best_fallback
+    if best_fallback:
+        return best_fallback
+
+    payload = {
+        "school_id": school_id,
+        "name": normalized_subject_name,
+        "class_name": class_name,
+        "batch_id": primary_batch.get("id") if primary_batch else None,
+        "metadata": {"section": section},
+        "is_active": True,
+    }
+    try:
+        created = (
+            get_supabase_admin_client()
+            .table("subjects")
+            .insert(payload)
+            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
+            .single()
+            .execute()
+        )
+        ATTENDANCE_SUBJECTS_CACHE.pop(school_id, None)
+        return dict(created.data or {}) if created.data else None
+    except Exception:
+        retry_rows = (
+            get_supabase_admin_client()
+            .table("subjects")
+            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .ilike("name", normalized_subject_name)
+            .limit(25)
+            .execute()
+        )
+        for row in list(retry_rows.data or []):
+            metadata = row.get("metadata") or {}
+            metadata_section = _normalize(metadata.get("section")) if isinstance(metadata, dict) else ""
+            row_class_name = _normalize(row.get("class_name"))
+            if row_class_name and _cf(row_class_name) == _cf(class_name):
+                if not metadata_section or _cf(metadata_section) == _cf(section):
+                    return row
+            if batch_ids and str(row.get("batch_id")) in batch_ids:
+                return row
+        raise
+
+
+def get_teacher_current_class(
+    school_id: str,
+    *,
+    actor: dict[str, Any],
+    target_date: str | None = None,
+    current_time: str | None = None,
+) -> dict[str, Any]:
+    teacher = _find_teaching_staff_member_for_actor(school_id, actor)
+    if not teacher:
+        raise ValueError("Logged-in teacher mapping not found")
+
+    selected_date = datetime.fromisoformat(target_date[:10]).date() if target_date else datetime.now().date()
+    weekday = _day_of_week_value(selected_date)
+
+    current_rows_response = (
+        get_supabase_admin_client()
+        .schema("scheduling")
+        .table("timetable_entries")
+        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+        .eq("school_id", school_id)
+        .eq("staff_member_id", teacher.get("id"))
+        .eq("day_of_week", weekday)
+        .eq("is_active", True)
+        .order("start_time")
+        .order("id")
+        .execute()
+    )
+    current_rows = list(current_rows_response.data or [])
+    candidate_rows = [
+        row
+        for row in current_rows
+        if _normalize(((row.get("metadata") or {}).get("ui_session_type") if isinstance(row.get("metadata"), dict) else row.get("session_type"))) not in {"break_time", "self_study"}
+    ]
+    matched_row, matched_by_current_time = _choose_timetable_row(candidate_rows, current_time)
+
+    if not matched_row:
+        fallback_rows_response = (
+            get_supabase_admin_client()
+            .schema("scheduling")
+            .table("timetable_entries")
+            .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+            .eq("school_id", school_id)
+            .eq("staff_member_id", teacher.get("id"))
+            .eq("is_active", True)
+            .order("day_of_week")
+            .order("start_time")
+            .order("id")
+            .execute()
+        )
+        fallback_rows = [
+            row
+            for row in list(fallback_rows_response.data or [])
+            if _normalize(((row.get("metadata") or {}).get("ui_session_type") if isinstance(row.get("metadata"), dict) else row.get("session_type"))) not in {"break_time", "self_study"}
+        ]
+        matched_row, matched_by_current_time = _choose_timetable_row(fallback_rows, None)
+
+    if not matched_row:
+        return {
+            "teacher_id": str(teacher.get("id") or ""),
+            "teacher_name": _normalize(teacher.get("full_name")),
+            "date": datetime.combine(selected_date, datetime.min.time()).isoformat(),
+            "matched_by_current_time": False,
+        }
+
+    batch_name = _split_timetable_batches(matched_row.get("class_name"))[:1]
+    class_name, section = split_batch_to_class_section(batch_name[0] if batch_name else matched_row.get("class_name"))
+    metadata = matched_row.get("metadata") or {}
+    subject_name = _normalize(metadata.get("subject")) if isinstance(metadata, dict) else ""
+    if not subject_name:
+        subject_name = _normalize(matched_row.get("subject"))
+    subject_row = _resolve_subject_for_batch_context(
+        school_id,
+        class_name=class_name,
+        section=section,
+        subject_name=subject_name,
+    )
+
+    return {
+        "teacher_id": str(teacher.get("id") or ""),
+        "teacher_name": _normalize(teacher.get("full_name")),
+        "date": datetime.combine(selected_date, datetime.min.time()).isoformat(),
+        "class_name": class_name,
+        "section": section,
+        "subject": subject_name or None,
+        "subject_id": (subject_row or {}).get("id"),
+        "start_time": _normalize_time_hhmm(matched_row.get("start_time")) or None,
+        "end_time": _normalize_time_hhmm(matched_row.get("end_time")) or None,
+        "timetable_entry_id": matched_row.get("id"),
+        "matched_by_current_time": matched_by_current_time,
+    }
 
 
 def get_batch_current_class(

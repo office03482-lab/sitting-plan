@@ -76,7 +76,9 @@ from app.schemas import (
 )
 from app.schemas import DayOfWeek as TimetableDayOfWeek
 from app.services.supabase_attendance import (
+    get_batch_current_class as get_supabase_batch_current_class,
     get_student_marking as get_supabase_student_marking,
+    get_teacher_current_class as get_supabase_teacher_current_class,
     get_integrated_overview as get_supabase_integrated_overview,
     list_leaves as list_supabase_attendance_leaves,
     get_overview as get_supabase_attendance_overview,
@@ -1480,6 +1482,19 @@ def get_teacher_current_class(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        try:
+            return TeacherAttendanceContextResponse(
+                **get_supabase_teacher_current_class(
+                    school_id,
+                    actor=actor,
+                    target_date=target_date.isoformat() if target_date else None,
+                    current_time=current_time,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     seed_attendance_data(db, school_id)
     teacher_name = (actor.get("name") or "").strip()
     if not teacher_name:
@@ -1568,6 +1583,17 @@ def get_batch_current_class(
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
+    if not is_legacy_sqlite_mode():
+        return TeacherAttendanceContextResponse(
+            **get_supabase_batch_current_class(
+                school_id,
+                class_name=class_name,
+                section=section,
+                target_date=target_date.isoformat() if target_date else None,
+                current_time=current_time,
+            )
+        )
+
     reject_legacy_attendance_request()
     seed_attendance_data(db, school_id)
     selected_date = target_date or datetime.now().date()
