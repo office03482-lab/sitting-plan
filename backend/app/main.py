@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
+from app.services.timetable_schema_checks import verify_timetable_schema
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
     if settings.is_production:
         ensure_native_attendance_mode()
         verify_attendance_schema()
+        verify_timetable_schema()
     
     yield
     
@@ -85,6 +87,7 @@ async def readiness_check():
         db.execute(text("SELECT 1"))
         if settings.is_production:
             verify_attendance_schema()
+            verify_timetable_schema()
         return {
             "status": "ready",
             "service": "Dr. GIRISH APP",

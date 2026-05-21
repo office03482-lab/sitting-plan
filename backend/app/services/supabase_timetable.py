@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Any, Iterable
 
 from fastapi import HTTPException, status
 
 from app.services.supabase_admin import get_supabase_admin_client
+
+logger = logging.getLogger(__name__)
+
+TIMETABLE_SCHEMA = "scheduling"
+TIMETABLE_TABLE = "timetable_entries"
 
 NO_TEACHER_SESSION_TYPES = {"break_time", "self_study"}
 SESSION_TYPE_TO_DB = {
@@ -38,6 +44,38 @@ def resolve_ui_session_type(row: dict[str, Any]) -> str:
 
 def is_no_teacher_session(session_type: str | None) -> bool:
     return str(session_type or "").strip().lower() in NO_TEACHER_SESSION_TYPES
+
+
+def get_timetable_table_query(supabase: Any | None = None) -> Any:
+    client = supabase or get_supabase_admin_client()
+    return client.schema(TIMETABLE_SCHEMA).table(TIMETABLE_TABLE)
+
+
+def validate_timetable_schema_resolution() -> None:
+    """
+    Fail fast if PostgREST cannot resolve the scheduling.timetable_entries relation.
+    """
+    logger.info(
+        "timetable.schema_resolution_check.start schema=%s table=%s",
+        TIMETABLE_SCHEMA,
+        TIMETABLE_TABLE,
+    )
+    try:
+        get_timetable_table_query().select("id").limit(1).execute()
+    except Exception as exc:
+        raise RuntimeError(
+            "Supabase/PostgREST could not resolve timetable table "
+            f"{TIMETABLE_SCHEMA}.{TIMETABLE_TABLE}. "
+            "Expected query path is client.schema('scheduling').table('timetable_entries'). "
+            "A common cause is accidentally querying 'public.scheduling.timetable_entries' "
+            "by passing a schema-qualified table name into .table(...), or a stale/misconfigured "
+            "PostgREST exposed schema cache."
+        ) from exc
+    logger.info(
+        "timetable.schema_resolution_check.ok schema=%s table=%s",
+        TIMETABLE_SCHEMA,
+        TIMETABLE_TABLE,
+    )
 
 
 def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
@@ -163,11 +201,8 @@ def list_timetable_entries(
     class_name: str | None = None,
     room_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    supabase = get_supabase_admin_client()
     query = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .select("*")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -195,11 +230,8 @@ def list_timetable_entries(
 
 
 def get_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
-    supabase = get_supabase_admin_client()
     response = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .select("*")
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -245,11 +277,8 @@ def check_teacher_conflicts(
     *,
     exclude_entry_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    supabase = get_supabase_admin_client()
     query = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .select("*")
         .eq("school_id", school_id)
         .eq("staff_member_id", teacher_id)
@@ -316,11 +345,8 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", True)),
     }
-    supabase = get_supabase_admin_client()
     created = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .insert(payload)
         .execute()
     )
@@ -387,11 +413,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", existing.get("is_active", True))),
     }
-    supabase = get_supabase_admin_client()
     updated = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .update(payload)
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -404,11 +427,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
 
 
 def delete_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
-    supabase = get_supabase_admin_client()
     updated = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .update({"is_active": False})
         .eq("id", entry_id)
         .eq("school_id", school_id)
@@ -421,11 +441,8 @@ def delete_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
 
 
 def delete_all_timetable_entries(school_id: str) -> dict[str, Any]:
-    supabase = get_supabase_admin_client()
     existing = (
-        supabase
-        .schema("scheduling")
-        .table("timetable_entries")
+        get_timetable_table_query()
         .select("id")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -434,9 +451,7 @@ def delete_all_timetable_entries(school_id: str) -> dict[str, Any]:
     rows = list(existing.data or [])
     if rows:
         (
-            supabase
-            .schema("scheduling")
-            .table("timetable_entries")
+            get_timetable_table_query()
             .update({"is_active": False})
             .eq("school_id", school_id)
             .eq("is_active", True)
