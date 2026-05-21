@@ -130,8 +130,8 @@ const normalizeStudentToAttendanceStudent = (student: Student): AttendanceStuden
         ? Number(student.id)
         : String(student.id ?? '').trim(),
   name: String(student.name || '').trim(),
-  class_name: String(student.class_name || '').trim() || 'General',
-  section: String(student.section || '').trim() || 'A',
+  class_name: String(student.class_name || '').trim(),
+  section: String(student.section || '').trim(),
   roll_no: String(student.roll_number || '').trim(),
   parent_contact: String(student.phone || student.reference_number || '').trim() || undefined,
 });
@@ -607,7 +607,7 @@ function AttendanceManagementContent() {
     studentsData: AttendanceStudent[],
     batchesData: Batch[]
   ) => {
-    const firstBatch = batchesData[0]?.name || (studentsData[0] ? `${studentsData[0].class_name} | ${studentsData[0].section}` : '');
+    const firstBatch = String(batchesData[0]?.name || '').trim();
     if (!firstBatch) return;
     setStudentFilters((current) => ({
       ...current,
@@ -783,6 +783,10 @@ function AttendanceManagementContent() {
         debugAttendanceLoader('loadStudentTab.start');
         setTabLoading(true);
         const studentsRes = await apiService.listAttendanceStudents({ school_id: currentSchoolId, limit: attendanceStudentListPageSize });
+        const batchesRes = await apiService
+          .listBatches(currentSchoolId, true, 'batch')
+          .catch(() => apiService.listBatches(currentSchoolId, true))
+          .catch(() => ({ data: [] as Batch[] }));
         const subjectsRes =
           subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
             ? ({ data: subjects.length ? subjects : toArray<AttendanceSubject>(overview?.subject_options) } as { data: AttendanceSubject[] })
@@ -801,16 +805,13 @@ function AttendanceManagementContent() {
             .map(normalizeStudentToAttendanceStudent)
             .filter((student) => student.name && student.class_name && student.section);
         }
-        let normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
+        let normalizedBatches = toArray<Batch>(batchesRes.data)
+          .filter((item) => String(item.name || '').trim())
+          .sort((left, right) =>
+            String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
+          );
         if (!normalizedBatches.length) {
-          const batchResponse = await apiService
-            .listBatches(currentSchoolId, true, 'batch')
-            .catch(() => apiService.listBatches(currentSchoolId, true));
-          normalizedBatches = toArray<Batch>(batchResponse.data)
-            .filter((item) => String(item.name || '').trim())
-            .sort((left, right) =>
-              String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
-            );
+          normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
         }
         setManagedBatches(normalizedBatches);
         setStudents(nextStudents);
@@ -851,35 +852,22 @@ function AttendanceManagementContent() {
       return managedBatchRefreshInFlightRef.current;
     }
 
-    const refreshPromise = (async () => {
-      lastManagedBatchRefreshAtRef.current = Date.now();
-      try {
-        debugAttendanceLoader('loadManagedBatches.start', { force });
-        if (students.length) {
-          const normalizedBatches = buildAttendanceBatches(students, Number(currentSchoolId) || 1);
+      const refreshPromise = (async () => {
+        lastManagedBatchRefreshAtRef.current = Date.now();
+        try {
+          debugAttendanceLoader('loadManagedBatches.start', { force });
+          const response = await apiService
+            .listBatches(currentSchoolId, true, 'batch')
+            .catch(() => apiService.listBatches(currentSchoolId, true));
+          let normalizedBatches = toArray<Batch>(response.data)
+            .filter((item) => String(item.name || '').trim())
+            .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' }));
+          if (!normalizedBatches.length && students.length) {
+            normalizedBatches = buildAttendanceBatches(students, Number(currentSchoolId) || 1);
+          }
           setManagedBatches(normalizedBatches);
           setStudentFilters((current) => ({
             ...current,
-            batch_name:
-              current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
-                ? current.batch_name
-                : normalizedBatches[0]?.name || '',
-            record_batch_name:
-              current.record_batch_name && normalizedBatches.some((item) => item.name === current.record_batch_name)
-                ? current.record_batch_name
-                : '',
-          }));
-          return;
-        }
-        const response = await apiService
-          .listBatches(currentSchoolId, true, 'batch')
-          .catch(() => apiService.listBatches(currentSchoolId, true));
-        const normalizedBatches = toArray<Batch>(response.data)
-          .filter((item) => String(item.name || '').trim())
-          .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' }));
-        setManagedBatches(normalizedBatches);
-        setStudentFilters((current) => ({
-          ...current,
           batch_name:
             current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
               ? current.batch_name
@@ -1173,10 +1161,8 @@ function AttendanceManagementContent() {
     if (derivedStudentBatches.length) {
       return derivedStudentBatches;
     }
-
-    const currentBatch = String(studentFilters.batch_name || '').trim();
-    return currentBatch ? [currentBatch] : [];
-  }, [managedBatches, studentFilters.batch_name, students]);
+    return [];
+  }, [managedBatches, students]);
   const selectedReportBatchNames = useMemo(
     () => parseCommaSeparatedValues(reportFilters.batch_names),
     [reportFilters.batch_names]
