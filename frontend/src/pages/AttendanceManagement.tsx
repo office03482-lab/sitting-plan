@@ -1693,7 +1693,6 @@ function AttendanceManagementContent() {
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
     if (!selectedBatchParts.className || !selectedBatchParts.section) return;
-    if (!recordBatchParts.className || !recordBatchParts.section) return;
     if (
       studentPrimaryHydrationKeyRef.current === studentPrimaryHydrationKey &&
       studentPrimaryHydrationPromiseRef.current
@@ -1718,8 +1717,10 @@ function AttendanceManagementContent() {
       });
       await loadBatchAttendanceContext();
       if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
-      await loadStudentRecords();
-      if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
+      if (recordBatchParts.className && recordBatchParts.section) {
+        await loadStudentRecords();
+        if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
+      }
       setStudentPrimaryHydrationReadyKey(studentPrimaryHydrationKey);
     })().finally(() => {
       if (studentPrimaryHydrationKeyRef.current === studentPrimaryHydrationKey) {
@@ -1732,12 +1733,12 @@ function AttendanceManagementContent() {
   }, [
     canRunAttendanceRequests,
     isStudentTabVisible,
-    recordBatchParts.className,
-    recordBatchParts.section,
     selectedBatchParts.className,
     selectedBatchParts.section,
     studentPrimaryHydrationKey,
     studentPrimaryHydrationReadyKey,
+    recordBatchParts.className,
+    recordBatchParts.section,
   ]);
 
   useEffect(() => {
