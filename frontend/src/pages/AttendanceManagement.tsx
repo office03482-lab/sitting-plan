@@ -1075,10 +1075,58 @@ function AttendanceManagementContent() {
     void loadManagedBatches({ force: false });
   }, [activeTab, managedBatches.length]);
 
-  const batchOptions = useMemo(
-    () => managedBatches.map((item) => item.name).filter(Boolean),
-    [managedBatches]
-  );
+  useEffect(() => {
+    if (activeTab !== 'student') return;
+    if (managedBatches.length || !students.length) return;
+
+    const normalizedBatches = buildAttendanceBatches(students, Number(currentSchoolId) || 1);
+    if (!normalizedBatches.length) return;
+
+    debugAttendanceLoader('effect.student.recover_managed_batches', {
+      batchCount: normalizedBatches.length,
+      studentCount: students.length,
+    });
+
+    setManagedBatches(normalizedBatches);
+    setStudentFilters((current) => ({
+      ...current,
+      batch_name:
+        current.batch_name && normalizedBatches.some((item) => item.name === current.batch_name)
+          ? current.batch_name
+          : normalizedBatches[0]?.name || '',
+      record_batch_name:
+        current.record_batch_name && normalizedBatches.some((item) => item.name === current.record_batch_name)
+          ? current.record_batch_name
+          : current.record_batch_name || normalizedBatches[0]?.name || '',
+    }));
+  }, [activeTab, currentSchoolId, managedBatches.length, students]);
+
+  const batchOptions = useMemo(() => {
+    const managedNames = managedBatches.map((item) => String(item.name || '').trim()).filter(Boolean);
+    if (managedNames.length) {
+      return managedNames;
+    }
+
+    const derivedStudentBatches = Array.from(
+      new Set(
+        students
+          .map((student) => {
+            const className = String(student.class_name || '').trim();
+            const section = String(student.section || '').trim();
+            if (!className || !section) return '';
+            return `${className} | ${section}`;
+          })
+          .filter(Boolean)
+      )
+    ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+
+    if (derivedStudentBatches.length) {
+      return derivedStudentBatches;
+    }
+
+    const currentBatch = String(studentFilters.batch_name || '').trim();
+    return currentBatch ? [currentBatch] : [];
+  }, [managedBatches, studentFilters.batch_name, students]);
   const selectedReportBatchNames = useMemo(
     () => parseCommaSeparatedValues(reportFilters.batch_names),
     [reportFilters.batch_names]
