@@ -168,7 +168,7 @@ def get_student_marking_route(
 
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])
-def list_student_records_route(
+async def list_student_records_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -180,7 +180,7 @@ def list_student_records_route(
     service=Depends(get_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)
-    return service.list_student_records(
+    return await service.list_student_records(
         school_id=school_id,
         class_name=class_name,
         section=section,

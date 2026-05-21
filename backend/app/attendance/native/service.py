@@ -108,8 +108,8 @@ class NativeAttendanceService:
             entries=entries or [],
         )
 
-    def list_student_records(self, **kwargs):
-        return list_student_records(**kwargs)
+    async def list_student_records(self, **kwargs):
+        return await list_student_records(**kwargs)
 
     def delete_student_record(self, *, school_id: str, record_id: str):
         return delete_student_record(school_id, record_id=record_id)

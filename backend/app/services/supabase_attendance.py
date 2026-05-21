@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 import logging
 import time
@@ -258,6 +259,75 @@ def _execute_student_attendance_chunk(
                 time.sleep(ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS)
     if last_error:
         raise last_error
+
+
+async def _fetch_student_attendance_chunks_async(
+    school_id: str,
+    student_id_chunks: list[list[str]],
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    async def _run_chunk(chunk: list[str]) -> list[dict[str, Any]] | Exception:
+        try:
+            return await asyncio.to_thread(
+                _execute_student_attendance_chunk,
+                school_id,
+                chunk,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except Exception as exc:
+            return exc
+
+    results = await asyncio.gather(
+        *[_run_chunk(chunk) for chunk in student_id_chunks],
+        return_exceptions=False,
+    )
+
+    aggregated_rows: list[dict[str, Any]] = []
+    failed_chunks = 0
+
+    for chunk, result in zip(student_id_chunks, results):
+        if isinstance(result, Exception):
+            failed_chunks += 1
+            logger.exception(
+                "attendance.chunk.give_up",
+                extra={
+                    "chunk_size": len(chunk),
+                    "school_id": school_id,
+                    "sample": chunk[:3],
+                },
+            )
+            continue
+        aggregated_rows.extend(result)
+
+    return aggregated_rows, failed_chunks
+
+
+async def _fetch_student_attendance_rows_batched(
+    school_id: str,
+    student_ids: list[str],
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    student_id_chunks = _chunk_values(student_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE)
+    logger.info(
+        "attendance.student_records.chunking",
+        extra={
+            "student_count": len(student_ids),
+            "chunk_count": len(student_id_chunks),
+            "chunk_size": ATTENDANCE_LOOKUP_CHUNK_SIZE,
+            "school_id": school_id,
+        },
+    )
+    return await _fetch_student_attendance_chunks_async(
+        school_id,
+        student_id_chunks,
+        date_from=date_from,
+        date_to=date_to,
+    )
     return []
 
 
@@ -1445,7 +1515,7 @@ def get_integrated_overview(school_id: str) -> dict[str, Any]:
     return get_overview(school_id)
 
 
-def list_student_records(
+async def list_student_records(
     school_id: str,
     *,
     class_name: str | None = None,
@@ -1573,38 +1643,12 @@ def list_student_records(
             },
         )
         student_ids = student_ids[:MAX_STUDENT_LOOKUP]
-    student_id_chunks = _chunk_values(student_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE)
-    logger.info(
-        "attendance.student_records.chunking",
-        extra={
-            "student_count": len(student_ids),
-            "chunk_count": len(student_id_chunks),
-            "chunk_size": ATTENDANCE_LOOKUP_CHUNK_SIZE,
-            "school_id": school_id,
-        },
+    rows, failed_chunks = await _fetch_student_attendance_rows_batched(
+        school_id,
+        student_ids,
+        date_from=date_from,
+        date_to=date_to,
     )
-    rows: list[dict[str, Any]] = []
-    failed_chunks = 0
-    for chunk in student_id_chunks:
-        try:
-            rows.extend(
-                _execute_student_attendance_chunk(
-                    school_id,
-                    chunk,
-                    date_from=date_from,
-                    date_to=date_to,
-                )
-            )
-        except Exception:
-            failed_chunks += 1
-            logger.exception(
-                "attendance.chunk.give_up",
-                extra={
-                    "chunk_size": len(chunk),
-                    "school_id": school_id,
-                    "sample": chunk[:3],
-                },
-            )
     subjects = {str(item.get("id")): item for item in _fetch_subjects(school_id)}
     student_lookup = {str(item.get("id")): item for item in filtered_students}
     payload = [
