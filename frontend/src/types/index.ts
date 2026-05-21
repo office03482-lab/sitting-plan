@@ -315,11 +315,11 @@ export interface PlanComparison {
 
 // ==================== Teacher ====================
 export interface Teacher {
-  id: number;
+  id: string | number;
   name: string;
   photoDataUrl?: string;
   subject: string;
-  school_id: number;
+  school_id: string | number;
   email?: string;
   phone?: string;
   employee_code?: string;
@@ -340,10 +340,10 @@ export type TimetableSessionType = 'regular_class' | 'break_time' | 'doubt_sessi
 export type TimetableExtraClassScope = 'class_wise' | 'subject_wise' | 'general';
 
 export interface TimetableEntry {
-  id: number;
-  teacher_id?: number;
-  school_id: number;
-  room_id?: number;
+  id: string | number;
+  teacher_id?: string | number;
+  school_id: string | number;
+  room_id?: string | number;
   session_mode?: TimetableSessionMode;
   session_type?: TimetableSessionType;
   extra_class_scope?: TimetableExtraClassScope;
@@ -363,15 +363,15 @@ export interface TimetableEntry {
 }
 
 export interface TimetableView {
-  id: number;
+  id: string | number;
   day_of_week: DayOfWeek;
   start_time: string;
   end_time: string;
   class_name: string;
   subject: string;
   teacher_name?: string;
-  teacher_id?: number;
-  room_id?: number;
+  teacher_id?: string | number;
+  room_id?: string | number;
   room_name?: string;
   session_mode?: TimetableSessionMode;
   session_type?: TimetableSessionType;

@@ -76,6 +76,10 @@ const ensureArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value 
 const getRequestErrorMessage = (error: any, fallback: string) =>
   error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
 
+const hasValue = (value: unknown) => String(value ?? '').trim().length > 0;
+const sameId = (left: string | number | null | undefined, right: string | number | null | undefined) =>
+  String(left ?? '').trim() === String(right ?? '').trim();
+
 const TimetableManagement: React.FC = () => {
   const user = useAuthStore((state) => state.user);
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
@@ -91,8 +95,8 @@ const TimetableManagement: React.FC = () => {
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'teacher' | 'room' | 'batch'>('grid');
   const [selectedDay, setSelectedDay] = useState<DayOfWeek | 'all'>('all');
-  const [selectedTeacher, setSelectedTeacher] = useState<number | 'all'>('all');
-  const [selectedRoom, setSelectedRoom] = useState<number | 'all'>('all');
+  const [selectedTeacher, setSelectedTeacher] = useState<string | number | 'all'>('all');
+  const [selectedRoom, setSelectedRoom] = useState<string | number | 'all'>('all');
   const [selectedBatch, setSelectedBatch] = useState<string | 'all'>('all');
   const [selectedSessionModeFilter, setSelectedSessionModeFilter] = useState<TimetableSessionModeFilter>('all');
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
@@ -134,11 +138,12 @@ const TimetableManagement: React.FC = () => {
     const entryList = ensureArray<TimetableView>(entries);
     if (!isTeacherSelfView) return teacherList;
     if (teacherList.length === 0) {
-      const teacherMap = new Map<number, Teacher>();
+      const teacherMap = new Map<string, Teacher>();
       entryList.forEach((entry) => {
         if (!entry.teacher_id) return;
-        if (teacherMap.has(entry.teacher_id)) return;
-        teacherMap.set(entry.teacher_id, {
+        const teacherKey = String(entry.teacher_id);
+        if (teacherMap.has(teacherKey)) return;
+        teacherMap.set(teacherKey, {
           id: entry.teacher_id,
           name: String(entry.teacher_name || user?.full_name || 'Teacher'),
           subject: String(entry.subject || 'Assigned Subject'),
@@ -242,10 +247,10 @@ const TimetableManagement: React.FC = () => {
     setShowForm(false);
   };
 
-  const checkConflict = async (data: typeof formData, excludeId?: number): Promise<ConflictCheckResponse | null> => {
+  const checkConflict = async (data: typeof formData, excludeId?: string | number): Promise<ConflictCheckResponse | null> => {
     try {
       const response = await apiService.checkTimetableConflict({
-        teacher_id: parseInt(data.teacher_id),
+        teacher_id: data.teacher_id,
         day_of_week: data.day_of_week,
         start_time: data.start_time,
         end_time: data.end_time,
@@ -277,8 +282,8 @@ const TimetableManagement: React.FC = () => {
 
     try {
       const submitData = {
-        teacher_id: isTeacherFreeSession ? undefined : parseInt(formData.teacher_id),
-        room_id: formData.room_id ? parseInt(formData.room_id) : undefined,
+        teacher_id: isTeacherFreeSession ? undefined : formData.teacher_id,
+        room_id: hasValue(formData.room_id) ? formData.room_id : undefined,
         session_mode: formData.session_mode,
         session_type: formData.session_type,
         extra_class_scope: formData.session_type === 'extra_class' ? formData.extra_class_scope : undefined,
@@ -356,7 +361,7 @@ const TimetableManagement: React.FC = () => {
     });
   };
 
-  const handleDelete = async (entryId: number) => {
+  const handleDelete = async (entryId: string | number) => {
     if (!confirm('Are you sure you want to delete this timetable entry?')) return;
 
     try {
@@ -476,8 +481,8 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
 
   const filteredEntries = normalizedEntries.filter(entry => {
     if (selectedDay !== 'all' && entry.day_of_week !== selectedDay) return false;
-    if (selectedTeacher !== 'all' && entry.teacher_id !== selectedTeacher) return false;
-    if (selectedRoom !== 'all' && entry.room_id !== selectedRoom) return false;
+    if (selectedTeacher !== 'all' && !sameId(entry.teacher_id, selectedTeacher)) return false;
+    if (selectedRoom !== 'all' && !sameId(entry.room_id, selectedRoom)) return false;
     if (selectedBatch !== 'all') {
       const batches = entry.class_name
         .split(',')
@@ -506,7 +511,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
   const roomEntries = normalizedRooms
     .map((room) => ({
       room,
-      entries: filteredEntries.filter((entry) => entry.room_id === room.id),
+      entries: filteredEntries.filter((entry) => sameId(entry.room_id, room.id)),
     }))
     .filter(({ entries }) => entries.length > 0);
   const batchEntries = batchOptions
@@ -724,7 +729,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
 
             <select
               value={selectedTeacher}
-              onChange={(e) => setSelectedTeacher(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+              onChange={(e) => setSelectedTeacher(e.target.value === 'all' ? 'all' : e.target.value)}
               className="px-3 py-1 border border-gray-300 rounded"
             >
               <option value="all">{isTeacherSelfView ? 'My Timetable' : 'All Teachers'}</option>
@@ -736,7 +741,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             {canManageTimetable ? (
               <select
                 value={selectedRoom}
-                onChange={(e) => setSelectedRoom(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+                onChange={(e) => setSelectedRoom(e.target.value === 'all' ? 'all' : e.target.value)}
                 className="px-3 py-1 border border-gray-300 rounded"
               >
                 <option value="all">All Rooms</option>
@@ -831,7 +836,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                   <select
                     value={formData.teacher_id}
                     onChange={(e) => {
-                      const selectedTeacherData = visibleTeachers.find((teacher) => teacher.id === parseInt(e.target.value));
+                      const selectedTeacherData = visibleTeachers.find((teacher) => sameId(teacher.id, e.target.value));
                       setFormData({
                         ...formData,
                         teacher_id: e.target.value,

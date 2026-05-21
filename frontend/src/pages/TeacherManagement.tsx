@@ -122,7 +122,7 @@ const TeacherManagement: React.FC = () => {
     setShowForm(true);
   };
 
-  const handleDelete = async (teacherId: number) => {
+  const handleDelete = async (teacherId: string | number) => {
     if (!confirm('Are you sure you want to delete this teacher?')) return;
 
     try {

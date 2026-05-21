@@ -2813,14 +2813,14 @@ class ApiService {
     return { data: Number(count || 0) } as { data: number };
   }
 
-  async getTeacher(teacherId: number) {
+  async getTeacher(teacherId: string | number) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
     const { data, error } = await supabase.from('staff_members').select('*').eq('id', resolvedId).single();
     if (error) throw error;
     return { data: this.mapSupabaseTeacherToLegacy(data) } as { data: Teacher };
   }
 
-  async updateTeacher(teacherId: number, data: Partial<Teacher>) {
+  async updateTeacher(teacherId: string | number, data: Partial<Teacher>) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     if (!scopedSchoolId) throw new Error('No active school membership found.');
@@ -2875,7 +2875,7 @@ class ApiService {
     return { data: this.mapSupabaseTeacherToLegacy(updated) } as { data: Teacher };
   }
 
-  async deleteTeacher(teacherId: number) {
+  async deleteTeacher(teacherId: string | number) {
     const resolvedId = this.resolveMappedId('teacher', teacherId);
     const { data: existing, error: existingError } = await supabase
       .from('staff_members')
@@ -2892,11 +2892,11 @@ class ApiService {
   // ==================== Timetable ====================
 
   async checkTimetableConflict(data: {
-    teacher_id: number;
+    teacher_id: string | number;
     day_of_week: DayOfWeek;
     start_time: string;
     end_time: string;
-    exclude_entry_id?: number;
+    exclude_entry_id?: string | number;
   }) {
     const scopedSchoolId = this.getCurrentSupabaseSchoolId();
     return this.api.post('/timetable/check-conflict', {
@@ -2975,12 +2975,12 @@ class ApiService {
     });
   }
 
-  async getTimetableEntry(entryId: number) {
+  async getTimetableEntry(entryId: string | number) {
     const response = await this.api.get(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
     return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
-  async updateTimetableEntry(entryId: number, data: Partial<TimetableEntry>) {
+  async updateTimetableEntry(entryId: string | number, data: Partial<TimetableEntry>) {
     const response = await this.api.put(`/timetable/${this.resolveTimetableEntryId(entryId)}`, {
       ...data,
       teacher_id: data.teacher_id ? this.resolveMappedId('teacher', data.teacher_id) : undefined,
@@ -2988,7 +2988,7 @@ class ApiService {
     return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
-  async deleteTimetableEntry(entryId: number) {
+  async deleteTimetableEntry(entryId: string | number) {
     return this.api.delete(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
   }
 
