@@ -453,10 +453,11 @@ export interface AttendanceHoliday {
 }
 
 export interface AttendanceSubject {
-  id: number;
+  id: string | number;
   name: string;
   class_name: string;
   section: string;
+  batch_name?: string;
   is_active?: boolean;
 }
 
