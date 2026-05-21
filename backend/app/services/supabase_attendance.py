@@ -492,7 +492,7 @@ def _fetch_timetable_candidates_from_normalized_batches(
         get_supabase_admin_client()
         .schema("scheduling")
         .table("timetable_entries")
-        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
+        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
         .eq("school_id", school_id)
         .eq("day_of_week", weekday)
         .eq("is_active", True)
@@ -520,7 +520,7 @@ def _fetch_timetable_candidates_from_legacy_batches(
         get_supabase_admin_client()
         .schema("scheduling")
         .table("timetable_entries")
-        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
+        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
         .eq("school_id", school_id)
         .eq("day_of_week", weekday)
         .eq("is_active", True)
@@ -712,6 +712,8 @@ def get_batch_current_class(
 
     metadata = matched_row.get("metadata") or {}
     subject_name = _normalize(metadata.get("subject")) if isinstance(metadata, dict) else ""
+    if not subject_name:
+        subject_name = _normalize(matched_row.get("subject"))
     staff_member_id = str(matched_row.get("staff_member_id") or "")
     teacher_name = _fetch_staff_member_name(school_id, staff_member_id)
     subject_row = _resolve_subject_for_batch_context(

@@ -129,6 +129,8 @@ def serialize_timetable_row(
     room_name: str | None = None,
 ) -> dict[str, Any]:
     ui_session_type = resolve_ui_session_type(row)
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    subject_value = str((metadata or {}).get("subject") or row.get("subject") or "").strip()
     return {
         "id": row.get("id"),
         "teacher_id": row.get("staff_member_id"),
@@ -136,15 +138,15 @@ def serialize_timetable_row(
         "school_id": row.get("school_id"),
         "session_mode": row.get("session_mode") or "offline",
         "session_type": ui_session_type,
-        "extra_class_scope": row.get("metadata", {}).get("extra_class_scope") if isinstance(row.get("metadata"), dict) else None,
-        "online_platform": row.get("metadata", {}).get("online_platform") if isinstance(row.get("metadata"), dict) else None,
+        "extra_class_scope": metadata.get("extra_class_scope"),
+        "online_platform": metadata.get("online_platform"),
         "online_link": row.get("online_link"),
         "notes": row.get("notes"),
         "day_of_week": row.get("day_of_week"),
         "start_time": str(row.get("start_time") or "")[:5],
         "end_time": str(row.get("end_time") or "")[:5],
         "class_name": row.get("class_name") or "",
-        "subject": ((row.get("metadata") or {}).get("subject") if isinstance(row.get("metadata"), dict) else None) or "",
+        "subject": subject_value,
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -305,6 +307,7 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "end_time": entry_data.get("end_time"),
         "class_name": entry_data.get("class_name"),
         "section": None,
+        "subject": entry_data.get("subject"),
         "subject_id": None,
         "session_mode": entry_data.get("session_mode") or "offline",
         "session_type": normalize_session_type_for_db(ui_session_type),
@@ -376,6 +379,7 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "start_time": next_start,
         "end_time": next_end,
         "class_name": entry_data.get("class_name", existing.get("class_name")),
+        "subject": entry_data.get("subject", existing.get("subject")),
         "session_mode": entry_data.get("session_mode", existing.get("session_mode")),
         "session_type": normalize_session_type_for_db(next_session_type),
         "online_link": entry_data.get("online_link", existing.get("online_link")),
