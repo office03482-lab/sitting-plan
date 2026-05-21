@@ -410,7 +410,7 @@ function inferBatchPartsFromStudents(selectedBatchLabel: string, students: Atten
     )
   );
 
-  if (uniquePairs.length === 1) {
+  if (uniquePairs.length >= 1) {
     const [className, section] = uniquePairs[0].split('|||');
     return { className, section };
   }
@@ -1335,10 +1335,20 @@ function AttendanceManagementContent() {
     [subjects, selectedBatchParts.className, selectedBatchParts.section]
   );
 
-  const selectedBatchRosterStudents = useMemo(
-    () => students.filter((student) => studentMatchesBatchSelection(student, studentFilters.batch_name)),
-    [studentFilters.batch_name, students]
-  );
+  const selectedBatchRosterStudents = useMemo(() => {
+    const matchedStudents = students.filter((student) => studentMatchesBatchSelection(student, studentFilters.batch_name));
+    if (matchedStudents.length) {
+      return matchedStudents;
+    }
+    if (selectedBatchParts.className && selectedBatchParts.section) {
+      return students.filter(
+        (student) =>
+          String(student.class_name || '').trim().toLowerCase() === selectedBatchParts.className.trim().toLowerCase()
+          && String(student.section || '').trim().toLowerCase() === selectedBatchParts.section.trim().toLowerCase()
+      );
+    }
+    return [];
+  }, [selectedBatchParts.className, selectedBatchParts.section, studentFilters.batch_name, students]);
 
   const selectedBatchSubject = useMemo(
     () =>
@@ -1349,7 +1359,11 @@ function AttendanceManagementContent() {
   );
 
   const buildFallbackStudentMarking = useCallback((): StudentAttendanceMarkingResponse | null => {
-    if (!selectedBatchParts.className || !selectedBatchParts.section) return null;
+    const resolvedClassName =
+      selectedBatchParts.className || String(selectedBatchRosterStudents[0]?.class_name || '').trim();
+    const resolvedSection =
+      selectedBatchParts.section || String(selectedBatchRosterStudents[0]?.section || '').trim();
+    if (!selectedBatchRosterStudents.length) return null;
 
     const normalizedSearch = String(studentFilters.search || '').trim().toLowerCase();
     const previousRows = new Map(
@@ -1378,13 +1392,14 @@ function AttendanceManagementContent() {
 
     return {
       date: studentFilters.date,
-      class_name: selectedBatchParts.className,
-      section: selectedBatchParts.section,
+      class_name: resolvedClassName,
+      section: resolvedSection,
       subject_id: selectedBatchSubject?.id,
       subject_name: selectedBatchSubject?.name,
       students: matchingStudents,
     };
   }, [
+    selectedBatchRosterStudents,
     selectedBatchParts.className,
     selectedBatchParts.section,
     selectedBatchSubject?.id,
