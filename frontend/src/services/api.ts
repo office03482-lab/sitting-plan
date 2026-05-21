@@ -13,6 +13,7 @@ import type {
   Hostel, HostelRoom, StudentHostelRequest,
   AuthResponse, RolePowerUser
 } from '@types';
+import { AuthInitializationRegistry } from '@/contexts/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@store/auth';
 import {
@@ -53,6 +54,11 @@ export const getApiBaseUrl = () => {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+type FailedQueueEntry = {
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+};
+
 export const isRequestCanceled = (error: any) =>
   axios.isCancel(error) ||
   error?.code === 'ERR_CANCELED' ||
@@ -96,6 +102,8 @@ const getPersistedUser = () => {
 
 class ApiService {
   private api: AxiosInstance;
+  private isRefreshing = false;
+  private failedQueue: FailedQueueEntry[] = [];
   private attendanceOverviewRequestPromise: Promise<{ data: AttendanceOverview }> | null = null;
   private attendanceOverviewCache: { expiresAt: number; data: AttendanceOverview } | null = null;
   private attendanceSubjectsRequestPromise: Promise<{ data: AttendanceSubject[] }> | null = null;
@@ -187,8 +195,54 @@ class ApiService {
 
   private clearClientAuth(redirectToLogin: boolean = true) {
     useAuthStore.getState().logout();
+    AuthInitializationRegistry.resolve('UNAUTHENTICATED');
     if (typeof window !== 'undefined' && redirectToLogin && !window.location.pathname.startsWith('/login')) {
       window.location.replace('/login');
+    }
+  }
+
+  private processFailedQueue(error: unknown, token: string | null = null) {
+    const pendingQueue = [...this.failedQueue];
+    this.failedQueue = [];
+
+    pendingQueue.forEach(({ resolve, reject }) => {
+      if (error || !token) {
+        reject(error || new Error('Unable to refresh session token.'));
+        return;
+      }
+      resolve(token);
+    });
+  }
+
+  private async refreshAccessTokenWithLock() {
+    if (this.isRefreshing) {
+      return new Promise<string>((resolve, reject) => {
+        this.failedQueue.push({ resolve, reject });
+      });
+    }
+
+    this.isRefreshing = true;
+
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error || !data.session?.access_token) {
+        throw error || new Error('Session refresh returned no access token.');
+      }
+
+      useAuthStore.getState().hydrate({
+        token: data.session.access_token,
+        refreshToken: data.session.refresh_token,
+        user: useAuthStore.getState().user,
+      });
+
+      this.processFailedQueue(null, data.session.access_token);
+      return data.session.access_token;
+    } catch (error) {
+      this.processFailedQueue(error, null);
+      this.clearClientAuth(false);
+      throw error;
+    } finally {
+      this.isRefreshing = false;
     }
   }
 
@@ -1417,9 +1471,11 @@ class ApiService {
       let authState = useAuthStore.getState();
 
       if (!refreshExcluded) {
+        await AuthInitializationRegistry.readyPromise;
         authState = await this.waitForAuthInitialization();
         console.debug('[auth-sync]', 'api.request.auth_gate', {
           url: config.url || '',
+          auth_status: AuthInitializationRegistry.status,
           auth_initialized: authState.auth_initialized,
           auth_loading: authState.auth_loading,
           hasToken: Boolean(authState.token || this.getAccessToken()),
@@ -1492,16 +1548,15 @@ class ApiService {
             return Promise.reject(error);
           }
 
-          const currentToken = this.getAccessToken();
-          const latestToken = await this.getLatestSessionAccessToken();
-          if (!latestToken || latestToken === currentToken) {
-            return Promise.reject(error);
+          try {
+            const latestToken = await this.refreshAccessTokenWithLock();
+            config.__retryAfterRefresh = true;
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${latestToken}`;
+            return this.api.request(config);
+          } catch (refreshError) {
+            return Promise.reject(refreshError);
           }
-
-          config.__retryAfterRefresh = true;
-          config.headers = config.headers || {};
-          config.headers.Authorization = `Bearer ${latestToken}`;
-          return this.api.request(config);
         }
 
         const method = config?.method?.toLowerCase();
@@ -5456,10 +5511,10 @@ class ApiService {
 
   async createAttendanceLeave(
     data: {
-      staff_member_id: number;
+      staff_member_id: number | string;
       leave_type: 'casual' | 'sick' | 'paid' | 'emergency';
-      from_date: string;
-      to_date: string;
+      from_date: string | Date;
+      to_date: string | Date;
       reason?: string;
     },
     schoolId: number | string = 1
@@ -5468,21 +5523,44 @@ class ApiService {
     if (!scopedSchoolId) {
       throw new Error('Active school context is required to create attendance leave');
     }
-    try {
-      return await this.api.post<AttendanceLeave>('/attendance/leaves', data, {
-        params: { school_id: scopedSchoolId },
-      });
-    } catch (error: any) {
-      if (!this.isDatetimeValidationError(error)) throw error;
-      const retryData = {
-        ...data,
-        from_date: this.toDateTimeString(data.from_date) || data.from_date,
-        to_date: this.toDateTimeString(data.to_date, true) || data.to_date,
-      };
-      return this.api.post<AttendanceLeave>('/attendance/leaves', retryData, {
-        params: { school_id: scopedSchoolId },
-      });
-    }
+    const toIsoDateOnly = (value: string | Date) => {
+      if (value instanceof Date) {
+        const year = value.getFullYear();
+        const month = String(value.getMonth() + 1).padStart(2, '0');
+        const day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+
+      const trimmed = String(value || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return trimmed;
+      }
+
+      const parsedDate = new Date(trimmed);
+      if (Number.isNaN(parsedDate.getTime())) {
+        throw new Error('Invalid leave date format.');
+      }
+
+      const year = parsedDate.getFullYear();
+      const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+      const day = String(parsedDate.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const payload = {
+      staff_member_id:
+        typeof data.staff_member_id === 'string'
+          ? data.staff_member_id.trim()
+          : String(data.staff_member_id),
+      leave_type: data.leave_type,
+      from_date: toIsoDateOnly(data.from_date),
+      to_date: toIsoDateOnly(data.to_date),
+      reason: data.reason?.trim() || undefined,
+    };
+
+    return this.api.post<AttendanceLeave>('/attendance/leaves', payload, {
+      params: { school_id: scopedSchoolId },
+    });
   }
 
   async decideAttendanceLeave(

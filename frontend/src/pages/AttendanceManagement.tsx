@@ -2067,7 +2067,7 @@ function AttendanceManagementContent() {
     event.preventDefault();
     try {
       await apiService.createAttendanceLeave({
-        staff_member_id: Number(leaveForm.staff_member_id),
+        staff_member_id: String(leaveForm.staff_member_id).trim(),
         leave_type: leaveForm.leave_type,
         from_date: leaveForm.from_date,
         to_date: leaveForm.to_date,

@@ -11,6 +11,7 @@ from app.attendance.schema_checks import verify_attendance_schema
 from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
+from app.middleware.observability import SystemObservabilityEngine
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +50,8 @@ app = FastAPI(
     version=settings.api_version,
     lifespan=lifespan,
 )
+
+app.add_middleware(SystemObservabilityEngine)
 
 # Add CORS middleware
 app.add_middleware(

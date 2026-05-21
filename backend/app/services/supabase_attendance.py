@@ -16,8 +16,10 @@ from app.services.supabase_admin import get_supabase_admin_client
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_LOOKUP_CHUNK_SIZE = 100
+STAFF_LOOKUP_CHUNK_SIZE = 100
 MAX_STUDENT_LOOKUP = 1000
 MAX_STAFF_LOOKUP = 200
+ASYNC_ATTENDANCE_FETCH_CONCURRENCY = 8
 ATTENDANCE_CHUNK_RETRY_COUNT = 2
 ATTENDANCE_CHUNK_RETRY_DELAY_SECONDS = 0.35
 BATCH_CURRENT_CLASS_CACHE_TTL_SECONDS = 45
@@ -268,17 +270,20 @@ async def _fetch_student_attendance_chunks_async(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
+    semaphore = asyncio.Semaphore(ASYNC_ATTENDANCE_FETCH_CONCURRENCY)
+
     async def _run_chunk(chunk: list[str]) -> list[dict[str, Any]] | Exception:
-        try:
-            return await asyncio.to_thread(
-                _execute_student_attendance_chunk,
-                school_id,
-                chunk,
-                date_from=date_from,
-                date_to=date_to,
-            )
-        except Exception as exc:
-            return exc
+        async with semaphore:
+            try:
+                return await asyncio.to_thread(
+                    _execute_student_attendance_chunk,
+                    school_id,
+                    chunk,
+                    date_from=date_from,
+                    date_to=date_to,
+                )
+            except Exception as exc:
+                return exc
 
     results = await asyncio.gather(
         *[_run_chunk(chunk) for chunk in student_id_chunks],
@@ -328,7 +333,28 @@ async def _fetch_student_attendance_rows_batched(
         date_from=date_from,
         date_to=date_to,
     )
-    return []
+
+
+def _execute_staff_attendance_chunk(
+    school_id: str,
+    chunk_ids: list[str],
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    query = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("staff_attendance")
+        .select("id, school_id, staff_member_id, attendance_date, status, check_in, check_out, metadata, created_at")
+        .eq("school_id", school_id)
+    )
+    if date_from:
+        query = query.gte("attendance_date", date_from[:10])
+    if date_to:
+        query = query.lte("attendance_date", date_to[:10])
+    response = query.in_("staff_member_id", chunk_ids).order("attendance_date", desc=True).execute()
+    return list(response.data or [])
 
 
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
@@ -1727,19 +1753,16 @@ def list_staff_records(
     staff_ids = _sanitize_lookup_ids([row.get("id") for row in filtered_staff])
     if not staff_ids:
         return []
-    query = (
-        get_supabase_admin_client()
-        .schema("attendance")
-        .table("staff_attendance")
-        .select("id, school_id, staff_member_id, attendance_date, status, check_in, check_out, metadata, created_at")
-        .eq("school_id", school_id)
-    )
-    if date_from:
-        query = query.gte("attendance_date", date_from[:10])
-    if date_to:
-        query = query.lte("attendance_date", date_to[:10])
-    response = query.in_("staff_member_id", staff_ids).order("attendance_date", desc=True).execute()
-    rows = list(response.data or [])
+    rows: list[dict[str, Any]] = []
+    for chunk in _chunk_values(staff_ids, STAFF_LOOKUP_CHUNK_SIZE):
+        rows.extend(
+            _execute_staff_attendance_chunk(
+                school_id,
+                chunk,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        )
     staff_lookup = {str(item.get("id")): item for item in filtered_staff}
     payload = [
         {

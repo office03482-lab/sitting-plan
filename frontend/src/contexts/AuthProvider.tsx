@@ -29,11 +29,14 @@ type MembershipRecord = {
   roles?: MembershipRole | MembershipRole[];
 };
 
+export type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED';
+
 type AuthContextValue = {
   loading: boolean;
   initialized: boolean;
   authReady: boolean;
   sessionReady: boolean;
+  authStatus: AuthStatus;
   user: User | null;
   session: Session | null;
   authError: string | null;
@@ -45,7 +48,83 @@ type AuthContextValue = {
   canAccess: (options?: { roles?: UserRole[]; permissions?: string[] }) => boolean;
 };
 
+type ReadySignal = {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (reason?: unknown) => void;
+};
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+const AUTH_STORAGE_KEYS = [
+  'auth_token',
+  'token',
+  'access_token',
+  'refresh_token',
+  'user',
+  'sitting-plan-auth',
+] as const;
+
+const createReadySignal = (): ReadySignal => {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (reason?: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return {
+    promise,
+    resolve: resolvePromise,
+    reject: rejectPromise,
+  };
+};
+
+const createAuthInitializationRegistry = () => {
+  let signal = createReadySignal();
+
+  return {
+    status: 'IDLE' as AuthStatus,
+    lastError: null as string | null,
+    readyPromise: signal.promise,
+    reset(nextStatus: AuthStatus = 'INITIALIZING') {
+      signal = createReadySignal();
+      this.readyPromise = signal.promise;
+      this.status = nextStatus;
+      this.lastError = null;
+    },
+    resolve(nextStatus: AuthStatus) {
+      this.status = nextStatus;
+      signal.resolve();
+    },
+    fail(reason: unknown, nextStatus: AuthStatus = 'UNAUTHENTICATED') {
+      this.status = nextStatus;
+      this.lastError =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string'
+            ? reason
+            : 'Auth initialization failed.';
+      signal.resolve();
+    },
+  };
+};
+
+export const AuthInitializationRegistry = createAuthInitializationRegistry();
+
+function clearPersistedAuthArtifacts() {
+  if (typeof window === 'undefined') return;
+  for (const key of AUTH_STORAGE_KEYS) {
+    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
+  }
+}
+
+function redirectToLogin() {
+  if (typeof window === 'undefined') return;
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.replace('/login');
+  }
+}
 
 async function diagnoseSupabaseConnectivityError() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -214,18 +293,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logoutStore = useAuthStore((state) => state.logout);
   const setAuthLifecycle = useAuthStore((state) => state.setAuthLifecycle);
   const storeUser = useAuthStore((state) => state.user);
+
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('IDLE');
+
+  const storeUserRef = useRef(storeUser);
+  const authErrorRef = useRef(authError);
   const failedSessionFingerprintRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
   const lastProfileBootstrapUserIdRef = useRef<string | null>(null);
-  const storeUserRef = useRef(storeUser);
-  const authErrorRef = useRef(authError);
   const activeSyncFingerprintRef = useRef<string | null>(null);
   const currentSessionFingerprintRef = useRef<string | null>(null);
   const tokenRefreshDebounceRef = useRef<number | null>(null);
+  const authSubscriptionAttachedRef = useRef(false);
 
   useEffect(() => {
     storeUserRef.current = storeUser;
@@ -252,19 +335,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    let isMounted = true;
+    if (authSubscriptionAttachedRef.current) {
+      return;
+    }
+    authSubscriptionAttachedRef.current = true;
 
-    const clearAuthState = () => {
+    let isMounted = true;
+    AuthInitializationRegistry.reset('INITIALIZING');
+    setAuthStatus('INITIALIZING');
+    setLoading(true);
+
+    const finalizeInitialization = (status: AuthStatus, errorMessage?: string | null) => {
       if (!isMounted) return;
+      setAuthStatus(status);
+      setAuthError(errorMessage ?? null);
+      setLoading(false);
+      setInitialized(true);
+      initializedRef.current = true;
+      if (errorMessage) {
+        AuthInitializationRegistry.fail(errorMessage, status);
+      } else {
+        AuthInitializationRegistry.resolve(status);
+      }
+    };
+
+    const clearAuthState = (options?: { redirectToLogin?: boolean; reason?: string | null }) => {
+      if (!isMounted) return;
+      clearPersistedAuthArtifacts();
       setSession(null);
-      setAuthError(null);
       failedSessionFingerprintRef.current = null;
       lastProfileBootstrapUserIdRef.current = null;
       activeSyncFingerprintRef.current = null;
       logoutStore();
-      setLoading(false);
-      setInitialized(true);
-      initializedRef.current = true;
+      finalizeInitialization('UNAUTHENTICATED', options?.reason ?? null);
+      if (options?.redirectToLogin) {
+        redirectToLogin();
+      }
     };
 
     const syncSession = async (
@@ -288,13 +394,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         silentTokenRefresh: options?.silentTokenRefresh,
       });
 
-      if (!nextSession) {
-        clearAuthState();
-        return;
-      }
-
-      if (!nextSession.access_token || !nextSession.user?.id) {
-        clearAuthState();
+      if (!nextSession?.access_token || !nextSession?.user?.id) {
+        clearAuthState({
+          redirectToLogin: origin === 'SIGNED_OUT',
+        });
         return;
       }
 
@@ -314,9 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         !storeUserRef.current
       ) {
         setSession(nextSession);
-        setLoading(false);
-        setInitialized(true);
-        initializedRef.current = true;
+        finalizeInitialization('UNAUTHENTICATED', authErrorRef.current);
         return;
       }
 
@@ -327,6 +428,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: storeUserRef.current,
         });
+        setSession(nextSession);
+        finalizeInitialization('AUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.silent_refresh_applied', {
           origin,
           nextFingerprint,
@@ -336,6 +439,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (currentFingerprint && nextFingerprint && currentFingerprint === nextFingerprint && !shouldBootstrapProfile) {
+        finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED', authErrorRef.current);
         console.debug('[auth-sync]', 'syncSession.noop_same_fingerprint', {
           origin,
           nextFingerprint,
@@ -352,9 +456,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: storeUserRef.current,
         });
-        setLoading(false);
-        setInitialized(true);
-        initializedRef.current = true;
+        finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.fast_path_complete', {
           origin,
           nextFingerprint,
@@ -370,21 +472,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      setAuthStatus('INITIALIZING');
       setLoading(true);
       activeSyncFingerprintRef.current = nextFingerprint;
 
       try {
         const appUser = await buildAppUserFromSession(nextSession);
         if (!isMounted) return;
+
+        setSession(nextSession);
         setAuthError(null);
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = nextSession.user.id;
-        setSession(nextSession);
         hydrate({
           token: nextSession.access_token,
           refreshToken: nextSession.refresh_token,
           user: appUser,
         });
+        finalizeInitialization('AUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.bootstrap_complete', {
           origin,
           nextFingerprint,
@@ -393,18 +498,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error('Failed to build authenticated ERP user from Supabase session.', error);
         if (!isMounted) return;
+
         setSession(nextSession);
         failedSessionFingerprintRef.current = nextFingerprint;
-        setAuthError(
-          error instanceof Error
-            ? error.message
-            : 'Authenticated session mili, lekin ERP profile ya school membership load nahi hui.',
-        );
         hydrate({
           token: nextSession.access_token,
           refreshToken: nextSession.refresh_token,
           user: null,
         });
+        finalizeInitialization(
+          'UNAUTHENTICATED',
+          error instanceof Error
+            ? error.message
+            : 'Authenticated session mili, lekin ERP profile ya school membership load nahi hui.',
+        );
         console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
           origin,
           nextFingerprint,
@@ -413,12 +520,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } finally {
         if (isMounted) {
           activeSyncFingerprintRef.current = null;
-          setLoading(false);
-          setInitialized(true);
-          initializedRef.current = true;
         }
       }
     };
+
+    const bootstrapInitialSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          throw error;
+        }
+        await syncSession(data.session, {
+          bootstrapProfile: true,
+          origin: 'INITIAL_SESSION',
+        });
+      } catch (error) {
+        console.error('Failed to initialize Supabase auth session.', error);
+        clearAuthState({
+          reason: error instanceof Error ? error.message : 'Failed to initialize auth session.',
+        });
+      }
+    };
+
+    void bootstrapInitialSession();
 
     const {
       data: { subscription },
@@ -427,6 +551,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         event,
         fingerprint: getSessionFingerprint(nextSession),
       });
+
+      if (event === 'SIGNED_OUT') {
+        clearAuthState({
+          redirectToLogin: true,
+        });
+        return;
+      }
+
       if (event === 'TOKEN_REFRESHED') {
         if (tokenRefreshDebounceRef.current) {
           window.clearTimeout(tokenRefreshDebounceRef.current);
@@ -453,20 +585,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(tokenRefreshDebounceRef.current);
       }
       subscription.unsubscribe();
+      authSubscriptionAttachedRef.current = false;
     };
-  }, []);
+  }, [hydrate, logoutStore, setAuthLifecycle]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       loading,
       initialized,
-      authReady: initialized && !loading && !!storeUser && !!session,
-      sessionReady: initialized && !loading && !!session,
+      authReady: authStatus === 'AUTHENTICATED' && !!storeUser && !!session,
+      sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
+      authStatus,
       user: storeUser,
       session,
       authError,
       async signIn(email: string, password: string) {
         setLoading(true);
+        setAuthStatus('INITIALIZING');
+        AuthInitializationRegistry.reset('INITIALIZING');
         setAuthError(null);
         try {
           const { error } = await supabase.auth.signInWithPassword({
@@ -479,14 +615,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         } catch (error) {
           setLoading(false);
+          setAuthStatus('UNAUTHENTICATED');
+          AuthInitializationRegistry.fail(error, 'UNAUTHENTICATED');
           throw await normalizeAuthError(error);
         }
       },
       async signOut() {
-        await supabase.auth.signOut();
-        setAuthError(null);
-        failedSessionFingerprintRef.current = null;
-        logoutStore();
+        try {
+          await supabase.auth.signOut();
+        } finally {
+          clearPersistedAuthArtifacts();
+          logoutStore();
+          setSession(null);
+          setAuthStatus('UNAUTHENTICATED');
+          setAuthError(null);
+          AuthInitializationRegistry.resolve('UNAUTHENTICATED');
+          redirectToLogin();
+        }
       },
       getDefaultRoute: getDefaultRouteForUser,
       hasRole(roles) {
@@ -525,7 +670,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return roleOk && permissionOk;
       },
     }),
-    [authError, hydrate, initialized, loading, logoutStore, session, storeUser],
+    [authError, authStatus, initialized, loading, logoutStore, session, storeUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

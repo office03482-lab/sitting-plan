@@ -1,12 +1,17 @@
 """
 Pydantic validation schemas
 """
-from pydantic import BaseModel, ConfigDict, Field, validator
+import re
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, validator
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
 
 from app.models import DoorLocation, LeaveStatus, LeaveType
+
+ISO_DATE_PREFIX_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
 # ==================== Auth Schemas ====================
@@ -1358,11 +1363,47 @@ class AttendanceNotificationResponse(BaseModel):
 
 
 class AttendanceLeaveCreate(BaseModel):
-    staff_member_id: int | str
+    staff_member_id: str
     leave_type: LeaveType
     from_date: date
     to_date: date
     reason: Optional[str] = None
+
+    @field_validator("staff_member_id", mode="before")
+    @classmethod
+    def normalize_staff_member_id(cls, value):
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("staff_member_id is required")
+        try:
+            return str(UUID(text))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("staff_member_id must be a valid UUID") from exc
+
+    @field_validator("leave_type", mode="before")
+    @classmethod
+    def normalize_leave_type(cls, value):
+        text = str(value or "").strip().casefold()
+        if not text:
+            raise ValueError("leave_type is required")
+        for enum_value in LeaveType:
+            if text in {enum_value.value.casefold(), enum_value.name.casefold()}:
+                return enum_value
+        raise ValueError(f"leave_type must be one of: {', '.join(item.value for item in LeaveType)}")
+
+    @field_validator("from_date", "to_date", mode="before")
+    @classmethod
+    def normalize_iso_dates(cls, value):
+        if isinstance(value, date):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+
+        text = str(value or "").strip()
+        match = ISO_DATE_PREFIX_RE.search(text)
+        if not match:
+            raise ValueError("Date must be a valid YYYY-MM-DD string")
+        return date.fromisoformat(match.group(1))
 
 
 class AttendanceLeaveDecision(BaseModel):
