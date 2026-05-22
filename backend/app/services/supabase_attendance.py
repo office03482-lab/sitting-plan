@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime
 import logging
+import re
 import time
 from typing import Any
 from uuid import UUID
@@ -367,6 +368,9 @@ def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
     if "-" in normalized:
         left, right = normalized.split("-", 1)
         return left.strip() or "General", right.strip() or "A"
+    spaced_match = re.match(r"^(.*\S)\s+([A-Za-z0-9]{1,3})$", normalized)
+    if spaced_match:
+        return spaced_match.group(1).strip() or "General", spaced_match.group(2).strip() or "A"
     return normalized, "A"
 
 
@@ -492,7 +496,7 @@ def _fetch_timetable_candidates_from_normalized_batches(
         get_supabase_admin_client()
         .schema("scheduling")
         .table("timetable_entries")
-        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+        .select("id, staff_member_id, subject_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
         .eq("school_id", school_id)
         .eq("day_of_week", weekday)
         .eq("is_active", True)
@@ -515,12 +519,13 @@ def _fetch_timetable_candidates_from_legacy_batches(
     normalized_section = _normalize(section)
     escaped_pipe = _escape_postgrest_like(f"{normalized_class} | {normalized_section}")
     escaped_dash = _escape_postgrest_like(f"{normalized_class}-{normalized_section}")
+    escaped_space = _escape_postgrest_like(f"{normalized_class} {normalized_section}")
     escaped_class = _escape_postgrest_like(normalized_class)
     response = (
         get_supabase_admin_client()
         .schema("scheduling")
         .table("timetable_entries")
-        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+        .select("id, staff_member_id, subject_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
         .eq("school_id", school_id)
         .eq("day_of_week", weekday)
         .eq("is_active", True)
@@ -529,6 +534,7 @@ def _fetch_timetable_candidates_from_legacy_batches(
                 [
                     f"class_name.ilike.%{escaped_pipe}%",
                     f"class_name.ilike.%{escaped_dash}%",
+                    f"class_name.ilike.%{escaped_space}%",
                     f"class_name.ilike.%{escaped_class}%",
                     f"section.eq.{_escape_postgrest_like(normalized_section)}",
                 ]
@@ -555,6 +561,22 @@ def _fetch_staff_member_name(school_id: str, staff_member_id: str | None) -> str
     )
     rows = list(response.data or [])
     return _normalize(rows[0].get("full_name")) if rows else ""
+
+
+def _fetch_subject_name(school_id: str, subject_id: str | None) -> str:
+    if not subject_id:
+        return ""
+    response = (
+        get_supabase_admin_client()
+        .table("subjects")
+        .select("name")
+        .eq("school_id", school_id)
+        .eq("id", subject_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return _normalize(rows[0].get("name")) if rows else ""
 
 
 def _find_teaching_staff_member_for_actor(school_id: str, actor: dict[str, Any]) -> dict[str, Any] | None:
@@ -707,7 +729,7 @@ def get_teacher_current_class(
         get_supabase_admin_client()
         .schema("scheduling")
         .table("timetable_entries")
-        .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+        .select("id, staff_member_id, subject_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
         .eq("school_id", school_id)
         .eq("staff_member_id", teacher.get("id"))
         .eq("day_of_week", weekday)
@@ -729,7 +751,7 @@ def get_teacher_current_class(
             get_supabase_admin_client()
             .schema("scheduling")
             .table("timetable_entries")
-            .select("id, staff_member_id, day_of_week, start_time, end_time, class_name, subject, session_type, metadata, is_active")
+            .select("id, staff_member_id, subject_id, day_of_week, start_time, end_time, class_name, session_type, metadata, is_active")
             .eq("school_id", school_id)
             .eq("staff_member_id", teacher.get("id"))
             .eq("is_active", True)
@@ -758,7 +780,7 @@ def get_teacher_current_class(
     metadata = matched_row.get("metadata") or {}
     subject_name = _normalize(metadata.get("subject")) if isinstance(metadata, dict) else ""
     if not subject_name:
-        subject_name = _normalize(matched_row.get("subject"))
+        subject_name = _fetch_subject_name(school_id, str(matched_row.get("subject_id") or ""))
     subject_row = _resolve_subject_for_batch_context(
         school_id,
         class_name=class_name,
@@ -891,7 +913,7 @@ def get_batch_current_class(
     metadata = matched_row.get("metadata") or {}
     subject_name = _normalize(metadata.get("subject")) if isinstance(metadata, dict) else ""
     if not subject_name:
-        subject_name = _normalize(matched_row.get("subject"))
+        subject_name = _fetch_subject_name(school_id, str(matched_row.get("subject_id") or ""))
     staff_member_id = str(matched_row.get("staff_member_id") or "")
     teacher_name = _fetch_staff_member_name(school_id, staff_member_id)
     subject_row = _resolve_subject_for_batch_context(

@@ -2976,23 +2976,32 @@ class ApiService {
   }
 
   async getTimetableEntry(entryId: string | number) {
-    const response = await this.api.get(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
+    const response = await this.api.get(`/timetable/${this.resolveTimetableEntryId(entryId)}`, {
+      params: scopedSchoolId ? { school_id: scopedSchoolId } : undefined,
+    });
     return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
   async updateTimetableEntry(entryId: string | number, data: Partial<TimetableEntry>) {
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
     const response = await this.api.put(`/timetable/${this.resolveTimetableEntryId(entryId)}`, {
       ...data,
       teacher_id: data.teacher_id ? this.resolveMappedId('teacher', data.teacher_id) : undefined,
+    }, {
+      params: scopedSchoolId ? { school_id: scopedSchoolId } : undefined,
     });
     return { data: this.mapTimetableEntryToClient(response.data) } as { data: TimetableEntry };
   }
 
   async deleteTimetableEntry(entryId: string | number) {
-    return this.api.delete(`/timetable/${this.resolveTimetableEntryId(entryId)}`);
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
+    return this.api.delete(`/timetable/${this.resolveTimetableEntryId(entryId)}`, {
+      params: scopedSchoolId ? { school_id: scopedSchoolId } : undefined,
+    });
   }
 
-  async deleteAllTimetableEntries(schoolId: number = 1, isAdmin: boolean = true) {
+  async deleteAllTimetableEntries(schoolId?: number, isAdmin: boolean = true) {
     const scopedSchoolId = this.getCurrentSupabaseSchoolId() || schoolId;
     return this.api.delete(`/timetable`, { params: { school_id: scopedSchoolId, is_admin: isAdmin } });
   }

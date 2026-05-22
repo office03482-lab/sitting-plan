@@ -607,7 +607,7 @@ class TimetableEntryBase(BaseModel):
     day_of_week: DayOfWeek
     start_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')  # HH:MM format
     end_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')    # HH:MM format
-    class_name: str = Field(..., min_length=1, max_length=50)
+    class_name: str = Field(..., min_length=1, max_length=255)
     subject: str = Field(..., min_length=1, max_length=255)
 
 
@@ -629,7 +629,7 @@ class TimetableEntryUpdate(BaseModel):
     day_of_week: Optional[DayOfWeek] = None
     start_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
     end_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
-    class_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    class_name: Optional[str] = Field(None, min_length=1, max_length=255)
     subject: Optional[str] = Field(None, min_length=1, max_length=255)
     is_active: Optional[bool] = None
 

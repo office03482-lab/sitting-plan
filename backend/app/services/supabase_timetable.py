@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+import re
+import time
 from typing import Any, Iterable
 
 from fastapi import HTTPException, status
@@ -26,6 +28,15 @@ SESSION_TYPE_TO_DB = {
     "break_time": "activity",
     "self_study": "activity",
 }
+LOOKUP_CACHE_TTL_SECONDS = 30.0
+_SUBJECT_LOOKUP_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict[str, Any]]]] = {}
+_STAFF_LOOKUP_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict[str, Any]]]] = {}
+_ROOM_LOOKUP_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict[str, Any]]]] = {}
+_TIMETABLE_LIST_CACHE: dict[tuple[str, str, str, str, str], tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _clear_timetable_caches() -> None:
+    _TIMETABLE_LIST_CACHE.clear()
 
 
 def normalize_session_type_for_db(session_type: str | None) -> str:
@@ -88,10 +99,133 @@ def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
     return sorted(set(normalized))
 
 
+def _normalize_batch_label(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _split_batch_label(value: Any) -> tuple[str, str]:
+    normalized = _normalize_batch_label(value)
+    if not normalized:
+        return "", ""
+    if "|" in normalized:
+        left, right = normalized.split("|", 1)
+        return left.strip(), right.strip() or "A"
+    if "-" in normalized:
+        left, right = normalized.split("-", 1)
+        return left.strip(), right.strip() or "A"
+    spaced_match = re.match(r"^(.*\S)\s+([A-Za-z0-9]{1,3})$", normalized)
+    if spaced_match:
+        return spaced_match.group(1).strip(), spaced_match.group(2).strip() or "A"
+    return normalized, "A"
+
+
+def _expand_timetable_batches(class_name: Any) -> list[tuple[str, str]]:
+    normalized_values = [item.strip() for item in _normalize_batch_label(class_name).split(",") if item.strip()]
+    seen: set[tuple[str, str]] = set()
+    expanded: list[tuple[str, str]] = []
+    for value in normalized_values:
+        normalized_class_name, normalized_section = _split_batch_label(value)
+        if not normalized_class_name:
+            continue
+        entry = (normalized_class_name, normalized_section or "A")
+        if entry in seen:
+            continue
+        seen.add(entry)
+        expanded.append(entry)
+    return expanded
+
+
+def _sync_timetable_entry_batches(school_id: str, timetable_entry_id: str, class_name: Any) -> None:
+    supabase = get_supabase_admin_client()
+    (
+        supabase
+        .schema(TIMETABLE_SCHEMA)
+        .table("timetable_entry_batches")
+        .delete()
+        .eq("timetable_entry_id", timetable_entry_id)
+        .execute()
+    )
+
+    batch_rows = [
+        {
+            "timetable_entry_id": timetable_entry_id,
+            "school_id": school_id,
+            "class_name": normalized_class_name,
+            "section": normalized_section,
+        }
+        for normalized_class_name, normalized_section in _expand_timetable_batches(class_name)
+    ]
+    if not batch_rows:
+        return
+    (
+        supabase
+        .schema(TIMETABLE_SCHEMA)
+        .table("timetable_entry_batches")
+        .insert(batch_rows)
+        .execute()
+    )
+
+
+def _fetch_subject_lookup(school_id: str, subject_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    ids = _sanitize_lookup_ids(subject_ids)
+    if not ids:
+        return {}
+    cache_key = (school_id, tuple(ids))
+    cached = _SUBJECT_LOOKUP_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= LOOKUP_CACHE_TTL_SECONDS:
+        return cached[1]
+    response = (
+        get_supabase_admin_client()
+        .table("subjects")
+        .select("id, name, class_name, batch_id, metadata, is_active")
+        .eq("school_id", school_id)
+        .in_("id", ids)
+        .execute()
+    )
+    lookup = {str(item["id"]): item for item in list(response.data or [])}
+    _SUBJECT_LOOKUP_CACHE[cache_key] = (now, lookup)
+    return lookup
+
+
+def _resolve_subject_id_for_timetable(school_id: str, class_name: Any, subject_name: Any) -> str | None:
+    normalized_subject = _normalize_batch_label(subject_name)
+    if not normalized_subject:
+        return None
+
+    expanded_batches = _expand_timetable_batches(class_name)
+    first_class_name = expanded_batches[0][0] if expanded_batches else ""
+    response = (
+        get_supabase_admin_client()
+        .table("subjects")
+        .select("id, name, class_name, metadata")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .ilike("name", normalized_subject)
+        .limit(25)
+        .execute()
+    )
+    candidates = list(response.data or [])
+    if not candidates:
+        return None
+
+    normalized_class_key = first_class_name.strip().casefold()
+    for row in candidates:
+        row_class_name = _normalize_batch_label(row.get("class_name")).casefold()
+        if normalized_class_key and row_class_name == normalized_class_key:
+            return str(row.get("id"))
+    return str(candidates[0].get("id")) if candidates[0].get("id") else None
+
+
 def _fetch_staff_lookup(school_id: str, staff_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     ids = _sanitize_lookup_ids(staff_ids)
     if not ids:
         return {}
+    cache_key = (school_id, tuple(ids))
+    cached = _STAFF_LOOKUP_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= LOOKUP_CACHE_TTL_SECONDS:
+        return cached[1]
     supabase = get_supabase_admin_client()
     response = (
         supabase
@@ -101,13 +235,20 @@ def _fetch_staff_lookup(school_id: str, staff_ids: Iterable[str]) -> dict[str, d
         .in_("id", ids)
         .execute()
     )
-    return {str(item["id"]): item for item in list(response.data or [])}
+    lookup = {str(item["id"]): item for item in list(response.data or [])}
+    _STAFF_LOOKUP_CACHE[cache_key] = (now, lookup)
+    return lookup
 
 
 def _fetch_room_lookup(school_id: str, room_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     ids = _sanitize_lookup_ids(room_ids)
     if not ids:
         return {}
+    cache_key = (school_id, tuple(ids))
+    cached = _ROOM_LOOKUP_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= LOOKUP_CACHE_TTL_SECONDS:
+        return cached[1]
     supabase = get_supabase_admin_client()
     response = (
         supabase
@@ -117,7 +258,9 @@ def _fetch_room_lookup(school_id: str, room_ids: Iterable[str]) -> dict[str, dic
         .in_("id", ids)
         .execute()
     )
-    return {str(item["id"]): item for item in list(response.data or [])}
+    lookup = {str(item["id"]): item for item in list(response.data or [])}
+    _ROOM_LOOKUP_CACHE[cache_key] = (now, lookup)
+    return lookup
 
 
 def _ensure_system_staff_member(school_id: str, session_type: str) -> dict[str, Any]:
@@ -165,10 +308,11 @@ def serialize_timetable_row(
     *,
     teacher_name: str | None = None,
     room_name: str | None = None,
+    subject_name: str | None = None,
 ) -> dict[str, Any]:
     ui_session_type = resolve_ui_session_type(row)
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
-    subject_value = str((metadata or {}).get("subject") or row.get("subject") or "").strip()
+    subject_value = str((metadata or {}).get("subject") or subject_name or "").strip()
     return {
         "id": row.get("id"),
         "teacher_id": row.get("staff_member_id"),
@@ -201,6 +345,17 @@ def list_timetable_entries(
     class_name: str | None = None,
     room_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    cache_key = (
+        school_id,
+        day_of_week or "",
+        teacher_id or "",
+        (class_name or "").strip().casefold(),
+        room_id or "",
+    )
+    cached = _TIMETABLE_LIST_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= LOOKUP_CACHE_TTL_SECONDS:
+        return [dict(item) for item in cached[1]]
     query = (
         get_timetable_table_query()
         .select("*")
@@ -219,14 +374,18 @@ def list_timetable_entries(
     rows = list(response.data or [])
     staff_lookup = _fetch_staff_lookup(school_id, [row.get("staff_member_id") for row in rows])
     room_lookup = _fetch_room_lookup(school_id, [row.get("room_id") for row in rows])
-    return [
+    subject_lookup = _fetch_subject_lookup(school_id, [row.get("subject_id") for row in rows])
+    serialized_rows = [
         serialize_timetable_row(
             row,
             teacher_name=(staff_lookup.get(str(row.get("staff_member_id"))) or {}).get("full_name"),
             room_name=(room_lookup.get(str(row.get("room_id"))) or {}).get("name"),
+            subject_name=(subject_lookup.get(str(row.get("subject_id"))) or {}).get("name"),
         )
         for row in rows
     ]
+    _TIMETABLE_LIST_CACHE[cache_key] = (now, serialized_rows)
+    return [dict(item) for item in serialized_rows]
 
 
 def get_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
@@ -243,10 +402,40 @@ def get_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Timetable entry not found")
     staff_lookup = _fetch_staff_lookup(school_id, [row.get("staff_member_id")])
     room_lookup = _fetch_room_lookup(school_id, [row.get("room_id")])
+    subject_lookup = _fetch_subject_lookup(school_id, [row.get("subject_id")])
     return serialize_timetable_row(
         row,
         teacher_name=(staff_lookup.get(str(row.get("staff_member_id"))) or {}).get("full_name"),
         room_name=(room_lookup.get(str(row.get("room_id"))) or {}).get("name"),
+        subject_name=(subject_lookup.get(str(row.get("subject_id"))) or {}).get("name"),
+    )
+
+
+def _build_timetable_response(
+    school_id: str,
+    row: dict[str, Any],
+    *,
+    teacher_name: str | None = None,
+    room_name: str | None = None,
+    subject_name: str | None = None,
+) -> dict[str, Any]:
+    resolved_teacher_name = teacher_name
+    if resolved_teacher_name is None and row.get("staff_member_id"):
+        resolved_teacher_name = (_fetch_staff_lookup(school_id, [row.get("staff_member_id")]).get(str(row.get("staff_member_id"))) or {}).get("full_name")
+
+    resolved_room_name = room_name
+    if resolved_room_name is None and row.get("room_id"):
+        resolved_room_name = (_fetch_room_lookup(school_id, [row.get("room_id")]).get(str(row.get("room_id"))) or {}).get("name")
+
+    resolved_subject_name = subject_name
+    if resolved_subject_name is None and row.get("subject_id"):
+        resolved_subject_name = (_fetch_subject_lookup(school_id, [row.get("subject_id")]).get(str(row.get("subject_id"))) or {}).get("name")
+
+    return serialize_timetable_row(
+        row,
+        teacher_name=resolved_teacher_name,
+        room_name=resolved_room_name,
+        subject_name=resolved_subject_name,
     )
 
 
@@ -300,12 +489,17 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
     ui_session_type = str(entry_data.get("session_type") or "regular_class").strip().lower()
     room_id = _check_room_exists(school_id, entry_data.get("room_id"))
     teacher_id = entry_data.get("teacher_id")
+    teacher_name: str | None = None
     if is_no_teacher_session(ui_session_type):
-        teacher_id = _ensure_system_staff_member(school_id, ui_session_type)["id"]
+        system_teacher = _ensure_system_staff_member(school_id, ui_session_type)
+        teacher_id = system_teacher["id"]
+        teacher_name = system_teacher.get("full_name")
     elif not teacher_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Teacher is required")
 
     if not is_no_teacher_session(ui_session_type):
+        teacher_lookup = _fetch_staff_lookup(school_id, [str(teacher_id)])
+        teacher_name = (teacher_lookup.get(str(teacher_id)) or {}).get("full_name") or "Teacher"
         conflicts = check_teacher_conflicts(
             school_id,
             str(teacher_id),
@@ -314,8 +508,6 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
             str(entry_data["end_time"]),
         )
         if conflicts:
-            teacher_lookup = _fetch_staff_lookup(school_id, [str(teacher_id)])
-            teacher_name = (teacher_lookup.get(str(teacher_id)) or {}).get("full_name") or "Teacher"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Teacher conflict: {teacher_name} is already assigned during this time",
@@ -336,8 +528,7 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "end_time": entry_data.get("end_time"),
         "class_name": entry_data.get("class_name"),
         "section": None,
-        "subject": entry_data.get("subject"),
-        "subject_id": None,
+        "subject_id": _resolve_subject_id_for_timetable(school_id, entry_data.get("class_name"), entry_data.get("subject")),
         "session_mode": entry_data.get("session_mode") or "offline",
         "session_type": normalize_session_type_for_db(ui_session_type),
         "online_link": entry_data.get("online_link"),
@@ -357,7 +548,14 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
     created_id = created_row.get("id")
     if not created_id:
         raise HTTPException(status_code=500, detail="Timetable entry save returned no id")
-    return get_timetable_entry(school_id, str(created_id))
+    _sync_timetable_entry_batches(school_id, str(created_id), payload.get("class_name"))
+    _clear_timetable_caches()
+    return _build_timetable_response(
+        school_id,
+        created_row,
+        teacher_name=teacher_name,
+        subject_name=entry_data.get("subject"),
+    )
 
 
 def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, Any]) -> dict[str, Any]:
@@ -405,7 +603,11 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "start_time": next_start,
         "end_time": next_end,
         "class_name": entry_data.get("class_name", existing.get("class_name")),
-        "subject": entry_data.get("subject", existing.get("subject")),
+        "subject_id": _resolve_subject_id_for_timetable(
+            school_id,
+            entry_data.get("class_name", existing.get("class_name")),
+            entry_data.get("subject", existing.get("subject")),
+        ),
         "session_mode": entry_data.get("session_mode", existing.get("session_mode")),
         "session_type": normalize_session_type_for_db(next_session_type),
         "online_link": entry_data.get("online_link", existing.get("online_link")),
@@ -423,6 +625,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
     updated_rows = updated.data if isinstance(updated.data, list) else ([updated.data] if updated.data else [])
     if not updated_rows:
         raise HTTPException(status_code=404, detail="Timetable entry not found")
+    _sync_timetable_entry_batches(school_id, entry_id, payload.get("class_name"))
+    _clear_timetable_caches()
     return get_timetable_entry(school_id, entry_id)
 
 
@@ -437,6 +641,7 @@ def delete_timetable_entry(school_id: str, entry_id: str) -> dict[str, Any]:
     )
     if not list(updated.data or []):
         raise HTTPException(status_code=404, detail="Timetable entry not found")
+    _clear_timetable_caches()
     return {"message": "Timetable entry deleted successfully"}
 
 
@@ -457,4 +662,5 @@ def delete_all_timetable_entries(school_id: str) -> dict[str, Any]:
             .eq("is_active", True)
             .execute()
         )
+        _clear_timetable_caches()
     return {"message": f"{len(rows)} timetable entries deleted successfully"}

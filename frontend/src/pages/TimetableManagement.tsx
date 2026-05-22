@@ -6,7 +6,6 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuthStore } from '@store/auth';
 import type {
   Batch,
-  ConflictCheckResponse,
   DayOfWeek,
   Room,
   Student,
@@ -79,6 +78,14 @@ const getRequestErrorMessage = (error: any, fallback: string) =>
 const hasValue = (value: unknown) => String(value ?? '').trim().length > 0;
 const sameId = (left: string | number | null | undefined, right: string | number | null | undefined) =>
   String(left ?? '').trim() === String(right ?? '').trim();
+const sortTimetableEntries = (items: TimetableView[]) =>
+  [...items].sort((left, right) => {
+    const dayDiff = DAY_INDEX[left.day_of_week] - DAY_INDEX[right.day_of_week];
+    if (dayDiff !== 0) return dayDiff;
+    const startDiff = compareTimeValues(left.start_time, right.start_time);
+    if (startDiff !== 0) return startDiff;
+    return String(left.id).localeCompare(String(right.id));
+  });
 
 const TimetableManagement: React.FC = () => {
   const user = useAuthStore((state) => state.user);
@@ -101,6 +108,7 @@ const TimetableManagement: React.FC = () => {
   const [selectedSessionModeFilter, setSelectedSessionModeFilter] = useState<TimetableSessionModeFilter>('all');
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
   const [copyingDay, setCopyingDay] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [referenceDate, setReferenceDate] = useState(() => toInputDateValue(new Date()));
   const [copyDayForm, setCopyDayForm] = useState<{
     source_day: DayOfWeek;
@@ -171,53 +179,75 @@ const TimetableManagement: React.FC = () => {
     }
   }, [isTeacherSelfView, visibleTeachers]);
 
+  const refreshEntries = async () => {
+    const response = await apiService.listTimetableEntries();
+    const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
+    setEntries(nextEntries);
+    return nextEntries;
+  };
+
+  const upsertEntry = (entry: TimetableEntry | TimetableView) => {
+    setEntries((current) =>
+      sortTimetableEntries([
+        ...current.filter((item) => !sameId(item.id, entry.id)),
+        entry as TimetableView,
+      ])
+    );
+  };
+
+  const loadReferenceData = async () => {
+    if (isTeacherSelfView) {
+      const teachersResponse = await apiService.listTeachers();
+      setTeachers(ensureArray<Teacher>(teachersResponse.data));
+      setRooms([]);
+      setStudents([]);
+      setManagedBatchOptions([]);
+      return;
+    }
+
+    const [teachersResponse, roomsResponse, batchResponse, classResponse] = await Promise.allSettled([
+      apiService.listTeachers(),
+      apiService.listRooms(),
+      apiService.listBatches(undefined, undefined, 'batch'),
+      apiService.listBatches(undefined, undefined, 'class'),
+    ]);
+
+    setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
+    setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
+    setStudents([]);
+    const managedOptions = [
+      ...ensureArray<Batch>(batchResponse.status === 'fulfilled' ? batchResponse.value.data : []),
+      ...ensureArray<Batch>(classResponse.status === 'fulfilled' ? classResponse.value.data : []),
+    ]
+      .map((item: Batch) => String(item.name || '').trim())
+      .filter(Boolean);
+    setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
+    apiService.listStudents()
+      .then((response) => {
+        setStudents(ensureArray<Student>(response.data));
+      })
+      .catch(() => {
+        setStudents([]);
+      });
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
       setAlert(null);
-      if (isTeacherSelfView) {
-        const [entriesResponse, teachersResponse] = await Promise.allSettled([
-          apiService.listTimetableEntries(),
-          apiService.listTeachers(),
-        ]);
-
-        if (entriesResponse.status !== 'fulfilled') {
-          throw entriesResponse.reason;
-        }
-
-        setEntries(ensureArray<TimetableView>(entriesResponse.value.data));
-        setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
-        setRooms([]);
-        setStudents([]);
-        setManagedBatchOptions([]);
-        return;
-      }
-
-      const [entriesResponse, teachersResponse, roomsResponse, studentsResponse, batchResponse, classResponse] = await Promise.allSettled([
-        apiService.listTimetableEntries(),
-        apiService.listTeachers(),
-        apiService.listRooms(),
-        apiService.listStudents(),
-        apiService.listBatches(1, undefined, 'batch'),
-        apiService.listBatches(1, undefined, 'class'),
+      const [entriesResponse, referenceResponse] = await Promise.allSettled([
+        refreshEntries(),
+        loadReferenceData(),
       ]);
 
-      setEntries(entriesResponse.status === 'fulfilled' ? ensureArray<TimetableView>(entriesResponse.value.data) : []);
-      setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
-      setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
-      setStudents(studentsResponse.status === 'fulfilled' ? ensureArray<Student>(studentsResponse.value.data) : []);
-      const managedOptions = [
-        ...ensureArray<Batch>(batchResponse.status === 'fulfilled' ? batchResponse.value.data : []),
-        ...ensureArray<Batch>(classResponse.status === 'fulfilled' ? classResponse.value.data : []),
-      ]
-        .map((item: Batch) => String(item.name || '').trim())
-        .filter(Boolean);
-      setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
       if (entriesResponse.status !== 'fulfilled') {
         setAlert({
           type: 'error',
           message: getRequestErrorMessage(entriesResponse.reason, 'Timetable entries load nahi ho paaye.'),
         });
+      }
+      if (referenceResponse.status !== 'fulfilled' && isTeacherSelfView) {
+        setTeachers([]);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -247,24 +277,51 @@ const TimetableManagement: React.FC = () => {
     setShowForm(false);
   };
 
-  const checkConflict = async (data: typeof formData, excludeId?: string | number): Promise<ConflictCheckResponse | null> => {
-    try {
-      const response = await apiService.checkTimetableConflict({
-        teacher_id: data.teacher_id,
-        day_of_week: data.day_of_week,
-        start_time: data.start_time,
-        end_time: data.end_time,
-        exclude_entry_id: excludeId,
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error checking conflict:', error);
-      return null;
-    }
+  const openCreateForm = () => {
+    setAlert(null);
+    setEditingEntry(null);
+    setFormData({
+      teacher_id: '',
+      room_id: '',
+      session_mode: 'offline',
+      session_type: 'regular_class',
+      extra_class_scope: 'general',
+      online_platform: '',
+      online_link: '',
+      notes: '',
+      day_of_week: 'monday',
+      start_time: '',
+      end_time: '',
+      class_names: [],
+      subject: '',
+    });
+    setShowForm(true);
+  };
+
+  const populateFormFromEntry = (entry: Pick<TimetableView, 'teacher_id' | 'room_id' | 'session_mode' | 'session_type' | 'extra_class_scope' | 'online_platform' | 'online_link' | 'notes' | 'day_of_week' | 'start_time' | 'end_time' | 'class_name' | 'subject'>) => {
+    setFormData({
+      teacher_id: entry.teacher_id?.toString() || '',
+      room_id: entry.room_id?.toString() || '',
+      session_mode: entry.session_mode || 'offline',
+      session_type: entry.session_type || 'regular_class',
+      extra_class_scope: entry.extra_class_scope || 'general',
+      online_platform: entry.online_platform || '',
+      online_link: entry.online_link || '',
+      notes: entry.notes || '',
+      day_of_week: entry.day_of_week,
+      start_time: entry.start_time,
+      end_time: entry.end_time,
+      class_names: String(entry.class_name || '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+      subject: entry.subject || '',
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     const isBreakSession = formData.session_type === 'break_time';
     const isTeacherFreeSession = isNoTeacherSession(formData.session_type);
 
@@ -272,15 +329,13 @@ const TimetableManagement: React.FC = () => {
       setAlert({ type: 'error', message: 'All fields are required' });
       return;
     }
-
-    // Check for conflicts
-    const conflictCheck = isTeacherFreeSession ? null : await checkConflict(formData, editingEntry?.id);
-    if (conflictCheck?.has_conflict) {
-      setAlert({ type: 'error', message: conflictCheck.message });
+    if (compareTimeValues(formData.start_time, formData.end_time) >= 0) {
+      setAlert({ type: 'error', message: 'End time start time se aage honi chahiye.' });
       return;
     }
 
     try {
+      setSubmitting(true);
       const submitData = {
         teacher_id: isTeacherFreeSession ? undefined : formData.teacher_id,
         room_id: hasValue(formData.room_id) ? formData.room_id : undefined,
@@ -296,23 +351,56 @@ const TimetableManagement: React.FC = () => {
         class_name: formData.class_names.join(', '),
         subject: isBreakSession ? 'Break Time' : formData.subject,
       };
+      const selectedTeacherData = visibleTeachers.find((teacher) => sameId(teacher.id, submitData.teacher_id));
+      const selectedRoomData = normalizedRooms.find((room) => sameId(room.id, submitData.room_id));
 
       if (editingEntry) {
-        await apiService.updateTimetableEntry(editingEntry.id, submitData);
+        const response = await apiService.updateTimetableEntry(editingEntry.id, submitData);
+        upsertEntry(response.data);
         setAlert({ type: 'success', message: 'Timetable entry updated successfully' });
       } else {
-        await apiService.createTimetableEntry(submitData);
+        const tempId = `temp-${Date.now()}`;
+        const optimisticEntry: TimetableView = {
+          id: tempId,
+          day_of_week: submitData.day_of_week,
+          start_time: submitData.start_time,
+          end_time: submitData.end_time,
+          class_name: submitData.class_name,
+          subject: submitData.subject,
+          teacher_id: submitData.teacher_id,
+          teacher_name: isTeacherFreeSession
+            ? (formData.session_type === 'break_time' ? 'BREAK TIME' : 'SELF STUDY')
+            : selectedTeacherData?.name || '',
+          room_id: submitData.room_id,
+          room_name: selectedRoomData?.name || '',
+          session_mode: submitData.session_mode,
+          session_type: submitData.session_type,
+          extra_class_scope: submitData.extra_class_scope,
+          online_platform: submitData.online_platform,
+          online_link: submitData.online_link,
+          notes: submitData.notes,
+        };
+        upsertEntry(optimisticEntry);
+        resetForm();
+        const response = await apiService.createTimetableEntry(submitData);
+        setEntries((current) => current.filter((entry) => !sameId(entry.id, tempId)));
+        upsertEntry(response.data);
         setAlert({ type: 'success', message: 'Timetable entry created successfully' });
+        void refreshEntries();
+        return;
       }
       resetForm();
-      loadData();
+      void refreshEntries();
     } catch (error) {
+      setEntries((current) => current.filter((entry) => !String(entry.id).startsWith('temp-')));
       console.error('Error saving timetable entry:', error);
       const requestError = error as any;
       setAlert({
         type: 'error',
         message: requestError?.response?.data?.detail || requestError?.message || 'Failed to save timetable entry',
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -322,9 +410,9 @@ const TimetableManagement: React.FC = () => {
     }
 
     try {
-      await apiService.deleteAllTimetableEntries(1, true);
+      await apiService.deleteAllTimetableEntries(undefined, true);
+      setEntries([]);
       setAlert({ type: 'success', message: 'All timetable entries deleted successfully' });
-      loadData();
     } catch (error) {
       console.error('Error deleting timetable entries:', error);
       setAlert({ type: 'error', message: 'Failed to delete all timetable entries' });
@@ -332,32 +420,17 @@ const TimetableManagement: React.FC = () => {
   };
 
   const handleEdit = (entry: TimetableView) => {
-    // Get full entry details
+    populateFormFromEntry(entry);
+    setEditingEntry(entry as TimetableEntry);
+    setShowForm(true);
+
     apiService.getTimetableEntry(entry.id).then(response => {
       const fullEntry = response.data;
       setEditingEntry(fullEntry);
-      setFormData({
-        teacher_id: fullEntry.teacher_id?.toString() || '',
-        room_id: fullEntry.room_id?.toString() || '',
-        session_mode: fullEntry.session_mode || 'offline',
-        session_type: fullEntry.session_type || 'regular_class',
-        extra_class_scope: fullEntry.extra_class_scope || 'general',
-        online_platform: fullEntry.online_platform || '',
-        online_link: fullEntry.online_link || '',
-        notes: fullEntry.notes || '',
-        day_of_week: fullEntry.day_of_week,
-        start_time: fullEntry.start_time,
-        end_time: fullEntry.end_time,
-        class_names: fullEntry.class_name
-          .split(',')
-          .map((name) => name.trim())
-          .filter(Boolean),
-        subject: fullEntry.subject,
-      });
-      setShowForm(true);
+      populateFormFromEntry(fullEntry);
     }).catch(error => {
       console.error('Error loading entry details:', error);
-      setAlert({ type: 'error', message: 'Failed to load entry details' });
+      setAlert({ type: 'error', message: 'Failed to load latest entry details. Showing loaded timetable data instead.' });
     });
   };
 
@@ -366,8 +439,8 @@ const TimetableManagement: React.FC = () => {
 
     try {
       await apiService.deleteTimetableEntry(entryId);
+      setEntries((current) => current.filter((entry) => !sameId(entry.id, entryId)));
       setAlert({ type: 'success', message: 'Timetable entry deleted successfully' });
-      loadData();
     } catch (error) {
       console.error('Error deleting timetable entry:', error);
       setAlert({ type: 'error', message: 'Failed to delete timetable entry' });
@@ -429,7 +502,7 @@ const TimetableManagement: React.FC = () => {
         type: 'success',
         message: `${DAY_LABELS[source_day]} ka timetable ${DAY_LABELS[target_day]} mein copy ho gaya${replace_target ? ' aur purana target timetable replace ho gaya' : ''}.`,
       });
-      await loadData();
+      await refreshEntries();
     } catch (error: any) {
       console.error('Error copying timetable day:', error);
       setAlert({
@@ -543,7 +616,6 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             ? viewMode
             : 'day',
         session_mode_filter: selectedSessionModeFilter,
-        school_id: 1,
         day_of_week: selectedDay === 'all' ? undefined : selectedDay,
         teacher_id: selectedTeacher === 'all' ? undefined : selectedTeacher,
         room_id: selectedRoom === 'all' ? undefined : selectedRoom,
@@ -589,7 +661,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               Delete All
             </button>
             <button
-              onClick={() => setShowForm(true)}
+              onClick={openCreateForm}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
             >
               <Plus size={20} />
@@ -1086,13 +1158,15 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               <div className="flex gap-3 px-6 py-4 border-t border-gray-200 bg-white">
                 <button
                   type="submit"
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"
+                  disabled={submitting}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-60"
                 >
-                  {editingEntry ? 'Update' : 'Create'}
+                  {submitting ? (editingEntry ? 'Updating...' : 'Creating...') : (editingEntry ? 'Update' : 'Create')}
                 </button>
                 <button
                   type="button"
                   onClick={resetForm}
+                  disabled={submitting}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
                 >
                   Cancel

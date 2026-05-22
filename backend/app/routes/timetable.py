@@ -364,6 +364,16 @@ def fetch_export_rows(
     return batch_rows
 
 
+def coerce_timetable_views(entries: List[TimetableView | Dict[str, object]]) -> List[TimetableView]:
+    normalized: List[TimetableView] = []
+    for entry in entries:
+        if isinstance(entry, TimetableView):
+            normalized.append(entry)
+        else:
+            normalized.append(TimetableView(**entry))
+    return normalized
+
+
 def group_entries_for_export(entries: List[TimetableView], view_by: str, session_mode_filter: str = "all") -> List[Dict[str, object]]:
     grouped: Dict[str, List[TimetableView]] = defaultdict(list)
     titles: Dict[str, str] = {}
@@ -710,13 +720,13 @@ async def export_timetable(
     db: Session = Depends(get_db),
 ):
     if not is_legacy_sqlite_mode():
-        entries = list_timetable_entries_supabase(
+        entries = coerce_timetable_views(list_timetable_entries_supabase(
             school_id,
             day_of_week=day_of_week.value if day_of_week else None,
             teacher_id=str(teacher_id) if teacher_id else None,
             class_name=batch_name if view_by == "batch" else None,
             room_id=str(room_id) if room_id else None,
-        )
+        ))
         if not entries:
             raise HTTPException(status_code=404, detail="No timetable entries found for export")
 
