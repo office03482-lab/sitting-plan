@@ -18,8 +18,15 @@ LEGACY_SCHOOL_FALLBACK = "1"
 _PLACEHOLDER_SCHOOL_IDS = {"", "1", "none", "null", "undefined"}
 
 
+def should_use_supabase_native_services() -> bool:
+    configured_flag = settings.use_supabase_native_services
+    if configured_flag is not None:
+        return bool(configured_flag)
+    return bool(settings.supabase_url and settings.supabase_service_role_key)
+
+
 def is_legacy_sqlite_mode() -> bool:
-    return not bool(settings.use_supabase_native_services)
+    return not should_use_supabase_native_services()
 
 
 def _normalize_school_id_candidate(value: Any) -> str:

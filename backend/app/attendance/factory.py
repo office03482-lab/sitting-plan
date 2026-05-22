@@ -1,7 +1,7 @@
 from app.config import settings
 from app.attendance.guards import reject_legacy_attendance_request
 from app.attendance.native.service import NativeAttendanceService
-from app.services.supabase_context import is_legacy_sqlite_mode
+from app.services.supabase_context import is_legacy_sqlite_mode, should_use_supabase_native_services
 
 
 class LegacyAttendanceService:
@@ -16,7 +16,6 @@ def get_attendance_service():
             raise RuntimeError("Legacy attendance mode is not allowed in production")
         return NativeAttendanceService()
 
-    if is_legacy_sqlite_mode():
-        return LegacyAttendanceService()
-    return NativeAttendanceService()
-
+    if should_use_supabase_native_services():
+        return NativeAttendanceService()
+    return LegacyAttendanceService()
