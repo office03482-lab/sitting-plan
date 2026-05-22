@@ -193,7 +193,9 @@ class Settings(BaseSettings):
             if self.jwt_secret.strip().lower() in UNSAFE_JWT_SECRETS or len(self.jwt_secret.strip()) < 32:
                 raise ValueError("JWT_SECRET must be explicitly configured and at least 32 characters in production.")
         elif self.use_supabase_native_services is None:
-            self.use_supabase_native_services = False
+            self.use_supabase_native_services = bool(
+                self.supabase_url and self.supabase_service_role_key
+            )
 
         return self
 

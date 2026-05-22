@@ -943,7 +943,9 @@ def _fetch_students(
     query = (
         get_supabase_admin_client()
         .table("students")
-        .select("id, school_id, roll_number, full_name, class_name, section, is_active, created_at, updated_at")
+        .select(
+            "id, school_id, batch_id, roll_number, full_name, father_name, phone, class_name, section, is_active, created_at, updated_at"
+        )
         .eq("school_id", school_id)
         .eq("is_active", True)
         .order("full_name")
@@ -1273,8 +1275,8 @@ def _serialize_student(row: dict[str, Any], batch_lookup: dict[str, dict[str, An
     return {
         "id": row.get("id"),
         "name": row.get("full_name") or "",
-        "class_name": class_name,
-        "section": section,
+        "class_name": class_name or "General",
+        "section": section or "A",
         "batch_name": batch_name,
         "roll_no": row.get("roll_number") or "",
         "parent_contact": row.get("phone"),
@@ -1387,8 +1389,9 @@ def get_overview(school_id: str) -> dict[str, Any]:
 
 def list_students(school_id: str, *, skip: int = 0, limit: int = 100, search: str | None = None) -> list[dict[str, Any]]:
     rows = _fetch_students(school_id, search=search, skip=skip, limit=limit)
+    batch_lookup = _fetch_batches(school_id)
     return sanitize_response_payload(
-        [_serialize_student(row) for row in rows],
+        [_serialize_student(row, batch_lookup) for row in rows],
         log_label="attendance.list_students",
     )
 

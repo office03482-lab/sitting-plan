@@ -3,8 +3,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from app.attendance.factory import get_attendance_service
 from app.attendance.logging_utils import log_attendance_mode
+from app.attendance.native.service import NativeAttendanceService
 from app.schemas import (
     StaffAttendanceMarkRequest,
     StaffAttendanceMarkingResponse,
@@ -25,10 +25,14 @@ from app.services.supabase_context import resolve_school_id_from_actor
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
 
 
+def get_native_attendance_service() -> NativeAttendanceService:
+    return NativeAttendanceService()
+
+
 @router.get("/overview", response_model=AttendanceOverviewResponse)
 def get_overview(
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("overview", school_id)
     return AttendanceOverviewResponse(**service.get_overview(school_id=school_id))
@@ -37,7 +41,7 @@ def get_overview(
 @router.get("/integrated-overview")
 def get_integrated_overview_route(
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("integrated-overview", school_id)
     return service.get_integrated_overview(school_id=school_id)
@@ -49,7 +53,7 @@ def list_students_route(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("students", school_id)
     return service.list_students(school_id=school_id, skip=skip, limit=limit, search=search)
@@ -62,7 +66,7 @@ def list_integrated_students_route(
     limit: int = Query(default=100, ge=1, le=200),
     search: Optional[str] = Query(default=None),
     batch: Optional[str] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("integrated-students", school_id)
     return service.list_integrated_students(
@@ -82,7 +86,7 @@ def list_staff_route(
     search: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("staff", school_id)
     return service.list_staff(
@@ -103,7 +107,7 @@ def list_integrated_staff_route(
     search: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
     source: Optional[str] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("integrated-staff", school_id)
     return service.list_integrated_staff(
@@ -119,7 +123,7 @@ def list_integrated_staff_route(
 @router.get("/subjects", response_model=List[AttendanceSubjectResponse])
 def list_subjects_route(
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("subjects", school_id)
     return service.list_subjects(school_id=school_id)
@@ -132,7 +136,7 @@ def get_batch_current_class_route(
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("batch-current-class", school_id)
     payload = service.get_batch_current_class(
@@ -153,7 +157,7 @@ def get_student_marking_route(
     subject_id: str = Query(...),
     search: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-marking", school_id)
     payload = service.get_student_marking(
@@ -177,7 +181,7 @@ async def list_student_records_route(
     date_to: Optional[date] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=100),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)
     return await service.list_student_records(
@@ -196,7 +200,7 @@ async def list_student_records_route(
 def delete_student_record_route(
     record_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-records.delete", school_id)
     return service.delete_student_record(
@@ -213,7 +217,7 @@ def delete_all_student_records_route(
     student_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-records.delete_all", school_id)
     return service.delete_all_student_records(
@@ -235,7 +239,7 @@ def list_staff_records_route(
     date_to: Optional[date] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("staff-records", school_id)
     return service.list_staff_records(
@@ -255,7 +259,7 @@ def get_staff_dashboard_route(
     department: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("staff-dashboard", school_id)
     return StaffDashboardResponse(
@@ -274,7 +278,7 @@ def get_staff_marking_route(
     department: str = Query(...),
     search: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("staff-marking", school_id)
     payload = service.get_staff_marking(
@@ -290,7 +294,7 @@ def get_staff_marking_route(
 def save_staff_marking_route(
     payload: StaffAttendanceMarkRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("staff-marking.save", school_id)
     return service.save_staff_marking(
@@ -306,7 +310,7 @@ def list_leaves_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     status: Optional[str] = Query(default=None),
     actor: dict = Depends(get_authenticated_actor_context),
-    service=Depends(get_attendance_service),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("leaves", school_id)
     return service.list_leaves(

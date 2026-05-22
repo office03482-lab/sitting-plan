@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
+from app.services.supabase_context import should_use_supabase_native_services
 from app.services.timetable_schema_checks import verify_timetable_schema
 
 # Configure logging
@@ -217,14 +218,16 @@ app.include_router(
     edupay.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("edupay"))],
 )
-app.include_router(
-    attendance_native_router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
-)
-app.include_router(
-    legacy_attendance_router.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
-)
+if should_use_supabase_native_services():
+    app.include_router(
+        attendance_native_router,
+        dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
+    )
+else:
+    app.include_router(
+        legacy_attendance_router.router,
+        dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
+    )
 
 
 if __name__ == "__main__":
