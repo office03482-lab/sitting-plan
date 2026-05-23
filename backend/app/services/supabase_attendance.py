@@ -222,18 +222,80 @@ def _rpc_list_student_records(
     response = get_supabase_admin_client().rpc("attendance_student_report_rows", params).execute()
     duration_ms = round((time.monotonic() - started_at) * 1000)
     rows = list(response.data or [])
+
+    # Augment rows when class/section or subject_name are missing by fetching student and subject details.
+    try:
+        student_ids_need = [str(r.get("student_id")) for r in rows if not _normalize(r.get("class_name")) or not _normalize(r.get("subject_name"))]
+        student_map: dict[str, dict[str, Any]] = {}
+        if student_ids_need:
+            student_query = (
+                get_supabase_admin_client()
+                .table("students")
+                .select("id, class_name, section, batch_id, full_name, roll_number")
+                .eq("school_id", school_id)
+                .in_("id", student_ids_need)
+                .execute()
+            )
+            for s in list(student_query.data or []):
+                sid = str(s.get("id") or "")
+                if sid:
+                    student_map[sid] = s
+    except Exception:
+        student_map = {}
+
+    batches = _fetch_batches(school_id)
+
+    augmented: list[dict[str, Any]] = []
+    for r in rows:
+        row = dict(r)
+        sid = str(row.get("student_id") or "")
+        # Class/section fallback from student record
+        class_val = _normalize(row.get("class_name"))
+        section_val = _normalize(row.get("section"))
+        batch_name = _normalize(row.get("batch_name"))
+        if (not class_val or not section_val) and student_map.get(sid):
+            stud = student_map.get(sid)
+            class_val = class_val or _normalize(stud.get("class_name"))
+            section_val = section_val or _normalize(stud.get("section"))
+            if not batch_name and stud.get("batch_id"):
+                batch_obj = batches.get(str(stud.get("batch_id")))
+                batch_name = _normalize(batch_obj.get("name") if batch_obj else "")
+            if not class_val and batch_name:
+                parsed_class, parsed_section = split_batch_to_class_section(batch_name)
+                class_val = class_val or parsed_class
+                section_val = section_val or parsed_section
+
+        row["class_name"] = class_val or "General"
+        row["section"] = section_val or "A"
+        row["batch_name"] = batch_name
+
+        # Subject name fallback
+        subj_name = _normalize(row.get("subject_name"))
+        subj_id = _normalize(row.get("subject_id"))
+        if not subj_name and subj_id:
+            try:
+                subj_name = _fetch_subject_name(school_id, subj_id)
+            except Exception:
+                subj_name = ""
+        row["subject_name"] = subj_name
+
+        # Marked by normalization
+        row["marked_by"] = _normalize(row.get("marked_by")) or _normalize((row.get("metadata") or {}).get("marked_by")) or ""
+
+        augmented.append(row)
+
     logger.info(
         "attendance.student_records.rpc_complete",
         extra={
             "school_id": school_id,
-            "row_count": len(rows),
+            "row_count": len(augmented),
             "duration_ms": duration_ms,
             "skip": skip,
             "limit": limit,
             "has_batch_filters": bool(batch_filter_payload),
         },
     )
-    return rows
+    return augmented
 
 
 def _execute_student_attendance_chunk(
@@ -2173,6 +2235,15 @@ def save_student_marking(
     marked_by: str | None = None,
     entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    logger.info(
+        "attendance.supabase.save.request",
+        extra={
+            "school_id": str(school_id),
+            "date": str(date_value),
+            "subject_id": str(subject_id),
+            "entries": len(entries or []),
+        },
+    )
     normalized_entries = list(entries or [])
     student_ids = _sanitize_lookup_ids(
         [entry.get("student_id") for entry in normalized_entries]

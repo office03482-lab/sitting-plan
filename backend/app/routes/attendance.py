@@ -92,6 +92,9 @@ from app.services.supabase_attendance import (
     list_subjects as list_supabase_attendance_subjects,
 )
 from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
 
@@ -1762,6 +1765,7 @@ def save_student_marking(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
+    logger.info("attendance.save.request", extra={"school_id": str(school_id), "date": str(payload.date), "subject_id": str(payload.subject_id), "entries": len(payload.entries)})
     seed_attendance_data(db, school_id)
     target_date = day_start(payload.date)
     subject = None

@@ -2718,8 +2718,8 @@ function AttendanceManagementContent() {
       return;
     }
     const requestedSection =
-      studentFilters.record_scope === 'class' ? '' : recordBatchParts.section;
-    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
+      studentFilters.record_scope === 'class' ? undefined : recordBatchParts.section;
+    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection || ''}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
@@ -2780,14 +2780,14 @@ function AttendanceManagementContent() {
       return;
     }
     const requestedSection =
-      studentFilters.attendance_scope === 'class' ? '' : calendarBatchParts.section;
+      studentFilters.attendance_scope === 'class' ? undefined : calendarBatchParts.section;
     if (!calendarBatchParts.className || (!requestedSection && studentFilters.attendance_scope === 'batch')) {
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
       return;
     }
     const monthRange = getMonthRange(studentFilters.dashboard_date);
-    const requestKey = `${studentFilters.attendance_scope}|${calendarBatchParts.className}|${requestedSection}|${monthRange.from}|${monthRange.to}|${attendanceStudentDashboardPageSize}`;
+    const requestKey = `${studentFilters.attendance_scope}|${calendarBatchParts.className}|${requestedSection || ''}|${monthRange.from}|${monthRange.to}|${attendanceStudentDashboardPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentCalendarRecords.cache_hit', { requestKey, count: cachedRecords.length });
