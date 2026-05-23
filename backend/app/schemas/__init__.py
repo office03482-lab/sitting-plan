@@ -1440,7 +1440,7 @@ class StudentAttendanceMarkEntry(BaseModel):
 
 class StudentAttendanceMarkRequest(BaseModel):
     date: date
-    subject_id: int | str
+    subject_id: Optional[int | str] = None
     marked_by: Optional[str] = None
     entries: List[StudentAttendanceMarkEntry] = Field(default_factory=list)
 
@@ -1449,8 +1449,8 @@ class StudentAttendanceMarkingResponse(BaseModel):
     date: datetime
     class_name: str
     section: str
-    subject_id: int | str
-    subject_name: str
+    subject_id: Optional[int | str] = None
+    subject_name: Optional[str] = None
     students: List[StudentAttendanceMarkingRow] = Field(default_factory=list)
 
 

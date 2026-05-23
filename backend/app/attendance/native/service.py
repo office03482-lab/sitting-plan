@@ -15,7 +15,9 @@ from app.services.supabase_attendance import (
     list_students,
     list_subjects,
     save_staff_marking,
+    save_student_marking,
     get_staff_dashboard,
+    list_batch_day_classes,
 )
 
 
@@ -26,6 +28,7 @@ class NativeAttendanceService:
         school_id: str,
         class_name: str,
         section: str,
+        batch_name: str | None = None,
         target_date: str | None = None,
         current_time: str | None = None,
     ):
@@ -33,6 +36,26 @@ class NativeAttendanceService:
             school_id,
             class_name=class_name,
             section=section,
+            batch_name=batch_name,
+            target_date=target_date,
+            current_time=current_time,
+        )
+
+    def list_batch_day_classes(
+        self,
+        *,
+        school_id: str,
+        class_name: str,
+        section: str,
+        batch_name: str | None = None,
+        target_date: str | None = None,
+        current_time: str | None = None,
+    ):
+        return list_batch_day_classes(
+            school_id,
+            class_name=class_name,
+            section=section,
+            batch_name=batch_name,
             target_date=target_date,
             current_time=current_time,
         )
@@ -82,7 +105,7 @@ class NativeAttendanceService:
     def list_subjects(self, *, school_id: str):
         return list_subjects(school_id)
 
-    def get_student_marking(self, *, school_id: str, date_value: str, class_name: str, section: str, subject_id: str, search: str | None = None):
+    def get_student_marking(self, *, school_id: str, date_value: str, class_name: str, section: str, subject_id: str | None = None, search: str | None = None):
         return get_student_marking(
             school_id,
             date_value=date_value,
@@ -98,6 +121,23 @@ class NativeAttendanceService:
             date_value=date_value,
             department=department,
             search=search,
+        )
+
+    def save_student_marking(
+        self,
+        *,
+        school_id: str,
+        date_value: str,
+        subject_id: str | None = None,
+        marked_by: str | None = None,
+        entries: list[dict] | None = None,
+    ):
+        return save_student_marking(
+            school_id,
+            date_value=date_value,
+            subject_id=subject_id,
+            marked_by=marked_by,
+            entries=entries or [],
         )
 
     def save_staff_marking(self, *, school_id: str, date_value: str, marked_by: str | None = None, entries: list[dict] | None = None):

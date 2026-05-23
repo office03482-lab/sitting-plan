@@ -1578,6 +1578,7 @@ def get_teacher_current_class(
 def get_batch_current_class(
     class_name: str = Query(...),
     section: str = Query(...),
+    batch_name: Optional[str] = Query(default=None),
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
@@ -1586,12 +1587,13 @@ def get_batch_current_class(
     if not is_legacy_sqlite_mode():
         return TeacherAttendanceContextResponse(
             **get_supabase_batch_current_class(
-                school_id,
-                class_name=class_name,
-                section=section,
-                target_date=target_date.isoformat() if target_date else None,
-                current_time=current_time,
-            )
+            school_id,
+            class_name=class_name,
+            section=section,
+            batch_name=batch_name,
+            target_date=target_date.isoformat() if target_date else None,
+            current_time=current_time,
+        )
         )
 
     reject_legacy_attendance_request()
@@ -1675,7 +1677,7 @@ def get_student_marking(
     date: date = Query(...),
     class_name: str = Query(...),
     section: str = Query(...),
-    subject_id: str = Query(...),
+    subject_id: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
@@ -1688,7 +1690,7 @@ def get_student_marking(
                     date_value=date.isoformat(),
                     class_name=class_name,
                     section=section,
-                    subject_id=str(subject_id),
+                    subject_id=str(subject_id) if subject_id else None,
                     search=search,
                 )
             )
@@ -1697,15 +1699,19 @@ def get_student_marking(
 
     seed_attendance_data(db, school_id)
     target_date = day_start(date)
-    subject = (
-        db.query(AttendanceSubject)
-        .filter(
-            AttendanceSubject.id == subject_id, AttendanceSubject.school_id == school_id
+    subject = None
+    if subject_id:
+        subject = (
+            db.query(AttendanceSubject)
+            .filter(
+                AttendanceSubject.id == subject_id, AttendanceSubject.school_id == school_id
+            )
+            .first()
         )
-        .first()
-    )
+        if not subject:
+            raise HTTPException(status_code=404, detail="Subject not found")
     if not subject:
-        raise HTTPException(status_code=404, detail="Subject not found")
+        subject = resolve_attendance_subject(db, school_id, class_name, section, None)
     query = db.query(AttendanceStudent).filter(
         AttendanceStudent.school_id == school_id,
         AttendanceStudent.class_name == class_name,
@@ -1725,7 +1731,7 @@ def get_student_marking(
             db.query(StudentAttendance)
             .filter(
                 StudentAttendance.student_id == student.id,
-                StudentAttendance.subject_id == subject_id,
+                StudentAttendance.subject_id == subject.id,
                 StudentAttendance.date == target_date,
             )
             .first()
@@ -1758,16 +1764,18 @@ def save_student_marking(
 ):
     seed_attendance_data(db, school_id)
     target_date = day_start(payload.date)
-    subject = (
-        db.query(AttendanceSubject)
-        .filter(
-            AttendanceSubject.id == payload.subject_id,
-            AttendanceSubject.school_id == school_id,
+    subject = None
+    if payload.subject_id:
+        subject = (
+            db.query(AttendanceSubject)
+            .filter(
+                AttendanceSubject.id == payload.subject_id,
+                AttendanceSubject.school_id == school_id,
+            )
+            .first()
         )
-        .first()
-    )
-    if not subject:
-        raise HTTPException(status_code=404, detail="Subject not found")
+        if not subject:
+            raise HTTPException(status_code=404, detail="Subject not found")
 
     for entry in payload.entries:
         student = (
@@ -1780,11 +1788,18 @@ def save_student_marking(
         )
         if not student:
             continue
+        resolved_subject = subject or resolve_attendance_subject(
+            db,
+            school_id,
+            student.class_name,
+            student.section,
+            None,
+        )
         record = (
             db.query(StudentAttendance)
             .filter(
                 StudentAttendance.student_id == student.id,
-                StudentAttendance.subject_id == payload.subject_id,
+                StudentAttendance.subject_id == resolved_subject.id,
                 StudentAttendance.date == target_date,
             )
             .first()
@@ -1793,7 +1808,7 @@ def save_student_marking(
             record = StudentAttendance(
                 student_id=student.id,
                 date=target_date,
-                subject_id=payload.subject_id,
+                subject_id=resolved_subject.id,
                 status=entry.status,
                 absence_reason=entry.absence_reason if entry.status == StudentAttendanceStatus.ABSENT else None,
                 marked_by=payload.marked_by or actor["name"],

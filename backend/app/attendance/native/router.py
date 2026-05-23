@@ -15,6 +15,7 @@ from app.schemas import (
     AttendanceSubjectResponse,
     StaffDashboardResponse,
     StaffAttendanceRecordResponse,
+    StudentAttendanceMarkRequest,
     StudentAttendanceMarkingResponse,
     StudentAttendanceRecordResponse,
     TeacherAttendanceContextResponse,
@@ -133,6 +134,7 @@ def list_subjects_route(
 def get_batch_current_class_route(
     class_name: str = Query(...),
     section: str = Query(...),
+    batch_name: Optional[str] = Query(default=None),
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
@@ -143,10 +145,33 @@ def get_batch_current_class_route(
         school_id=school_id,
         class_name=class_name,
         section=section,
+        batch_name=batch_name,
         target_date=target_date.isoformat() if target_date else None,
         current_time=current_time,
     )
     return TeacherAttendanceContextResponse(**payload)
+
+
+@router.get("/batch-day-classes", response_model=List[TeacherAttendanceContextResponse])
+def list_batch_day_classes_route(
+    class_name: str = Query(...),
+    section: str = Query(...),
+    batch_name: Optional[str] = Query(default=None),
+    target_date: Optional[date] = Query(default=None),
+    current_time: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("batch-day-classes", school_id)
+    payload = service.list_batch_day_classes(
+        school_id=school_id,
+        class_name=class_name,
+        section=section,
+        batch_name=batch_name,
+        target_date=target_date.isoformat() if target_date else None,
+        current_time=current_time,
+    )
+    return [TeacherAttendanceContextResponse(**item) for item in payload]
 
 
 @router.get("/student-marking", response_model=StudentAttendanceMarkingResponse)
@@ -154,7 +179,7 @@ def get_student_marking_route(
     date: date = Query(...),
     class_name: str = Query(...),
     section: str = Query(...),
-    subject_id: str = Query(...),
+    subject_id: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     service: NativeAttendanceService = Depends(get_native_attendance_service),
@@ -169,6 +194,23 @@ def get_student_marking_route(
         search=search,
     )
     return StudentAttendanceMarkingResponse(**payload)
+
+
+@router.post("/student-marking")
+def save_student_marking_route(
+    payload: StudentAttendanceMarkRequest,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("student-marking.save", school_id)
+    return service.save_student_marking(
+        school_id=school_id,
+        date_value=payload.date.isoformat(),
+        subject_id=str(payload.subject_id) if payload.subject_id is not None else None,
+        marked_by=payload.marked_by or str(actor.get("name") or "").strip() or None,
+        entries=[entry.model_dump() for entry in payload.entries],
+    )
 
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])

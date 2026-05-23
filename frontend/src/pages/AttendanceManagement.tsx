@@ -115,6 +115,7 @@ const buildAttendanceBatches = (students: AttendanceStudent[], schoolId: number 
     .map(([name, studentCount], index) => ({
       id: index + 1,
       name,
+      category: 'batch',
       school_id: schoolId,
       is_active: true,
       created_at: '',
@@ -335,14 +336,34 @@ function splitBatchLabel(value?: string) {
     };
   }
 
-  if (normalized.includes('-')) {
-    const [classNameRaw, sectionRaw] = normalized.split('-', 1 + 1);
+  const hyphenMatch = normalized.match(/^(.*\S)\s*-\s*([A-Za-z0-9]{1,3})$/);
+  if (hyphenMatch) {
     return {
-      className: (classNameRaw || '').trim(),
-      section: (sectionRaw || '').trim(),
+      className: hyphenMatch[1].trim(),
+      section: hyphenMatch[2].trim(),
+    };
+  }
+  const spacedMatch = normalized.match(/^(.*\S)\s+([A-Za-z0-9]{1,3})$/);
+  if (spacedMatch) {
+    return {
+      className: spacedMatch[1].trim(),
+      section: spacedMatch[2].trim(),
     };
   }
   return { className: '', section: '' };
+}
+
+function normalizeClassNameKey(value?: string) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  const tokens = normalized.split(' ');
+  const firstNumericIndex = tokens.findIndex((token) => /\d/.test(token));
+  const relevantTokens = firstNumericIndex >= 0 ? tokens.slice(firstNumericIndex) : tokens;
+  return relevantTokens
+    .join(' ')
+    .replace(/\b(\d+)(st|nd|rd|th)\b/gi, '$1')
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeBatchComparisonKey(value?: string) {
@@ -351,20 +372,24 @@ function normalizeBatchComparisonKey(value?: string) {
 
   if (normalized.includes('|')) {
     const [classNameRaw, sectionRaw] = normalized.split('|', 2);
-    return `${(classNameRaw || '').trim().toLowerCase()}|${(sectionRaw || '').trim().toLowerCase()}`;
+    return `${normalizeClassNameKey(classNameRaw)}|${(sectionRaw || '').trim().toLowerCase()}`;
   }
 
-  if (normalized.includes('-')) {
-    const [classNameRaw, sectionRaw] = normalized.split('-', 2);
-    return `${(classNameRaw || '').trim().toLowerCase()}|${(sectionRaw || '').trim().toLowerCase()}`;
+  const hyphenMatch = normalized.match(/^(.*\S)\s*-\s*([A-Za-z0-9]{1,3})$/);
+  if (hyphenMatch) {
+    return `${normalizeClassNameKey(hyphenMatch[1])}|${hyphenMatch[2].trim().toLowerCase()}`;
   }
 
-  const spacedMatch = normalized.match(/^(.*\S)\s+([A-Za-z0-9]+)$/);
+  const spacedMatch = normalized.match(/^(.*\S)\s+([A-Za-z0-9]{1,3})$/);
   if (spacedMatch) {
-    return `${spacedMatch[1].trim().toLowerCase()}|${spacedMatch[2].trim().toLowerCase()}`;
+    return `${normalizeClassNameKey(spacedMatch[1])}|${spacedMatch[2].trim().toLowerCase()}`;
   }
 
-  return normalized.toLowerCase();
+  return normalizeClassNameKey(normalized);
+}
+
+function getManagedAttendanceCategory(batch?: Batch | null) {
+  return String(batch?.category || 'batch').trim().toLowerCase() === 'class' ? 'class' : 'batch';
 }
 
 function getAttendanceStudentBatchName(student: AttendanceStudent) {
@@ -453,6 +478,132 @@ function inferBatchPartsFromStudents(selectedBatchLabel: string, students: Atten
   return { className: '', section: '' };
 }
 
+function inferClassPartsFromStudents(selectedClassLabel: string, students: AttendanceStudent[]) {
+  const normalizedClassKey = normalizeClassNameKey(selectedClassLabel);
+  if (!normalizedClassKey) {
+    return { className: '', section: '' };
+  }
+
+  const matchingStudents = students.filter(
+    (student) => normalizeClassNameKey(String(student.class_name || '').trim()) === normalizedClassKey
+  );
+  if (!matchingStudents.length) {
+    return { className: selectedClassLabel.trim(), section: '' };
+  }
+
+  return {
+    className: String(matchingStudents[0]?.class_name || selectedClassLabel).trim(),
+    section: String(matchingStudents[0]?.section || '').trim(),
+  };
+}
+
+function inferAttendanceSelectionParts(
+  selectedLabel: string,
+  scope: 'batch' | 'class',
+  students: AttendanceStudent[]
+) {
+  if (scope === 'class') {
+    return inferClassPartsFromStudents(selectedLabel, students);
+  }
+
+  const parsed = splitBatchLabel(selectedLabel);
+  if (parsed.className && parsed.section) {
+    return parsed;
+  }
+  return inferBatchPartsFromStudents(selectedLabel, students);
+}
+
+function matchManagedAttendanceLabel(
+  managedItems: Batch[],
+  scope: 'batch' | 'class',
+  className?: string,
+  section?: string
+) {
+  const normalizedClassKey = normalizeClassNameKey(className);
+  const normalizedBatchKey = normalizeBatchComparisonKey(
+    className && section ? `${className} | ${section}` : className || ''
+  );
+
+  const filteredItems = managedItems.filter((item) => getManagedAttendanceCategory(item) === scope);
+  if (scope === 'batch' && normalizedBatchKey) {
+    const exactBatch = filteredItems.find(
+      (item) => normalizeBatchComparisonKey(String(item.name || '').trim()) === normalizedBatchKey
+    );
+    if (exactBatch?.name) {
+      return String(exactBatch.name).trim();
+    }
+  }
+
+  if (normalizedClassKey) {
+    const classMatch = filteredItems.find(
+      (item) => normalizeClassNameKey(String(item.name || '').trim()) === normalizedClassKey
+    );
+    if (classMatch?.name) {
+      return String(classMatch.name).trim();
+    }
+  }
+
+  return '';
+}
+
+function resolveManagedBatchSelection(
+  managedItems: Batch[],
+  selectedLabel: string,
+  scope: 'batch' | 'class'
+) {
+  const normalizedLabel = String(selectedLabel || '').trim();
+  if (!normalizedLabel) return null;
+
+  const scopedItems = managedItems.filter((item) => getManagedAttendanceCategory(item) === scope);
+  if (scope === 'batch') {
+    const batchKey = normalizeBatchComparisonKey(normalizedLabel);
+    return (
+      scopedItems.find((item) => normalizeBatchComparisonKey(String(item.name || '').trim()) === batchKey) ||
+      null
+    );
+  }
+
+  const classKey = normalizeClassNameKey(normalizedLabel);
+  return (
+    scopedItems.find(
+      (item) =>
+        normalizeClassNameKey(String(item.class_name || item.name || '').trim()) === classKey
+        || normalizeClassNameKey(String(item.name || '').trim()) === classKey
+    ) || null
+  );
+}
+
+function resolveManagedAttendanceStudentCount(
+  managedItems: Batch[],
+  selectedLabel: string,
+  scope: 'batch' | 'class'
+) {
+  const selectedItem = resolveManagedBatchSelection(managedItems, selectedLabel, scope);
+  const directCount = Number(selectedItem?.student_count ?? 0);
+  if (directCount > 0) {
+    return directCount;
+  }
+
+  if (scope === 'class') {
+    const classKey = normalizeClassNameKey(
+      String(selectedItem?.class_name || selectedItem?.name || selectedLabel || '').trim()
+    );
+    if (!classKey) return 0;
+
+    const summedBatchCount = managedItems
+      .filter((item) => getManagedAttendanceCategory(item) === 'batch')
+      .filter(
+        (item) =>
+          normalizeClassNameKey(String(item.class_name || '').trim()) === classKey
+      )
+      .reduce((total, item) => total + Number(item.student_count ?? 0), 0);
+
+    return summedBatchCount;
+  }
+
+  return 0;
+}
+
 function summarizeStudentDayRecords(records: StudentAttendanceRecord[]) {
   const grouped = new Map<
     string,
@@ -487,6 +638,46 @@ function summarizeStudentDayRecords(records: StudentAttendanceRecord[]) {
   }
 
   return Array.from(grouped.values());
+}
+
+function getAttendanceRecordBatchLabel(
+  managedItems: Batch[],
+  className?: string,
+  section?: string
+) {
+  return (
+    matchManagedAttendanceLabel(managedItems, 'batch', className, section) ||
+    [String(className || '').trim(), String(section || '').trim()].filter(Boolean).join(' | ')
+  );
+}
+
+function shouldDisplayAttendanceSubject(subjectName?: string | null) {
+  const normalized = String(subjectName || '').trim().toLowerCase();
+  return Boolean(normalized && normalized !== 'general attendance');
+}
+
+function shouldDisplayAttendanceTeacher(teacherName?: string | null) {
+  const normalized = String(teacherName || '').trim().toLowerCase();
+  return Boolean(
+    normalized
+    && normalized !== 'system'
+    && normalized !== 'attendance department'
+    && normalized !== 'attendance admin'
+  );
+}
+
+function recordMatchesSelectionScope(
+  record: Pick<StudentAttendanceRecord, 'class_name' | 'section'>,
+  scope: 'batch' | 'class',
+  className?: string,
+  section?: string
+) {
+  if (!className) return false;
+  if (scope === 'class') {
+    return normalizeClassNameKey(record.class_name) === normalizeClassNameKey(className);
+  }
+  if (!section) return false;
+  return normalizeBatchComparisonKey(`${record.class_name} | ${record.section}`) === normalizeBatchComparisonKey(`${className} | ${section}`);
 }
 
 function studentStatusClass(status: StudentAttendanceStatus) {
@@ -568,13 +759,18 @@ function AttendanceManagementContent() {
   const [reportData, setReportData] = useState<AttendanceReportResponse | null>(null);
   const [teacherAttendanceContext, setTeacherAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
   const [batchAttendanceContext, setBatchAttendanceContext] = useState<TeacherAttendanceContext | null>(null);
+  const [batchAttendanceOptions, setBatchAttendanceOptions] = useState<TeacherAttendanceContext[]>([]);
+  const [selectedBatchAttendanceEntryId, setSelectedBatchAttendanceEntryId] = useState('');
+  const [batchAttendanceOptionsLoading, setBatchAttendanceOptionsLoading] = useState(false);
   const [holidayForm, setHolidayForm] = useState(initialHolidayForm);
   const [leaveForm, setLeaveForm] = useState(initialLeaveForm);
 
   const [studentFilters, setStudentFilters] = useState({
     date: new Date().toISOString().slice(0, 10),
     dashboard_date: new Date().toISOString().slice(0, 10),
+    attendance_scope: 'batch' as 'batch' | 'class',
     batch_name: '',
+    record_scope: 'batch' as 'batch' | 'class',
     record_batch_name: '',
     subject_id: '',
     search: '',
@@ -658,9 +854,34 @@ function AttendanceManagementContent() {
     });
   };
 
-  const visibleAttendanceContext =
-    (user?.role === 'teacher' && teacherAttendanceContext?.class_name ? teacherAttendanceContext : null) ||
-    batchAttendanceContext;
+  const visibleAttendanceContext = useMemo(() => {
+    if (batchAttendanceContext && (batchAttendanceContext.subject || batchAttendanceContext.teacher_name)) {
+      return batchAttendanceContext;
+    }
+    if (teacherAttendanceContext && (teacherAttendanceContext.subject || teacherAttendanceContext.teacher_name)) {
+      return teacherAttendanceContext;
+    }
+    return null;
+  }, [batchAttendanceContext, teacherAttendanceContext]);
+
+  const getAttendanceContextOptionValue = useCallback(
+    (context: TeacherAttendanceContext | null | undefined) =>
+      String(
+        context?.timetable_entry_id
+        || `${context?.start_time || ''}|${context?.end_time || ''}|${context?.teacher_id || ''}|${context?.subject_id || ''}`
+      ),
+    []
+  );
+
+  const formatAttendanceContextOptionLabel = useCallback((context: TeacherAttendanceContext) => {
+    const parts = [];
+    const timeLabel = [context.start_time, context.end_time].filter(Boolean).join(' - ');
+    if (timeLabel) parts.push(timeLabel);
+    if (shouldDisplayAttendanceTeacher(context.teacher_name)) parts.push(context.teacher_name);
+    if (shouldDisplayAttendanceSubject(context.subject)) parts.push(context.subject || '');
+    return parts.filter(Boolean).join(' | ') || 'Scheduled Class';
+  }, []);
+
   const hasAttendanceRootAccess = hasExactPermission('attendance');
   const canViewOverviewTab = hasAttendanceRootAccess || hasExactPermission('attendance.overview');
   const canViewStudentTab = hasAttendanceRootAccess || hasExactPermission('attendance.student');
@@ -686,18 +907,40 @@ function AttendanceManagementContent() {
     studentsData: AttendanceStudent[],
     batchesData: Batch[]
   ) => {
-    const firstBatch = String(batchesData[0]?.name || '').trim();
-    if (!firstBatch) return;
+    const batchItems = batchesData.filter((item) => getManagedAttendanceCategory(item) === 'batch');
+    const classItems = batchesData.filter((item) => getManagedAttendanceCategory(item) === 'class');
+    const firstBatch = String(batchItems[0]?.name || '').trim();
+    const firstClass = String(classItems[0]?.name || '').trim();
     setStudentFilters((current) => ({
       ...current,
+      attendance_scope:
+        current.attendance_scope === 'class' && firstClass
+          ? 'class'
+          : firstBatch
+            ? 'batch'
+            : firstClass
+              ? 'class'
+              : current.attendance_scope,
       batch_name:
         current.batch_name && batchesData.some((item) => item.name === current.batch_name)
           ? current.batch_name
-          : firstBatch,
+          : current.attendance_scope === 'class'
+            ? firstClass || firstBatch
+            : firstBatch || firstClass,
+      record_scope:
+        current.record_scope === 'class' && firstClass
+          ? 'class'
+          : firstBatch
+            ? 'batch'
+            : firstClass
+              ? 'class'
+              : current.record_scope,
       record_batch_name:
         current.record_batch_name && batchesData.some((item) => item.name === current.record_batch_name)
           ? current.record_batch_name
-          : current.record_batch_name || firstBatch,
+          : current.record_scope === 'class'
+            ? current.record_batch_name || firstClass || firstBatch
+            : current.record_batch_name || firstBatch || firstClass,
     }));
   };
   const attendanceStudentsRefreshCooldownMs = 60_000;
@@ -733,7 +976,7 @@ function AttendanceManagementContent() {
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
   const canRunAttendanceRequests = authReady && sessionReady && !!session;
   const currentSchoolId = user?.school_id || 1;
-  const attendanceSecondaryHydrationDelayMs = 180;
+  const attendanceSecondaryHydrationDelayMs = 40;
   const studentRecordCacheTtlMs = 45_000;
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
@@ -762,6 +1005,16 @@ function AttendanceManagementContent() {
       timestamp: Date.now(),
       data,
     });
+  };
+
+  const clearStudentRecordCaches = () => {
+    studentRecordsCacheRef.current.clear();
+    studentRecordsRequestKeyRef.current = '';
+    studentRecordsRequestPromiseRef.current = null;
+    studentCalendarRequestKeyRef.current = '';
+    studentCalendarRequestPromiseRef.current = null;
+    todayDashboardRequestKeyRef.current = '';
+    todayDashboardRequestPromiseRef.current = null;
   };
 
   useEffect(() => {
@@ -865,8 +1118,7 @@ function AttendanceManagementContent() {
         setTabLoading(true);
         const studentsRes = await apiService.listAttendanceStudents({ school_id: currentSchoolId, limit: attendanceStudentListPageSize });
         const batchesRes = await apiService
-          .listBatches(currentSchoolId, true, 'batch')
-          .catch(() => apiService.listBatches(currentSchoolId, true))
+          .listBatches(currentSchoolId, true)
           .catch(() => ({ data: [] as Batch[] }));
         const subjectsRes =
           subjects.length || toArray<AttendanceSubject>(overview?.subject_options).length
@@ -886,13 +1138,13 @@ function AttendanceManagementContent() {
             .map(normalizeStudentToAttendanceStudent)
             .filter((student) => student.name && student.class_name && student.section);
         }
-        let normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
+        let normalizedBatches = toArray<Batch>(batchesRes.data)
+          .filter((item) => String(item.name || '').trim())
+          .sort((left, right) =>
+            String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
+          );
         if (!normalizedBatches.length) {
-          normalizedBatches = toArray<Batch>(batchesRes.data)
-            .filter((item) => String(item.name || '').trim())
-            .sort((left, right) =>
-              String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
-            );
+          normalizedBatches = buildAttendanceBatches(nextStudents, Number(currentSchoolId) || 1);
         }
         setManagedBatches(normalizedBatches);
         setStudents(nextStudents);
@@ -938,7 +1190,13 @@ function AttendanceManagementContent() {
         try {
           debugAttendanceLoader('loadManagedBatches.start', { force });
           if (students.length) {
-            const normalizedBatches = buildAttendanceBatches(students, Number(currentSchoolId) || 1);
+            const normalizedBatches = toArray<Batch>(
+              (await apiService.listBatches(currentSchoolId, true).catch(() => ({ data: [] as Batch[] }))).data
+            )
+              .filter((item) => String(item.name || '').trim())
+              .sort((left, right) =>
+                String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })
+              );
             if (normalizedBatches.length) {
               setManagedBatches(normalizedBatches);
               setStudentFilters((current) => ({
@@ -955,9 +1213,7 @@ function AttendanceManagementContent() {
               return;
             }
           }
-          const response = await apiService
-            .listBatches(currentSchoolId, true, 'batch')
-            .catch(() => apiService.listBatches(currentSchoolId, true));
+          const response = await apiService.listBatches(currentSchoolId, true);
           let normalizedBatches = toArray<Batch>(response.data)
             .filter((item) => String(item.name || '').trim())
             .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' }));
@@ -1151,12 +1407,6 @@ function AttendanceManagementContent() {
   ]);
 
   useEffect(() => {
-    if (studentFilters.batch_name) {
-      loadStudentMarking();
-    }
-  }, [studentFilters.batch_name, studentFilters.date, studentFilters.subject_id]);
-
-  useEffect(() => {
     if (!isStudentTabVisible || user?.role !== 'teacher' || !canViewStudentTab) return;
     debugAttendanceLoader('effect.student.teacher_context');
     void loadTeacherAttendanceContext();
@@ -1235,30 +1485,74 @@ function AttendanceManagementContent() {
     }));
   }, [activeTab, currentSchoolId, managedBatches.length, students]);
 
-  const batchOptions = useMemo(() => {
-    const managedNames = managedBatches.map((item) => String(item.name || '').trim()).filter(Boolean);
-    if (managedNames.length) {
-      return managedNames;
+  const managedBatchOptions = useMemo(() => {
+    const names = managedBatches
+      .filter((item) => getManagedAttendanceCategory(item) === 'batch')
+      .map((item) => String(item.name || '').trim())
+      .filter(Boolean);
+    if (names.length) {
+      return names;
     }
-
-    const derivedStudentBatches = Array.from(
+    return Array.from(
       new Set(
         students
-          .map((student) => {
-            const className = String(student.class_name || '').trim();
-            const section = String(student.section || '').trim();
-            if (!className || !section) return '';
-            return `${className} | ${section}`;
-          })
+          .map((student) => getAttendanceStudentBatchName(student))
           .filter(Boolean)
       )
     ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-
-    if (derivedStudentBatches.length) {
-      return derivedStudentBatches;
-    }
-    return [];
   }, [managedBatches, students]);
+
+  const managedClassOptions = useMemo(() => {
+    const names = managedBatches
+      .filter((item) => getManagedAttendanceCategory(item) === 'class')
+      .map((item) => String(item.name || '').trim())
+      .filter(Boolean);
+    if (names.length) {
+      return names;
+    }
+    return Array.from(
+      new Set(
+        students
+          .map((student) => String(student.class_name || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+  }, [managedBatches, students]);
+
+  const batchOptions = useMemo(
+    () => (studentFilters.attendance_scope === 'class' ? managedClassOptions : managedBatchOptions),
+    [managedBatchOptions, managedClassOptions, studentFilters.attendance_scope]
+  );
+
+  const recordBatchOptions = useMemo(
+    () => (studentFilters.record_scope === 'class' ? managedClassOptions : managedBatchOptions),
+    [managedBatchOptions, managedClassOptions, studentFilters.record_scope]
+  );
+
+  useEffect(() => {
+    setStudentFilters((current) => {
+      const nextOptions = current.attendance_scope === 'class' ? managedClassOptions : managedBatchOptions;
+      if (!nextOptions.length) return current;
+      if (current.batch_name && nextOptions.includes(current.batch_name)) return current;
+      return {
+        ...current,
+        batch_name: nextOptions[0],
+        subject_id: '',
+      };
+    });
+  }, [managedBatchOptions, managedClassOptions]);
+
+  useEffect(() => {
+    setStudentFilters((current) => {
+      const nextOptions = current.record_scope === 'class' ? managedClassOptions : managedBatchOptions;
+      if (!nextOptions.length) return current;
+      if (!current.record_batch_name || nextOptions.includes(current.record_batch_name)) return current;
+      return {
+        ...current,
+        record_batch_name: nextOptions[0],
+      };
+    });
+  }, [managedBatchOptions, managedClassOptions]);
   const selectedReportBatchNames = useMemo(
     () => parseCommaSeparatedValues(reportFilters.batch_names),
     [reportFilters.batch_names]
@@ -1289,21 +1583,20 @@ function AttendanceManagementContent() {
     setReportBatchPicker('');
   };
 
-  const selectedBatchParts = useMemo(() => {
-    const parsed = splitBatchLabel(studentFilters.batch_name);
-    if (parsed.className && parsed.section) {
-      return parsed;
-    }
-    return inferBatchPartsFromStudents(studentFilters.batch_name, students);
-  }, [studentFilters.batch_name, students]);
+  const selectedBatchParts = useMemo(
+    () => inferAttendanceSelectionParts(studentFilters.batch_name, studentFilters.attendance_scope, students),
+    [studentFilters.attendance_scope, studentFilters.batch_name, students]
+  );
 
-  const recordBatchParts = useMemo(() => {
-    const parsed = splitBatchLabel(studentFilters.record_batch_name);
-    if (parsed.className && parsed.section) {
-      return parsed;
-    }
-    return inferBatchPartsFromStudents(studentFilters.record_batch_name, students);
-  }, [studentFilters.record_batch_name, students]);
+  const recordBatchParts = useMemo(
+    () => inferAttendanceSelectionParts(studentFilters.record_batch_name, studentFilters.record_scope, students),
+    [studentFilters.record_batch_name, studentFilters.record_scope, students]
+  );
+
+  const selectedManagedAttendanceItem = useMemo(
+    () => resolveManagedBatchSelection(managedBatches, studentFilters.batch_name, studentFilters.attendance_scope),
+    [managedBatches, studentFilters.attendance_scope, studentFilters.batch_name]
+  );
 
   const calendarBatchParts = useMemo(
     () => selectedBatchParts,
@@ -1311,13 +1604,110 @@ function AttendanceManagementContent() {
   );
 
   const calendarBatchLabel = (studentFilters.batch_name || '').trim();
-  const normalizedCalendarBatchKey = normalizeBatchComparisonKey(calendarBatchLabel);
+  const studentSecondaryHydrationKey = useMemo(
+    () =>
+      [
+        studentPrimaryHydrationReadyKey,
+        studentFilters.attendance_scope,
+        studentFilters.batch_name,
+        calendarBatchParts.className,
+        calendarBatchParts.section,
+        studentFilters.dashboard_date,
+        attendanceStudentDashboardPageSize,
+      ].join('|'),
+    [
+      attendanceStudentDashboardPageSize,
+      calendarBatchParts.className,
+      calendarBatchParts.section,
+      studentFilters.attendance_scope,
+      studentFilters.batch_name,
+      studentFilters.dashboard_date,
+      studentPrimaryHydrationReadyKey,
+    ]
+  );
+
+  const batchSubjectOptions = useMemo(
+    () => {
+      const exactBatchSubjects = subjects
+        .filter((item) =>
+          studentFilters.attendance_scope === 'class'
+            ? normalizeClassNameKey(item.class_name) === normalizeClassNameKey(selectedBatchParts.className)
+            : subjectMatchesBatchSelection(
+                item,
+                studentFilters.batch_name,
+                selectedBatchParts.className,
+                selectedBatchParts.section,
+              )
+        )
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      const matchingSubjects = exactBatchSubjects.length
+        ? exactBatchSubjects
+        : subjects
+          .filter(
+            (item) =>
+              studentFilters.attendance_scope === 'class'
+                ? normalizeClassNameKey(item.class_name) === normalizeClassNameKey(selectedBatchParts.className)
+                : item.class_name === selectedBatchParts.className &&
+                  item.section === selectedBatchParts.section
+          )
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+      const specificSubjects = matchingSubjects.filter(
+        (item) => item.name.trim().toLowerCase() !== 'general attendance'
+      );
+
+      return specificSubjects.length ? specificSubjects : matchingSubjects;
+    },
+    [studentFilters.attendance_scope, studentFilters.batch_name, subjects, selectedBatchParts.className, selectedBatchParts.section]
+  );
+
+  const selectedBatchRosterStudents = useMemo(() => {
+    const matchedStudents = students.filter((student) =>
+      studentFilters.attendance_scope === 'class'
+        ? normalizeClassNameKey(String(student.class_name || '').trim()) === normalizeClassNameKey(studentFilters.batch_name)
+        : studentMatchesBatchSelection(student, studentFilters.batch_name)
+    );
+    if (matchedStudents.length) {
+      return matchedStudents;
+    }
+    if (selectedBatchParts.className && selectedBatchParts.section) {
+      return students.filter(
+        (student) =>
+          String(student.class_name || '').trim().toLowerCase() === selectedBatchParts.className.trim().toLowerCase()
+          && String(student.section || '').trim().toLowerCase() === selectedBatchParts.section.trim().toLowerCase()
+      );
+    }
+    if (selectedBatchParts.className) {
+      return students.filter(
+        (student) =>
+          normalizeClassNameKey(String(student.class_name || '').trim()) ===
+          normalizeClassNameKey(selectedBatchParts.className)
+      );
+    }
+    return [];
+  }, [selectedBatchParts.className, selectedBatchParts.section, studentFilters.attendance_scope, studentFilters.batch_name, students]);
+
+  const selectedTimetableParts = useMemo(() => {
+    const managedClassName = String(selectedManagedAttendanceItem?.class_name || '').trim();
+    const managedSection = String(selectedManagedAttendanceItem?.section || '').trim();
+    const rosterClassName = String(selectedBatchRosterStudents[0]?.class_name || '').trim();
+    const rosterSection = String(selectedBatchRosterStudents[0]?.section || '').trim();
+
+    return {
+      className: selectedBatchParts.className || managedClassName || rosterClassName,
+      section: selectedBatchParts.section || managedSection || rosterSection,
+    };
+  }, [selectedBatchParts.className, selectedBatchParts.section, selectedBatchRosterStudents, selectedManagedAttendanceItem]);
+
   const studentPrimaryHydrationKey = useMemo(
     () =>
       [
         currentSchoolId,
-        selectedBatchParts.className,
-        selectedBatchParts.section,
+        studentFilters.attendance_scope,
+        studentFilters.batch_name,
+        selectedTimetableParts.className,
+        selectedTimetableParts.section,
         recordBatchParts.className,
         recordBatchParts.section,
         studentFilters.date,
@@ -1329,76 +1719,14 @@ function AttendanceManagementContent() {
       currentSchoolId,
       recordBatchParts.className,
       recordBatchParts.section,
-      selectedBatchParts.className,
-      selectedBatchParts.section,
+      studentFilters.attendance_scope,
+      studentFilters.batch_name,
+      selectedTimetableParts.className,
+      selectedTimetableParts.section,
       studentFilters.date,
       studentFilters.recordStudentName,
     ]
   );
-  const studentSecondaryHydrationKey = useMemo(
-    () =>
-      [
-        studentPrimaryHydrationReadyKey,
-        calendarBatchParts.className,
-        calendarBatchParts.section,
-        studentFilters.dashboard_date,
-        attendanceStudentDashboardPageSize,
-      ].join('|'),
-    [
-      attendanceStudentDashboardPageSize,
-      calendarBatchParts.className,
-      calendarBatchParts.section,
-      studentFilters.dashboard_date,
-      studentPrimaryHydrationReadyKey,
-    ]
-  );
-
-  const batchSubjectOptions = useMemo(
-    () => {
-      const exactBatchSubjects = subjects
-        .filter((item) =>
-          subjectMatchesBatchSelection(
-            item,
-            studentFilters.batch_name,
-            selectedBatchParts.className,
-            selectedBatchParts.section,
-          )
-        )
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      const matchingSubjects = exactBatchSubjects.length
-        ? exactBatchSubjects
-        : subjects
-          .filter(
-            (item) =>
-              item.class_name === selectedBatchParts.className &&
-              item.section === selectedBatchParts.section
-          )
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-      const specificSubjects = matchingSubjects.filter(
-        (item) => item.name.trim().toLowerCase() !== 'general attendance'
-      );
-
-      return specificSubjects.length ? specificSubjects : matchingSubjects;
-    },
-    [studentFilters.batch_name, subjects, selectedBatchParts.className, selectedBatchParts.section]
-  );
-
-  const selectedBatchRosterStudents = useMemo(() => {
-    const matchedStudents = students.filter((student) => studentMatchesBatchSelection(student, studentFilters.batch_name));
-    if (matchedStudents.length) {
-      return matchedStudents;
-    }
-    if (selectedBatchParts.className && selectedBatchParts.section) {
-      return students.filter(
-        (student) =>
-          String(student.class_name || '').trim().toLowerCase() === selectedBatchParts.className.trim().toLowerCase()
-          && String(student.section || '').trim().toLowerCase() === selectedBatchParts.section.trim().toLowerCase()
-      );
-    }
-    return [];
-  }, [selectedBatchParts.className, selectedBatchParts.section, studentFilters.batch_name, students]);
 
   const selectedBatchSubject = useMemo(
     () =>
@@ -1450,12 +1778,14 @@ function AttendanceManagementContent() {
         batchAttendanceContext?.subject_id,
         teacherAttendanceContext?.subject_id,
       ),
-      subject_name: selectedBatchSubject?.name,
+      subject_name: selectedBatchSubject?.name || batchAttendanceContext?.subject || teacherAttendanceContext?.subject,
       students: matchingStudents,
     };
   }, [
     batchAttendanceContext?.subject_id,
+    batchAttendanceContext?.subject,
     teacherAttendanceContext?.subject_id,
+    teacherAttendanceContext?.subject,
     selectedBatchRosterStudents,
     selectedBatchParts.className,
     selectedBatchParts.section,
@@ -1501,23 +1831,50 @@ function AttendanceManagementContent() {
   }, [studentRecords, studentFilters.date_from, studentFilters.date_to]);
 
   const studentBatchSummary = useMemo(() => {
-    const rows = studentRecords.filter((record) => {
-      if (!selectedBatchParts.className || !selectedBatchParts.section) return false;
-      return (
-        record.class_name === selectedBatchParts.className &&
-        record.section === selectedBatchParts.section
-      );
-    });
+    const rows = studentRecords.filter((record) =>
+      recordMatchesSelectionScope(
+        record,
+        studentFilters.attendance_scope,
+        selectedBatchParts.className,
+        selectedBatchParts.section,
+      )
+    );
     const present = rows.filter((record) => record.status === 'present').length;
     const absent = rows.filter((record) => record.status === 'absent').length;
     const late = rows.filter((record) => record.status === 'late').length;
     return { present, absent, late, total: rows.length };
-  }, [studentRecords, selectedBatchParts.className, selectedBatchParts.section]);
+  }, [studentRecords, studentFilters.attendance_scope, selectedBatchParts.className, selectedBatchParts.section]);
 
-  const selectedBatchStudentCount = useMemo(
-    () => selectedBatchRosterStudents.length,
-    [selectedBatchRosterStudents]
-  );
+  const selectedBatchStudentCount = useMemo(() => {
+    const managedCount = resolveManagedAttendanceStudentCount(
+      managedBatches,
+      studentFilters.batch_name,
+      studentFilters.attendance_scope
+    );
+    return managedCount > 0 ? managedCount : selectedBatchRosterStudents.length;
+  }, [
+    managedBatches,
+    selectedBatchRosterStudents.length,
+    studentFilters.attendance_scope,
+    studentFilters.batch_name,
+  ]);
+
+  const selectedRecordStudentCount = useMemo(() => {
+    const managedCount = resolveManagedAttendanceStudentCount(
+      managedBatches,
+      studentFilters.record_batch_name,
+      studentFilters.record_scope
+    );
+    if (managedCount > 0) {
+      return managedCount;
+    }
+
+    return students.filter((student) =>
+      studentFilters.record_scope === 'class'
+        ? normalizeClassNameKey(String(student.class_name || '').trim()) === normalizeClassNameKey(studentFilters.record_batch_name)
+        : studentMatchesBatchSelection(student, studentFilters.record_batch_name)
+    ).length;
+  }, [managedBatches, studentFilters.record_batch_name, studentFilters.record_scope, students]);
 
   const loadSelectedBatchStudentsFallback = useCallback(async () => {
     const batchLabel = String(studentFilters.batch_name || '').trim();
@@ -1585,7 +1942,8 @@ function AttendanceManagementContent() {
   }, [attendanceStudentBatchFallbackPageSize, canRunAttendanceRequests, currentSchoolId, studentFilters.batch_name]);
 
   useEffect(() => {
-    if (!selectedBatchParts.className || !selectedBatchParts.section) return;
+    if (!selectedTimetableParts.className) return;
+    if (studentFilters.attendance_scope === 'batch' && !selectedTimetableParts.section) return;
 
     const currentSubjectId = normalizeSubjectId(studentFilters.subject_id);
     const selectedExists = batchSubjectOptions.some((item) => normalizeSubjectId(item.id) === currentSubjectId);
@@ -1606,8 +1964,9 @@ function AttendanceManagementContent() {
   }, [
     batchAttendanceContext?.subject_id,
     batchSubjectOptions,
-    selectedBatchParts.className,
-    selectedBatchParts.section,
+    studentFilters.attendance_scope,
+    selectedTimetableParts.className,
+    selectedTimetableParts.section,
     studentFilters.subject_id,
     teacherAttendanceContext?.subject_id,
   ]);
@@ -1622,6 +1981,16 @@ function AttendanceManagementContent() {
     selectedBatchRosterStudents.length,
     studentFilters.batch_name,
   ]);
+
+  useEffect(() => {
+    setBatchAttendanceContext(null);
+    setBatchAttendanceOptions([]);
+    setSelectedBatchAttendanceEntryId('');
+    setStudentMarking(null);
+    if (user?.role !== 'teacher') {
+      setTeacherAttendanceContext(null);
+    }
+  }, [studentFilters.attendance_scope, studentFilters.batch_name, studentFilters.date, user?.role]);
 
   useEffect(() => {
     if (!isStudentTabVisible || !studentFilters.batch_name) return;
@@ -1692,7 +2061,8 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
-    if (!selectedBatchParts.className || !selectedBatchParts.section) return;
+    if (!selectedTimetableParts.className) return;
+    if (studentFilters.attendance_scope === 'batch' && !selectedTimetableParts.section) return;
     if (
       studentPrimaryHydrationKeyRef.current === studentPrimaryHydrationKey &&
       studentPrimaryHydrationPromiseRef.current
@@ -1715,12 +2085,21 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('effect.student.primary_hydration', {
         requestKey: studentPrimaryHydrationKey,
       });
-      await loadBatchAttendanceContext();
+      const batchContext = await loadBatchAttendanceContext();
       if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
-      if (recordBatchParts.className && recordBatchParts.section) {
-        await loadStudentRecords();
-        if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
-      }
+      await Promise.all([
+        loadStudentMarking({
+          subjectId: pickPreferredSubjectId(
+            batchContext?.subject_id,
+            teacherAttendanceContext?.subject_id,
+          ),
+          subjectName: batchContext?.subject || teacherAttendanceContext?.subject || '',
+        }),
+        recordBatchParts.className && (studentFilters.record_scope === 'class' || recordBatchParts.section)
+          ? loadStudentRecords()
+          : Promise.resolve(),
+      ]);
+      if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
       setStudentPrimaryHydrationReadyKey(studentPrimaryHydrationKey);
     })().finally(() => {
       if (studentPrimaryHydrationKeyRef.current === studentPrimaryHydrationKey) {
@@ -1733,18 +2112,23 @@ function AttendanceManagementContent() {
   }, [
     canRunAttendanceRequests,
     isStudentTabVisible,
-    selectedBatchParts.className,
-    selectedBatchParts.section,
+    studentFilters.attendance_scope,
+    selectedTimetableParts.className,
+    selectedTimetableParts.section,
     studentPrimaryHydrationKey,
     studentPrimaryHydrationReadyKey,
     recordBatchParts.className,
     recordBatchParts.section,
+    studentFilters.record_scope,
+    teacherAttendanceContext?.subject,
+    teacherAttendanceContext?.subject_id,
   ]);
 
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
     if (!studentPrimaryHydrationReadyKey) return;
-    if (!calendarBatchParts.className || !calendarBatchParts.section) return;
+    if (!calendarBatchParts.className) return;
+    if (studentFilters.attendance_scope === 'batch' && !calendarBatchParts.section) return;
     if (
       studentSecondaryHydrationKeyRef.current === studentSecondaryHydrationKey &&
       studentSecondaryHydrationPromiseRef.current
@@ -1759,9 +2143,10 @@ function AttendanceManagementContent() {
       });
       await new Promise((resolve) => window.setTimeout(resolve, attendanceSecondaryHydrationDelayMs));
       if (studentSecondaryHydrationKeyRef.current !== studentSecondaryHydrationKey) return;
-      await loadTodayStudentDashboard(studentFilters.dashboard_date);
-      if (studentSecondaryHydrationKeyRef.current !== studentSecondaryHydrationKey) return;
-      await loadStudentCalendarRecords();
+      await Promise.all([
+        loadTodayStudentDashboard(studentFilters.dashboard_date),
+        loadStudentCalendarRecords(),
+      ]);
     })().finally(() => {
       if (studentSecondaryHydrationKeyRef.current === studentSecondaryHydrationKey) {
         studentSecondaryHydrationPromiseRef.current = null;
@@ -1776,6 +2161,7 @@ function AttendanceManagementContent() {
     calendarBatchParts.section,
     canRunAttendanceRequests,
     isStudentTabVisible,
+    studentFilters.attendance_scope,
     studentFilters.dashboard_date,
     studentPrimaryHydrationReadyKey,
     studentSecondaryHydrationKey,
@@ -1786,8 +2172,24 @@ function AttendanceManagementContent() {
       string,
       { batch_name: string; present: number; absent: number; late: number; total: number }
     >();
-    for (const record of summarizeStudentDayRecords(todayStudentRecords)) {
-      const key = record.batch_name;
+    const scopedRecords = summarizeStudentDayRecords(todayStudentRecords).filter((record) =>
+      recordMatchesSelectionScope(
+        {
+          class_name: splitBatchLabel(record.batch_name).className,
+          section: splitBatchLabel(record.batch_name).section,
+        },
+        studentFilters.attendance_scope,
+        selectedBatchParts.className,
+        selectedBatchParts.section,
+      )
+    );
+    for (const record of scopedRecords) {
+      const parsedBatch = splitBatchLabel(record.batch_name);
+      const key = getAttendanceRecordBatchLabel(
+        managedBatches,
+        parsedBatch.className,
+        parsedBatch.section,
+      );
       const current = grouped.get(key) || {
         batch_name: key,
         present: 0,
@@ -1801,30 +2203,46 @@ function AttendanceManagementContent() {
       grouped.set(key, current);
     }
     return Array.from(grouped.values()).sort((a, b) => a.batch_name.localeCompare(b.batch_name));
-  }, [todayStudentRecords]);
+  }, [managedBatches, selectedBatchParts.className, selectedBatchParts.section, studentFilters.attendance_scope, todayStudentRecords]);
 
   const todayOverallSummary = useMemo(() => {
-    const normalizedRecords = summarizeStudentDayRecords(todayStudentRecords);
+    const normalizedRecords = summarizeStudentDayRecords(todayStudentRecords).filter((record) =>
+      recordMatchesSelectionScope(
+        {
+          class_name: splitBatchLabel(record.batch_name).className,
+          section: splitBatchLabel(record.batch_name).section,
+        },
+        studentFilters.attendance_scope,
+        selectedBatchParts.className,
+        selectedBatchParts.section,
+      )
+    );
     const present = normalizedRecords.filter((record) => record.status === 'present').length;
     const absent = normalizedRecords.filter((record) => record.status === 'absent').length;
     return { present, absent, late: 0, total: normalizedRecords.length };
-  }, [todayStudentRecords]);
+  }, [selectedBatchParts.className, selectedBatchParts.section, studentFilters.attendance_scope, todayStudentRecords]);
 
   const calendarSourceRecords = useMemo(() => {
     if (studentCalendarUsingMonthFallback) {
       return studentCalendarRecords;
     }
 
-    const matchedCalendarRecords = studentCalendarRecords.filter((record) => {
-      if (!normalizedCalendarBatchKey) return true;
-      return normalizeBatchComparisonKey(`${record.class_name} | ${record.section}`) === normalizedCalendarBatchKey;
-    });
+    const matchedCalendarRecords = studentCalendarRecords.filter((record) =>
+      recordMatchesSelectionScope(
+        record,
+        studentFilters.attendance_scope,
+        calendarBatchParts.className,
+        calendarBatchParts.section,
+      )
+    );
 
     return matchedCalendarRecords;
   }, [
+    calendarBatchParts.className,
+    calendarBatchParts.section,
     studentCalendarRecords,
     studentCalendarUsingMonthFallback,
-    normalizedCalendarBatchKey,
+    studentFilters.attendance_scope,
   ]);
 
   const studentCalendar = useMemo(() => {
@@ -2182,26 +2600,30 @@ function AttendanceManagementContent() {
     });
   }, [markStaffDepartmentOptions]);
 
-  const loadStudentMarking = async () => {
-    if (!selectedBatchParts.className || !selectedBatchParts.section) return;
+  const loadStudentMarking = async (options?: { subjectId?: string; subjectName?: string }) => {
     const fallbackMarking = buildFallbackStudentMarking();
-    const subjectId = pickPreferredSubjectId(
-      studentFilters.subject_id,
-      selectedBatchSubject?.id,
-      batchAttendanceContext?.subject_id,
-      teacherAttendanceContext?.subject_id,
-      batchSubjectOptions[0]?.id,
-    );
-    if (!subjectId) {
+    if (!canRunAttendanceRequests) {
       setStudentMarking(fallbackMarking);
       return;
     }
+    if (!selectedTimetableParts.className || !selectedTimetableParts.section) {
+      setStudentMarking(fallbackMarking);
+      return;
+    }
+
     try {
+      const effectiveSubjectId = pickPreferredSubjectId(
+        options?.subjectId,
+        studentFilters.subject_id,
+        batchAttendanceContext?.subject_id,
+        teacherAttendanceContext?.subject_id,
+        fallbackMarking?.subject_id,
+      );
       const response = await apiService.getStudentAttendanceMarking({
         date: studentFilters.date,
-        class_name: selectedBatchParts.className,
-        section: selectedBatchParts.section,
-        subject_id: subjectId,
+        class_name: selectedTimetableParts.className,
+        section: selectedTimetableParts.section,
+        subject_id: effectiveSubjectId || undefined,
         search: studentFilters.search || undefined,
         school_id: 1,
       });
@@ -2210,136 +2632,84 @@ function AttendanceManagementContent() {
         setStudentMarking(fallbackMarking);
         return;
       }
-      const nextMarking = {
+      const normalizedPayload: StudentAttendanceMarkingResponse = {
         ...(payload as StudentAttendanceMarkingResponse),
-        subject_id: pickPreferredSubjectId(
-          (payload as StudentAttendanceMarkingResponse).subject_id,
-          subjectId,
-        ),
-        subject_name: (payload as StudentAttendanceMarkingResponse).subject_name ?? selectedBatchSubject?.name,
-        students: toArray<StudentAttendanceMarkingRow>(
-          (payload as StudentAttendanceMarkingResponse).students
-        ),
+        students: toArray<StudentAttendanceMarkingRow>((payload as StudentAttendanceMarkingResponse).students),
+        subject_id: effectiveSubjectId || (payload as StudentAttendanceMarkingResponse).subject_id,
+        subject_name:
+          options?.subjectName
+          || (payload as StudentAttendanceMarkingResponse).subject_name
+          || fallbackMarking?.subject_name,
       };
-      if (!nextMarking.students.length) {
-        setStudentMarking(fallbackMarking);
-        return;
-      }
-      setStudentMarking(nextMarking);
+      setStudentMarking(normalizedPayload);
     } catch (error: any) {
-      if (isRequestCanceled(error)) {
-        return;
+      if (!isRequestCanceled(error)) {
+        console.error('Error loading student attendance marking:', error);
       }
       setStudentMarking(fallbackMarking);
-      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Live marking load nahi hua, roster fallback dikhaya gaya hai.') });
     }
   };
 
   const loadTeacherAttendanceContext = async () => {
-    if (!canRunAttendanceRequests) {
-      debugAttendanceLoader('loadTeacherAttendanceContext.skipped.auth_not_ready');
+    if (!canRunAttendanceRequests || user?.role !== 'teacher' || !canViewStudentTab) {
+      setTeacherAttendanceContext(null);
       return;
     }
-    if (user?.role !== 'teacher') return;
-    const requestKey = `${studentFilters.date}:${getCurrentTimeHHMM().slice(0, 4)}`;
-    if (teacherContextRequestKeyRef.current === requestKey) {
-      return;
-    }
-    teacherContextRequestKeyRef.current = requestKey;
     try {
-      debugAttendanceLoader('loadTeacherAttendanceContext.start', { requestKey });
       const response = await apiService.getTeacherAttendanceContext({
         target_date: studentFilters.date,
         current_time: getCurrentTimeHHMM(),
         school_id: 1,
       });
-      const context = response.data;
+      const context = response.data || null;
       setTeacherAttendanceContext(context);
       upsertAttendanceSubject(context);
-      if (!context.class_name || !context.section) {
-        setAlert({ type: 'warning', message: 'Aaj ke liye teacher ki timetable class abhi match nahi hui.' });
-        return;
-      }
-      setStudentFilters((current) => ({
-        ...current,
-        batch_name: `${context.class_name} | ${context.section}`,
-        subject_id: context.subject_id ? String(context.subject_id) : current.subject_id,
-      }));
     } catch (error: any) {
+      if (!isRequestCanceled(error)) {
+        console.error('Error loading teacher attendance context:', error);
+      }
       setTeacherAttendanceContext(null);
-      setAlert({ type: 'warning', message: getApiErrorMessage(error, 'Teacher timetable se class auto-load nahi hui.') });
-    } finally {
-      debugAttendanceLoader('loadTeacherAttendanceContext.end', { requestKey });
-      window.setTimeout(() => {
-        if (teacherContextRequestKeyRef.current === requestKey) {
-          teacherContextRequestKeyRef.current = '';
-        }
-      }, 5_000);
     }
   };
 
   const loadBatchAttendanceContext = async () => {
-    if (!canRunAttendanceRequests) {
-      debugAttendanceLoader('loadBatchAttendanceContext.skipped.auth_not_ready');
-      return;
-    }
-    if (!selectedBatchParts.className || !selectedBatchParts.section) {
+    if (!canRunAttendanceRequests || !selectedTimetableParts.className || !selectedTimetableParts.section) {
+      setBatchAttendanceOptions([]);
+      setSelectedBatchAttendanceEntryId('');
       setBatchAttendanceContext(null);
-      return;
+      return null;
     }
-    const requestKey = `${selectedBatchParts.className}|${selectedBatchParts.section}|${studentFilters.date}|${getCurrentTimeHHMM().slice(0, 4)}`;
-    if (
-      batchContextRequestKeyRef.current === requestKey &&
-      batchContextRequestPromiseRef.current
-    ) {
-      debugAttendanceLoader('loadBatchAttendanceContext.reused_inflight', { requestKey });
-      return batchContextRequestPromiseRef.current;
+    try {
+      setBatchAttendanceOptionsLoading(true);
+      const response = await apiService.getBatchDayClasses({
+        class_name: selectedTimetableParts.className,
+        section: selectedTimetableParts.section,
+        batch_name: studentFilters.attendance_scope === 'batch' ? studentFilters.batch_name : undefined,
+        target_date: studentFilters.date,
+        current_time: getCurrentTimeHHMM(),
+        school_id: 1,
+      });
+      const contexts = toArray<TeacherAttendanceContext>(response.data);
+      setBatchAttendanceOptions(contexts);
+      const preferredContext = contexts.find(
+        (item) => getAttendanceContextOptionValue(item) === selectedBatchAttendanceEntryId
+      );
+      const context = preferredContext || contexts.find((item) => item.matched_by_current_time) || contexts[0] || null;
+      setSelectedBatchAttendanceEntryId(context ? getAttendanceContextOptionValue(context) : '');
+      setBatchAttendanceContext(context);
+      upsertAttendanceSubject(context);
+      return context;
+    } catch (error: any) {
+      if (!isRequestCanceled(error)) {
+        console.error('Error loading batch attendance context:', error);
+      }
+      setBatchAttendanceOptions([]);
+      setSelectedBatchAttendanceEntryId('');
+      setBatchAttendanceContext(null);
+      return null;
+    } finally {
+      setBatchAttendanceOptionsLoading(false);
     }
-    batchContextRequestKeyRef.current = requestKey;
-    const loadPromise = (async () => {
-      try {
-        debugAttendanceLoader('loadBatchAttendanceContext.start', {
-          className: selectedBatchParts.className,
-          section: selectedBatchParts.section,
-          requestKey,
-        });
-        const response = await apiService.getBatchAttendanceContext({
-          class_name: selectedBatchParts.className,
-          section: selectedBatchParts.section,
-          target_date: studentFilters.date,
-          current_time: getCurrentTimeHHMM(),
-          school_id: 1,
-        });
-        if (batchContextRequestKeyRef.current !== requestKey) return;
-        const context = response.data;
-        setBatchAttendanceContext(context);
-        upsertAttendanceSubject(context);
-        if (context.subject_id) {
-          setStudentFilters((current) => ({
-            ...current,
-            subject_id: String(context.subject_id),
-          }));
-        }
-      } catch (error: any) {
-        if (isRequestCanceled(error)) {
-          debugAttendanceLoader('loadBatchAttendanceContext.canceled', { requestKey });
-          return;
-        }
-        setBatchAttendanceContext(null);
-      } finally {
-        debugAttendanceLoader('loadBatchAttendanceContext.end', {
-          className: selectedBatchParts.className,
-          section: selectedBatchParts.section,
-          requestKey,
-        });
-      }
-    })().finally(() => {
-      if (batchContextRequestKeyRef.current === requestKey) {
-        batchContextRequestPromiseRef.current = null;
-      }
-    });
-    batchContextRequestPromiseRef.current = loadPromise;
-    return loadPromise;
   };
 
   const loadStudentRecords = async () => {
@@ -2347,7 +2717,9 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStudentRecords.skipped.auth_not_ready');
       return;
     }
-    const requestKey = `${recordBatchParts.className}|${recordBatchParts.section}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
+    const requestedSection =
+      studentFilters.record_scope === 'class' ? '' : recordBatchParts.section;
+    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
@@ -2372,7 +2744,7 @@ function AttendanceManagementContent() {
         const response = await apiService.listStudentAttendanceRecords({
           school_id: 1,
           class_name: recordBatchParts.className || undefined,
-          section: recordBatchParts.section || undefined,
+          section: requestedSection || undefined,
           student_name: studentFilters.recordStudentName || undefined,
           limit: attendanceStudentRecordPageSize,
         });
@@ -2407,13 +2779,15 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStudentCalendarRecords.skipped.auth_not_ready');
       return;
     }
-    if (!calendarBatchParts.className || !calendarBatchParts.section) {
+    const requestedSection =
+      studentFilters.attendance_scope === 'class' ? '' : calendarBatchParts.section;
+    if (!calendarBatchParts.className || (!requestedSection && studentFilters.attendance_scope === 'batch')) {
       setStudentCalendarRecords([]);
       setStudentCalendarUsingMonthFallback(false);
       return;
     }
     const monthRange = getMonthRange(studentFilters.dashboard_date);
-    const requestKey = `${calendarBatchParts.className}|${calendarBatchParts.section}|${monthRange.from}|${monthRange.to}|${attendanceStudentDashboardPageSize}`;
+    const requestKey = `${studentFilters.attendance_scope}|${calendarBatchParts.className}|${requestedSection}|${monthRange.from}|${monthRange.to}|${attendanceStudentDashboardPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentCalendarRecords.cache_hit', { requestKey, count: cachedRecords.length });
@@ -2439,7 +2813,7 @@ function AttendanceManagementContent() {
         const response = await apiService.listStudentAttendanceRecords({
           school_id: 1,
           class_name: calendarBatchParts.className,
-          section: calendarBatchParts.section,
+          section: requestedSection || undefined,
           date_from: monthRange.from || undefined,
           date_to: monthRange.to || undefined,
           limit: attendanceStudentDashboardPageSize,
@@ -2531,9 +2905,11 @@ function AttendanceManagementContent() {
 
   const refreshStudentTabViews = async (options?: { includeOverview?: boolean; forceOverview?: boolean }) => {
     if (isStudentTabVisible) {
-      await loadStudentRecords();
-      await loadStudentCalendarRecords();
-      await loadTodayStudentDashboard(studentFilters.dashboard_date);
+      await Promise.all([
+        loadStudentRecords(),
+        loadStudentCalendarRecords(),
+        loadTodayStudentDashboard(studentFilters.dashboard_date),
+      ]);
     }
     if (options?.includeOverview) {
       await loadOverviewData({ force: options.forceOverview });
@@ -2648,21 +3024,16 @@ function AttendanceManagementContent() {
   const handleSaveStudentAttendance = async () => {
     const markingPayload = studentMarking || buildFallbackStudentMarking();
     if (!markingPayload) return;
-    const effectiveSubjectId = pickPreferredSubjectId(
-      markingPayload.subject_id,
-      studentFilters.subject_id,
-      selectedBatchSubject?.id,
-      batchAttendanceContext?.subject_id,
-      teacherAttendanceContext?.subject_id,
-    );
-    if (!effectiveSubjectId) {
-      setAlert({ type: 'warning', message: 'Subject select hone ke baad hi student attendance save ho sakti hai.' });
-      return;
-    }
     try {
+      const effectiveSubjectId = pickPreferredSubjectId(
+        studentFilters.subject_id,
+        batchAttendanceContext?.subject_id,
+        teacherAttendanceContext?.subject_id,
+        markingPayload.subject_id,
+      );
       await apiService.saveStudentAttendance({
         date: studentFilters.date,
-        subject_id: effectiveSubjectId,
+        subject_id: effectiveSubjectId || undefined,
         marked_by: visibleAttendanceContext?.teacher_name || user?.full_name || 'Attendance Department',
         entries: markingPayload.students.map((item) => ({
           student_id: item.student_id,
@@ -2670,6 +3041,7 @@ function AttendanceManagementContent() {
           absence_reason: item.status === 'absent' ? item.absence_reason : undefined,
         })),
       });
+      clearStudentRecordCaches();
       setAlert({ type: 'success', message: 'Student attendance save ho gayi.' });
       await refreshStudentTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
@@ -2832,14 +3204,11 @@ function AttendanceManagementContent() {
 
   const handleDeleteAllStudentRecords = async () => {
     if (!window.confirm('Current filters ke hisaab se saare student attendance records delete karne hain?')) return;
-    const [class_name, section] = studentFilters.record_batch_name.includes('|')
-      ? studentFilters.record_batch_name.split('|').map((item) => item.trim())
-      : ['', ''];
     try {
       await apiService.deleteAllStudentAttendanceRecords({
         school_id: 1,
-        class_name: class_name || undefined,
-        section: section || undefined,
+        class_name: recordBatchParts.className || undefined,
+        section: recordBatchParts.section || undefined,
         student_name: studentFilters.recordStudentName || undefined,
         date_from: studentFilters.date_from || undefined,
         date_to: studentFilters.date_to || undefined,
@@ -3071,31 +3440,72 @@ function AttendanceManagementContent() {
                   <div>
                     <h2 className="text-2xl font-bold text-slate-900">Mark Student Attendance</h2>
                     <p className="mt-2 text-sm text-slate-500">
-                      {user?.role === 'teacher'
-                        ? 'Teacher timetable ke hisaab se class aur subject auto-load honge.'
-                        : 'Date aur batch select karke attendance mark karein.'}
+                      Date ke saath batch ya class select karke attendance mark karein.
                     </p>
-                    {visibleAttendanceContext?.class_name ? (
-                      <p className="mt-2 text-sm text-indigo-600">
-                        {visibleAttendanceContext.teacher_name ? `${visibleAttendanceContext.teacher_name}: ` : ''}
-                        {visibleAttendanceContext.class_name} | {visibleAttendanceContext.section}
-                        {visibleAttendanceContext.subject ? ` | ${visibleAttendanceContext.subject}` : ''}
-                        {visibleAttendanceContext.start_time && visibleAttendanceContext.end_time
-                          ? ` | ${visibleAttendanceContext.start_time} - ${visibleAttendanceContext.end_time}`
-                          : ''}
+                    <p className="mt-2 text-sm text-slate-600">
+                      Selected {studentFilters.attendance_scope === 'class' ? 'class' : 'batch'} total students:{' '}
+                      <span className="font-semibold text-slate-900">{selectedBatchStudentCount}</span>
+                    </p>
+                    {visibleAttendanceContext?.subject || visibleAttendanceContext?.teacher_name ? (
+                      <p className="mt-2 text-sm text-slate-600">
+                        {shouldDisplayAttendanceTeacher(visibleAttendanceContext?.teacher_name) ? (
+                          <>
+                            Teacher: <span className="font-semibold text-slate-900">{visibleAttendanceContext?.teacher_name}</span>
+                          </>
+                        ) : null}
+                        {shouldDisplayAttendanceTeacher(visibleAttendanceContext?.teacher_name) && shouldDisplayAttendanceSubject(visibleAttendanceContext?.subject) ? ' | ' : ''}
+                        {shouldDisplayAttendanceSubject(visibleAttendanceContext?.subject) ? (
+                          <>
+                            Subject: <span className="font-semibold text-slate-900">{visibleAttendanceContext?.subject}</span>
+                          </>
+                        ) : null}
                       </p>
+                    ) : null}
+                    {studentFilters.batch_name ? (
+                      <div className="mt-3 max-w-2xl">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Today&apos;s Classes</p>
+                        <SelectField
+                          value={selectedBatchAttendanceEntryId}
+                          disabled={batchAttendanceOptionsLoading || !batchAttendanceOptions.length}
+                          onChange={async (e) => {
+                            const nextValue = e.target.value;
+                            setSelectedBatchAttendanceEntryId(nextValue);
+                            const nextContext = batchAttendanceOptions.find(
+                              (item) => getAttendanceContextOptionValue(item) === nextValue
+                            ) || null;
+                            setBatchAttendanceContext(nextContext);
+                            upsertAttendanceSubject(nextContext);
+                            setStudentFilters((current) => ({
+                              ...current,
+                              subject_id: pickPreferredSubjectId(nextContext?.subject_id, current.subject_id),
+                            }));
+                            await loadStudentMarking({
+                              subjectId: String(nextContext?.subject_id || ''),
+                              subjectName: nextContext?.subject || '',
+                            });
+                          }}
+                          className="w-full pr-12 text-[13px] md:text-sm"
+                        >
+                          <option value="">
+                            {batchAttendanceOptionsLoading
+                              ? 'Loading today classes...'
+                              : batchAttendanceOptions.length
+                                ? 'Select teacher / subject'
+                                : 'No timetable class found'}
+                          </option>
+                          {batchAttendanceOptions.map((item) => {
+                            const optionValue = getAttendanceContextOptionValue(item);
+                            return (
+                              <option key={optionValue} value={optionValue}>
+                                {formatAttendanceContextOptionLabel(item)}
+                              </option>
+                            );
+                          })}
+                        </SelectField>
+                      </div>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-2">
-                    {user?.role === 'teacher' ? (
-                      <button
-                        type="button"
-                        onClick={() => void loadTeacherAttendanceContext()}
-                        className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-                      >
-                        Auto Load My Class
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() =>
@@ -3115,40 +3525,41 @@ function AttendanceManagementContent() {
                   </div>
                 </div>
 
-                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="mt-6 grid gap-4 md:grid-cols-[0.95fr_minmax(0,3.1fr)_0.75fr] xl:grid-cols-[0.9fr_minmax(0,3.6fr)_0.8fr]">
                   <div>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Date</p>
                     <input type="date" value={studentFilters.date} onChange={(e) => setStudentFilters({ ...studentFilters, date: e.target.value })} className={inputClass} />
                   </div>
                   <div>
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Batch</p>
-                    <SelectField value={studentFilters.batch_name} onChange={(e) => setStudentFilters({ ...studentFilters, batch_name: e.target.value })}>
-                      <option value="">Batch</option>
-                      {batchOptions.map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                      ))}
-                    </SelectField>
-                  </div>
-                  <div>
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subject</p>
-                    <SelectField
-                      value={studentFilters.subject_id}
-                      onChange={(e) => setStudentFilters({ ...studentFilters, subject_id: e.target.value })}
-                      disabled={!studentFilters.batch_name || !batchSubjectOptions.length}
-                    >
-                      <option value="">
-                        {!studentFilters.batch_name
-                          ? 'Select batch first'
-                          : batchSubjectOptions.length
-                            ? 'Select subject'
-                            : 'No subject available'}
-                      </option>
-                      {batchSubjectOptions.map((item) => (
-                        <option key={item.id} value={String(item.id)}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </SelectField>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Attendance Type</p>
+                    <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-3">
+                      <SelectField
+                        value={studentFilters.attendance_scope}
+                        onChange={(e) => {
+                          const nextScope = e.target.value as 'batch' | 'class';
+                          const nextOptions = nextScope === 'class' ? managedClassOptions : managedBatchOptions;
+                          setStudentFilters({
+                            ...studentFilters,
+                            attendance_scope: nextScope,
+                            batch_name: nextOptions[0] || '',
+                            subject_id: '',
+                          });
+                        }}
+                      >
+                        <option value="batch">Batch Wise</option>
+                        <option value="class">Class Wise</option>
+                      </SelectField>
+                      <SelectField
+                        value={studentFilters.batch_name}
+                        onChange={(e) => setStudentFilters({ ...studentFilters, batch_name: e.target.value })}
+                        className="w-full pr-12 text-[13px] md:text-sm"
+                      >
+                        <option value="">{studentFilters.attendance_scope === 'class' ? 'Select Class' : 'Select Batch'}</option>
+                        {batchOptions.map((item) => (
+                          <option key={item} value={item}>{item}</option>
+                        ))}
+                      </SelectField>
+                    </div>
                   </div>
                 </div>
 
@@ -3256,11 +3667,28 @@ function AttendanceManagementContent() {
                       </button>
                     </div>
                   </div>
-                  <p className="mt-4 text-sm text-slate-600">Selected batch total students: <span className="font-semibold text-slate-900">{selectedBatchStudentCount}</span></p>
+                  <p className="mt-4 text-sm text-slate-600">
+                    Selected {studentFilters.record_scope === 'class' ? 'class' : 'batch'} total students: <span className="font-semibold text-slate-900">{selectedRecordStudentCount}</span>
+                  </p>
                   <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <SelectField
+                      value={studentFilters.record_scope}
+                      onChange={(e) => {
+                        const nextScope = e.target.value as 'batch' | 'class';
+                        const nextOptions = nextScope === 'class' ? managedClassOptions : managedBatchOptions;
+                        setStudentFilters({
+                          ...studentFilters,
+                          record_scope: nextScope,
+                          record_batch_name: nextOptions[0] || '',
+                        });
+                      }}
+                    >
+                      <option value="batch">Batch Records</option>
+                      <option value="class">Class Records</option>
+                    </SelectField>
                     <SelectField value={studentFilters.record_batch_name} onChange={(e) => setStudentFilters({ ...studentFilters, record_batch_name: e.target.value })}>
-                      <option value="">All Batches</option>
-                      {batchOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                      <option value="">{studentFilters.record_scope === 'class' ? 'All Classes' : 'All Batches'}</option>
+                      {recordBatchOptions.map((item) => <option key={item} value={item}>{item}</option>)}
                     </SelectField>
                     <input value={studentFilters.recordStudentName} onChange={(e) => setStudentFilters({ ...studentFilters, recordStudentName: e.target.value })} className={inputClass} placeholder="Student name" />
                     <input type="date" value={studentFilters.date_from} onChange={(e) => setStudentFilters({ ...studentFilters, date_from: e.target.value })} className={inputClass} />
@@ -3279,14 +3707,14 @@ function AttendanceManagementContent() {
                         <div key={record.id} className="grid min-w-[52rem] grid-cols-[1.2fr_1fr_1fr_0.8fr_0.7fr] gap-4 px-4 py-3 text-sm text-slate-700">
                           <div>
                             <p>{record.student_name}</p>
-                            {record.subject_name ? <p className="mt-1 text-xs text-slate-500">Subject: {record.subject_name}</p> : null}
-                            {record.marked_by ? <p className="mt-1 text-xs text-slate-500">Teacher: {record.marked_by}</p> : null}
+                            {shouldDisplayAttendanceSubject(record.subject_name) ? <p className="mt-1 text-xs text-slate-500">Subject: {record.subject_name}</p> : null}
+                            {shouldDisplayAttendanceTeacher(record.marked_by) ? <p className="mt-1 text-xs text-slate-500">Teacher: {record.marked_by}</p> : null}
                             {record.absence_reason ? <p className="mt-1 text-xs text-amber-700">Remark: {record.absence_reason}</p> : null}
                           </div>
-                          <span>{record.class_name} | {record.section}</span>
+                          <span>{getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)}</span>
                           <div>
                             <p>{formatDate(record.date)}</p>
-                            <p className="mt-1 text-xs text-slate-500">{record.class_name} | {record.section}</p>
+                            <p className="mt-1 text-xs text-slate-500">{getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)}</p>
                           </div>
                           <span className={studentRecordStatusClass(record.status)}>{record.status}</span>
                           <button type="button" onClick={() => handleDeleteStudentRecord(record.id)} className={studentRecordDeleteButtonClass}>
@@ -4077,7 +4505,7 @@ function SelectField({
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-sky-200 bg-sky-50 shadow-sm">
+    <div className="relative w-full overflow-hidden rounded-2xl border border-sky-200 bg-sky-50 shadow-sm">
       <select
         {...props}
         className={`w-full cursor-pointer appearance-none bg-transparent px-4 py-3 pr-16 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-200/70 ${className}`.trim()}

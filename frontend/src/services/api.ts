@@ -54,6 +54,35 @@ export const getApiBaseUrl = () => {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const normalizeClassNameKey = (value?: string | null) => {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  const tokens = normalized.split(' ');
+  const firstNumericIndex = tokens.findIndex((token) => /\d/.test(token));
+  const relevantTokens = firstNumericIndex >= 0 ? tokens.slice(firstNumericIndex) : tokens;
+  return relevantTokens
+    .join(' ')
+    .replace(/\b(\d+)(st|nd|rd|th)\b/gi, '$1')
+    .trim()
+    .toLowerCase();
+};
+const normalizeBatchKey = (value?: string | null) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (normalized.includes('|')) {
+    const [classNameRaw, sectionRaw] = normalized.split('|', 2);
+    return `${normalizeClassNameKey(classNameRaw)}|${(sectionRaw || '').trim().toLowerCase()}`;
+  }
+  const hyphenMatch = normalized.match(/^(.*\S)\s*-\s*([A-Za-z0-9]{1,3})$/);
+  if (hyphenMatch) {
+    return `${normalizeClassNameKey(hyphenMatch[1])}|${hyphenMatch[2].trim().toLowerCase()}`;
+  }
+  const spacedMatch = normalized.match(/^(.*\S)\s+([A-Za-z0-9]{1,3})$/);
+  if (spacedMatch) {
+    return `${normalizeClassNameKey(spacedMatch[1])}|${spacedMatch[2].trim().toLowerCase()}`;
+  }
+  return normalizeClassNameKey(normalized);
+};
 type FailedQueueEntry = {
   resolve: (token: string) => void;
   reject: (error: unknown) => void;
@@ -111,15 +140,30 @@ class ApiService {
   private attendanceStudentsRequestKey: string | null = null;
   private attendanceStudentsRequestPromise: Promise<{ data: AttendanceStudent[] }> | null = null;
   private attendanceStudentsCache = new Map<string, { expiresAt: number; data: AttendanceStudent[] }>();
+  private studentsListRequestKey: string | null = null;
+  private studentsListRequestPromise: Promise<{ data: Student[] }> | null = null;
+  private studentsListCache = new Map<string, { expiresAt: number; data: Student[] }>();
   private attendanceStaffDashboardRequestKey: string | null = null;
   private attendanceStaffDashboardRequestPromise: Promise<{ data: StaffDashboard }> | null = null;
   private attendanceStaffDashboardCache = new Map<string, { expiresAt: number; data: StaffDashboard }>();
   private batchListRequestKey: string | null = null;
   private batchListRequestPromise: Promise<{ data: Batch[] }> | null = null;
   private batchListCache = new Map<string, { expiresAt: number; data: Batch[] }>();
+  private roomsListRequestKey: string | null = null;
+  private roomsListRequestPromise: Promise<{ data: Room[] }> | null = null;
+  private roomsListCache = new Map<string, { expiresAt: number; data: Room[] }>();
+  private teachersListRequestKey: string | null = null;
+  private teachersListRequestPromise: Promise<{ data: Teacher[] }> | null = null;
+  private teachersListCache = new Map<string, { expiresAt: number; data: Teacher[] }>();
+  private invigilatorsListRequestKey: string | null = null;
+  private invigilatorsListRequestPromise: Promise<{ data: Invigilator[] }> | null = null;
+  private invigilatorsListCache = new Map<string, { expiresAt: number; data: Invigilator[] }>();
   private batchAttendanceContextRequestKey: string | null = null;
   private batchAttendanceContextRequestPromise: Promise<{ data: TeacherAttendanceContext }> | null = null;
   private batchAttendanceContextCache = new Map<string, { expiresAt: number; data: TeacherAttendanceContext }>();
+  private batchDayClassesRequestKey: string | null = null;
+  private batchDayClassesRequestPromise: Promise<{ data: TeacherAttendanceContext[] }> | null = null;
+  private batchDayClassesCache = new Map<string, { expiresAt: number; data: TeacherAttendanceContext[] }>();
   private studentAttendanceRecordsRequestKey: string | null = null;
   private studentAttendanceRecordsRequestPromise: Promise<{ data: StudentAttendanceRecord[] }> | null = null;
   private studentAttendanceRecordsCache = new Map<string, { expiresAt: number; data: StudentAttendanceRecord[] }>();
@@ -156,10 +200,40 @@ class ApiService {
     this.attendanceSubjectsRequestPromise = null;
   }
 
+  private clearStudentAttendanceRecordsCache() {
+    this.studentAttendanceRecordsCache.clear();
+    this.studentAttendanceRecordsRequestKey = null;
+    this.studentAttendanceRecordsRequestPromise = null;
+  }
+
+  private clearStudentsListCache() {
+    this.studentsListCache.clear();
+    this.studentsListRequestKey = null;
+    this.studentsListRequestPromise = null;
+  }
+
   private clearBatchListCache() {
     this.batchListCache.clear();
     this.batchListRequestKey = null;
     this.batchListRequestPromise = null;
+  }
+
+  private clearRoomsListCache() {
+    this.roomsListCache.clear();
+    this.roomsListRequestKey = null;
+    this.roomsListRequestPromise = null;
+  }
+
+  private clearTeachersListCache() {
+    this.teachersListCache.clear();
+    this.teachersListRequestKey = null;
+    this.teachersListRequestPromise = null;
+  }
+
+  private clearInvigilatorsListCache() {
+    this.invigilatorsListCache.clear();
+    this.invigilatorsListRequestKey = null;
+    this.invigilatorsListRequestPromise = null;
   }
 
   private getAccessToken() {
@@ -753,6 +827,8 @@ class ApiService {
       id: batch.id,
       name: batch.name,
       category: batch.category,
+      class_name: batch.class_name || undefined,
+      section: batch.section || undefined,
       syllabus: batch.syllabus || undefined,
       stream: batch.stream || undefined,
       display_order: Number(batch.display_order ?? 0),
@@ -1791,6 +1867,8 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearStudentsListCache();
+    this.clearBatchListCache();
     return { data: this.mapSupabaseStudentToLegacy(data) } as { data: Student };
   }
 
@@ -1812,52 +1890,91 @@ class ApiService {
       return { data: [] } as { data: Student[] };
     }
 
-    const { data, error } = await supabase
-      .from('students')
-      .select(`
-        id,
-        school_id,
-        batch_id,
-        admission_no,
-        roll_number,
-        full_name,
-        father_name,
-        mother_name,
-        email,
-        phone,
-        guardian_name,
-        guardian_phone,
-        class_name,
-        section,
-        academic_session,
-        date_of_birth,
-        gender,
-        special_needs,
-        requires_near_exit,
-        requires_extra_time,
-        boarding_type,
-        hostel_required,
-        metadata,
-        is_active,
-        created_at,
-        updated_at,
-        batches(name)
-      `)
-      .eq('school_id', scopedSchoolId)
-      .order('full_name', { ascending: true })
-      .range(skip, Math.max(skip, skip + limit - 1));
-
-    if (error) {
-      this.logSupabaseQueryError('listStudents', error, { schoolId: scopedSchoolId, skip, limit, batch });
-      throw error;
+    const requestKey = JSON.stringify({
+      school_id: scopedSchoolId,
+      skip,
+      limit,
+      batch: batch || '',
+    });
+    const now = Date.now();
+    const cached = this.studentsListCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: Student[] };
+    }
+    if (this.studentsListRequestKey === requestKey && this.studentsListRequestPromise) {
+      return this.studentsListRequestPromise;
     }
 
-    let students = (data || []).map((item: any) => this.mapSupabaseStudentToLegacy(item));
-    if (batch) {
-      const normalizedBatch = batch.trim().toLowerCase();
-      students = students.filter((student) => String(student.batch || '').trim().toLowerCase() === normalizedBatch);
-    }
-    return { data: students } as { data: Student[] };
+    this.studentsListRequestKey = requestKey;
+    this.studentsListRequestPromise = (async () => {
+      const { data, error } = await supabase
+        .from('students')
+        .select(`
+          id,
+          school_id,
+          batch_id,
+          admission_no,
+          roll_number,
+          full_name,
+          father_name,
+          mother_name,
+          email,
+          phone,
+          guardian_name,
+          guardian_phone,
+          class_name,
+          section,
+          academic_session,
+          date_of_birth,
+          gender,
+          special_needs,
+          requires_near_exit,
+          requires_extra_time,
+          boarding_type,
+          hostel_required,
+          metadata,
+          is_active,
+          created_at,
+          updated_at,
+          batches(name)
+        `)
+        .eq('school_id', scopedSchoolId)
+        .order('full_name', { ascending: true })
+        .range(skip, Math.max(skip, skip + limit - 1));
+
+      if (error) {
+        this.logSupabaseQueryError('listStudents', error, { schoolId: scopedSchoolId, skip, limit, batch });
+        throw error;
+      }
+
+      let students = (data || []).map((item: any) => this.mapSupabaseStudentToLegacy(item));
+      if (batch) {
+        const normalizedBatch = normalizeBatchKey(batch);
+        students = students.filter((student) => {
+          const directBatch = normalizeBatchKey(String(student.batch || '').trim());
+          const classSectionBatch = normalizeBatchKey(
+            `${String(student.class_name || '').trim()} | ${String(student.section || '').trim()}`
+          );
+          return Boolean(
+            normalizedBatch &&
+            (directBatch === normalizedBatch || classSectionBatch === normalizedBatch)
+          );
+        });
+      }
+
+      this.studentsListCache.set(requestKey, {
+        data: students,
+        expiresAt: Date.now() + 60_000,
+      });
+      return { data: students } as { data: Student[] };
+    })().finally(() => {
+      if (this.studentsListRequestKey === requestKey) {
+        this.studentsListRequestKey = null;
+        this.studentsListRequestPromise = null;
+      }
+    });
+
+    return this.studentsListRequestPromise;
   }
 
   async getStudentsCount() {
@@ -2015,6 +2132,8 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearStudentsListCache();
+    this.clearBatchListCache();
     return { data: this.mapSupabaseStudentToLegacy(updated) } as { data: Student };
   }
 
@@ -2030,6 +2149,8 @@ class ApiService {
     const { error } = await supabase.from('students').delete().eq('id', resolvedId);
     if (error) throw error;
     await this.removeStudentPhotoAsset(existing?.metadata?.photo_path || null);
+    this.clearStudentsListCache();
+    this.clearBatchListCache();
     return { data: { message: 'Student deleted successfully' } } as { data: { message: string } };
   }
 
@@ -2052,6 +2173,8 @@ class ApiService {
         console.warn('[Supabase] bulk student photo cleanup failed', { message: removeError.message });
       }
     }
+    this.clearStudentsListCache();
+    this.clearBatchListCache();
     return { data: { success: true, is_admin: isAdmin } } as { data: { success: boolean; is_admin: boolean } };
   }
 
@@ -2119,6 +2242,8 @@ class ApiService {
         })
         .eq('id', student.id);
     }
+    this.clearStudentsListCache();
+    this.clearBatchListCache();
 
     return {
       data: {
@@ -2343,6 +2468,7 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearRoomsListCache();
     return { data: this.mapSupabaseRoomToLegacy(data) } as { data: Room };
   }
 
@@ -2351,13 +2477,36 @@ class ApiService {
     if (!scopedSchoolId) {
       return { data: [] } as { data: Room[] };
     }
-    const { data, error } = await supabase
-      .from('rooms')
-      .select('*')
-      .eq('school_id', scopedSchoolId)
-      .order('name', { ascending: true });
-    if (error) throw error;
-    return { data: (data || []).map((room: any) => this.mapSupabaseRoomToLegacy(room)) } as { data: Room[] };
+    const requestKey = JSON.stringify({ school_id: scopedSchoolId });
+    const now = Date.now();
+    const cached = this.roomsListCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: Room[] };
+    }
+    if (this.roomsListRequestKey === requestKey && this.roomsListRequestPromise) {
+      return this.roomsListRequestPromise;
+    }
+    this.roomsListRequestKey = requestKey;
+    this.roomsListRequestPromise = (async () => {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('school_id', scopedSchoolId)
+        .order('name', { ascending: true });
+      if (error) throw error;
+      const rooms = (data || []).map((room: any) => this.mapSupabaseRoomToLegacy(room));
+      this.roomsListCache.set(requestKey, {
+        data: rooms,
+        expiresAt: Date.now() + 60_000,
+      });
+      return { data: rooms } as { data: Room[] };
+    })().finally(() => {
+      if (this.roomsListRequestKey === requestKey) {
+        this.roomsListRequestKey = null;
+        this.roomsListRequestPromise = null;
+      }
+    });
+    return this.roomsListRequestPromise;
   }
 
   async getRoomsSummary() {
@@ -2409,12 +2558,14 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearRoomsListCache();
     return { data: this.mapSupabaseRoomToLegacy(updated) } as { data: Room };
   }
 
   async deleteRoom(roomId: string | number, _schoolId: number = 1) {
     const { error } = await supabase.from('rooms').delete().eq('id', roomId);
     if (error) throw error;
+    this.clearRoomsListCache();
     return { data: { message: 'Room deleted successfully' } } as { data: { message: string } };
   }
 
@@ -2776,6 +2927,7 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearTeachersListCache();
     return { data: this.mapSupabaseTeacherToLegacy(data) } as { data: Teacher };
   }
 
@@ -2784,17 +2936,39 @@ class ApiService {
     if (!scopedSchoolId) {
       return { data: [] } as { data: Teacher[] };
     }
+    const requestKey = JSON.stringify({ school_id: scopedSchoolId, skip, limit });
+    const now = Date.now();
+    const cached = this.teachersListCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: Teacher[] };
+    }
+    if (this.teachersListRequestKey === requestKey && this.teachersListRequestPromise) {
+      return this.teachersListRequestPromise;
+    }
+    this.teachersListRequestKey = requestKey;
+    this.teachersListRequestPromise = (async () => {
+      const { data, error } = await supabase
+        .from('staff_members')
+        .select('*')
+        .eq('school_id', scopedSchoolId)
+        .eq('staff_type', 'teaching')
+        .order('full_name', { ascending: true })
+        .range(skip, Math.max(skip, skip + limit - 1));
 
-    const { data, error } = await supabase
-      .from('staff_members')
-      .select('*')
-      .eq('school_id', scopedSchoolId)
-      .eq('staff_type', 'teaching')
-      .order('full_name', { ascending: true })
-      .range(skip, Math.max(skip, skip + limit - 1));
-
-    if (error) throw error;
-    return { data: (data || []).map((item: any) => this.mapSupabaseTeacherToLegacy(item)) } as { data: Teacher[] };
+      if (error) throw error;
+      const teachers = (data || []).map((item: any) => this.mapSupabaseTeacherToLegacy(item));
+      this.teachersListCache.set(requestKey, {
+        data: teachers,
+        expiresAt: Date.now() + 60_000,
+      });
+      return { data: teachers } as { data: Teacher[] };
+    })().finally(() => {
+      if (this.teachersListRequestKey === requestKey) {
+        this.teachersListRequestKey = null;
+        this.teachersListRequestPromise = null;
+      }
+    });
+    return this.teachersListRequestPromise;
   }
 
   async getTeachersCount() {
@@ -2872,6 +3046,7 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearTeachersListCache();
     return { data: this.mapSupabaseTeacherToLegacy(updated) } as { data: Teacher };
   }
 
@@ -2886,6 +3061,7 @@ class ApiService {
     const { error } = await supabase.from('staff_members').delete().eq('id', resolvedId);
     if (error) throw error;
     await this.removeStaffPhotoAsset(existing?.metadata?.photo_path || null);
+    this.clearTeachersListCache();
     return { data: { message: 'Teacher deleted successfully' } } as { data: { message: string } };
   }
 
@@ -3213,6 +3389,7 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearInvigilatorsListCache();
     return { data: this.mapSupabaseInvigilatorToLegacy(data) } as { data: Invigilator };
   }
 
@@ -3221,22 +3398,44 @@ class ApiService {
     if (!scopedSchoolId) {
       return { data: [] } as { data: Invigilator[] };
     }
-
-    let query = supabase
-      .from('staff_members')
-      .select('*')
-      .eq('school_id', scopedSchoolId)
-      .neq('staff_type', 'teaching')
-      .order('full_name', { ascending: true })
-      .range(skip, Math.max(skip, skip + limit - 1));
-
-    if (isActive !== undefined) {
-      query = query.eq('is_active', isActive);
+    const requestKey = JSON.stringify({ school_id: scopedSchoolId, is_active: isActive, skip, limit });
+    const now = Date.now();
+    const cached = this.invigilatorsListCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: Invigilator[] };
     }
+    if (this.invigilatorsListRequestKey === requestKey && this.invigilatorsListRequestPromise) {
+      return this.invigilatorsListRequestPromise;
+    }
+    this.invigilatorsListRequestKey = requestKey;
+    this.invigilatorsListRequestPromise = (async () => {
+      let query = supabase
+        .from('staff_members')
+        .select('*')
+        .eq('school_id', scopedSchoolId)
+        .neq('staff_type', 'teaching')
+        .order('full_name', { ascending: true })
+        .range(skip, Math.max(skip, skip + limit - 1));
 
-    const { data, error } = await query;
-    if (error) throw error;
-    return { data: (data || []).map((item: any) => this.mapSupabaseInvigilatorToLegacy(item)) } as { data: Invigilator[] };
+      if (isActive !== undefined) {
+        query = query.eq('is_active', isActive);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      const invigilators = (data || []).map((item: any) => this.mapSupabaseInvigilatorToLegacy(item));
+      this.invigilatorsListCache.set(requestKey, {
+        data: invigilators,
+        expiresAt: Date.now() + 60_000,
+      });
+      return { data: invigilators } as { data: Invigilator[] };
+    })().finally(() => {
+      if (this.invigilatorsListRequestKey === requestKey) {
+        this.invigilatorsListRequestKey = null;
+        this.invigilatorsListRequestPromise = null;
+      }
+    });
+    return this.invigilatorsListRequestPromise;
   }
 
   async getInvigilator(invigilatorId: number) {
@@ -3303,6 +3502,7 @@ class ApiService {
       .single();
 
     if (error) throw error;
+    this.clearInvigilatorsListCache();
     return { data: this.mapSupabaseInvigilatorToLegacy(updated) } as { data: Invigilator };
   }
 
@@ -3317,6 +3517,7 @@ class ApiService {
     const { error } = await supabase.from('staff_members').delete().eq('id', resolvedId);
     if (error) throw error;
     await this.removeStaffPhotoAsset(existing?.metadata?.photo_path || null);
+    this.clearInvigilatorsListCache();
     return { data: { message: 'Staff member deleted successfully' } } as { data: { message: string } };
   }
 
@@ -5155,6 +5356,7 @@ class ApiService {
   async getBatchAttendanceContext(params: {
     class_name: string;
     section: string;
+    batch_name?: string;
     target_date?: string;
     current_time?: string;
     school_id?: number | string;
@@ -5200,11 +5402,60 @@ class ApiService {
     return this.batchAttendanceContextRequestPromise;
   }
 
+  async getBatchDayClasses(params: {
+    class_name: string;
+    section: string;
+    batch_name?: string;
+    target_date?: string;
+    current_time?: string;
+    school_id?: number | string;
+  }) {
+    const scopedSchoolId = await this.resolveScopedSchoolId(params?.school_id);
+    if (!scopedSchoolId) {
+      throw new Error('Active school context is required to load batch day classes');
+    }
+    const requestParams = {
+      ...params,
+      school_id: scopedSchoolId,
+    };
+    const requestKey = JSON.stringify(requestParams);
+    const now = Date.now();
+    const cached = this.batchDayClassesCache.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.data } as { data: TeacherAttendanceContext[] };
+    }
+
+    if (this.batchDayClassesRequestKey === requestKey && this.batchDayClassesRequestPromise) {
+      return this.batchDayClassesRequestPromise;
+    }
+
+    this.batchDayClassesRequestKey = requestKey;
+    this.batchDayClassesRequestPromise = this.api
+      .get<TeacherAttendanceContext[]>('/attendance/batch-day-classes', {
+        params: requestParams,
+      })
+      .then((response) => {
+        this.batchDayClassesCache.set(requestKey, {
+          data: response.data,
+          expiresAt: Date.now() + 45_000,
+        });
+        return response;
+      })
+      .finally(() => {
+        if (this.batchDayClassesRequestKey === requestKey) {
+          this.batchDayClassesRequestKey = null;
+          this.batchDayClassesRequestPromise = null;
+        }
+      });
+
+    return this.batchDayClassesRequestPromise;
+  }
+
   async getStudentAttendanceMarking(params: {
     date: string;
     class_name: string;
     section: string;
-    subject_id: number;
+    subject_id?: number | string;
     search?: string;
     school_id?: number | string;
   }) {
@@ -5225,7 +5476,7 @@ class ApiService {
   async saveStudentAttendance(
     data: {
       date: string;
-      subject_id: string | number;
+      subject_id?: string | number;
       marked_by?: string;
       entries: Array<{ student_id: string | number; status: 'present' | 'absent' | 'late'; absence_reason?: string }>;
     },
@@ -5236,15 +5487,21 @@ class ApiService {
       throw new Error('Active school context is required to save student attendance');
     }
     try {
-      return await this.api.post('/attendance/student-marking', data, {
+      const response = await this.api.post('/attendance/student-marking', data, {
         params: { school_id: scopedSchoolId },
+        timeout: 120000,
       });
+      this.clearStudentAttendanceRecordsCache();
+      return response;
     } catch (error: any) {
       if (!this.isDatetimeValidationError(error)) throw error;
       const retryData = { ...data, date: this.toDateTimeString(data.date) || data.date };
-      return this.api.post('/attendance/student-marking', retryData, {
+      const response = await this.api.post('/attendance/student-marking', retryData, {
         params: { school_id: scopedSchoolId },
+        timeout: 120000,
       });
+      this.clearStudentAttendanceRecordsCache();
+      return response;
     }
   }
 

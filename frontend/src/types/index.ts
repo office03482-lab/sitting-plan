@@ -20,6 +20,8 @@ export interface Batch {
   id: string | number;
   name: string;
   category?: 'batch' | 'class' | string;
+  class_name?: string;
+  section?: string;
   syllabus?: string;
   stream?: string;
   display_order?: number;
@@ -534,6 +536,8 @@ export interface TeacherAttendanceContext {
   timetable_entry_id?: number;
   matched_by_current_time: boolean;
 }
+
+export interface BatchDayClassOption extends TeacherAttendanceContext {}
 
 export interface StaffAttendanceMarkingRow {
   staff_member_id: number;
