@@ -48,6 +48,7 @@ DAYS_ORDER = [
     DayOfWeek.THURSDAY,
     DayOfWeek.FRIDAY,
     DayOfWeek.SATURDAY,
+    DayOfWeek.SUNDAY,
 ]
 DAYS_LABELS = {day.value: day.value.capitalize() for day in DAYS_ORDER}
 EXPORT_GROUPINGS = {"day", "teacher", "room", "batch"}

@@ -26,6 +26,7 @@ const DAY_INDEX: Record<DayOfWeek, number> = {
   thursday: 3,
   friday: 4,
   saturday: 5,
+  sunday: 6,
 };
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
@@ -35,6 +36,7 @@ const DAY_LABELS: Record<DayOfWeek, string> = {
   thursday: 'Thursday',
   friday: 'Friday',
   saturday: 'Saturday',
+  sunday: 'Sunday',
 };
 
 const formatDateBadge = (value: Date) =>
@@ -53,15 +55,16 @@ const toInputDateValue = (value: Date) => {
 };
 
 const getDayOfWeekFromDate = (value: string): DayOfWeek => {
-  const date = new Date(`${value}T00:00:00`);
+  const parts = value.split('-').map(Number);
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
   const jsDay = date.getDay();
-  const normalizedIndex = jsDay === 0 ? 6 : jsDay - 1;
-  const day = (Object.keys(DAY_INDEX) as DayOfWeek[]).find((item) => DAY_INDEX[item] === normalizedIndex);
+  const day = (Object.keys(DAY_INDEX) as DayOfWeek[]).find((item) => DAY_INDEX[item] === jsDay);
   return day || 'monday';
 };
 
 const getWeekDateForDay = (referenceDate: string, day: DayOfWeek) => {
-  const date = new Date(`${referenceDate}T00:00:00`);
+  const parts = referenceDate.split('-').map(Number);
+  const date = new Date(parts[0], parts[1] - 1, parts[2]);
   const referenceDay = getDayOfWeekFromDate(referenceDate);
   const diff = DAY_INDEX[day] - DAY_INDEX[referenceDay];
   date.setDate(date.getDate() + diff);
@@ -136,7 +139,7 @@ const TimetableManagement: React.FC = () => {
     subject: '',
   });
 
-  const daysOfWeek: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const daysOfWeek: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   const defaultTimeSlots = [
     '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'
   ];
@@ -849,7 +852,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           </div>
 
           <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-            Selected date <span className="font-semibold">{formatDateBadge(new Date(`${referenceDate}T00:00:00`))}</span> ka day
+            Selected date <span className="font-semibold">{(() => { const p = referenceDate.split('-').map(Number); return formatDateBadge(new Date(p[0], p[1] - 1, p[2])); })()}</span> ka day
             <span className="font-semibold"> {DAY_LABELS[selectedReferenceDay]}</span> hai.
             {selectedDay === 'all'
               ? ' Neeche poore week ki actual dates dikh rahi hain.'

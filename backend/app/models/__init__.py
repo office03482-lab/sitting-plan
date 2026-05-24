@@ -499,6 +499,7 @@ class DayOfWeek(str, enum.Enum):
     THURSDAY = "thursday"
     FRIDAY = "friday"
     SATURDAY = "saturday"
+    SUNDAY = "sunday"
 
 
 # ==================== Teacher Management ====================
