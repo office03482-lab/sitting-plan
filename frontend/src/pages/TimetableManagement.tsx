@@ -431,17 +431,6 @@ const TimetableManagement: React.FC = () => {
     populateFormFromEntry(entry);
     setEditingEntry(entry as TimetableEntry);
     setShowForm(true);
-
-    apiService.getTimetableEntry(entry.id).then(response => {
-      const fullEntry = response.data;
-      setEditingEntry(fullEntry);
-      populateFormFromEntry(fullEntry);
-    }).catch(error => {
-      console.error('Error loading entry details:', error);
-      setEditingEntry(null);
-      setShowForm(false);
-      setAlert({ type: 'error', message: 'Entry details load nahi hue. Please refresh karein.' });
-    });
   };
 
   const handleDelete = async (entryId: string | number) => {
