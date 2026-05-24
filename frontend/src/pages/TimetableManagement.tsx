@@ -91,6 +91,13 @@ const isEntryInDateRange = (entry: TimetableView, fromDate: string, toDate: stri
   if (toDate && entryStart && entryStart > toDate) return false;
   return true;
 };
+const getEntryDateBadge = (entry: TimetableView, weekDateByDay: Record<DayOfWeek, Date>): Date => {
+  if (entry.start_date) {
+    const parts = entry.start_date.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+  return weekDateByDay[entry.day_of_week];
+};
 const sortTimetableEntries = (items: TimetableView[]) =>
   [...items].sort((left, right) => {
     const dayDiff = DAY_INDEX[left.day_of_week] - DAY_INDEX[right.day_of_week];
@@ -1368,7 +1375,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                           {DAY_LABELS[entry.day_of_week]}
                         </span>
                         <div className="mt-1 text-xs text-gray-500">
-                          {formatDateBadge(weekDateByDay[entry.day_of_week])}
+                          {formatDateBadge(getEntryDateBadge(entry, weekDateByDay))}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -1461,7 +1468,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                           ) : null}
                         </div>
                           <div className="space-y-1">
-                          <div className="text-xs text-gray-500">{formatDateBadge(weekDateByDay[entry.day_of_week])}</div>
+                          <div className="text-xs text-gray-500">{formatDateBadge(getEntryDateBadge(entry, weekDateByDay))}</div>
                           <div className="font-medium text-gray-900">{entry.class_name}</div>
                           <div className="text-sm text-gray-600">{entry.subject}</div>
                           {entry.teacher_name && <div className="text-sm text-gray-500">{entry.teacher_name}</div>}
@@ -1513,7 +1520,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <div className="text-xs text-gray-500">{formatDateBadge(weekDateByDay[entry.day_of_week])}</div>
+                        <div className="text-xs text-gray-500">{formatDateBadge(getEntryDateBadge(entry, weekDateByDay))}</div>
                         <div className="font-medium text-gray-900">{entry.class_name}</div>
                         <div className="text-sm text-gray-600">{entry.subject}</div>
                         <div className="text-sm text-gray-500">{getSessionTypeLabel(entry.session_type)}</div>
@@ -1568,7 +1575,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                         <tr key={`${batch}-${entry.id}`}>
                           <td className="px-4 py-3 text-sm text-gray-900">
                             <div>{DAY_LABELS[entry.day_of_week]}</div>
-                            <div className="text-xs text-gray-500">{formatDateBadge(weekDateByDay[entry.day_of_week])}</div>
+                            <div className="text-xs text-gray-500">{formatDateBadge(getEntryDateBadge(entry, weekDateByDay))}</div>
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">{formatTime(entry.start_time)} - {formatTime(entry.end_time)}</td>
                           <td className="px-4 py-3 text-sm text-gray-900">{entry.teacher_name || '-'}</td>
