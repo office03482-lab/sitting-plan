@@ -58,7 +58,8 @@ const getDayOfWeekFromDate = (value: string): DayOfWeek => {
   const parts = value.split('-').map(Number);
   const date = new Date(parts[0], parts[1] - 1, parts[2]);
   const jsDay = date.getDay();
-  const day = (Object.keys(DAY_INDEX) as DayOfWeek[]).find((item) => DAY_INDEX[item] === jsDay);
+  const normalizedIndex = jsDay === 0 ? 6 : jsDay - 1;
+  const day = (Object.keys(DAY_INDEX) as DayOfWeek[]).find((item) => DAY_INDEX[item] === normalizedIndex);
   return day || 'monday';
 };
 
