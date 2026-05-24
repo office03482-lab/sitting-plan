@@ -424,6 +424,10 @@ const TimetableManagement: React.FC = () => {
   };
 
   const handleEdit = (entry: TimetableView) => {
+    if (String(entry.id).startsWith('temp-')) {
+      setAlert({ type: 'warning', message: 'Yeh entry abhi save ho rahi hai. Kuch der baad try karein.' });
+      return;
+    }
     populateFormFromEntry(entry);
     setEditingEntry(entry as TimetableEntry);
     setShowForm(true);
@@ -434,7 +438,9 @@ const TimetableManagement: React.FC = () => {
       populateFormFromEntry(fullEntry);
     }).catch(error => {
       console.error('Error loading entry details:', error);
-      setAlert({ type: 'error', message: 'Failed to load latest entry details. Showing loaded timetable data instead.' });
+      setEditingEntry(null);
+      setShowForm(false);
+      setAlert({ type: 'error', message: 'Entry details load nahi hue. Please refresh karein.' });
     });
   };
 

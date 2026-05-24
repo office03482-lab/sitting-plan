@@ -880,7 +880,7 @@ class ApiService {
   private mapTimetableEntryToClient(entry: any): TimetableEntry {
     return {
       ...entry,
-      id: typeof entry?.id === 'string' ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
+      id: typeof entry?.id === 'string' && !String(entry.id).startsWith('temp-') ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
       teacher_id:
         typeof entry?.teacher_id === 'string'
           ? this.getLegacyMappedId('teacher', entry.teacher_id)
@@ -893,7 +893,7 @@ class ApiService {
   private mapTimetableViewToClient(entry: any): TimetableView {
     return {
       ...entry,
-      id: typeof entry?.id === 'string' ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
+      id: typeof entry?.id === 'string' && !String(entry.id).startsWith('temp-') ? this.getLegacyTimetableEntryId(entry.id) : Number(entry?.id || 0),
       teacher_id:
         typeof entry?.teacher_id === 'string'
           ? this.getLegacyMappedId('teacher', entry.teacher_id)
