@@ -2,8 +2,7 @@
 SQLAlchemy ORM Models for Exam Seating System
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date, ForeignKey, 
-Text, Enum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum

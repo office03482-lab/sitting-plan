@@ -2,7 +2,7 @@
 Timetable management routes
 """
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from typing import Dict, List, Optional
 

@@ -82,6 +82,15 @@ const getRequestErrorMessage = (error: any, fallback: string) =>
 const hasValue = (value: unknown) => String(value ?? '').trim().length > 0;
 const sameId = (left: string | number | null | undefined, right: string | number | null | undefined) =>
   String(left ?? '').trim() === String(right ?? '').trim();
+const isEntryInDateRange = (entry: TimetableView, fromDate: string, toDate: string): boolean => {
+  if (!fromDate && !toDate) return true;
+  const entryStart = entry.start_date || '';
+  const entryEnd = entry.end_date || '';
+  if (!entryStart && !entryEnd) return true;
+  if (fromDate && entryEnd && entryEnd < fromDate) return false;
+  if (toDate && entryStart && entryStart > toDate) return false;
+  return true;
+};
 const sortTimetableEntries = (items: TimetableView[]) =>
   [...items].sort((left, right) => {
     const dayDiff = DAY_INDEX[left.day_of_week] - DAY_INDEX[right.day_of_week];
@@ -114,6 +123,8 @@ const TimetableManagement: React.FC = () => {
   const [copyingDay, setCopyingDay] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [referenceDate, setReferenceDate] = useState(() => toInputDateValue(new Date()));
+  const [dateRangeFrom, setDateRangeFrom] = useState('');
+  const [dateRangeTo, setDateRangeTo] = useState('');
   const [copyDayForm, setCopyDayForm] = useState<{
     source_day: DayOfWeek;
     target_day: DayOfWeek;
@@ -138,8 +149,7 @@ const TimetableManagement: React.FC = () => {
     end_time: '',
     class_names: [] as string[],
     subject: '',
-    start_date: '',
-    end_date: '',
+    picked_date: '',
   });
 
   const daysOfWeek: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -307,11 +317,12 @@ const TimetableManagement: React.FC = () => {
       end_time: '',
       class_names: [],
       subject: '',
+      picked_date: '',
     });
     setShowForm(true);
   };
 
-  const populateFormFromEntry = (entry: Pick<TimetableView, 'teacher_id' | 'room_id' | 'session_mode' | 'session_type' | 'extra_class_scope' | 'online_platform' | 'online_link' | 'notes' | 'day_of_week' | 'start_time' | 'end_time' | 'class_name' | 'subject' | 'start_date' | 'end_date'>) => {
+  const populateFormFromEntry = (entry: Pick<TimetableView, 'teacher_id' | 'room_id' | 'session_mode' | 'session_type' | 'extra_class_scope' | 'online_platform' | 'online_link' | 'notes' | 'day_of_week' | 'start_time' | 'end_time' | 'class_name' | 'subject' | 'start_date'>) => {
     setFormData({
       teacher_id: entry.teacher_id?.toString() || '',
       room_id: entry.room_id?.toString() || '',
@@ -329,8 +340,7 @@ const TimetableManagement: React.FC = () => {
         .map((name) => name.trim())
         .filter(Boolean),
       subject: entry.subject || '',
-      start_date: entry.start_date || '',
-      end_date: entry.end_date || '',
+      picked_date: entry.start_date || '',
     });
   };
 
@@ -365,8 +375,7 @@ const TimetableManagement: React.FC = () => {
         end_time: formData.end_time,
         class_name: formData.class_names.join(', '),
         subject: isBreakSession ? 'Break Time' : formData.subject,
-        start_date: formData.start_date || undefined,
-        end_date: formData.end_date || undefined,
+        start_date: formData.picked_date || undefined,
       };
       const selectedTeacherData = visibleTeachers.find((teacher) => sameId(teacher.id, submitData.teacher_id));
       const selectedRoomData = normalizedRooms.find((room) => sameId(room.id, submitData.room_id));
@@ -575,6 +584,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
         .filter(Boolean);
       if (!batches.includes(selectedBatch)) return false;
     }
+    if (!isEntryInDateRange(entry, dateRangeFrom, dateRangeTo)) return false;
     return true;
   });
 
@@ -1055,6 +1065,22 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Date *
+                </label>
+                <input
+                  type="date"
+                  value={formData.picked_date}
+                  onChange={(e) => {
+                    const dateVal = e.target.value;
+                    const day = dateVal ? getDayOfWeekFromDate(dateVal) : 'monday';
+                    setFormData({ ...formData, picked_date: dateVal, day_of_week: day });
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Day of Week *
                 </label>
                 <select
@@ -1152,31 +1178,6 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Start Date
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.start_date}
-                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    End Date
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.end_date}
-                    onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Notes
@@ -1213,6 +1214,34 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           </div>
         </div>
       )}
+
+      {/* Date Range Filter */}
+      <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-medium text-gray-700">Date Range Filter:</span>
+          <input
+            type="date"
+            value={dateRangeFrom}
+            onChange={(e) => setDateRangeFrom(e.target.value)}
+            className="px-2 py-1 border border-gray-300 rounded text-sm"
+          />
+          <span className="text-gray-400">to</span>
+          <input
+            type="date"
+            value={dateRangeTo}
+            onChange={(e) => setDateRangeTo(e.target.value)}
+            className="px-2 py-1 border border-gray-300 rounded text-sm"
+          />
+          {(dateRangeFrom || dateRangeTo) && (
+            <button
+              onClick={() => { setDateRangeFrom(''); setDateRangeTo(''); }}
+              className="text-red-500 hover:text-red-700 underline text-xs"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Grid View */}
       {viewMode === 'grid' && (
@@ -1252,6 +1281,13 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                               <div className="text-gray-500">{getSessionTypeLabel(entry.session_type)}</div>
                               <div className="text-gray-500">Mode: {getModeLabel(entry)}</div>
                               {entry.room_name && <div className="text-gray-500">Room: {entry.room_name}</div>}
+                              {entry.start_date && (
+                                <div className="text-gray-400 text-[10px] mt-0.5">
+                                  {entry.end_date
+                                    ? `${entry.start_date} → ${entry.end_date}`
+                                    : `From ${entry.start_date}`}
+                                </div>
+                              )}
                               {entry.online_platform && <div className="text-gray-500">Platform: {entry.online_platform}</div>}
                               {canManageTimetable ? (
                                 <div className="flex gap-1 mt-1">
@@ -1351,6 +1387,9 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                         {entry.teacher_name || '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {entry.start_date ? `${entry.start_date}${entry.end_date ? ` → ${entry.end_date}` : ' onwards'}` : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {getRoomModeSummary(entry)}
                       </td>
                       {canManageTimetable ? (
@@ -1433,6 +1472,11 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                           </div>
                           <div className="text-sm text-gray-500">Mode: {getModeLabel(entry)}</div>
                           {entry.room_name && <div className="text-sm text-gray-500">Room: {entry.room_name}</div>}
+                          {entry.start_date && (
+                            <div className="text-xs text-gray-400">
+                              {entry.end_date ? `${entry.start_date} → ${entry.end_date}` : `From ${entry.start_date}`}
+                            </div>
+                          )}
                           {entry.online_platform && <div className="text-sm text-gray-500">Platform: {entry.online_platform}</div>}
                         </div>
                       </div>
@@ -1479,6 +1523,11 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                           {formatTime(entry.start_time)} - {formatTime(entry.end_time)}
                         </div>
                         <div className="text-sm text-gray-500">Mode: {getModeLabel(entry)}</div>
+                        {entry.start_date && (
+                          <div className="text-xs text-gray-400">
+                            {entry.end_date ? `${entry.start_date} → ${entry.end_date}` : `From ${entry.start_date}`}
+                          </div>
+                        )}
                         {entry.online_platform && <div className="text-sm text-gray-500">Platform: {entry.online_platform}</div>}
                       </div>
                     </div>
@@ -1510,6 +1559,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teacher</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Room</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date Range</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                       </tr>
                     </thead>
@@ -1525,6 +1575,9 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                           <td className="px-4 py-3 text-sm text-gray-900">{entry.subject}</td>
                           <td className="px-4 py-3 text-sm text-gray-900">
                             {getRoomModeSummary(entry)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-500">
+                            {entry.start_date ? `${entry.start_date}${entry.end_date ? ` → ${entry.end_date}` : ' onwards'}` : '-'}
                           </td>
                           <td className="px-4 py-3 text-sm">
                             <div className="flex gap-2">
