@@ -138,6 +138,8 @@ const TimetableManagement: React.FC = () => {
     end_time: '',
     class_names: [] as string[],
     subject: '',
+    start_date: '',
+    end_date: '',
   });
 
   const daysOfWeek: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -176,6 +178,11 @@ const TimetableManagement: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!referenceDate) return;
+    refreshEntries();
+  }, [referenceDate]);
+
+  useEffect(() => {
     if (!isTeacherSelfView) return;
     setViewMode('teacher');
     if (visibleTeachers[0]?.id) {
@@ -184,7 +191,9 @@ const TimetableManagement: React.FC = () => {
   }, [isTeacherSelfView, visibleTeachers]);
 
   const refreshEntries = async () => {
-    const response = await apiService.listTimetableEntries();
+    const response = await apiService.listTimetableEntries({
+      reference_date: referenceDate || undefined,
+    });
     const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
     setEntries(nextEntries);
     return nextEntries;
@@ -302,7 +311,7 @@ const TimetableManagement: React.FC = () => {
     setShowForm(true);
   };
 
-  const populateFormFromEntry = (entry: Pick<TimetableView, 'teacher_id' | 'room_id' | 'session_mode' | 'session_type' | 'extra_class_scope' | 'online_platform' | 'online_link' | 'notes' | 'day_of_week' | 'start_time' | 'end_time' | 'class_name' | 'subject'>) => {
+  const populateFormFromEntry = (entry: Pick<TimetableView, 'teacher_id' | 'room_id' | 'session_mode' | 'session_type' | 'extra_class_scope' | 'online_platform' | 'online_link' | 'notes' | 'day_of_week' | 'start_time' | 'end_time' | 'class_name' | 'subject' | 'start_date' | 'end_date'>) => {
     setFormData({
       teacher_id: entry.teacher_id?.toString() || '',
       room_id: entry.room_id?.toString() || '',
@@ -320,6 +329,8 @@ const TimetableManagement: React.FC = () => {
         .map((name) => name.trim())
         .filter(Boolean),
       subject: entry.subject || '',
+      start_date: entry.start_date || '',
+      end_date: entry.end_date || '',
     });
   };
 
@@ -354,6 +365,8 @@ const TimetableManagement: React.FC = () => {
         end_time: formData.end_time,
         class_name: formData.class_names.join(', '),
         subject: isBreakSession ? 'Break Time' : formData.subject,
+        start_date: formData.start_date || undefined,
+        end_date: formData.end_date || undefined,
       };
       const selectedTeacherData = visibleTeachers.find((teacher) => sameId(teacher.id, submitData.teacher_id));
       const selectedRoomData = normalizedRooms.find((room) => sameId(room.id, submitData.room_id));
@@ -1137,6 +1150,31 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
                   required={formData.session_type !== 'break_time'}
                   disabled={formData.session_type === 'break_time'}
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.start_date}
+                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.end_date}
+                    onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
               </div>
 
               <div>

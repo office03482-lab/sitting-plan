@@ -362,6 +362,8 @@ export interface TimetableEntry {
   updated_at: string;
   teacher_name?: string;
   room_name?: string;
+  start_date?: string;
+  end_date?: string;
 }
 
 export interface TimetableView {
@@ -381,6 +383,8 @@ export interface TimetableView {
   online_platform?: string;
   online_link?: string;
   notes?: string;
+  start_date?: string;
+  end_date?: string;
 }
 
 // ==================== Invigilator ====================

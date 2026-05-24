@@ -610,6 +610,8 @@ class TimetableEntryBase(BaseModel):
     end_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')    # HH:MM format
     class_name: str = Field(..., min_length=1, max_length=255)
     subject: str = Field(..., min_length=1, max_length=255)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class TimetableEntryCreate(TimetableEntryBase):
@@ -632,6 +634,8 @@ class TimetableEntryUpdate(BaseModel):
     end_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
     class_name: Optional[str] = Field(None, min_length=1, max_length=255)
     subject: Optional[str] = Field(None, min_length=1, max_length=255)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     is_active: Optional[bool] = None
 
 
@@ -664,6 +668,8 @@ class TimetableView(BaseModel):
     online_platform: Optional[str] = None
     online_link: Optional[str] = None
     notes: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ConflictCheckResponse(BaseModel):

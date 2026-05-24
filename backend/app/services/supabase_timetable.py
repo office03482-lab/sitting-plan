@@ -303,6 +303,19 @@ def _ensure_system_staff_member(school_id: str, session_type: str) -> dict[str, 
     return dict(created.data)
 
 
+def _is_outside_date_range(row: dict[str, Any], reference_date: str) -> bool:
+    start_date = row.get("start_date")
+    end_date = row.get("end_date")
+    if not start_date and not end_date:
+        return False
+    ref = str(reference_date)[:10]
+    if start_date and ref < str(start_date)[:10]:
+        return True
+    if end_date and ref > str(end_date)[:10]:
+        return True
+    return False
+
+
 def serialize_timetable_row(
     row: dict[str, Any],
     *,
@@ -332,6 +345,8 @@ def serialize_timetable_row(
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "start_date": row.get("start_date"),
+        "end_date": row.get("end_date"),
         "teacher_name": teacher_name,
         "room_name": room_name,
     }
@@ -344,6 +359,7 @@ def list_timetable_entries(
     teacher_id: str | None = None,
     class_name: str | None = None,
     room_id: str | None = None,
+    reference_date: str | None = None,
 ) -> list[dict[str, Any]]:
     cache_key = (
         school_id,
@@ -351,6 +367,7 @@ def list_timetable_entries(
         teacher_id or "",
         (class_name or "").strip().casefold(),
         room_id or "",
+        reference_date or "",
     )
     cached = _TIMETABLE_LIST_CACHE.get(cache_key)
     now = time.monotonic()
@@ -372,6 +389,8 @@ def list_timetable_entries(
         query = query.eq("room_id", room_id)
     response = query.order("day_of_week").order("start_time").execute()
     rows = list(response.data or [])
+    if reference_date:
+        rows = [r for r in rows if not _is_outside_date_range(r, reference_date)]
     staff_lookup = _fetch_staff_lookup(school_id, [row.get("staff_member_id") for row in rows])
     room_lookup = _fetch_room_lookup(school_id, [row.get("room_id") for row in rows])
     subject_lookup = _fetch_subject_lookup(school_id, [row.get("subject_id") for row in rows])
@@ -535,6 +554,8 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "notes": entry_data.get("notes"),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", True)),
+        "start_date": entry_data.get("start_date"),
+        "end_date": entry_data.get("end_date"),
     }
     created = (
         get_timetable_table_query()
@@ -614,6 +635,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "notes": entry_data.get("notes", existing.get("notes")),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", existing.get("is_active", True))),
+        "start_date": entry_data.get("start_date", existing.get("start_date")),
+        "end_date": entry_data.get("end_date", existing.get("end_date")),
     }
     updated = (
         get_timetable_table_query()

@@ -675,6 +675,7 @@ async def list_timetable_entries(
     teacher_id: Optional[str | int] = None,
     class_name: Optional[str] = None,
     room_id: Optional[str | int] = None,
+    reference_date: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
@@ -685,6 +686,7 @@ async def list_timetable_entries(
             teacher_id=str(teacher_id) if teacher_id else None,
             class_name=class_name,
             room_id=str(room_id) if room_id else None,
+            reference_date=reference_date.isoformat() if reference_date else None,
         )
 
     query = get_entry_query(db, school_id)

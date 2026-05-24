@@ -2,7 +2,8 @@
 SQLAlchemy ORM Models for Exam Seating System
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date, ForeignKey, 
+Text, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -550,6 +551,8 @@ class TimetableEntry(Base):
     online_platform = Column(String(100), nullable=True)
     online_link = Column(String(500), nullable=True)
     notes = Column(Text, nullable=True)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
 
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -3101,6 +3101,7 @@ class ApiService {
     class_name?: string;
     room_id?: string | number;
     school_id?: string | number;
+    reference_date?: string;
   }) {
     const scopedSchoolId = this.getCurrentSupabaseSchoolId() || params?.school_id;
     const response = await this.api.get('/timetable', {
