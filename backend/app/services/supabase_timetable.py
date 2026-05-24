@@ -345,8 +345,8 @@ def serialize_timetable_row(
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "start_date": row.get("start_date"),
-        "end_date": row.get("end_date"),
+        "start_date": str(row.get("start_date") or "")[:10] or None,
+        "end_date": str(row.get("end_date") or "")[:10] or None,
         "teacher_name": teacher_name,
         "room_name": room_name,
     }
