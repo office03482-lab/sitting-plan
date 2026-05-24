@@ -592,6 +592,7 @@ class DayOfWeek(str, Enum):
     THURSDAY = "thursday"
     FRIDAY = "friday"
     SATURDAY = "saturday"
+    SUNDAY = "sunday"
 
 
 class TimetableEntryBase(BaseModel):
@@ -1461,6 +1462,7 @@ class StudentAttendanceRecordResponse(BaseModel):
     roll_no: str
     class_name: str
     section: str
+    batch_name: str = ""
     date: datetime
     subject_id: int | str
     subject_name: str

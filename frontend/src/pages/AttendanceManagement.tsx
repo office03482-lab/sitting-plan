@@ -125,12 +125,7 @@ const buildAttendanceBatches = (students: AttendanceStudent[], schoolId: number 
 };
 
 const normalizeStudentToAttendanceStudent = (student: Student): AttendanceStudent => ({
-  id:
-    typeof student.id === 'string'
-      ? student.id.trim()
-      : Number.isFinite(Number(student.id))
-        ? Number(student.id)
-        : String(student.id ?? '').trim(),
+  id: String(student.id ?? '').trim(),
   name: String(student.name || '').trim(),
   class_name: String(student.class_name || '').trim(),
   section: String(student.section || '').trim(),
@@ -652,18 +647,13 @@ function getAttendanceRecordBatchLabel(
 }
 
 function shouldDisplayAttendanceSubject(subjectName?: string | null) {
-  const normalized = String(subjectName || '').trim().toLowerCase();
-  return Boolean(normalized && normalized !== 'general attendance');
+  const normalized = String(subjectName || '').trim();
+  return Boolean(normalized);
 }
 
 function shouldDisplayAttendanceTeacher(teacherName?: string | null) {
   const normalized = String(teacherName || '').trim().toLowerCase();
-  return Boolean(
-    normalized
-    && normalized !== 'system'
-    && normalized !== 'attendance department'
-    && normalized !== 'attendance admin'
-  );
+  return Boolean(normalized && normalized !== 'system' && normalized !== 'attendance department');
 }
 
 function recordMatchesSelectionScope(
@@ -1712,6 +1702,7 @@ function AttendanceManagementContent() {
         recordBatchParts.section,
         studentFilters.date,
         studentFilters.recordStudentName.trim().toLowerCase(),
+        studentFilters.record_batch_name?.trim().toLowerCase() || '',
         attendanceStudentRecordPageSize,
       ].join('|'),
     [
@@ -1721,6 +1712,7 @@ function AttendanceManagementContent() {
       recordBatchParts.section,
       studentFilters.attendance_scope,
       studentFilters.batch_name,
+      studentFilters.record_batch_name,
       selectedTimetableParts.className,
       selectedTimetableParts.section,
       studentFilters.date,
@@ -2061,8 +2053,8 @@ function AttendanceManagementContent() {
 
   useEffect(() => {
     if (!isStudentTabVisible || !canRunAttendanceRequests) return;
-    if (!selectedTimetableParts.className) return;
-    if (studentFilters.attendance_scope === 'batch' && !selectedTimetableParts.section) return;
+    if (!selectedTimetableParts.className && !studentFilters.batch_name) return;
+    if (studentFilters.attendance_scope === 'batch' && !selectedTimetableParts.section && !studentFilters.batch_name) return;
     if (
       studentPrimaryHydrationKeyRef.current === studentPrimaryHydrationKey &&
       studentPrimaryHydrationPromiseRef.current
@@ -2087,6 +2079,7 @@ function AttendanceManagementContent() {
       });
       const batchContext = await loadBatchAttendanceContext();
       if (studentPrimaryHydrationKeyRef.current !== studentPrimaryHydrationKey) return;
+      const recordBatchName = studentFilters.record_scope === 'batch' ? (studentFilters.record_batch_name || '').trim() : '';
       await Promise.all([
         loadStudentMarking({
           subjectId: pickPreferredSubjectId(
@@ -2095,7 +2088,7 @@ function AttendanceManagementContent() {
           ),
           subjectName: batchContext?.subject || teacherAttendanceContext?.subject || '',
         }),
-        recordBatchParts.className && (studentFilters.record_scope === 'class' || recordBatchParts.section)
+        (recordBatchParts.className && (studentFilters.record_scope === 'class' || recordBatchParts.section)) || recordBatchName
           ? loadStudentRecords()
           : Promise.resolve(),
       ]);
@@ -2719,7 +2712,8 @@ function AttendanceManagementContent() {
     }
     const requestedSection =
       studentFilters.record_scope === 'class' ? undefined : recordBatchParts.section;
-    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection || ''}|${studentFilters.recordStudentName}|${attendanceStudentRecordPageSize}`;
+    const recordBatchName = studentFilters.record_scope === 'batch' ? (studentFilters.record_batch_name || '').trim() : '';
+    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection || ''}|${studentFilters.recordStudentName}|${recordBatchName}|${attendanceStudentRecordPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
@@ -2746,6 +2740,7 @@ function AttendanceManagementContent() {
           class_name: recordBatchParts.className || undefined,
           section: requestedSection || undefined,
           student_name: studentFilters.recordStudentName || undefined,
+          batch_name: recordBatchName || undefined,
           limit: attendanceStudentRecordPageSize,
         });
         if (studentRecordsRequestKeyRef.current !== requestKey) return;
@@ -3711,10 +3706,20 @@ function AttendanceManagementContent() {
                             {shouldDisplayAttendanceTeacher(record.marked_by) ? <p className="mt-1 text-xs text-slate-500">Teacher: {record.marked_by}</p> : null}
                             {record.absence_reason ? <p className="mt-1 text-xs text-amber-700">Remark: {record.absence_reason}</p> : null}
                           </div>
-                          <span>{getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)}</span>
+                          <span>
+                            {record.batch_name
+                              ? <span className="text-xs text-slate-600">{record.batch_name}<br /><span className="text-[10px] text-slate-400">{record.class_name} | {record.section}</span></span>
+                              : getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)
+                            }
+                          </span>
                           <div>
                             <p>{formatDate(record.date)}</p>
-                            <p className="mt-1 text-xs text-slate-500">{getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {record.batch_name
+                                ? `${record.batch_name} | ${record.class_name} | ${record.section}`
+                                : getAttendanceRecordBatchLabel(managedBatches, record.class_name, record.section)
+                              }
+                            </p>
                           </div>
                           <span className={studentRecordStatusClass(record.status)}>{record.status}</span>
                           <button type="button" onClick={() => handleDeleteStudentRecord(record.id)} className={studentRecordDeleteButtonClass}>

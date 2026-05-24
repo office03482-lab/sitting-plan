@@ -206,7 +206,45 @@ def _rpc_list_student_records(
     limit: int = 100,
     batch_filters: list[tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
-    batch_filter_payload = _normalize_batch_filters(batch_filters)
+    # Resolve batch names to actual batch records so we can filter by class/section in SQL
+    # and by batch_id in Python for coaching batches that share the same class/section.
+    batches = _fetch_batches(school_id)
+    resolved_batch_ids: set[str] = set()
+    resolved_batch_filter_payload: list[dict[str, str]] = []
+
+    if batch_filters:
+        for raw_name, raw_section in batch_filters:
+            normalized_name = _normalize(raw_name)
+            if not normalized_name:
+                continue
+            # Try to find a batch whose name matches
+            matched = None
+            for b in batches.values():
+                b_name = _normalize(b.get("name"))
+                if _cf(b_name) == _cf(normalized_name) or _canonical_batch_key(b_name) == _canonical_batch_key(normalized_name):
+                    matched = b
+                    break
+            if matched:
+                b_class = _normalize(matched.get("class_name"))
+                b_section = _normalize(matched.get("section")) or _normalize(raw_section) or ""
+                bid = _normalize(matched.get("id"))
+                if bid:
+                    resolved_batch_ids.add(bid)
+                if b_class:
+                    resolved_batch_filter_payload.append({"class_name": b_class, "section": b_section})
+            else:
+                # No matching batch found -- use the raw name as a class_name filter
+                resolved_batch_filter_payload.append({"class_name": normalized_name, "section": _normalize(raw_section) or ""})
+
+    # Use resolved batch IDs for post-filtering instead of SQL batch filters when we have specific batches,
+    # because coaching batches share the same class_name="General" and section="A".
+    use_sql_batch_filter = bool(resolved_batch_filter_payload) and not resolved_batch_ids
+    batch_filter_payload = None
+    if use_sql_batch_filter:
+        normalized_batch_filters = _normalize_batch_filters(
+            [(item["class_name"], item.get("section") or None) for item in resolved_batch_filter_payload]
+        )
+        batch_filter_payload = normalized_batch_filters or None
     params = {
         "p_school_id": school_id,
         "p_class_name": _normalize(class_name) or None,
@@ -216,14 +254,18 @@ def _rpc_list_student_records(
         "p_date_to": date_to[:10] if date_to else None,
         "p_skip": max(skip, 0),
         "p_limit": max(limit, 1),
-        "p_batch_filters": batch_filter_payload or None,
+        "p_batch_filters": batch_filter_payload,
     }
     started_at = time.monotonic()
     response = get_supabase_admin_client().rpc("attendance_student_report_rows", params).execute()
     duration_ms = round((time.monotonic() - started_at) * 1000)
     rows = list(response.data or [])
 
-    # Augment rows when class/section or subject_name are missing by fetching student and subject details.
+    # If we resolved specific batch IDs, post-filter by batch_id so only that batch's records are returned
+    if resolved_batch_ids and batch_filters:
+        rows = [r for r in rows if _normalize(r.get("batch_id")) in resolved_batch_ids]
+
+    # Augment rows when class/section or subject_name are missing by fetching student details.
     try:
         student_ids_need = [str(r.get("student_id")) for r in rows if not _normalize(r.get("class_name")) or not _normalize(r.get("subject_name"))]
         student_map: dict[str, dict[str, Any]] = {}
@@ -243,31 +285,71 @@ def _rpc_list_student_records(
     except Exception:
         student_map = {}
 
-    batches = _fetch_batches(school_id)
-
     augmented: list[dict[str, Any]] = []
     for r in rows:
         row = dict(r)
         sid = str(row.get("student_id") or "")
-        # Class/section fallback from student record
         class_val = _normalize(row.get("class_name"))
         section_val = _normalize(row.get("section"))
-        batch_name = _normalize(row.get("batch_name"))
+
+        # Prefer class_name/section stored in metadata at marking time (actual batch context)
+        metadata = row.get("metadata")
+        meta_class = ""
+        meta_section = ""
+        if isinstance(metadata, dict):
+            meta_class = _normalize(metadata.get("class_name"))
+            meta_section = _normalize(metadata.get("section"))
+            if meta_class:
+                class_val = meta_class
+            if meta_section:
+                section_val = meta_section
+
+        # Resolve batch_name: prefer matching a batch from metadata class/section, else from student's batch_id
+        batch_id = _normalize(row.get("batch_id"))
+        batch_obj = None
+        batch_name_val = ""
+        if meta_class:
+            for b in batches.values():
+                b_class = _normalize(b.get("class_name"))
+                b_section = _normalize(b.get("section"))
+                if b_class == meta_class and b_section == meta_section:
+                    batch_name_val = _normalize(b.get("name"))
+                    batch_obj = b
+                    break
+        if not batch_name_val and batch_id:
+            batch_obj = batches.get(batch_id)
+            batch_name_val = _normalize(batch_obj.get("name")) if batch_obj else ""
+
+        # If class is the SQL default "General", student likely has no explicit class/section.
+        # In that case, use batch values for both class and section.
+        if batch_obj:
+            batch_class = _normalize(batch_obj.get("class_name"))
+            batch_section = _normalize(batch_obj.get("section"))
+            if class_val == "General" and batch_class:
+                class_val = batch_class
+                if section_val == "A" and batch_section:
+                    section_val = batch_section
+            if not class_val and batch_name_val:
+                parsed_class, parsed_section = split_batch_to_class_section(batch_name_val)
+                class_val = class_val or parsed_class
+                section_val = section_val or parsed_section
+
+        # Fallback: try student_map for rows that still need class/section
         if (not class_val or not section_val) and student_map.get(sid):
             stud = student_map.get(sid)
             class_val = class_val or _normalize(stud.get("class_name"))
             section_val = section_val or _normalize(stud.get("section"))
-            if not batch_name and stud.get("batch_id"):
+            if not batch_name_val and stud.get("batch_id"):
                 batch_obj = batches.get(str(stud.get("batch_id")))
-                batch_name = _normalize(batch_obj.get("name") if batch_obj else "")
-            if not class_val and batch_name:
-                parsed_class, parsed_section = split_batch_to_class_section(batch_name)
+                batch_name_val = _normalize(batch_obj.get("name") if batch_obj else "")
+            if not class_val and batch_name_val:
+                parsed_class, parsed_section = split_batch_to_class_section(batch_name_val)
                 class_val = class_val or parsed_class
                 section_val = section_val or parsed_section
 
         row["class_name"] = class_val or "General"
         row["section"] = section_val or "A"
-        row["batch_name"] = batch_name
+        row["batch_name"] = batch_name_val
 
         # Subject name fallback
         subj_name = _normalize(row.get("subject_name"))
@@ -293,6 +375,7 @@ def _rpc_list_student_records(
             "skip": skip,
             "limit": limit,
             "has_batch_filters": bool(batch_filter_payload),
+            "resolved_batch_ids": list(resolved_batch_ids),
         },
     )
     return augmented
@@ -2198,9 +2281,14 @@ def save_staff_marking(
     entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     normalized_entries = []
+    skipped_entries: list[str] = []
     for entry in entries or []:
         staff_member_id = _normalize(entry.get("staff_member_id"))
         if not staff_member_id:
+            skipped_entries.append("empty")
+            continue
+        if not _is_valid_uuid(staff_member_id):
+            skipped_entries.append(staff_member_id)
             continue
         normalized_entries.append(
             {
@@ -2212,6 +2300,16 @@ def save_staff_marking(
                 "check_out": _normalize(entry.get("check_out")) or None,
                 "metadata": {"marked_by": marked_by or "HR Admin"},
             }
+        )
+
+    if skipped_entries:
+        logger.warning(
+            "attendance.save_staff_marking.skipped_entries",
+            extra={
+                "skipped_count": len(skipped_entries),
+                "skipped_ids": skipped_entries[:50],
+                "school_id": str(school_id),
+            },
         )
 
     if not normalized_entries:
@@ -2245,10 +2343,17 @@ def save_student_marking(
         },
     )
     normalized_entries = list(entries or [])
-    student_ids = _sanitize_lookup_ids(
-        [entry.get("student_id") for entry in normalized_entries]
-    )
+    raw_student_ids = [entry.get("student_id") for entry in normalized_entries]
+    student_ids = _sanitize_lookup_ids(raw_student_ids, require_uuid=True)
     if not student_ids:
+        logger.warning(
+            "attendance.save_student_marking.no_valid_uuids",
+            extra={
+                "total_entries": len(normalized_entries),
+                "raw_ids": raw_student_ids,
+                "school_id": str(school_id),
+            },
+        )
         return {"message": "Student attendance saved successfully"}
 
     students_response = (
@@ -2268,13 +2373,16 @@ def save_student_marking(
     shared_subject = _fetch_subject_row(school_id, subject_id) if subject_id else None
     subject_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
 
+    skipped_entries: list[str] = []
     payload_rows: list[dict[str, Any]] = []
     for entry in normalized_entries:
         student_id = _normalize(entry.get("student_id"))
         if not student_id:
+            skipped_entries.append("empty")
             continue
         student_row = students_by_id.get(student_id)
         if not student_row:
+            skipped_entries.append(student_id)
             continue
 
         class_name = _normalize(student_row.get("class_name"))
@@ -2307,8 +2415,22 @@ def save_student_marking(
                     if status == "absent"
                     else None
                 ),
-                "metadata": {"marked_by": marked_by or "Attendance Admin"},
+                "metadata": {
+                    "marked_by": marked_by or "Attendance Admin",
+                    "class_name": class_name or "General",
+                    "section": section or "A",
+                },
             }
+        )
+
+    if skipped_entries:
+        logger.warning(
+            "attendance.save_student_marking.skipped_entries",
+            extra={
+                "skipped_count": len(skipped_entries),
+                "skipped_ids": skipped_entries[:50],
+                "school_id": str(school_id),
+            },
         )
 
     if not payload_rows:
@@ -2510,6 +2632,7 @@ async def list_student_records(
             "roll_no": student_lookup.get(str(row.get("student_id")), {}).get("roll_no", ""),
             "class_name": student_lookup.get(str(row.get("student_id")), {}).get("class_name", ""),
             "section": student_lookup.get(str(row.get("student_id")), {}).get("section", ""),
+            "batch_name": student_lookup.get(str(row.get("student_id")), {}).get("batch_name", ""),
             "date": _iso_datetime(row.get("attendance_date")),
             "subject_id": row.get("subject_id"),
             "subject_name": subjects.get(str(row.get("subject_id")), {}).get("name", ""),

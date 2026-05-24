@@ -109,12 +109,18 @@ export function StudentRecordsTable({ vm }: { vm: any }) {
               {record.absence_reason ? <p className="mt-1 text-xs text-amber-700">Remark: {record.absence_reason}</p> : null}
             </div>
             <span>
-              {record.class_name} | {record.section}
+              {record.batch_name
+                ? <><span className="text-xs text-slate-600">{record.batch_name}</span><br /><span className="text-[10px] text-slate-400">{record.class_name} | {record.section}</span></>
+                : <>{record.class_name} | {record.section}</>
+              }
             </span>
             <div>
               <p>{formatDate(record.date)}</p>
               <p className="mt-1 text-xs text-slate-500">
-                {record.class_name} | {record.section}
+                {record.batch_name
+                  ? `${record.batch_name} | ${record.class_name} | ${record.section}`
+                  : `${record.class_name} | ${record.section}`
+                }
               </p>
             </div>
             <span className={studentRecordStatusClass(record.status)}>{record.status}</span>

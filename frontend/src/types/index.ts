@@ -336,7 +336,7 @@ export interface Teacher {
 }
 
 // ==================== Timetable ====================
-export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
+export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 export type TimetableSessionMode = 'offline' | 'online';
 export type TimetableSessionType = 'regular_class' | 'break_time' | 'doubt_session' | 'extra_class' | 'self_study';
 export type TimetableExtraClassScope = 'class_wise' | 'subject_wise' | 'general';
@@ -514,6 +514,7 @@ export interface StudentAttendanceRecord {
   roll_no?: string;
   class_name: string;
   section: string;
+  batch_name?: string;
   subject_name?: string;
   date: string;
   status: StudentAttendanceStatus;

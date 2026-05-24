@@ -5512,6 +5512,7 @@ class ApiService {
     student_name?: string;
     date_from?: string;
     date_to?: string;
+    batch_name?: string;
     skip?: number;
     limit?: number;
   }) {
@@ -6060,7 +6061,7 @@ async exportAttendanceReport(params: {
             .some((value) => String(value || '').toLowerCase().includes(searchTerm));
         })
         .map((student) => ({
-          id: Number(student.id || 0),
+          id: String(student.id ?? '').trim(),
           name: String(student.name || ''),
           class_name: String(student.class_name || student.batch || 'General'),
           section: String(student.section || 'A'),

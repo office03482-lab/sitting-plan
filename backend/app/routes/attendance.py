@@ -330,6 +330,7 @@ def day_of_week_for_date(target_date: date) -> TimetableDayOfWeek:
         3: TimetableDayOfWeek.THURSDAY,
         4: TimetableDayOfWeek.FRIDAY,
         5: TimetableDayOfWeek.SATURDAY,
+        6: TimetableDayOfWeek.SUNDAY,
     }
     return mapping[target_date.weekday()]
 
@@ -1844,11 +1845,15 @@ def list_student_records(
     student_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
     if not is_legacy_sqlite_mode():
+        batch_filters = None
+        if batch_name:
+            batch_filters = [(batch_name, None)]
         return list_supabase_student_records(
             school_id,
             class_name=class_name,
@@ -1858,6 +1863,7 @@ def list_student_records(
             date_to=date_to.isoformat() if date_to else None,
             skip=skip,
             limit=limit,
+            batch_filters=batch_filters,
         )
     school_id = coerce_legacy_school_id(school_id)
     seed_attendance_data(db, school_id)
@@ -1877,6 +1883,8 @@ def list_student_records(
         query = query.filter(StudentAttendance.date >= day_start(date_from))
     if date_to:
         query = query.filter(StudentAttendance.date <= day_end(date_to))
+    if batch_name:
+        query = query.filter(AttendanceStudent.batch == batch_name)
     records = (
         query.order_by(StudentAttendance.date.desc(), StudentAttendance.id.desc())
         .offset(skip)

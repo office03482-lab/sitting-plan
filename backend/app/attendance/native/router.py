@@ -221,11 +221,15 @@ async def list_student_records_route(
     student_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=100),
     service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)
+    batch_filters = None
+    if batch_name:
+        batch_filters = [(batch_name, None)]
     return await service.list_student_records(
         school_id=school_id,
         class_name=class_name,
@@ -235,6 +239,7 @@ async def list_student_records_route(
         date_to=date_to.isoformat() if date_to else None,
         skip=skip,
         limit=limit,
+        batch_filters=batch_filters,
     )
 
 
