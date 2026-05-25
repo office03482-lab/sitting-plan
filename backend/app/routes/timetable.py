@@ -973,7 +973,6 @@ async def download_timetable_template():
     ws.column_dimensions["G"].width = 14
     ws.column_dimensions["H"].width = 20
     ws.column_dimensions["I"].width = 12
-    ws.add_data_validation()
     stream = BytesIO()
     wb.save(stream)
     stream.seek(0)

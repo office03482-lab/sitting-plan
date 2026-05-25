@@ -1700,7 +1700,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
       a.download = 'timetable_template.xlsx';
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch {
+    } catch (err) {
+      console.error('Template download error:', err);
       setAlert({ type: 'error', message: 'Template download failed' });
     }
   };
