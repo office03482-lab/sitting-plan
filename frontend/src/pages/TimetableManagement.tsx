@@ -1249,7 +1249,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
       {showBulkForm && (
         <BulkEntryModal
           onClose={() => setShowBulkForm(false)}
-          onCreated={() => { setShowBulkForm(false); refreshEntries(); }}
+          onCreated={() => { setShowBulkForm(false); refreshEntriesWithDates(); }}
           teachers={visibleTeachers}
           rooms={normalizedRooms}
           batchOptions={batchOptions}
