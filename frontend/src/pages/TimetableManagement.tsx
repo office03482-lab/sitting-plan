@@ -1765,6 +1765,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
           class_name: batch,
           subject: subject || undefined,
           start_date: pickedDate || undefined,
+          skip_conflict_check: true,
         }).catch(err => {
           console.error(`Failed for batch "${batch}":`, err?.response?.data || err?.message || err);
           throw err;

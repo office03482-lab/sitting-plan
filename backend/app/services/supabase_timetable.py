@@ -516,21 +516,23 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
     elif not teacher_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Teacher is required")
 
+    skip_conflict = bool(entry_data.get("skip_conflict_check", False))
     if not is_no_teacher_session(ui_session_type):
         teacher_lookup = _fetch_staff_lookup(school_id, [str(teacher_id)])
         teacher_name = (teacher_lookup.get(str(teacher_id)) or {}).get("full_name") or "Teacher"
-        conflicts = check_teacher_conflicts(
-            school_id,
-            str(teacher_id),
-            str(entry_data["day_of_week"]),
-            str(entry_data["start_time"]),
-            str(entry_data["end_time"]),
-        )
-        if conflicts:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Teacher conflict: {teacher_name} is already assigned during this time",
+        if not skip_conflict:
+            conflicts = check_teacher_conflicts(
+                school_id,
+                str(teacher_id),
+                str(entry_data["day_of_week"]),
+                str(entry_data["start_time"]),
+                str(entry_data["end_time"]),
             )
+            if conflicts:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Teacher conflict: {teacher_name} is already assigned during this time",
+                )
 
     metadata = {
         "subject": entry_data.get("subject"),

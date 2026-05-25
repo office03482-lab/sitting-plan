@@ -616,7 +616,7 @@ class TimetableEntryBase(BaseModel):
 
 class TimetableEntryCreate(TimetableEntryBase):
     """Create timetable entry schema"""
-    pass
+    skip_conflict_check: bool = False
 
 
 class TimetableEntryUpdate(BaseModel):

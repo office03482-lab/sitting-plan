@@ -364,6 +364,7 @@ export interface TimetableEntry {
   room_name?: string;
   start_date?: string;
   end_date?: string;
+  skip_conflict_check?: boolean;
 }
 
 export interface TimetableView {

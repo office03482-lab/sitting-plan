@@ -1005,11 +1005,11 @@ async def upload_timetable_excel(
     def resolve_teacher_id(name: str) -> str | None:
         if not name or not name.strip():
             return None
-        name_key = name.strip().lower()
-        if name_key in teacher_cache:
-            return teacher_cache[name_key]
+        key = name.strip().lower()
+        if key in teacher_cache:
+            return teacher_cache[key]
         response = (
-            supabase.table("attendance_staff")
+            supabase.table("staff_members")
             .select("id")
             .ilike("full_name", f"%{name.strip()}%")
             .eq("school_id", school_id)
@@ -1018,7 +1018,7 @@ async def upload_timetable_excel(
         )
         data = response.data if isinstance(response.data, list) else []
         result = str(data[0]["id"]) if data else None
-        teacher_cache[name_key] = result
+        teacher_cache[key] = result
         return result
 
     def resolve_room_id(name: str) -> str | None:
