@@ -276,9 +276,8 @@ const TimetableManagement: React.FC = () => {
     try {
       setLoading(true);
       setAlert(null);
-      const [entriesResponse, referenceResponse] = await Promise.allSettled([
+      const [entriesResponse] = await Promise.allSettled([
         refreshEntries(),
-        loadReferenceData(),
       ]);
 
       if (entriesResponse.status !== 'fulfilled') {
@@ -287,13 +286,13 @@ const TimetableManagement: React.FC = () => {
           message: getRequestErrorMessage(entriesResponse.reason, 'Timetable entries load nahi ho paaye.'),
         });
       }
-      if (referenceResponse.status !== 'fulfilled' && isTeacherSelfView) {
-        setTeachers([]);
-      }
+
+      setLoading(false);
+
+      loadReferenceData().catch(() => {});
     } catch (error) {
       console.error('Error loading data:', error);
       setAlert({ type: 'error', message: getRequestErrorMessage(error, 'Failed to load timetable data') });
-    } finally {
       setLoading(false);
     }
   };
