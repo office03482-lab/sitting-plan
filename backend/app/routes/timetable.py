@@ -41,6 +41,7 @@ from app.services.supabase_timetable import (
 )
 
 router = APIRouter()
+utility_router = APIRouter()
 
 DAYS_ORDER = [
     DayOfWeek.MONDAY,
@@ -952,7 +953,7 @@ async def check_conflict(
     return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
 
 
-@router.get("/template")
+@utility_router.get("/template")
 async def download_timetable_template():
     wb = Workbook()
     ws = wb.active
@@ -983,7 +984,7 @@ async def download_timetable_template():
     )
 
 
-@router.post("/upload")
+@utility_router.post("/upload")
 async def upload_timetable_excel(
     file: UploadFile = File(...),
     school_id: str = Depends(resolve_school_id_from_actor),
