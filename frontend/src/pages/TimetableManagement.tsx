@@ -132,6 +132,8 @@ const TimetableManagement: React.FC = () => {
   const [referenceDate, setReferenceDate] = useState(() => toInputDateValue(new Date()));
   const [dateRangeFrom, setDateRangeFrom] = useState('');
   const [dateRangeTo, setDateRangeTo] = useState('');
+  const [appliedDateFrom, setAppliedDateFrom] = useState('');
+  const [appliedDateTo, setAppliedDateTo] = useState('');
   const [copyDayForm, setCopyDayForm] = useState<{
     source_day: DayOfWeek;
     target_day: DayOfWeek;
@@ -591,7 +593,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
         .filter(Boolean);
       if (!batches.includes(selectedBatch)) return false;
     }
-    if (!isEntryInDateRange(entry, dateRangeFrom, dateRangeTo)) return false;
+    if (!isEntryInDateRange(entry, appliedDateFrom, appliedDateTo)) return false;
     return true;
   });
 
@@ -1239,15 +1241,26 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             onChange={(e) => setDateRangeTo(e.target.value)}
             className="px-2 py-1 border border-gray-300 rounded text-sm"
           />
-          {(dateRangeFrom || dateRangeTo) && (
+          <button
+            onClick={() => { setAppliedDateFrom(dateRangeFrom); setAppliedDateTo(dateRangeTo); }}
+            className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+          >
+            Load
+          </button>
+          {(appliedDateFrom || appliedDateTo) && (
             <button
-              onClick={() => { setDateRangeFrom(''); setDateRangeTo(''); }}
+              onClick={() => { setDateRangeFrom(''); setDateRangeTo(''); setAppliedDateFrom(''); setAppliedDateTo(''); }}
               className="text-red-500 hover:text-red-700 underline text-xs"
             >
               Clear
             </button>
           )}
         </div>
+        {(appliedDateFrom || appliedDateTo) && (
+          <div className="mt-1 text-xs text-gray-500">
+            Filter active: {appliedDateFrom || '...'} to {appliedDateTo || '...'}
+          </div>
+        )}
       </div>
 
       {/* Grid View */}
