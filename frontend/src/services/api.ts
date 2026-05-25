@@ -1884,6 +1884,13 @@ class ApiService {
     });
   }
 
+  async downloadTimetableTemplate() {
+    return this.api.get('/timetable/template', {
+      responseType: 'blob',
+    });
+  }
+
+
   async listStudents(_schoolId: number = 1, skip = 0, limit = 10000, batch?: string) {
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
     if (!scopedSchoolId) {

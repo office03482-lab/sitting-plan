@@ -1693,8 +1693,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
 
   const downloadTemplate = async () => {
     try {
-      const response = await apiService.api.get('/timetable/template', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const response = await apiService.downloadTimetableTemplate();
+      const url = window.URL.createObjectURL(response.data);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'timetable_template.xlsx';
