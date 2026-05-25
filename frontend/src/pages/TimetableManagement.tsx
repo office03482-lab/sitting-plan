@@ -134,6 +134,8 @@ const TimetableManagement: React.FC = () => {
   const [dateRangeTo, setDateRangeTo] = useState('');
   const [appliedDateFrom, setAppliedDateFrom] = useState('');
   const [appliedDateTo, setAppliedDateTo] = useState('');
+  const [showBulkForm, setShowBulkForm] = useState(false);
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [copyDayForm, setCopyDayForm] = useState<{
     source_day: DayOfWeek;
     target_day: DayOfWeek;
@@ -710,6 +712,13 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               <Plus size={20} />
               Add Entry
             </button>
+            <button
+              onClick={() => setShowBulkForm(true)}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2"
+            >
+              <Plus size={20} />
+              Bulk Entry
+            </button>
           </div>
         ) : null}
       </div>
@@ -1236,6 +1245,18 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
         </div>
       )}
 
+      {/* Bulk Entry Modal */}
+      {showBulkForm && (
+        <BulkEntryModal
+          onClose={() => setShowBulkForm(false)}
+          onCreated={() => { setShowBulkForm(false); refreshEntries(); }}
+          teachers={visibleTeachers}
+          rooms={normalizedRooms}
+          batchOptions={batchOptions}
+          apiService={apiService}
+        />
+      )}
+
       {/* Date Range Filter */}
       <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
         <div className="flex items-center gap-3 flex-wrap">
@@ -1643,5 +1664,232 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
     </div>
   );
 };
+
+interface BulkEntryModalProps {
+  onClose: () => void;
+  onCreated: () => void;
+  teachers: Teacher[];
+  rooms: Room[];
+  batchOptions: string[];
+  apiService: typeof apiService;
+}
+
+function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, apiService }: BulkEntryModalProps) {
+  const [pickedDate, setPickedDate] = useState('');
+  const [teacherId, setTeacherId] = useState('');
+  const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
+  const [subject, setSubject] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [roomId, setRoomId] = useState('');
+  const [sessionMode, setSessionMode] = useState<TimetableSessionMode>('offline');
+  const [notes, setNotes] = useState('');
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState(0);
+
+  const dayOfWeek = pickedDate ? getDayOfWeekFromDate(pickedDate) : 'monday';
+
+  const handleBatchToggle = (batch: string) => {
+    setSelectedBatches(prev =>
+      prev.includes(batch) ? prev.filter(b => b !== batch) : [...prev, batch]
+    );
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teacherId || selectedBatches.length === 0 || !startTime || !endTime) {
+      setAlert({ type: 'error', message: 'Teacher, batches, start aur end time zaroori hain.' });
+      return;
+    }
+
+    setBulkSubmitting(true);
+    setBulkProgress(0);
+    setAlert(null);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const batch of selectedBatches) {
+      try {
+        await apiService.createTimetableEntry({
+          teacher_id: teacherId,
+          room_id: roomId || undefined,
+          session_mode: sessionMode,
+          session_type: 'regular_class',
+          notes: notes || undefined,
+          day_of_week: dayOfWeek,
+          start_time: startTime,
+          end_time: endTime,
+          class_name: batch,
+          subject: subject || undefined,
+          start_date: pickedDate || undefined,
+        });
+        successCount++;
+      } catch {
+        failCount++;
+      }
+      setBulkProgress(successCount + failCount);
+    }
+
+    setBulkSubmitting(false);
+    if (failCount === 0) {
+      setAlert({ type: 'success', message: `${successCount} entries successfully created!` });
+      setTimeout(() => { onClose(); onCreated(); }, 1500);
+    } else {
+      setAlert({ type: 'error', message: `${successCount} created, ${failCount} failed.` });
+    }
+  };
+
+  const selectedTeacherSubject = teachers.find(t => String(t.id) === String(teacherId))?.subject || '';
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Bulk Entry - Create Multiple Entries</h2>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 p-6">
+          {alert && (
+            <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              {alert.message}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+            <input
+              type="date"
+              value={pickedDate}
+              onChange={(e) => setPickedDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+            <p className="text-xs text-gray-500 mt-1">Day: {DAY_LABELS[dayOfWeek]}</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Teacher *</label>
+            <select
+              value={teacherId}
+              onChange={(e) => { setTeacherId(e.target.value); setSubject(teachers.find(t => String(t.id) === e.target.value)?.subject || ''); }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              required
+            >
+              <option value="">Select Teacher</option>
+              {teachers.map(t => (
+                <option key={t.id} value={t.id}>{t.name} - {t.subject}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              placeholder={selectedTeacherSubject || 'Auto-filled from teacher'}
+              disabled={!!selectedTeacherSubject}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time *</label>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Time *</label>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
+            <select
+              value={roomId}
+              onChange={(e) => setRoomId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            >
+              <option value="">No Room</option>
+              {rooms.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Session Mode</label>
+            <select
+              value={sessionMode}
+              onChange={(e) => setSessionMode(e.target.value as TimetableSessionMode)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            >
+              <option value="offline">Offline</option>
+              <option value="online">Online</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Batches * ({selectedBatches.length} selected)</label>
+            <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2 grid grid-cols-2 gap-1">
+              {batchOptions.map(batch => (
+                <label key={batch} className="flex items-center gap-2 text-sm px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedBatches.includes(batch)}
+                    onChange={() => handleBatchToggle(batch)}
+                    className="rounded"
+                  />
+                  {batch}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              rows={2}
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4 border-t border-gray-200">
+            <button
+              type="submit"
+              disabled={bulkSubmitting}
+              className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-60"
+            >
+              {bulkSubmitting ? `Creating... (${bulkProgress}/${selectedBatches.length})` : `Create ${selectedBatches.length} Entries`}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={bulkSubmitting}
+              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 export default TimetableManagement;
