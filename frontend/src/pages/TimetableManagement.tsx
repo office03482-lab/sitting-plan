@@ -1687,6 +1687,50 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkTab, setBulkTab] = useState<'manual' | 'excel'>('manual');
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const downloadTemplate = async () => {
+    try {
+      const response = await apiService.api.get('/timetable/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'timetable_template.xlsx';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setAlert({ type: 'error', message: 'Template download failed' });
+    }
+  };
+
+  const handleExcelUpload = async () => {
+    if (!excelFile) return;
+    setUploading(true);
+    setAlert(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', excelFile);
+      const response = await apiService.api.post('/timetable/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const data = response.data;
+      if (data.errors?.length) {
+        setAlert({ type: 'error', message: `${data.created} created, ${data.errors.length} errors. Check console for details.` });
+        console.error('Upload errors:', data.errors);
+      } else {
+        setAlert({ type: 'success', message: `${data.created} entries created from Excel!` });
+        setTimeout(() => { onClose(); onCreated(); }, 1500);
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: err?.response?.data?.detail || err?.message || 'Upload failed' });
+    }
+    setUploading(false);
+  };
+  const [bulkTab, setBulkTab] = useState<'manual' | 'excel'>('manual');
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const dayOfWeek = pickedDate ? getDayOfWeekFromDate(pickedDate) : 'monday';
 
@@ -1721,12 +1765,17 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
           class_name: batch,
           subject: subject || undefined,
           start_date: pickedDate || undefined,
+        }).catch(err => {
+          console.error(`Failed for batch "${batch}":`, err?.response?.data || err?.message || err);
+          throw err;
         })
       )
     );
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;
     const failCount = results.filter(r => r.status === 'rejected').length;
+    const errors = results.filter(r => r.status === 'rejected').map(r => (r as PromiseRejectedResult).reason);
+    console.error('Bulk create errors:', errors);
     setBulkProgress(selectedBatches.length);
 
     setBulkSubmitting(false);
@@ -1743,148 +1792,231 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Bulk Entry - Create Multiple Entries</h2>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4 p-6">
-          {alert && (
-            <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-              {alert.message}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-            <input
-              type="date"
-              value={pickedDate}
-              onChange={(e) => setPickedDate(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-            <p className="text-xs text-gray-500 mt-1">Day: {DAY_LABELS[dayOfWeek]}</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Teacher *</label>
-            <select
-              value={teacherId}
-              onChange={(e) => { setTeacherId(e.target.value); setSubject(teachers.find(t => String(t.id) === e.target.value)?.subject || ''); }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              required
-            >
-              <option value="">Select Teacher</option>
-              {teachers.map(t => (
-                <option key={t.id} value={t.id}>{t.name} - {t.subject}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
-            <input
-              type="text"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              placeholder={selectedTeacherSubject || 'Auto-filled from teacher'}
-              disabled={!!selectedTeacherSubject}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time *</label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Time *</label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                required
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
-            <select
-              value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            >
-              <option value="">No Room</option>
-              {rooms.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Session Mode</label>
-            <select
-              value={sessionMode}
-              onChange={(e) => setSessionMode(e.target.value as TimetableSessionMode)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            >
-              <option value="offline">Offline</option>
-              <option value="online">Online</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Batches * ({selectedBatches.length} selected)</label>
-            <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2 grid grid-cols-2 gap-1">
-              {batchOptions.map(batch => (
-                <label key={batch} className="flex items-center gap-2 text-sm px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedBatches.includes(batch)}
-                    onChange={() => handleBatchToggle(batch)}
-                    className="rounded"
-                  />
-                  {batch}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              rows={2}
-            />
-          </div>
-
-          <div className="flex gap-3 pt-4 border-t border-gray-200">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Bulk Entry</h2>
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
             <button
-              type="submit"
-              disabled={bulkSubmitting}
-              className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-60"
+              type="button"
+              onClick={() => setBulkTab('manual')}
+              className={`px-3 py-1 rounded text-sm ${bulkTab === 'manual' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}
             >
-              {bulkSubmitting ? `Creating... (${bulkProgress}/${selectedBatches.length})` : `Create ${selectedBatches.length} Entries`}
+              Manual
             </button>
             <button
               type="button"
-              onClick={onClose}
-              disabled={bulkSubmitting}
-              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
+              onClick={() => setBulkTab('excel')}
+              className={`px-3 py-1 rounded text-sm ${bulkTab === 'excel' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}
             >
-              Cancel
+              Excel Upload
             </button>
           </div>
-        </form>
+        </div>
+
+        {bulkTab === 'manual' ? (
+          <form onSubmit={handleSubmit} className="space-y-4 p-6">
+            {alert && (
+              <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                {alert.message}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <input
+                type="date"
+                value={pickedDate}
+                onChange={(e) => setPickedDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+              <p className="text-xs text-gray-500 mt-1">Day: {DAY_LABELS[dayOfWeek]}</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Teacher *</label>
+              <select
+                value={teacherId}
+                onChange={(e) => { setTeacherId(e.target.value); setSubject(teachers.find(t => String(t.id) === e.target.value)?.subject || ''); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                required
+              >
+                <option value="">Select Teacher</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name} - {t.subject}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                placeholder={selectedTeacherSubject || 'Auto-filled from teacher'}
+                disabled={!!selectedTeacherSubject}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Time *</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Time *</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
+              <select
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              >
+                <option value="">No Room</option>
+                {rooms.map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Session Mode</label>
+              <select
+                value={sessionMode}
+                onChange={(e) => setSessionMode(e.target.value as TimetableSessionMode)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              >
+                <option value="offline">Offline</option>
+                <option value="online">Online</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Batches * ({selectedBatches.length} selected)</label>
+              <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2 grid grid-cols-2 gap-1">
+                {batchOptions.map(batch => (
+                  <label key={batch} className="flex items-center gap-2 text-sm px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedBatches.includes(batch)}
+                      onChange={() => handleBatchToggle(batch)}
+                      className="rounded"
+                    />
+                    {batch}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                rows={2}
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-gray-200">
+              <button
+                type="submit"
+                disabled={bulkSubmitting}
+                className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-60"
+              >
+                {bulkSubmitting ? `Creating... (${bulkProgress}/${selectedBatches.length})` : `Create ${selectedBatches.length} Entries`}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={bulkSubmitting}
+                className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-4 p-6">
+            {alert && (
+              <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                {alert.message}
+              </div>
+            )}
+
+            <div className="text-sm text-gray-600">
+              <p className="mb-3">1. Pehle template download karo aur Excel fill karo.</p>
+              <p className="mb-3">2. Phir file upload karo.</p>
+              <p className="mb-3">Columns: Date, Day, Teacher, Batch/Class, Subject, Start Time, End Time, Room, Mode</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={downloadTemplate}
+              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
+            >
+              <Download size={16} />
+              Download Template
+            </button>
+
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(e) => setExcelFile(e.target.files?.[0] || null)}
+                className="hidden"
+                id="excel-upload"
+              />
+              <label htmlFor="excel-upload" className="cursor-pointer">
+                <div className="text-gray-500">
+                  {excelFile ? (
+                    <span className="text-blue-600">{excelFile.name}</span>
+                  ) : (
+                    <>
+                      <p className="text-lg mb-1">📁</p>
+                      <p>Click to select Excel file</p>
+                    </>
+                  )}
+                </div>
+              </label>
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-gray-200">
+              <button
+                type="button"
+                onClick={handleExcelUpload}
+                disabled={!excelFile || uploading}
+                className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-60"
+              >
+                {uploading ? 'Uploading...' : 'Upload & Create'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={uploading}
+                className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

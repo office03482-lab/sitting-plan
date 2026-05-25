@@ -6,9 +6,9 @@ from datetime import date, datetime
 from io import BytesIO
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -28,6 +28,7 @@ from app.schemas import (
     TimetableEntryUpdate,
     TimetableView,
 )
+from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
 from app.services.supabase_timetable import (
     check_teacher_conflicts as check_teacher_conflicts_supabase,
@@ -55,6 +56,13 @@ EXPORT_GROUPINGS = {"day", "teacher", "room", "batch"}
 SESSION_MODE_FILTERS = {"all", "offline", "online", "merged"}
 BREAK_TEACHER_NAME = "__BREAK_SESSION__"
 SELF_STUDY_TEACHER_NAME = "__SELF_STUDY_SESSION__"
+DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def get_day_of_week_from_date(date_str: str) -> str:
+    parts = date_str.split("-")
+    d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+    return DAY_NAMES[d.weekday()]
 
 
 
@@ -941,7 +949,139 @@ async def check_conflict(
                 ],
                 message="Conflict detected: Teacher is already assigned during this time slot",
             )
-        return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
+    return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
+
+
+@router.get("/template")
+async def download_timetable_template():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Timetable Template"
+    headers = ["Date", "Day", "Teacher", "Batch/Class", "Subject", "Start Time", "End Time", "Room", "Mode"]
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 25
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 20
+    ws.column_dimensions["F"].width = 14
+    ws.column_dimensions["G"].width = 14
+    ws.column_dimensions["H"].width = 20
+    ws.column_dimensions["I"].width = 12
+    ws.add_data_validation()
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=timetable_template.xlsx"},
+    )
+
+
+@router.post("/upload")
+async def upload_timetable_excel(
+    file: UploadFile = File(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: Dict[str, str] = Depends(require_timetable_manage_access),
+):
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    contents = await file.read()
+    wb = load_workbook(BytesIO(contents))
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    created = []
+    errors = []
+    supabase = get_supabase_admin_client()
+    teacher_cache: dict[str, str | None] = {}
+    room_cache: dict[str, str | None] = {}
+
+    def resolve_teacher_id(name: str) -> str | None:
+        if not name or not name.strip():
+            return None
+        name_key = name.strip().lower()
+        if name_key in teacher_cache:
+            return teacher_cache[name_key]
+        response = (
+            supabase.table("attendance_staff")
+            .select("id")
+            .ilike("full_name", f"%{name.strip()}%")
+            .eq("school_id", school_id)
+            .limit(1)
+            .execute()
+        )
+        data = response.data if isinstance(response.data, list) else []
+        result = str(data[0]["id"]) if data else None
+        teacher_cache[name_key] = result
+        return result
+
+    def resolve_room_id(name: str) -> str | None:
+        if not name or not name.strip():
+            return None
+        name_key = name.strip().lower()
+        if name_key in room_cache:
+            return room_cache[name_key]
+        response = (
+            supabase.table("rooms")
+            .select("id")
+            .ilike("name", f"%{name.strip()}%")
+            .eq("school_id", school_id)
+            .limit(1)
+            .execute()
+        )
+        data = response.data if isinstance(response.data, list) else []
+        result = str(data[0]["id"]) if data else None
+        room_cache[name_key] = result
+        return result
+
+    for idx, row in enumerate(rows, 2):
+        date_val, day_val, teacher_name, batch_val, subject_val, start_time, end_time, room_name, mode_val = (
+            (str(v).strip() if v else "") for v in (row + (None,) * (9 - len(row)))[:9]
+        )
+        if not teacher_name or not batch_val or not start_time or not end_time:
+            errors.append(f"Row {idx}: Teacher, Batch, Start Time, End Time are required")
+            continue
+        if not date_val:
+            errors.append(f"Row {idx}: Date is required")
+            continue
+
+        teacher_id = resolve_teacher_id(teacher_name)
+        if not teacher_id:
+            errors.append(f"Row {idx}: Teacher '{teacher_name}' not found")
+            continue
+        room_id = resolve_room_id(room_name) if room_name else None
+        day_of_week = day_val.lower() if day_val else get_day_of_week_from_date(date_val)
+
+        payload = {
+            "teacher_id": teacher_id,
+            "room_id": room_id,
+            "school_id": school_id,
+            "day_of_week": day_of_week,
+            "start_time": start_time[:5],
+            "end_time": end_time[:5],
+            "class_name": batch_val,
+            "subject": subject_val or "General",
+            "session_mode": mode_val.lower() if mode_val in ("offline", "online") else "offline",
+            "session_type": "regular_class",
+            "start_date": date_val[:10],
+        }
+        try:
+            result = create_timetable_entry_supabase(school_id, payload)
+            created.append(result)
+        except Exception as e:
+            errors.append(f"Row {idx}: {str(e)}")
+
+    return {
+        "created": len(created),
+        "errors": errors,
+        "entries": created,
+    }
 
     conflicts = check_teacher_conflict(db, teacher_id, day_of_week, start_time, end_time, exclude_entry_id)
     if conflicts:
