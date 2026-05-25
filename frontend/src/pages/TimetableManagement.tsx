@@ -1728,9 +1728,6 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
     }
     setUploading(false);
   };
-  const [bulkTab, setBulkTab] = useState<'manual' | 'excel'>('manual');
-  const [excelFile, setExcelFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
 
   const dayOfWeek = pickedDate ? getDayOfWeekFromDate(pickedDate) : 'monday';
 
