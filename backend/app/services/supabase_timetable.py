@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import re
 import time
@@ -391,9 +392,28 @@ def list_timetable_entries(
     rows = list(response.data or [])
     if reference_date:
         rows = [r for r in rows if not _is_outside_date_range(r, reference_date)]
-    staff_lookup = _fetch_staff_lookup(school_id, [row.get("staff_member_id") for row in rows])
-    room_lookup = _fetch_room_lookup(school_id, [row.get("room_id") for row in rows])
-    subject_lookup = _fetch_subject_lookup(school_id, [row.get("subject_id") for row in rows])
+
+    staff_ids = list({str(row.get("staff_member_id")) for row in rows if row.get("staff_member_id")})
+    room_ids = list({str(row.get("room_id")) for row in rows if row.get("room_id")})
+    subject_ids = list({str(row.get("subject_id")) for row in rows if row.get("subject_id")})
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(_fetch_staff_lookup, school_id, staff_ids): "staff",
+            pool.submit(_fetch_room_lookup, school_id, room_ids): "room",
+            pool.submit(_fetch_subject_lookup, school_id, subject_ids): "subject",
+        }
+        results: dict[str, Any] = {}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception:
+                results[key] = {}
+
+    staff_lookup = results.get("staff", {})
+    room_lookup = results.get("room", {})
+    subject_lookup = results.get("subject", {})
     serialized_rows = [
         serialize_timetable_row(
             row,

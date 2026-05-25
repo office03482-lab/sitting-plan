@@ -1,6 +1,7 @@
 """
 Timetable management routes
 """
+import asyncio
 from collections import defaultdict
 from datetime import date, datetime
 from io import BytesIO
@@ -689,13 +690,16 @@ async def list_timetable_entries(
     db: Session = Depends(get_db),
 ):
     if not is_legacy_sqlite_mode():
-        return list_timetable_entries_supabase(
-            school_id,
-            day_of_week=day_of_week.value if day_of_week else None,
-            teacher_id=str(teacher_id) if teacher_id else None,
-            class_name=class_name,
-            room_id=str(room_id) if room_id else None,
-            reference_date=reference_date.isoformat() if reference_date else None,
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: list_timetable_entries_supabase(
+                school_id,
+                day_of_week=day_of_week.value if day_of_week else None,
+                teacher_id=str(teacher_id) if teacher_id else None,
+                class_name=class_name,
+                room_id=str(room_id) if room_id else None,
+                reference_date=reference_date.isoformat() if reference_date else None,
+            ),
         )
 
     query = get_entry_query(db, school_id)
