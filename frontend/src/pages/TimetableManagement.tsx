@@ -1710,11 +1710,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
     setUploading(true);
     setAlert(null);
     try {
-      const formData = new FormData();
-      formData.append('file', excelFile);
-      const response = await apiService.api.post('/timetable/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const response = await apiService.uploadTimetableExcel(excelFile);
       const data = response.data;
       if (data.errors?.length) {
         setAlert({ type: 'error', message: `${data.created} created, ${data.errors.length} errors. Check console for details.` });

@@ -1890,6 +1890,16 @@ class ApiService {
     });
   }
 
+  async uploadTimetableExcel(file: File) {
+    const scopedSchoolId = this.getCurrentSupabaseSchoolId();
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.api.post('/timetable/upload', formData, {
+      params: { school_id: scopedSchoolId || undefined },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  }
+
 
   async listStudents(_schoolId: number = 1, skip = 0, limit = 10000, batch?: string) {
     const scopedSchoolId = await this.resolveCurrentSupabaseSchoolId();
