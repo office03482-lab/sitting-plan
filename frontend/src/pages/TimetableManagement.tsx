@@ -485,11 +485,16 @@ const TimetableManagement: React.FC = () => {
   };
 
   const getEntriesForDayAndTime = (day: DayOfWeek, time: string) => {
-    return entries.filter(entry =>
-      entry.day_of_week === day &&
-      compareTimeValues(entry.start_time, time) <= 0 &&
-      compareTimeValues(entry.end_time, time) > 0
-    );
+    return entries.filter(entry => {
+      if (entry.day_of_week !== day) return false;
+      if (compareTimeValues(entry.start_time, time) > 0) return false;
+      if (compareTimeValues(entry.end_time, time) <= 0) return false;
+      if (entry.start_date) {
+        const colDate = toInputDateValue(weekDateByDay[day]);
+        if (entry.start_date !== colDate) return false;
+      }
+      return true;
+    });
   };
 
   const handleCopyDayTimetable = async () => {
