@@ -194,16 +194,16 @@ app.include_router(
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("admin_office.teachers"))],
 )
 app.include_router(
-    timetable.router,
-    prefix=f"{settings.api_prefix}/timetable",
-    tags=["Timetable"],
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("timetable"))],
-)
-app.include_router(
     timetable.utility_router,
     prefix=f"{settings.api_prefix}/timetable",
     tags=["Timetable"],
     dependencies=[Depends(get_authenticated_user)],
+)
+app.include_router(
+    timetable.router,
+    prefix=f"{settings.api_prefix}/timetable",
+    tags=["Timetable"],
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("timetable"))],
 )
 app.include_router(
     settings_router.router,
