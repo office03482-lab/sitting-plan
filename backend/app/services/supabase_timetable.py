@@ -554,8 +554,8 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "notes": entry_data.get("notes"),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", True)),
-        "start_date": entry_data.get("start_date"),
-        "end_date": entry_data.get("end_date"),
+        "start_date": str(entry_data.get("start_date") or "")[:10] or None,
+        "end_date": str(entry_data.get("end_date") or "")[:10] or None,
     }
     created = (
         get_timetable_table_query()
@@ -635,8 +635,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "notes": entry_data.get("notes", existing.get("notes")),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", existing.get("is_active", True))),
-        "start_date": entry_data.get("start_date", existing.get("start_date")),
-        "end_date": entry_data.get("end_date", existing.get("end_date")),
+        "start_date": str(entry_data.get("start_date", existing.get("start_date")) or "")[:10] or None,
+        "end_date": str(entry_data.get("end_date", existing.get("end_date")) or "")[:10] or None,
     }
     updated = (
         get_timetable_table_query()

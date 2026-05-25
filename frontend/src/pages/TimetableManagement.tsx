@@ -1706,12 +1706,10 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
     setBulkSubmitting(true);
     setBulkProgress(0);
     setAlert(null);
-    let successCount = 0;
-    let failCount = 0;
 
-    for (const batch of selectedBatches) {
-      try {
-        await apiService.createTimetableEntry({
+    const results = await Promise.allSettled(
+      selectedBatches.map(batch =>
+        apiService.createTimetableEntry({
           teacher_id: teacherId,
           room_id: roomId || undefined,
           session_mode: sessionMode,
@@ -1723,13 +1721,13 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
           class_name: batch,
           subject: subject || undefined,
           start_date: pickedDate || undefined,
-        });
-        successCount++;
-      } catch {
-        failCount++;
-      }
-      setBulkProgress(successCount + failCount);
-    }
+        })
+      )
+    );
+
+    const successCount = results.filter(r => r.status === 'fulfilled').length;
+    const failCount = results.filter(r => r.status === 'rejected').length;
+    setBulkProgress(selectedBatches.length);
 
     setBulkSubmitting(false);
     if (failCount === 0) {
