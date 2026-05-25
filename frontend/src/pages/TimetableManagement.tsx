@@ -209,10 +209,17 @@ const TimetableManagement: React.FC = () => {
     }
   }, [isTeacherSelfView, visibleTeachers]);
 
-  const refreshEntries = async () => {
+  const refreshEntries = async (skipReferenceDate?: boolean) => {
     const response = await apiService.listTimetableEntries({
-      reference_date: referenceDate || undefined,
+      reference_date: skipReferenceDate ? undefined : (referenceDate || undefined),
     });
+    const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
+    setEntries(nextEntries);
+    return nextEntries;
+  };
+
+  const refreshEntriesWithDates = async () => {
+    const response = await apiService.listTimetableEntries({});
     const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
     setEntries(nextEntries);
     return nextEntries;
@@ -1242,7 +1249,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             className="px-2 py-1 border border-gray-300 rounded text-sm"
           />
           <button
-            onClick={() => { setAppliedDateFrom(dateRangeFrom); setAppliedDateTo(dateRangeTo); }}
+            onClick={() => { setAppliedDateFrom(dateRangeFrom); setAppliedDateTo(dateRangeTo); refreshEntriesWithDates(); }}
             className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
           >
             Load
