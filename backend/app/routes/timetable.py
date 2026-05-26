@@ -1007,10 +1007,10 @@ async def upload_timetable_excel(
     room_cache: dict[str, str | None] = {}
     teacher_subject_cache: dict[str, str] = {}
 
-    # Pre-load teacher subject assignments
+    # Pre-load teacher subject assignments from academic schema
     try:
         assignments_resp = (
-            supabase.table("staff_subject_assignments")
+            supabase.schema("academic").table("staff_subject_assignments")
             .select("staff_member_id, subject_id")
             .eq("school_id", school_id)
             .eq("is_active", True)
@@ -1021,8 +1021,9 @@ async def upload_timetable_excel(
             subj_id = str(a.get("subject_id") or "")
             if sm_id and subj_id:
                 teacher_subject_cache[sm_id] = subj_id
-    except Exception:
-        pass
+        logger.info("upload.subject_assignments_loaded count=%d", len(teacher_subject_cache))
+    except Exception as e:
+        logger.warning("upload.subject_assignments_failed: %s", e)
 
     # Pre-load subject names
     subject_name_cache: dict[str, str] = {}
@@ -1035,8 +1036,9 @@ async def upload_timetable_excel(
         )
         for s in (subjects_resp.data or []):
             subject_name_cache[str(s.get("id"))] = str(s.get("name") or "")
-    except Exception:
-        pass
+        logger.info("upload.subjects_loaded count=%d", len(subject_name_cache))
+    except Exception as e:
+        logger.warning("upload.subjects_failed: %s", e)
 
     def resolve_teacher_id(name: str) -> str | None:
         if not name or not name.strip():
@@ -1101,7 +1103,19 @@ async def upload_timetable_excel(
             if detected_subject_id:
                 subject_val = subject_name_cache.get(detected_subject_id, "General")
             else:
-                subject_val = "General"
+                # Fallback: check teacher's department as subject hint
+                try:
+                    teacher_info = (
+                        supabase.table("staff_members")
+                        .select("department")
+                        .eq("id", teacher_id)
+                        .single()
+                        .execute()
+                    )
+                    dept = (teacher_info.data or {}).get("department") or ""
+                    subject_val = dept if dept.strip() else "General"
+                except Exception:
+                    subject_val = "General"
 
         payloads.append({
             "teacher_id": teacher_id,
