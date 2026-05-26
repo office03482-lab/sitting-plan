@@ -305,6 +305,12 @@ def _ensure_system_staff_member(school_id: str, session_type: str) -> dict[str, 
 
 
 def _is_outside_date_range(row: dict[str, Any], reference_date: str) -> bool:
+    # Break time aur self study hamesha dikhe (regardless of date)
+    raw_metadata = row.get("metadata") or {}
+    if isinstance(raw_metadata, dict):
+        ui_type = (raw_metadata.get("ui_session_type") or "").strip().lower()
+        if ui_type in ("break_time", "self_study"):
+            return False
     start_date = row.get("start_date")
     end_date = row.get("end_date")
     if not start_date and not end_date:
