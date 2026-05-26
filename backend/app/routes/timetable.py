@@ -997,9 +997,15 @@ async def upload_timetable_excel(
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
     contents = await file.read()
-    wb = load_workbook(BytesIO(contents))
+    try:
+        wb = load_workbook(BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel file parse nahi ho paaya: {e}")
     ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    try:
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel rows parse nahi ho paaya: {e}")
     created = []
     errors = []
     supabase = get_supabase_admin_client()
@@ -1007,141 +1013,142 @@ async def upload_timetable_excel(
     room_cache: dict[str, str | None] = {}
     teacher_subject_cache: dict[str, str] = {}
 
-    # Pre-load teacher subject assignments from academic schema
     try:
-        assignments_resp = (
-            supabase.schema("academic").table("staff_subject_assignments")
-            .select("staff_member_id, subject_id")
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .execute()
-        )
-        for a in (assignments_resp.data or []):
-            sm_id = str(a.get("staff_member_id") or "")
-            subj_id = str(a.get("subject_id") or "")
-            if sm_id and subj_id:
-                teacher_subject_cache[sm_id] = subj_id
-        logger.info("upload.subject_assignments_loaded count=%d", len(teacher_subject_cache))
-    except Exception as e:
-        logger.warning("upload.subject_assignments_failed: %s", e)
+        # Pre-load teacher subject assignments from academic schema
+        try:
+            assignments_resp = (
+                supabase.schema("academic").table("staff_subject_assignments")
+                .select("staff_member_id, subject_id")
+                .eq("school_id", school_id)
+                .eq("is_active", True)
+                .execute()
+            )
+            for a in (assignments_resp.data or []):
+                sm_id = str(a.get("staff_member_id") or "")
+                subj_id = str(a.get("subject_id") or "")
+                if sm_id and subj_id:
+                    teacher_subject_cache[sm_id] = subj_id
+        except Exception as e:
+            errors.append(f"Subject assignments load failed: {e}")
 
-    # Pre-load subject names
-    subject_name_cache: dict[str, str] = {}
-    try:
-        subjects_resp = (
-            supabase.table("subjects")
-            .select("id, name")
-            .eq("school_id", school_id)
-            .execute()
-        )
-        for s in (subjects_resp.data or []):
-            subject_name_cache[str(s.get("id"))] = str(s.get("name") or "")
-        logger.info("upload.subjects_loaded count=%d", len(subject_name_cache))
-    except Exception as e:
-        logger.warning("upload.subjects_failed: %s", e)
+        # Pre-load subject names
+        subject_name_cache: dict[str, str] = {}
+        try:
+            subjects_resp = (
+                supabase.table("subjects")
+                .select("id, name")
+                .eq("school_id", school_id)
+                .execute()
+            )
+            for s in (subjects_resp.data or []):
+                subject_name_cache[str(s.get("id"))] = str(s.get("name") or "")
+        except Exception as e:
+            errors.append(f"Subjects load failed: {e}")
 
-    def resolve_teacher_id(name: str) -> str | None:
-        if not name or not name.strip():
-            return None
-        key = name.strip().lower()
-        if key in teacher_cache:
-            return teacher_cache[key]
-        response = (
-            supabase.table("staff_members")
-            .select("id")
-            .ilike("full_name", f"%{name.strip()}%")
-            .eq("school_id", school_id)
-            .limit(1)
-            .execute()
-        )
-        data = response.data if isinstance(response.data, list) else []
-        result = str(data[0]["id"]) if data else None
-        teacher_cache[key] = result
-        return result
+        def resolve_teacher_id(name: str) -> str | None:
+            if not name or not name.strip():
+                return None
+            key = name.strip().lower()
+            if key in teacher_cache:
+                return teacher_cache[key]
+            response = (
+                supabase.table("staff_members")
+                .select("id")
+                .ilike("full_name", f"%{name.strip()}%")
+                .eq("school_id", school_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data if isinstance(response.data, list) else []
+            result = str(data[0]["id"]) if data else None
+            teacher_cache[key] = result
+            return result
 
-    def resolve_room_id(name: str) -> str | None:
-        if not name or not name.strip():
-            return None
-        name_key = name.strip().lower()
-        if name_key in room_cache:
-            return room_cache[name_key]
-        response = (
-            supabase.table("rooms")
-            .select("id")
-            .ilike("name", f"%{name.strip()}%")
-            .eq("school_id", school_id)
-            .limit(1)
-            .execute()
-        )
-        data = response.data if isinstance(response.data, list) else []
-        result = str(data[0]["id"]) if data else None
-        room_cache[name_key] = result
-        return result
+        def resolve_room_id(name: str) -> str | None:
+            if not name or not name.strip():
+                return None
+            name_key = name.strip().lower()
+            if name_key in room_cache:
+                return room_cache[name_key]
+            response = (
+                supabase.table("rooms")
+                .select("id")
+                .ilike("name", f"%{name.strip()}%")
+                .eq("school_id", school_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data if isinstance(response.data, list) else []
+            result = str(data[0]["id"]) if data else None
+            room_cache[name_key] = result
+            return result
 
-    payloads: list[dict[str, Any]] = []
-    for idx, row in enumerate(rows, 2):
-        date_val, day_val, teacher_name, batch_val, subject_val, start_time, end_time, room_name, mode_val = (
-            (str(v).strip() if v else "") for v in (row + (None,) * (9 - len(row)))[:9]
-        )
-        if not teacher_name or not batch_val or not start_time or not end_time:
-            errors.append(f"Row {idx}: Teacher, Batch, Start Time, End Time are required")
-            continue
-        if not date_val:
-            errors.append(f"Row {idx}: Date is required")
-            continue
+        payloads: list[dict[str, Any]] = []
+        for idx, row in enumerate(rows, 2):
+            date_val, day_val, teacher_name, batch_val, subject_val, start_time, end_time, room_name, mode_val = (
+                (str(v).strip() if v else "") for v in (row + (None,) * (9 - len(row)))[:9]
+            )
+            if not teacher_name or not batch_val or not start_time or not end_time:
+                errors.append(f"Row {idx}: Teacher, Batch, Start Time, End Time required")
+                continue
+            if not date_val:
+                errors.append(f"Row {idx}: Date required")
+                continue
 
-        teacher_id = resolve_teacher_id(teacher_name)
-        if not teacher_id:
-            errors.append(f"Row {idx}: Teacher '{teacher_name}' system mein nahi mila")
-            continue
-        room_id = resolve_room_id(room_name) if room_name else None
-        day_of_week = day_val.lower() if day_val else get_day_of_week_from_date(date_val)
+            teacher_id = resolve_teacher_id(teacher_name)
+            if not teacher_id:
+                errors.append(f"Row {idx}: Teacher '{teacher_name}' system mein nahi mila")
+                continue
+            room_id = resolve_room_id(room_name) if room_name else None
+            day_of_week = day_val.lower() if day_val else get_day_of_week_from_date(date_val)
 
-        # Auto-detect subject if not provided
-        if not subject_val or subject_val.strip() == "":
-            detected_subject_id = teacher_subject_cache.get(teacher_id)
-            if detected_subject_id:
-                subject_val = subject_name_cache.get(detected_subject_id, "General")
-            else:
-                # Fallback: check teacher's department as subject hint
+            # Auto-detect subject if not provided
+            if not subject_val or subject_val.strip() == "":
+                detected_subject_id = teacher_subject_cache.get(teacher_id)
+                if detected_subject_id:
+                    subject_val = subject_name_cache.get(detected_subject_id, "General")
+                else:
+                    try:
+                        teacher_info = (
+                            supabase.table("staff_members")
+                            .select("department")
+                            .eq("id", teacher_id)
+                            .single()
+                            .execute()
+                        )
+                        dept = (teacher_info.data or {}).get("department") or ""
+                        subject_val = dept if dept.strip() else "General"
+                    except Exception:
+                        subject_val = "General"
+
+            payloads.append({
+                "teacher_id": teacher_id,
+                "room_id": room_id,
+                "school_id": school_id,
+                "day_of_week": day_of_week,
+                "start_time": start_time[:5],
+                "end_time": end_time[:5],
+                "class_name": batch_val,
+                "subject": subject_val or "General",
+                "session_mode": mode_val.lower() if mode_val in ("offline", "online") else "offline",
+                "session_type": "regular_class",
+                "start_date": date_val[:10],
+                "skip_conflict_check": True,
+            })
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(create_timetable_entry_supabase, school_id, p): i for i, p in enumerate(payloads)}
+            for future in as_completed(futures):
+                idx = futures[future]
                 try:
-                    teacher_info = (
-                        supabase.table("staff_members")
-                        .select("department")
-                        .eq("id", teacher_id)
-                        .single()
-                        .execute()
-                    )
-                    dept = (teacher_info.data or {}).get("department") or ""
-                    subject_val = dept if dept.strip() else "General"
-                except Exception:
-                    subject_val = "General"
+                    result = future.result()
+                    created.append(result)
+                except Exception as e:
+                    errors.append(f"Row {idx + 2}: {str(e)}")
 
-        payloads.append({
-            "teacher_id": teacher_id,
-            "room_id": room_id,
-            "school_id": school_id,
-            "day_of_week": day_of_week,
-            "start_time": start_time[:5],
-            "end_time": end_time[:5],
-            "class_name": batch_val,
-            "subject": subject_val or "General",
-            "session_mode": mode_val.lower() if mode_val in ("offline", "online") else "offline",
-            "session_type": "regular_class",
-            "start_date": date_val[:10],
-            "skip_conflict_check": True,
-        })
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(create_timetable_entry_supabase, school_id, p): i for i, p in enumerate(payloads)}
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                result = future.result()
-                created.append(result)
-            except Exception as e:
-                errors.append(f"Row {idx + 2}: {str(e)}")
+    except Exception as e:
+        errors.append(f"Upload processing failed: {e}")
 
     return {
         "created": len(created),
