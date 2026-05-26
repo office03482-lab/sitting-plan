@@ -222,17 +222,17 @@ def _rpc_list_student_records(
                 if _cf(b_name) == _cf(normalized_name) or _canonical_batch_key(b_name) == _canonical_batch_key(normalized_name):
                     matched = b
                     break
+            b_class = ""
+            b_section = ""
             if matched:
                 b_class = _normalize(matched.get("class_name"))
                 b_section = _normalize(matched.get("section")) or _normalize(raw_section) or ""
-                if b_class:
-                    resolved_batch_filter_payload.append({"class_name": b_class, "section": b_section})
+            if matched and b_class:
+                resolved_batch_filter_payload.append({"class_name": b_class, "section": b_section})
             else:
-                # No matching batch found -- try to find class/section by matching the batch name
-                # against student records, or split the name as a fallback.
+                # No matching batch found, or batch has no class_name --
+                # try to find class/section from student records, or split the name.
                 batch_name_clean = normalized_name
-                # Try to find a (class_name, section) from students whose combined
-                # label matches the requested batch name.
                 matched_class_section = _resolve_class_section_from_student_data(school_id, batch_name_clean)
                 if matched_class_section:
                     resolved_batch_filter_payload.append({
