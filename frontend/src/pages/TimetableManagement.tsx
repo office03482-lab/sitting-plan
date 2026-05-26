@@ -1712,15 +1712,21 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
     try {
       const response = await apiService.uploadTimetableExcel(excelFile);
       const data = response.data;
-      if (data.errors?.length) {
-        setAlert({ type: 'error', message: `${data.created} created, ${data.errors.length} errors. Check console for details.` });
-        console.error('Upload errors:', data.errors);
+      const createdCount = data.created || 0;
+      const errorList: string[] = data.errors || [];
+      if (errorList.length) {
+        const errorMsg = errorList.slice(0, 5).join('\n') + (errorList.length > 5 ? `\n...aur ${errorList.length - 5} aur errors` : '');
+        setAlert({ type: 'error', message: `${createdCount} created, ${errorList.length} errors:\n${errorMsg}` });
+        console.error('Upload errors:', errorList);
       } else {
-        setAlert({ type: 'success', message: `${data.created} entries created from Excel!` });
-        setTimeout(() => { onClose(); onCreated(); }, 1500);
+        setAlert({ type: 'success', message: `${createdCount} entries created from Excel!` });
+      }
+      if (createdCount > 0) {
+        setTimeout(() => { onClose(); onCreated(); }, 2000);
       }
     } catch (err: any) {
-      setAlert({ type: 'error', message: err?.response?.data?.detail || err?.message || 'Upload failed' });
+      const detail = err?.response?.data?.detail || err?.message;
+      setAlert({ type: 'error', message: typeof detail === 'string' ? detail : 'Upload failed' });
     }
     setUploading(false);
   };
@@ -1809,7 +1815,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         {bulkTab === 'manual' ? (
           <form onSubmit={handleSubmit} className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
                 {alert.message}
               </div>
             )}
@@ -1949,7 +1955,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         ) : (
           <div className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
                 {alert.message}
               </div>
             )}
