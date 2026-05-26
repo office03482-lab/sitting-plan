@@ -228,8 +228,21 @@ def _rpc_list_student_records(
                 if b_class:
                     resolved_batch_filter_payload.append({"class_name": b_class, "section": b_section})
             else:
-                # No matching batch found -- use the raw name as a class_name filter
-                resolved_batch_filter_payload.append({"class_name": normalized_name, "section": _normalize(raw_section) or ""})
+                # No matching batch found -- try to find class/section by matching the batch name
+                # against student records, or split the name as a fallback.
+                batch_name_clean = normalized_name
+                # Try to find a (class_name, section) from students whose combined
+                # label matches the requested batch name.
+                matched_class_section = _resolve_class_section_from_student_data(school_id, batch_name_clean)
+                if matched_class_section:
+                    resolved_batch_filter_payload.append({
+                        "class_name": matched_class_section[0],
+                        "section": matched_class_section[1],
+                    })
+                else:
+                    fallback_class, fallback_section = split_batch_to_class_section(batch_name_clean)
+                    raw_section_val = _normalize(raw_section) or fallback_section
+                    resolved_batch_filter_payload.append({"class_name": fallback_class, "section": raw_section_val})
 
     # Always use SQL class/section batch filters when batch_filters are provided,
     # regardless of whether batch IDs were resolved (since batch_id is not returned by RPC).
@@ -594,6 +607,107 @@ def _resolve_class_section_from_batch_name(
             resolved_section = resolved_section or _normalize(parsed_section)
 
     return resolved_class_name, resolved_section or "A"
+
+
+def _resolve_class_section_from_student_data(
+    school_id: str,
+    batch_name: str,
+) -> tuple[str, str] | None:
+    """Try to find (class_name, section) by matching batch_name against student records
+    where the batch label (class_name + section concatenation or formatted name) matches."""
+    normalized = _normalize(batch_name)
+    if not normalized:
+        return None
+    try:
+        response = (
+            get_supabase_admin_client()
+            .table("students")
+            .select("class_name, section")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .limit(500)
+            .execute()
+        )
+        students = list(response.data or [])
+        if not students:
+            return None
+        # Collect unique (class_name, section) pairs
+        seen: set[tuple[str, str]] = set()
+        candidates: list[tuple[str, str]] = []
+        for s in students:
+            cn = _normalize(s.get("class_name"))
+            sec = _normalize(s.get("section")) or "A"
+            if cn and (cn, sec) not in seen:
+                seen.add((cn, sec))
+                candidates.append((cn, sec))
+        # Try to find a pair whose batch key or combined label matches
+        wanted_key = _canonical_batch_key(normalized)
+        for cn, sec in candidates:
+            combined = f"{cn} {sec}"
+            if _cf(cn) == _cf(normalized):
+                return (cn, sec)
+            if _cf(combined) == _cf(normalized):
+                return (cn, sec)
+            candidate_key = _canonical_batch_key(f"{cn} | {sec}")
+            if candidate_key and candidate_key == wanted_key:
+                return (cn, sec)
+            candidate_key = _canonical_batch_key(f"{cn}-{sec}")
+            if candidate_key and candidate_key == wanted_key:
+                return (cn, sec)
+            candidate_key = _canonical_batch_key(f"{cn}{sec}")
+            if candidate_key and candidate_key == wanted_key:
+                return (cn, sec)
+        return None
+    except Exception:
+        logger.exception(
+            "attendance.resolve_class_section.student_lookup_failed",
+            extra={"school_id": school_id, "batch_name": batch_name},
+        )
+        return None
+    try:
+        response = (
+            get_supabase_admin_client()
+            .table("students")
+            .select("class_name, section")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .limit(500)
+            .execute()
+        )
+        students = list(response.data or [])
+        if not students:
+            return None
+        # Collect unique (class_name, section) pairs
+        seen: set[tuple[str, str]] = set()
+        candidates: list[tuple[str, str]] = []
+        for s in students:
+            cn = _normalize(s.get("class_name"))
+            sec = _normalize(s.get("section")) or "A"
+            if cn and (cn, sec) not in seen:
+                seen.add((cn, sec))
+                candidates.append((cn, sec))
+        # Try to find a pair whose batch key or combined label matches
+        wanted_key = _canonical_batch_key(normalized)
+        for cn, sec in candidates:
+            combined = f"{cn} {sec}"
+            if _cf(cn) == _cf(normalized):
+                # Direct class_name match
+                return (cn, sec)
+            if _cf(combined) == _cf(normalized):
+                return (cn, sec)
+            candidate_key = _canonical_batch_key(f"{cn} | {sec}")
+            if candidate_key and candidate_key == wanted_key:
+                return (cn, sec)
+            candidate_key = _canonical_batch_key(f"{cn}-{sec}")
+            if candidate_key and candidate_key == wanted_key:
+                return (cn, sec)
+        return None
+    except Exception:
+        logger.exception(
+            "attendance.resolve_class_section.student_lookup_failed",
+            extra={"school_id": school_id, "batch_name": batch_name},
+        )
+        return None
 
 
 def _split_timetable_batches(value: str | None) -> list[str]:
