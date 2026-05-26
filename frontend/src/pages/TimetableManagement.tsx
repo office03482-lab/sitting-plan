@@ -165,7 +165,7 @@ const TimetableManagement: React.FC = () => {
 
   const daysOfWeek: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   const defaultTimeSlots = [
-    '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'
+    '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'
   ];
 
   const visibleTeachers = useMemo(() => {
@@ -1648,6 +1648,78 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
         </div>
       )}
 
+      {/* Analysis: Teacher class count & blank slots */}
+      <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Teacher Class Count */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Users size={16} /> Teacher-wise Class Count
+          </h3>
+          <div className="max-h-64 overflow-y-auto space-y-1">
+            {visibleTeachers.length === 0 ? (
+              <p className="text-xs text-gray-400">No teachers loaded</p>
+            ) : (
+              [...visibleTeachers]
+                .map(t => {
+                  const count = entries.filter(e => sameId(e.teacher_id, t.id)).length;
+                  return { name: t.name || t.subject || 'Unknown', count };
+                })
+                .sort((a, b) => b.count - a.count)
+                .map(t => (
+                  <div key={t.name} className="flex justify-between items-center text-xs py-1 px-2 hover:bg-gray-50 rounded">
+                    <span className="text-gray-700">{t.name}</span>
+                    <span className="font-medium text-gray-900">{t.count} classes</span>
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
+
+        {/* Blank Slot Analysis */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Clock size={16} /> Blank Slots (no entry up to 6:30 PM)
+          </h3>
+          <div className="max-h-64 overflow-y-auto space-y-1">
+            {daysOfWeek.map(day => {
+              const allSlots = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00'];
+              const filledSlots = new Set<string>();
+              entries.forEach(e => {
+                if (e.day_of_week !== day) return;
+                if (e.start_date) {
+                  const colDate = toInputDateValue(weekDateByDay[day]);
+                  if (e.start_date !== colDate) return;
+                }
+                filledSlots.add(e.start_time);
+              });
+              const blankSlots = allSlots.filter(s => !filledSlots.has(s));
+              if (blankSlots.length === allSlots.length) return null;
+              return (
+                <div key={day} className="text-xs py-1 px-2 hover:bg-gray-50 rounded">
+                  <span className="font-medium text-gray-700">{DAY_LABELS[day]}: </span>
+                  <span className="text-red-500">{blankSlots.join(', ') || 'All filled'}</span>
+                </div>
+              );
+            }).filter(Boolean)}
+            {daysOfWeek.every(day => {
+              const allSlots = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00'];
+              const filledSlots = new Set<string>();
+              entries.forEach(e => {
+                if (e.day_of_week !== day) return;
+                if (e.start_date) {
+                  const colDate = toInputDateValue(weekDateByDay[day]);
+                  if (e.start_date !== colDate) return;
+                }
+                filledSlots.add(e.start_time);
+              });
+              return filledSlots.size === 0;
+            }) && (
+              <p className="text-xs text-gray-400">All days have no entries</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Summary */}
       <div className="mt-6 bg-white rounded-lg shadow p-4">
         <div className="text-sm text-gray-600">
@@ -1715,14 +1787,14 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
       const createdCount = data.created || 0;
       const errorList: string[] = data.errors || [];
       if (errorList.length) {
-        const errorMsg = errorList.slice(0, 5).join('\n') + (errorList.length > 5 ? `\n...aur ${errorList.length - 5} aur errors` : '');
+        const errorMsg = errorList.slice(0, 15).join('\n') + (errorList.length > 15 ? `\n...aur ${errorList.length - 15} aur errors` : '');
         setAlert({ type: 'error', message: `${createdCount} created, ${errorList.length} errors:\n${errorMsg}` });
         console.error('Upload errors:', errorList);
       } else {
         setAlert({ type: 'success', message: `${createdCount} entries created from Excel!` });
-      }
-      if (createdCount > 0) {
-        setTimeout(() => { onClose(); onCreated(); }, 2000);
+        if (createdCount > 0) {
+          setTimeout(() => { onClose(); onCreated(); }, 1500);
+        }
       }
     } catch (err: any) {
       const detail = err?.response?.data?.detail || err?.message;
@@ -1815,7 +1887,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         {bulkTab === 'manual' ? (
           <form onSubmit={handleSubmit} className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                <button type="button" onClick={() => setAlert(null)} className="absolute top-1 right-1 text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>
             )}
@@ -1955,7 +2028,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         ) : (
           <div className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                <button type="button" onClick={() => setAlert(null)} className="absolute top-1 right-1 text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>
             )}
