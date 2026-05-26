@@ -1016,8 +1016,9 @@ async def upload_timetable_excel(
     try:
         # Pre-load teacher subject assignments from academic schema
         try:
+            acad = get_supabase_admin_client()
             assignments_resp = (
-                supabase.schema("academic").table("staff_subject_assignments")
+                acad.schema("academic").table("staff_subject_assignments")
                 .select("staff_member_id, subject_id")
                 .eq("school_id", school_id)
                 .eq("is_active", True)
