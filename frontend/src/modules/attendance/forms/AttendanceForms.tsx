@@ -75,17 +75,28 @@ export function StudentMarkingFilters({ vm }: { vm: any }) {
 }
 
 export function StudentRecordFilters({ vm }: { vm: any }) {
+  const classOptions = vm.managedClassOptions || [];
+  const batchOptions = vm.managedBatchOptions || [];
   return (
-    <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <SelectField
+        value={vm.studentFilters.record_class_name}
+        onChange={(e) => vm.setStudentFilters({ ...vm.studentFilters, record_class_name: e.target.value, record_batch_name: '' })}
+      >
+        <option value="">All Classes</option>
+        {classOptions.map((item: string) => (
+          <option key={item} value={item}>{item}</option>
+        ))}
+      </SelectField>
       <SelectField
         value={vm.studentFilters.record_batch_name}
         onChange={(e) => vm.setStudentFilters({ ...vm.studentFilters, record_batch_name: e.target.value })}
       >
         <option value="">All Batches</option>
-        {vm.batchOptions.map((item) => (
-          <option key={item} value={item}>
-            {item}
-          </option>
+        {batchOptions
+          .filter((item: string) => !vm.studentFilters.record_class_name || item.startsWith(vm.studentFilters.record_class_name))
+          .map((item: string) => (
+          <option key={item} value={item}>{item}</option>
         ))}
       </SelectField>
       <input

@@ -1978,10 +1978,17 @@ def delete_all_student_records(
 
 @router.get("/student-dashboard/{student_id}", response_model=StudentDashboardResponse)
 def get_student_dashboard(
-    student_id: int,
+    student_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
+    # In Supabase mode, the frontend computes dashboard from student-records endpoint,
+    # so this legacy endpoint is only for backward compatibility.
+    if not is_legacy_sqlite_mode():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student dashboard is computed from records on the frontend in Supabase mode",
+        )
     seed_attendance_data(db, school_id)
     student = (
         db.query(AttendanceStudent)

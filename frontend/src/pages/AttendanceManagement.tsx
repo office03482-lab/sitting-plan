@@ -762,6 +762,7 @@ function AttendanceManagementContent() {
     batch_name: '',
     record_scope: 'batch' as 'batch' | 'class',
     record_batch_name: '',
+    record_class_name: '',
     subject_id: '',
     search: '',
     recordStudentName: '',
@@ -2710,10 +2711,9 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStudentRecords.skipped.auth_not_ready');
       return;
     }
-    const requestedSection =
-      studentFilters.record_scope === 'class' ? undefined : recordBatchParts.section;
-    const recordBatchName = studentFilters.record_scope === 'batch' ? (studentFilters.record_batch_name || '').trim() : '';
-    const requestKey = `${studentFilters.record_scope}|${recordBatchParts.className}|${requestedSection || ''}|${studentFilters.recordStudentName}|${recordBatchName}|${attendanceStudentRecordPageSize}`;
+    const recordClassName = (studentFilters.record_class_name || '').trim();
+    const recordBatchName = (studentFilters.record_batch_name || '').trim();
+    const requestKey = `class:${recordClassName}|batch:${recordBatchName}|name:${studentFilters.recordStudentName}|dates:${studentFilters.date_from}|${studentFilters.date_to}|limit:${attendanceStudentRecordPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
@@ -2737,10 +2737,11 @@ function AttendanceManagementContent() {
         });
         const response = await apiService.listStudentAttendanceRecords({
           school_id: 1,
-          class_name: recordBatchParts.className || undefined,
-          section: requestedSection || undefined,
-          student_name: studentFilters.recordStudentName || undefined,
+          class_name: recordClassName || undefined,
           batch_name: recordBatchName || undefined,
+          student_name: studentFilters.recordStudentName || undefined,
+          date_from: studentFilters.date_from || undefined,
+          date_to: studentFilters.date_to || undefined,
           limit: attendanceStudentRecordPageSize,
         });
         if (studentRecordsRequestKeyRef.current !== requestKey) return;
@@ -2807,8 +2808,9 @@ function AttendanceManagementContent() {
         });
         const response = await apiService.listStudentAttendanceRecords({
           school_id: 1,
-          class_name: calendarBatchParts.className,
+          class_name: calendarBatchParts.className || undefined,
           section: requestedSection || undefined,
+          batch_name: studentFilters.attendance_scope === 'batch' ? calendarBatchLabel || undefined : undefined,
           date_from: monthRange.from || undefined,
           date_to: monthRange.to || undefined,
           limit: attendanceStudentDashboardPageSize,
@@ -2872,6 +2874,9 @@ function AttendanceManagementContent() {
         debugAttendanceLoader('loadTodayStudentDashboard.start', { targetDate, requestKey });
         const response = await apiService.listStudentAttendanceRecords({
           school_id: 1,
+          class_name: calendarBatchParts.className || undefined,
+          section: (studentFilters.attendance_scope === 'batch' ? calendarBatchParts.section : undefined) || undefined,
+          batch_name: studentFilters.attendance_scope === 'batch' ? (studentFilters.batch_name || '').trim() || undefined : undefined,
           date_from: targetDate,
           date_to: targetDate,
           limit: attendanceStudentDashboardPageSize,
@@ -3665,25 +3670,19 @@ function AttendanceManagementContent() {
                   <p className="mt-4 text-sm text-slate-600">
                     Selected {studentFilters.record_scope === 'class' ? 'class' : 'batch'} total students: <span className="font-semibold text-slate-900">{selectedRecordStudentCount}</span>
                   </p>
-                  <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <SelectField
-                      value={studentFilters.record_scope}
-                      onChange={(e) => {
-                        const nextScope = e.target.value as 'batch' | 'class';
-                        const nextOptions = nextScope === 'class' ? managedClassOptions : managedBatchOptions;
-                        setStudentFilters({
-                          ...studentFilters,
-                          record_scope: nextScope,
-                          record_batch_name: nextOptions[0] || '',
-                        });
-                      }}
+                      value={studentFilters.record_class_name}
+                      onChange={(e) => setStudentFilters({ ...studentFilters, record_class_name: e.target.value, record_batch_name: '' })}
                     >
-                      <option value="batch">Batch Records</option>
-                      <option value="class">Class Records</option>
+                      <option value="">All Classes</option>
+                      {managedClassOptions.map((item: string) => <option key={item} value={item}>{item}</option>)}
                     </SelectField>
                     <SelectField value={studentFilters.record_batch_name} onChange={(e) => setStudentFilters({ ...studentFilters, record_batch_name: e.target.value })}>
-                      <option value="">{studentFilters.record_scope === 'class' ? 'All Classes' : 'All Batches'}</option>
-                      {recordBatchOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                      <option value="">All Batches</option>
+                      {managedBatchOptions
+                        .filter((item: string) => !studentFilters.record_class_name || item.startsWith(studentFilters.record_class_name))
+                        .map((item) => <option key={item} value={item}>{item}</option>)}
                     </SelectField>
                     <input value={studentFilters.recordStudentName} onChange={(e) => setStudentFilters({ ...studentFilters, recordStudentName: e.target.value })} className={inputClass} placeholder="Student name" />
                     <input type="date" value={studentFilters.date_from} onChange={(e) => setStudentFilters({ ...studentFilters, date_from: e.target.value })} className={inputClass} />

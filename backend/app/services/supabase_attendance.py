@@ -206,10 +206,8 @@ def _rpc_list_student_records(
     limit: int = 100,
     batch_filters: list[tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
-    # Resolve batch names to actual batch records so we can filter by class/section in SQL
-    # and by batch_id in Python for coaching batches that share the same class/section.
+    # Resolve batch names to actual batch records so we can filter by class/section in SQL.
     batches = _fetch_batches(school_id)
-    resolved_batch_ids: set[str] = set()
     resolved_batch_filter_payload: list[dict[str, str]] = []
 
     if batch_filters:
@@ -227,20 +225,16 @@ def _rpc_list_student_records(
             if matched:
                 b_class = _normalize(matched.get("class_name"))
                 b_section = _normalize(matched.get("section")) or _normalize(raw_section) or ""
-                bid = _normalize(matched.get("id"))
-                if bid:
-                    resolved_batch_ids.add(bid)
                 if b_class:
                     resolved_batch_filter_payload.append({"class_name": b_class, "section": b_section})
             else:
                 # No matching batch found -- use the raw name as a class_name filter
                 resolved_batch_filter_payload.append({"class_name": normalized_name, "section": _normalize(raw_section) or ""})
 
-    # Use resolved batch IDs for post-filtering instead of SQL batch filters when we have specific batches,
-    # because coaching batches share the same class_name="General" and section="A".
-    use_sql_batch_filter = bool(resolved_batch_filter_payload) and not resolved_batch_ids
+    # Always use SQL class/section batch filters when batch_filters are provided,
+    # regardless of whether batch IDs were resolved (since batch_id is not returned by RPC).
     batch_filter_payload = None
-    if use_sql_batch_filter:
+    if resolved_batch_filter_payload:
         normalized_batch_filters = _normalize_batch_filters(
             [(item["class_name"], item.get("section") or None) for item in resolved_batch_filter_payload]
         )
@@ -260,10 +254,6 @@ def _rpc_list_student_records(
     response = get_supabase_admin_client().rpc("attendance_student_report_rows", params).execute()
     duration_ms = round((time.monotonic() - started_at) * 1000)
     rows = list(response.data or [])
-
-    # If we resolved specific batch IDs, post-filter by batch_id so only that batch's records are returned
-    if resolved_batch_ids and batch_filters:
-        rows = [r for r in rows if _normalize(r.get("batch_id")) in resolved_batch_ids]
 
     # Augment rows when class/section or subject_name are missing by fetching student details.
     try:
