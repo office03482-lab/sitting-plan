@@ -1897,6 +1897,7 @@ class ApiService {
     return this.api.post('/timetable/upload', formData, {
       params: { school_id: scopedSchoolId || undefined },
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LONG_RUNNING_IMPORT_TIMEOUT_MS,
     });
   }
 

@@ -5,7 +5,7 @@ import asyncio
 from collections import defaultdict
 from datetime import date, datetime
 from io import BytesIO
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -1044,6 +1044,7 @@ async def upload_timetable_excel(
         room_cache[name_key] = result
         return result
 
+    payloads: list[dict[str, Any]] = []
     for idx, row in enumerate(rows, 2):
         date_val, day_val, teacher_name, batch_val, subject_val, start_time, end_time, room_name, mode_val = (
             (str(v).strip() if v else "") for v in (row + (None,) * (9 - len(row)))[:9]
@@ -1062,7 +1063,7 @@ async def upload_timetable_excel(
         room_id = resolve_room_id(room_name) if room_name else None
         day_of_week = day_val.lower() if day_val else get_day_of_week_from_date(date_val)
 
-        payload = {
+        payloads.append({
             "teacher_id": teacher_id,
             "room_id": room_id,
             "school_id": school_id,
@@ -1074,12 +1075,19 @@ async def upload_timetable_excel(
             "session_mode": mode_val.lower() if mode_val in ("offline", "online") else "offline",
             "session_type": "regular_class",
             "start_date": date_val[:10],
-        }
-        try:
-            result = create_timetable_entry_supabase(school_id, payload)
-            created.append(result)
-        except Exception as e:
-            errors.append(f"Row {idx}: {str(e)}")
+            "skip_conflict_check": True,
+        })
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(create_timetable_entry_supabase, school_id, p): i for i, p in enumerate(payloads)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                result = future.result()
+                created.append(result)
+            except Exception as e:
+                errors.append(f"Row {idx + 2}: {str(e)}")
 
     return {
         "created": len(created),
