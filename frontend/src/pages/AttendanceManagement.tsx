@@ -662,7 +662,7 @@ function recordMatchesSelectionScope(
   className?: string,
   section?: string
 ) {
-  if (!className) return false;
+  if (!className) return true;
   if (scope === 'class') {
     return normalizeClassNameKey(record.class_name) === normalizeClassNameKey(className);
   }
@@ -2854,7 +2854,7 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadTodayStudentDashboard.skipped.auth_not_ready', { targetDate });
       return;
     }
-    const requestKey = `${targetDate}|${attendanceStudentDashboardPageSize}`;
+    const requestKey = `${targetDate}|class:${calendarBatchParts.className || ''}|section:${calendarBatchParts.section || ''}|batch:${studentFilters.batch_name || ''}|limit:${attendanceStudentDashboardPageSize}`;
     const cachedRecords = readStudentRecordCache(requestKey);
     if (cachedRecords) {
       debugAttendanceLoader('loadTodayStudentDashboard.cache_hit', { requestKey, count: cachedRecords.length });
