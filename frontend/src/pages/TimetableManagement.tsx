@@ -85,7 +85,8 @@ const sameId = (left: string | number | null | undefined, right: string | number
 const isEntryInDateRange = (entry: TimetableView, fromDate: string, toDate: string): boolean => {
   if (!fromDate && !toDate) return true;
   // Break time aur self study hamesha dikhe
-  if (entry.session_type === 'break_time' || entry.session_type === 'self_study') return true;
+  if (entry.session_type === 'break_time' || entry.session_type === 'self_study'
+    || entry.teacher_name === 'BREAK TIME' || entry.teacher_name === 'SELF STUDY') return true;
   const entryStart = entry.start_date || '';
   const entryEnd = entry.end_date || '';
   if (!entryStart && !entryEnd) return true;
@@ -493,7 +494,9 @@ const TimetableManagement: React.FC = () => {
       if (compareTimeValues(entry.start_time, time) > 0) return false;
       if (compareTimeValues(entry.end_time, time) <= 0) return false;
       // Break time aur self study hamesha dikhe (regardless of date)
-      if (entry.session_type !== 'break_time' && entry.session_type !== 'self_study') {
+      const isBreakOrSelfStudy = entry.teacher_name === 'BREAK TIME' || entry.teacher_name === 'SELF STUDY'
+        || entry.session_type === 'break_time' || entry.session_type === 'self_study';
+      if (!isBreakOrSelfStudy) {
         if (entry.start_date) {
           const colDate = toInputDateValue(weekDateByDay[day]);
           if (entry.start_date !== colDate) return false;
@@ -1691,8 +1694,9 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               const filledSlots = new Set<string>();
               entries.forEach(e => {
                 if (e.day_of_week !== day) return;
-                // Break time aur self study hamesha count karo
-                if (e.session_type !== 'break_time' && e.session_type !== 'self_study') {
+                const isBreakOrSelfStudyB = e.teacher_name === 'BREAK TIME' || e.teacher_name === 'SELF STUDY'
+                  || e.session_type === 'break_time' || e.session_type === 'self_study';
+                if (!isBreakOrSelfStudyB) {
                   if (e.start_date) {
                     const colDate = toInputDateValue(weekDateByDay[day]);
                     if (e.start_date !== colDate) return;
@@ -1714,7 +1718,9 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               const filledSlots = new Set<string>();
               entries.forEach(e => {
                 if (e.day_of_week !== day) return;
-                if (e.session_type !== 'break_time' && e.session_type !== 'self_study') {
+                const isBreakOrSelfStudyC = e.teacher_name === 'BREAK TIME' || e.teacher_name === 'SELF STUDY'
+                  || e.session_type === 'break_time' || e.session_type === 'self_study';
+                if (!isBreakOrSelfStudyC) {
                   if (e.start_date) {
                     const colDate = toInputDateValue(weekDateByDay[day]);
                     if (e.start_date !== colDate) return;
