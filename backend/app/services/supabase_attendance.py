@@ -365,7 +365,6 @@ def _rpc_list_student_records(
             "skip": skip,
             "limit": limit,
             "has_batch_filters": bool(batch_filter_payload),
-            "resolved_batch_ids": list(resolved_batch_ids),
         },
     )
     return augmented
