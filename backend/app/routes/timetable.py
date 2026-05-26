@@ -1005,6 +1005,38 @@ async def upload_timetable_excel(
     supabase = get_supabase_admin_client()
     teacher_cache: dict[str, str | None] = {}
     room_cache: dict[str, str | None] = {}
+    teacher_subject_cache: dict[str, str] = {}
+
+    # Pre-load teacher subject assignments
+    try:
+        assignments_resp = (
+            supabase.table("staff_subject_assignments")
+            .select("staff_member_id, subject_id")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        for a in (assignments_resp.data or []):
+            sm_id = str(a.get("staff_member_id") or "")
+            subj_id = str(a.get("subject_id") or "")
+            if sm_id and subj_id:
+                teacher_subject_cache[sm_id] = subj_id
+    except Exception:
+        pass
+
+    # Pre-load subject names
+    subject_name_cache: dict[str, str] = {}
+    try:
+        subjects_resp = (
+            supabase.table("subjects")
+            .select("id, name")
+            .eq("school_id", school_id)
+            .execute()
+        )
+        for s in (subjects_resp.data or []):
+            subject_name_cache[str(s.get("id"))] = str(s.get("name") or "")
+    except Exception:
+        pass
 
     def resolve_teacher_id(name: str) -> str | None:
         if not name or not name.strip():
@@ -1058,10 +1090,18 @@ async def upload_timetable_excel(
 
         teacher_id = resolve_teacher_id(teacher_name)
         if not teacher_id:
-            errors.append(f"Row {idx}: Teacher '{teacher_name}' not found")
+            errors.append(f"Row {idx}: Teacher '{teacher_name}' system mein nahi mila")
             continue
         room_id = resolve_room_id(room_name) if room_name else None
         day_of_week = day_val.lower() if day_val else get_day_of_week_from_date(date_val)
+
+        # Auto-detect subject if not provided
+        if not subject_val or subject_val.strip() == "":
+            detected_subject_id = teacher_subject_cache.get(teacher_id)
+            if detected_subject_id:
+                subject_val = subject_name_cache.get(detected_subject_id, "General")
+            else:
+                subject_val = "General"
 
         payloads.append({
             "teacher_id": teacher_id,
