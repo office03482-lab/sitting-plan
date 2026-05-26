@@ -1897,8 +1897,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         {bulkTab === 'manual' ? (
           <form onSubmit={handleSubmit} className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line relative ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-                <button type="button" onClick={() => setAlert(null)} className="absolute top-1 right-1 text-gray-500 hover:text-gray-700">&times;</button>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-60 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                <button type="button" onClick={() => setAlert(null)} className="sticky top-0 float-right text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>
             )}
@@ -2038,8 +2038,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         ) : (
           <div className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line relative ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-                <button type="button" onClick={() => setAlert(null)} className="absolute top-1 right-1 text-gray-500 hover:text-gray-700">&times;</button>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-60 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                <button type="button" onClick={() => setAlert(null)} className="sticky top-0 float-right text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>
             )}
