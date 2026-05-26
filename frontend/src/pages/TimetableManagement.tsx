@@ -445,6 +445,7 @@ const TimetableManagement: React.FC = () => {
         type: 'error',
         message: requestError?.response?.data?.detail || requestError?.message || 'Failed to save timetable entry',
       });
+      void refreshEntries();
     } finally {
       setSubmitting(false);
     }
@@ -1255,7 +1256,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
       {/* Bulk Entry Modal */}
       {showBulkForm && (
         <BulkEntryModal
-          onClose={() => setShowBulkForm(false)}
+          onClose={() => { setShowBulkForm(false); refreshEntriesWithDates(); }}
           onCreated={() => { setShowBulkForm(false); refreshEntriesWithDates(); }}
           teachers={visibleTeachers}
           rooms={normalizedRooms}
@@ -1803,8 +1804,8 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
       const createdCount = data.created || 0;
       const errorList: string[] = data.errors || [];
       if (errorList.length) {
-        const errorMsg = errorList.slice(0, 15).join('\n') + (errorList.length > 15 ? `\n...aur ${errorList.length - 15} aur errors` : '');
-        setAlert({ type: 'error', message: `${createdCount} created, ${errorList.length} errors:\n${errorMsg}` });
+        const fullErrorText = errorList.join('\n');
+        setAlert({ type: 'error', message: `${createdCount} created, ${errorList.length} errors:\n${fullErrorText}` });
         console.error('Upload errors:', errorList);
       } else {
         setAlert({ type: 'success', message: `${createdCount} entries created from Excel!` });
@@ -1838,9 +1839,13 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
     setBulkProgress(0);
     setAlert(null);
 
-    const results = await Promise.allSettled(
-      selectedBatches.map(batch =>
-        apiService.createTimetableEntry({
+    const results: PromiseSettledResult<any>[] = [];
+    const errorMessages: string[] = [];
+    for (let i = 0; i < selectedBatches.length; i++) {
+      const batch = selectedBatches[i];
+      setBulkProgress(i + 1);
+      try {
+        const res = await apiService.createTimetableEntry({
           teacher_id: teacherId,
           room_id: roomId || undefined,
           session_mode: sessionMode,
@@ -1852,18 +1857,18 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
           class_name: batch,
           subject: subject || undefined,
           start_date: pickedDate || undefined,
-          skip_conflict_check: true,
-        }).catch(err => {
-          console.error(`Failed for batch "${batch}":`, err?.response?.data || err?.message || err);
-          throw err;
-        })
-      )
-    );
+        });
+        results.push({ status: 'fulfilled', value: res });
+      } catch (err: any) {
+        const msg = `Batch "${batch}": ${err?.response?.data?.detail || err?.message || 'Failed'}`;
+        errorMessages.push(msg);
+        results.push({ status: 'rejected', reason: err });
+        console.error(msg);
+      }
+    }
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;
     const failCount = results.filter(r => r.status === 'rejected').length;
-    const errors = results.filter(r => r.status === 'rejected').map(r => (r as PromiseRejectedResult).reason);
-    console.error('Bulk create errors:', errors);
     setBulkProgress(selectedBatches.length);
 
     setBulkSubmitting(false);
@@ -1871,7 +1876,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
       setAlert({ type: 'success', message: `${successCount} entries successfully created!` });
       setTimeout(() => { onClose(); onCreated(); }, 1500);
     } else {
-      setAlert({ type: 'error', message: `${successCount} created, ${failCount} failed.` });
+      setAlert({ type: 'error', message: `${successCount} created, ${failCount} failed:\n${errorMessages.join('\n')}` });
     }
   };
 
@@ -1903,7 +1908,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         {bulkTab === 'manual' ? (
           <form onSubmit={handleSubmit} className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-60 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-96 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
                 <button type="button" onClick={() => setAlert(null)} className="sticky top-0 float-right text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>
@@ -2044,7 +2049,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, api
         ) : (
           <div className="space-y-4 p-6">
             {alert && (
-              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-60 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              <div className={`p-3 rounded text-sm whitespace-pre-line relative max-h-96 overflow-y-auto ${alert.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
                 <button type="button" onClick={() => setAlert(null)} className="sticky top-0 float-right text-gray-500 hover:text-gray-700">&times;</button>
                 {alert.message}
               </div>

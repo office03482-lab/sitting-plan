@@ -1134,19 +1134,14 @@ async def upload_timetable_excel(
                 "session_mode": mode_val.lower() if mode_val in ("offline", "online") else "offline",
                 "session_type": "regular_class",
                 "start_date": date_val[:10],
-                "skip_conflict_check": True,
             })
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            futures = {pool.submit(create_timetable_entry_supabase, school_id, p): i for i, p in enumerate(payloads)}
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    result = future.result()
-                    created.append(result)
-                except Exception as e:
-                    errors.append(f"Row {idx + 2}: {str(e)}")
+        for idx, p in enumerate(payloads):
+            try:
+                result = create_timetable_entry_supabase(school_id, p)
+                created.append(result)
+            except Exception as e:
+                errors.append(f"Row {idx + 2}: {str(e)}")
 
     except Exception as e:
         errors.append(f"Upload processing failed: {e}")
@@ -1156,17 +1151,3 @@ async def upload_timetable_excel(
         "errors": errors,
         "entries": created,
     }
-
-    conflicts = check_teacher_conflict(db, teacher_id, day_of_week, start_time, end_time, exclude_entry_id)
-    if conflicts:
-        teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
-        return ConflictCheckResponse(
-            has_conflict=True,
-            conflicting_entries=[
-                build_timetable_response(c, teacher.name if teacher else None, c.room.name if c.room else None)
-                for c in conflicts
-            ],
-            message=f"Conflict detected: {teacher.name if teacher else 'Teacher'} is already assigned during this time slot",
-        )
-
-    return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
