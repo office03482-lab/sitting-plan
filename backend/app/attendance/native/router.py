@@ -15,6 +15,7 @@ from app.schemas import (
     AttendanceSubjectResponse,
     StaffDashboardResponse,
     StaffAttendanceRecordResponse,
+    StudentAttendanceDashboardSummaryResponse,
     StudentAttendanceMarkRequest,
     StudentAttendanceMarkingResponse,
     StudentAttendanceRecordResponse,
@@ -64,7 +65,7 @@ def list_students_route(
 def list_integrated_students_route(
     school_id: str = Depends(resolve_school_id_from_actor),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=200),
+    limit: int = Query(default=500, ge=1, le=10000),
     search: Optional[str] = Query(default=None),
     batch: Optional[str] = Query(default=None),
     service: NativeAttendanceService = Depends(get_native_attendance_service),
@@ -223,23 +224,71 @@ async def list_student_records_route(
     date_to: Optional[date] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=100),
+    limit: int = Query(default=100, ge=1, le=500),
     service: NativeAttendanceService = Depends(get_native_attendance_service),
 ):
     log_attendance_mode("student-records", school_id)
     batch_filters = None
+    resolved_class_name = class_name
+    resolved_section = section
     if batch_name:
         batch_filters = [(batch_name, None)]
+        # Batch-wise filtering is authoritative; avoid over-filtering from stale UI class/section values.
+        if not class_name:
+            resolved_class_name = None
+        if not section:
+            resolved_section = None
     return await service.list_student_records(
         school_id=school_id,
-        class_name=class_name,
-        section=section,
+        class_name=resolved_class_name,
+        section=resolved_section,
         student_name=student_name,
         date_from=date_from.isoformat() if date_from else None,
         date_to=date_to.isoformat() if date_to else None,
         skip=skip,
         limit=limit,
         batch_filters=batch_filters,
+    )
+
+
+@router.get("/dashboard", response_model=StudentAttendanceDashboardSummaryResponse)
+def get_student_dashboard_route(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    date: Optional[date] = Query(default=None),
+    class_name: Optional[str] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
+    scope: Optional[str] = Query(default=None),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("dashboard", school_id)
+    return StudentAttendanceDashboardSummaryResponse(
+        **service.get_student_dashboard(
+            school_id=school_id,
+            date_value=date.isoformat() if date else None,
+            class_name=class_name,
+            batch_name=batch_name,
+            scope=scope,
+        )
+    )
+
+
+@router.get("/calendar")
+async def get_student_calendar_route(
+    month: Optional[str] = Query(default=None),
+    class_name: Optional[str] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
+    scope: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("calendar", school_id)
+    # month expected as YYYY-MM or full date 'YYYY-MM-DD' (we use prefix)
+    return await service.get_student_calendar(
+        school_id=school_id,
+        month=month,
+        class_name=class_name,
+        batch_name=batch_name,
+        scope=scope,
     )
 
 

@@ -70,6 +70,7 @@ from app.schemas import (
     StudentAttendanceMarkRequest,
     StudentAttendanceMarkingResponse,
     StudentAttendanceMarkingRow,
+    StudentAttendanceDashboardSummaryResponse,
     StudentAttendanceRecordResponse,
     StudentDashboardResponse,
     TeacherAttendanceContextResponse,
@@ -82,6 +83,7 @@ from app.services.supabase_attendance import (
     get_integrated_overview as get_supabase_integrated_overview,
     list_leaves as list_supabase_attendance_leaves,
     get_overview as get_supabase_attendance_overview,
+    get_student_dashboard as get_supabase_student_dashboard,
     get_staff_dashboard as get_supabase_staff_dashboard,
     list_integrated_staff as list_supabase_integrated_staff,
     list_integrated_students as list_supabase_integrated_students,
@@ -1852,12 +1854,19 @@ async def list_student_records(
 ):
     if not is_legacy_sqlite_mode():
         batch_filters = None
+        resolved_class_name = class_name
+        resolved_section = section
         if batch_name:
             batch_filters = [(batch_name, None)]
+            # Batch-wise filtering is authoritative; avoid accidental over-filtering from stale UI class/section values.
+            if not class_name:
+                resolved_class_name = None
+            if not section:
+                resolved_section = None
         return await list_supabase_student_records(
             school_id,
-            class_name=class_name,
-            section=section,
+            class_name=resolved_class_name,
+            section=resolved_section,
             student_name=student_name,
             date_from=date_from.isoformat() if date_from else None,
             date_to=date_to.isoformat() if date_to else None,
@@ -1892,6 +1901,42 @@ async def list_student_records(
         .all()
     )
     return [serialize_student_attendance(item) for item in records]
+
+
+@router.get("/dashboard", response_model=StudentAttendanceDashboardSummaryResponse)
+def get_student_dashboard(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    date: Optional[date] = Query(default=None),
+    class_name: Optional[str] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
+    scope: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if not is_legacy_sqlite_mode():
+        return StudentAttendanceDashboardSummaryResponse(
+            **get_supabase_student_dashboard(
+                school_id,
+                date_value=date.isoformat() if date else None,
+                class_name=class_name,
+                batch_name=batch_name,
+                scope=scope,
+            )
+        )
+    school_id = coerce_legacy_school_id(school_id)
+    seed_attendance_data(db, school_id)
+    return StudentAttendanceDashboardSummaryResponse(
+        scope=scope,
+        date=date,
+        class_name=class_name,
+        batch_name=batch_name,
+        total_count=0,
+        present_count=0,
+        absent_count=0,
+        late_count=0,
+        class_summary=[],
+        batch_summary=[],
+        date_summary=[],
+    )
 
 
 @router.delete("/student-records/{record_id}")
@@ -2710,6 +2755,7 @@ def serialize_integrated_student(
         name=student.name,
         class_name=class_name,
         section=section,
+        batch_name=batch_name or None,
         roll_no=student.roll_number,
         parent_contact=student.phone,
         school_id=student.school_id,

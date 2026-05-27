@@ -1277,6 +1277,7 @@ class AttendanceStudentCreate(BaseModel):
     name: str
     class_name: str
     section: str
+    batch_name: Optional[str] = None
     roll_no: str
     parent_contact: Optional[str] = None
 
@@ -1499,6 +1500,39 @@ class StudentDashboardResponse(BaseModel):
     attendance_percentage: float
     low_attendance_alert: bool
     subject_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class StudentAttendanceDashboardBucketResponse(BaseModel):
+    label: str
+    present: int
+    absent: int
+    late: int
+    total: int
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    batch_name: Optional[str] = None
+
+
+class StudentAttendanceDashboardDateBucketResponse(BaseModel):
+    date: date
+    present: int
+    absent: int
+    late: int
+    total: int
+
+
+class StudentAttendanceDashboardSummaryResponse(BaseModel):
+    scope: Optional[str] = None
+    date: Optional[date] = None
+    class_name: Optional[str] = None
+    batch_name: Optional[str] = None
+    total_count: int
+    present_count: int
+    absent_count: int
+    late_count: int
+    class_summary: List[StudentAttendanceDashboardBucketResponse] = Field(default_factory=list)
+    batch_summary: List[StudentAttendanceDashboardBucketResponse] = Field(default_factory=list)
+    date_summary: List[StudentAttendanceDashboardDateBucketResponse] = Field(default_factory=list)
 
 
 class StaffAttendanceMarkingRow(BaseModel):

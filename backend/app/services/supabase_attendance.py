@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime
+import calendar
 import logging
 import re
 import time
 from typing import Any
 from uuid import UUID
+
+from fastapi import HTTPException
 
 from app.attendance.contracts import sanitize_response_payload
 from app.config import settings
@@ -33,6 +36,8 @@ ATTENDANCE_SUBJECTS_CACHE_TTL_SECONDS = 120
 ATTENDANCE_SUBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 ATTENDANCE_STUDENT_RECORDS_CACHE_TTL_SECONDS = 60
 ATTENDANCE_STUDENT_RECORDS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+ATTENDANCE_STUDENT_DASHBOARD_CACHE_TTL_SECONDS = 45
+ATTENDANCE_STUDENT_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS = 45
 ATTENDANCE_STAFF_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -162,6 +167,25 @@ def _normalize_batch_filters(
     return normalized
 
 
+def _normalize_batch_filter_names(
+    batch_filters: list[tuple[str, str | None]] | None,
+) -> list[str]:
+    if not batch_filters:
+        return []
+    normalized_names: list[str] = []
+    seen: set[str] = set()
+    for batch_name, _raw_section in batch_filters:
+        normalized_name = _normalize(batch_name)
+        if not normalized_name:
+            continue
+        key = _canonical_batch_key(normalized_name) or _cf(normalized_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_names.append(normalized_name)
+    return normalized_names
+
+
 def _student_records_cache_key(
     school_id: str,
     *,
@@ -188,7 +212,7 @@ def _student_records_cache_key(
             (date_from or "")[:10],
             (date_to or "")[:10],
             str(max(skip, 0)),
-            str(max(min(limit, 100), 1)),
+            str(max(min(limit, 500), 1)),
             normalized_batch_filter_key,
         ]
     )
@@ -323,8 +347,7 @@ def _rpc_list_student_records(
             batch_obj = batches.get(batch_id)
             batch_name_val = _normalize(batch_obj.get("name")) if batch_obj else ""
 
-        # If class is the SQL default "General", student likely has no explicit class/section.
-        # In that case, use batch values for both class and section.
+        # If class/section are still missing, prefer batch metadata before leaving them empty.
         if batch_obj:
             batch_class = _normalize(batch_obj.get("class_name"))
             batch_section = _normalize(batch_obj.get("section"))
@@ -350,8 +373,13 @@ def _rpc_list_student_records(
                 class_val = class_val or parsed_class
                 section_val = section_val or parsed_section
 
-        row["class_name"] = class_val or "General"
-        row["section"] = section_val or "A"
+        if class_val == "General" and not meta_class:
+            class_val = ""
+            if section_val == "A" and not meta_section:
+                section_val = ""
+
+        row["class_name"] = class_val
+        row["section"] = section_val
         row["batch_name"] = batch_name_val
 
         # Subject name fallback
@@ -536,17 +564,17 @@ def _execute_staff_attendance_chunk(
 def split_batch_to_class_section(batch_name: str | None) -> tuple[str, str]:
     normalized = _normalize(batch_name)
     if not normalized:
-        return "General", "A"
+        return "", ""
     if "|" in normalized:
         left, right = normalized.split("|", 1)
-        return left.strip() or "General", right.strip() or "A"
+        return left.strip(), right.strip()
     hyphen_match = re.match(r"^(.*\S)\s*-\s*([A-Za-z0-9]{1,3})$", normalized)
     if hyphen_match:
-        return hyphen_match.group(1).strip() or "General", hyphen_match.group(2).strip() or "A"
+        return hyphen_match.group(1).strip(), hyphen_match.group(2).strip()
     spaced_match = re.match(r"^(.*\S)\s+([A-Za-z0-9]{1,3})$", normalized)
     if spaced_match:
-        return spaced_match.group(1).strip() or "General", spaced_match.group(2).strip() or "A"
-    return normalized, "A"
+        return spaced_match.group(1).strip(), spaced_match.group(2).strip()
+    return normalized, ""
 
 
 def _resolve_class_section_from_batch_name(
@@ -606,7 +634,7 @@ def _resolve_class_section_from_batch_name(
             resolved_class_name = _normalize(parsed_class_name)
             resolved_section = resolved_section or _normalize(parsed_section)
 
-    return resolved_class_name, resolved_section or "A"
+    return resolved_class_name, resolved_section
 
 
 def _resolve_class_section_from_student_data(
@@ -636,7 +664,7 @@ def _resolve_class_section_from_student_data(
         candidates: list[tuple[str, str]] = []
         for s in students:
             cn = _normalize(s.get("class_name"))
-            sec = _normalize(s.get("section")) or "A"
+            sec = _normalize(s.get("section"))
             if cn and (cn, sec) not in seen:
                 seen.add((cn, sec))
                 candidates.append((cn, sec))
@@ -655,50 +683,6 @@ def _resolve_class_section_from_student_data(
             if candidate_key and candidate_key == wanted_key:
                 return (cn, sec)
             candidate_key = _canonical_batch_key(f"{cn}{sec}")
-            if candidate_key and candidate_key == wanted_key:
-                return (cn, sec)
-        return None
-    except Exception:
-        logger.exception(
-            "attendance.resolve_class_section.student_lookup_failed",
-            extra={"school_id": school_id, "batch_name": batch_name},
-        )
-        return None
-    try:
-        response = (
-            get_supabase_admin_client()
-            .table("students")
-            .select("class_name, section")
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .limit(500)
-            .execute()
-        )
-        students = list(response.data or [])
-        if not students:
-            return None
-        # Collect unique (class_name, section) pairs
-        seen: set[tuple[str, str]] = set()
-        candidates: list[tuple[str, str]] = []
-        for s in students:
-            cn = _normalize(s.get("class_name"))
-            sec = _normalize(s.get("section")) or "A"
-            if cn and (cn, sec) not in seen:
-                seen.add((cn, sec))
-                candidates.append((cn, sec))
-        # Try to find a pair whose batch key or combined label matches
-        wanted_key = _canonical_batch_key(normalized)
-        for cn, sec in candidates:
-            combined = f"{cn} {sec}"
-            if _cf(cn) == _cf(normalized):
-                # Direct class_name match
-                return (cn, sec)
-            if _cf(combined) == _cf(normalized):
-                return (cn, sec)
-            candidate_key = _canonical_batch_key(f"{cn} | {sec}")
-            if candidate_key and candidate_key == wanted_key:
-                return (cn, sec)
-            candidate_key = _canonical_batch_key(f"{cn}-{sec}")
             if candidate_key and candidate_key == wanted_key:
                 return (cn, sec)
         return None
@@ -1164,81 +1148,7 @@ def _resolve_subject_for_batch_context(
             return row
     if best_fallback:
         return best_fallback
-
-    normalized_class_key = _canonical_class_key(class_name).upper().replace(" ", "_")
-    normalized_subject_key = re.sub(r"[^A-Z0-9]+", "_", normalized_subject_name.upper()).strip("_")
-    subject_code = f"SUB_{normalized_class_key}_{normalized_subject_key}".strip("_")[:64] or f"SUB_{normalized_subject_key}"[:64] or "SUBJECT"
-    existing_subject_by_code = (
-        get_supabase_admin_client()
-        .table("subjects")
-        .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .ilike("subject_code", subject_code)
-        .limit(1)
-        .execute()
-    )
-    existing_subject_rows = list(existing_subject_by_code.data or [])
-    if existing_subject_rows:
-        return dict(existing_subject_rows[0])
-    payload = {
-        "school_id": school_id,
-        "subject_code": subject_code,
-        "name": normalized_subject_name,
-        "class_name": class_name,
-        "batch_id": primary_batch.get("id") if primary_batch else None,
-        "metadata": {"section": section},
-        "subject_type": "academic",
-        "is_active": True,
-    }
-    try:
-        created = (
-            get_supabase_admin_client()
-            .table("subjects")
-            .insert(payload)
-            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
-            .execute()
-        )
-        ATTENDANCE_SUBJECTS_CACHE.pop(school_id, None)
-        created_rows = created.data if isinstance(created.data, list) else ([created.data] if created.data else [])
-        return dict(created_rows[0]) if created_rows else None
-    except Exception:
-        retry_code_rows = (
-            get_supabase_admin_client()
-            .table("subjects")
-            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .ilike("subject_code", subject_code)
-            .limit(1)
-            .execute()
-        )
-        retry_code_data = list(retry_code_rows.data or [])
-        if retry_code_data:
-            return dict(retry_code_data[0])
-        retry_rows = (
-            get_supabase_admin_client()
-            .table("subjects")
-            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .ilike("name", normalized_subject_name)
-            .limit(25)
-            .execute()
-        )
-        retry_candidates = list(retry_rows.data or [])
-        if retry_candidates:
-            retry_candidates.sort(key=_subject_priority)
-        for row in retry_candidates:
-            metadata = row.get("metadata") or {}
-            metadata_section = _normalize(metadata.get("section")) if isinstance(metadata, dict) else ""
-            row_class_name = _normalize(row.get("class_name"))
-            if row_class_name and _canonical_class_key(row_class_name) == _canonical_class_key(class_name):
-                if not metadata_section or _cf(metadata_section) == _cf(section):
-                    return row
-            if batch_ids and str(row.get("batch_id")) in batch_ids:
-                return row
-        raise
+    return None
 
 
 def get_teacher_current_class(
@@ -1655,49 +1565,62 @@ def _fetch_students(
 ) -> list[dict[str, Any]]:
     safe_skip = max(skip, 0)
     safe_limit = max(limit, 1)
-    query = (
-        get_supabase_admin_client()
-        .table("students")
-        .select(
-            "id, school_id, batch_id, roll_number, full_name, father_name, phone, class_name, section, is_active, created_at, updated_at"
-        )
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .order("full_name")
-    )
-
     normalized_search = _normalize(search)
-    if normalized_search:
-        escaped = _escape_postgrest_like(normalized_search)
-        query = query.or_(
-            f"full_name.ilike.%{escaped}%,roll_number.ilike.%{escaped}%,father_name.ilike.%{escaped}%"
+    normalized_batch = _normalize(batch)
+    try:
+        query = (
+            get_supabase_admin_client()
+            .table("students")
+            .select(
+                "id, school_id, batch_id, roll_number, full_name, father_name, phone, class_name, section, is_active, created_at, updated_at"
+            )
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .order("full_name")
         )
 
-    normalized_batch = _normalize(batch)
-    if normalized_batch:
-        class_name, section = split_batch_to_class_section(normalized_batch)
-        if class_name:
-            query = query.eq("class_name", class_name)
-        if section:
-            query = query.eq("section", section)
+        if normalized_search:
+            escaped = _escape_postgrest_like(normalized_search)
+            query = query.or_(
+                f"full_name.ilike.%{escaped}%,roll_number.ilike.%{escaped}%,father_name.ilike.%{escaped}%"
+            )
 
-    started_at = time.monotonic()
-    response = query.range(safe_skip, safe_skip + safe_limit - 1).execute()
-    duration_ms = round((time.monotonic() - started_at) * 1000)
-    rows = list(response.data or [])
-    logger.info(
-        "attendance.students.fetch_complete",
-        extra={
-            "school_id": school_id,
-            "row_count": len(rows),
-            "duration_ms": duration_ms,
-            "skip": safe_skip,
-            "limit": safe_limit,
-            "has_search": bool(normalized_search),
-            "has_batch": bool(normalized_batch),
-        },
-    )
-    return rows
+        if normalized_batch:
+            class_name, section = split_batch_to_class_section(normalized_batch)
+            if class_name:
+                query = query.eq("class_name", class_name)
+            if section:
+                query = query.eq("section", section)
+
+        started_at = time.monotonic()
+        response = query.range(safe_skip, safe_skip + safe_limit - 1).execute()
+        duration_ms = round((time.monotonic() - started_at) * 1000)
+        rows = list(response.data or [])
+        logger.info(
+            "attendance.students.fetch_complete",
+            extra={
+                "school_id": school_id,
+                "row_count": len(rows),
+                "duration_ms": duration_ms,
+                "skip": safe_skip,
+                "limit": safe_limit,
+                "has_search": bool(normalized_search),
+                "has_batch": bool(normalized_batch),
+            },
+        )
+        return rows
+    except Exception:
+        logger.exception(
+            "attendance.students.fetch_failed",
+            extra={
+                "school_id": school_id,
+                "skip": safe_skip,
+                "limit": safe_limit,
+                "has_search": bool(normalized_search),
+                "has_batch": bool(normalized_batch),
+            },
+        )
+        return []
 
 
 def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
@@ -1706,26 +1629,30 @@ def _fetch_batches(school_id: str) -> dict[str, dict[str, Any]]:
         logger.info("attendance.batches.cache_hit", extra={"school_id": school_id})
         return cached_payload
 
-    started_at = time.monotonic()
-    response = (
-        get_supabase_admin_client()
-        .table("batches")
-        .select("id, name, class_name, section")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .execute()
-    )
-    payload = {str(item["id"]): item for item in list(response.data or [])}
-    _set_ttl_cache_entry(ATTENDANCE_BATCHES_CACHE, school_id, payload, ATTENDANCE_BATCHES_CACHE_TTL_SECONDS)
-    logger.info(
-        "attendance.batches.fetch_complete",
-        extra={
-            "school_id": school_id,
-            "row_count": len(payload),
-            "duration_ms": round((time.monotonic() - started_at) * 1000),
-        },
-    )
-    return payload
+    try:
+        started_at = time.monotonic()
+        response = (
+            get_supabase_admin_client()
+            .table("batches")
+            .select("id, name, class_name, section")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        payload = {str(item["id"]): item for item in list(response.data or [])}
+        _set_ttl_cache_entry(ATTENDANCE_BATCHES_CACHE, school_id, payload, ATTENDANCE_BATCHES_CACHE_TTL_SECONDS)
+        logger.info(
+            "attendance.batches.fetch_complete",
+            extra={
+                "school_id": school_id,
+                "row_count": len(payload),
+                "duration_ms": round((time.monotonic() - started_at) * 1000),
+            },
+        )
+        return payload
+    except Exception:
+        logger.exception("attendance.batches.fetch_failed", extra={"school_id": school_id})
+        return {}
 
 
 def _count_active_rows(
@@ -1862,17 +1789,21 @@ def _fetch_staff_members(
 
 
 def _fetch_subjects(school_id: str) -> list[dict[str, Any]]:
-    response = (
-        get_supabase_admin_client()
-        .table("subjects")
-        .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .order("class_name")
-        .order("name")
-        .execute()
-    )
-    return list(response.data or [])
+    try:
+        response = (
+            get_supabase_admin_client()
+            .table("subjects")
+            .select("id, school_id, name, class_name, batch_id, metadata, is_active, created_at, updated_at")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .order("class_name")
+            .order("name")
+            .execute()
+        )
+        return list(response.data or [])
+    except Exception:
+        logger.exception("attendance.subjects.fetch_failed", extra={"school_id": school_id})
+        return []
 
 
 def _fetch_notifications(school_id: str) -> list[dict[str, Any]]:
@@ -2204,48 +2135,45 @@ def get_student_marking(
     subject_id: str | None = None,
     search: str | None = None,
 ) -> dict[str, Any]:
-    students_response = (
+    batch_lookup = _fetch_batches(school_id)
+    serialized_students = [
+        _serialize_student(row, batch_lookup)
+        for row in _fetch_students(
+            school_id,
+            search=search,
+            skip=0,
+            limit=MAX_STUDENT_LOOKUP,
+        )
+    ]
+    students = [
+        {
+            "id": row.get("id"),
+            "full_name": row.get("name"),
+            "roll_number": row.get("roll_no"),
+            "class_name": row.get("class_name"),
+            "section": row.get("section"),
+        }
+        for row in serialized_students
+        if _cf(row.get("class_name")) == _cf(class_name)
+        and _cf(row.get("section")) == _cf(section)
+    ]
+    students.sort(key=lambda row: (_normalize(row.get("roll_number")), _normalize(row.get("full_name"))))
+
+    if not subject_id:
+        raise HTTPException(status_code=422, detail="Subject selection is required to load student attendance marking.")
+    subject_response = (
         get_supabase_admin_client()
-        .table("students")
-        .select("id, full_name, roll_number, class_name, section")
+        .table("subjects")
+        .select("id, name")
         .eq("school_id", school_id)
-        .eq("is_active", True)
-        .eq("class_name", class_name)
-        .eq("section", section)
-        .order("roll_number")
+        .eq("id", subject_id)
+        .limit(1)
         .execute()
     )
-    students = list(students_response.data or [])
-    search_term = _cf(search)
-    if search_term:
-        students = [
-            row
-            for row in students
-            if search_term in _cf(row.get("full_name")) or search_term in _cf(row.get("roll_number"))
-        ]
-
-    subject: dict[str, Any] | None = None
-    if subject_id:
-        subject_response = (
-            get_supabase_admin_client()
-            .table("subjects")
-            .select("id, name")
-            .eq("school_id", school_id)
-            .eq("id", subject_id)
-            .limit(1)
-            .execute()
-        )
-        subject_rows = list(subject_response.data or [])
-        if not subject_rows:
-            raise ValueError("Subject not found")
-        subject = subject_rows[0]
-    if not subject:
-        subject = _resolve_subject_for_batch_context(
-            school_id,
-            class_name=class_name,
-            section=section,
-            subject_name="General Attendance",
-        )
+    subject_rows = list(subject_response.data or [])
+    if not subject_rows:
+        raise HTTPException(status_code=422, detail="Subject could not be resolved for the selected class and section.")
+    subject = subject_rows[0]
 
     existing_by_student_id: dict[str, dict[str, Any]] = {}
     student_ids = _sanitize_lookup_ids([row.get("id") for row in students], require_uuid=True)
@@ -2283,7 +2211,7 @@ def get_student_marking(
         "class_name": class_name,
         "section": section,
         "subject_id": subject.get("id") if subject else None,
-        "subject_name": subject.get("name") if subject else "General Attendance",
+        "subject_name": subject.get("name") if subject else "",
         "students": [
             {
                 "student_id": row.get("id"),
@@ -2474,7 +2402,6 @@ def save_student_marking(
         if row.get("id")
     }
     shared_subject = _fetch_subject_row(school_id, subject_id) if subject_id else None
-    subject_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
 
     skipped_entries: list[str] = []
     payload_rows: list[dict[str, Any]] = []
@@ -2490,20 +2417,22 @@ def save_student_marking(
 
         class_name = _normalize(student_row.get("class_name"))
         section = _normalize(student_row.get("section"))
-        subject_cache_key = (class_name, section)
-        if shared_subject:
-            resolved_subject = shared_subject
-        else:
-            if subject_cache_key not in subject_cache:
-                subject_cache[subject_cache_key] = _resolve_subject_for_batch_context(
-                    school_id,
-                    class_name=class_name,
-                    section=section,
-                    subject_name="General Attendance",
-                )
-            resolved_subject = subject_cache.get(subject_cache_key)
+        if not class_name or not section:
+            raise HTTPException(
+                status_code=422,
+                detail="Student class/section mapping is incomplete for attendance marking.",
+            )
+        if not shared_subject:
+            raise HTTPException(
+                status_code=422,
+                detail="Subject selection is required to save student attendance.",
+            )
+        resolved_subject = shared_subject
         if not resolved_subject:
-            continue
+            raise HTTPException(
+                status_code=422,
+                detail="Subject could not be resolved for the selected class and section.",
+            )
 
         status = _normalize(entry.get("status")) or "present"
         payload_rows.append(
@@ -2520,8 +2449,8 @@ def save_student_marking(
                 ),
                 "metadata": {
                     "marked_by": marked_by or "Attendance Admin",
-                    "class_name": class_name or "General",
-                    "section": section or "A",
+                    "class_name": class_name,
+                    "section": section,
                 },
             }
         )
@@ -2539,6 +2468,27 @@ def save_student_marking(
     if not payload_rows:
         return {"message": "Student attendance saved successfully"}
 
+    unique_student_ids = sorted({str(row.get("student_id")) for row in payload_rows if row.get("student_id")})
+    unique_subject_ids = sorted({str(row.get("subject_id")) for row in payload_rows if row.get("subject_id")})
+    if unique_student_ids and unique_subject_ids:
+        duplicate_check = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("student_attendance")
+            .select("id, student_id, subject_id, attendance_date", count="exact")
+            .eq("school_id", school_id)
+            .eq("attendance_date", date_value[:10])
+            .in_("student_id", unique_student_ids)
+            .in_("subject_id", unique_subject_ids)
+            .limit(1)
+            .execute()
+        )
+        if int(getattr(duplicate_check, "count", 0) or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Attendance already saved for this batch, subject, and date.",
+            )
+
     (
         get_supabase_admin_client()
         .schema("attendance")
@@ -2548,6 +2498,7 @@ def save_student_marking(
     )
 
     ATTENDANCE_STUDENT_RECORDS_CACHE.clear()
+    ATTENDANCE_STUDENT_DASHBOARD_CACHE.clear()
     ATTENDANCE_OVERVIEW_CACHE.clear()
     return {"message": "Student attendance saved successfully"}
 
@@ -2604,7 +2555,7 @@ async def list_student_records(
     batch_filters: list[tuple[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
     safe_skip = max(skip, 0)
-    safe_limit = max(min(limit, 100), 1)
+    safe_limit = max(min(limit, 500), 1)
     cache_key = _student_records_cache_key(
         school_id,
         class_name=class_name,
@@ -2648,18 +2599,28 @@ async def list_student_records(
             payload,
             ATTENDANCE_STUDENT_RECORDS_CACHE_TTL_SECONDS,
         )
-        logger.info(
-            "attendance.student_records.complete",
-            extra={
-                "school_id": school_id,
-                "duration_ms": round((time.monotonic() - started_at) * 1000),
-                "skip": safe_skip,
-                "limit": safe_limit,
-                "payload_size": len(payload),
-                "source": "rpc",
-            },
-        )
-        return payload
+        if batch_filters and not payload:
+            logger.info(
+                "attendance.student_records.rpc_empty_with_batch_filters",
+                extra={
+                    "school_id": school_id,
+                    "skip": safe_skip,
+                    "limit": safe_limit,
+                },
+            )
+        else:
+            logger.info(
+                "attendance.student_records.complete",
+                extra={
+                    "school_id": school_id,
+                    "duration_ms": round((time.monotonic() - started_at) * 1000),
+                    "skip": safe_skip,
+                    "limit": safe_limit,
+                    "payload_size": len(payload),
+                    "source": "rpc",
+                },
+            )
+            return payload
     except Exception:
         logger.exception(
             "attendance.student_records.rpc_failed_fallback",
@@ -2676,27 +2637,22 @@ async def list_student_records(
     students = _fetch_students(school_id, limit=MAX_STUDENT_LOOKUP)
     batches = _fetch_batches(school_id)
     student_rows = [_serialize_student(row, batches) for row in students]
-    normalized_batch_filters = _normalize_batch_filters(batch_filters)
-    filtered_students = [
-        row
-        for row in student_rows
-        if (not class_name or _cf(row.get("class_name")) == _cf(class_name))
-        and (not section or _cf(row.get("section")) == _cf(section))
-        and (not student_name or _cf(student_name) in _cf(row.get("name")))
-        and (
-            not normalized_batch_filters
-            or any(
-                _cf(row.get("class_name")) == _cf(filter_item.get("class_name"))
-                and (
-                    not filter_item.get("section")
-                    or _cf(row.get("section")) == _cf(filter_item.get("section"))
-                )
-                for filter_item in normalized_batch_filters
-            )
+    resolved_batch_filter_pairs: list[tuple[str, str | None]] = []
+    for raw_batch_name, raw_section in batch_filters or []:
+        resolved_class_name, resolved_section = _resolve_class_section_from_batch_name(
+            school_id,
+            batch_name=raw_batch_name,
+            class_name=None,
+            section=raw_section,
         )
-    ]
+        normalized_class_name = _normalize(resolved_class_name)
+        normalized_section = _normalize(resolved_section) or None
+        if normalized_class_name:
+            resolved_batch_filter_pairs.append((normalized_class_name, normalized_section))
+    normalized_batch_filters = _normalize_batch_filters(resolved_batch_filter_pairs)
+    normalized_batch_filter_names = _normalize_batch_filter_names(batch_filters)
     student_ids = _sanitize_lookup_ids(
-        [row.get("id") for row in filtered_students],
+        [row.get("id") for row in student_rows],
         require_uuid=True,
     )
     logger.info(
@@ -2726,26 +2682,107 @@ async def list_student_records(
         date_to=date_to,
     )
     subjects = {str(item.get("id")): item for item in _fetch_subjects(school_id)}
-    student_lookup = {str(item.get("id")): item for item in filtered_students}
-    payload = [
-        {
-            "id": row.get("id"),
-            "student_id": row.get("student_id"),
-            "student_name": student_lookup.get(str(row.get("student_id")), {}).get("name", ""),
-            "roll_no": student_lookup.get(str(row.get("student_id")), {}).get("roll_no", ""),
-            "class_name": student_lookup.get(str(row.get("student_id")), {}).get("class_name", ""),
-            "section": student_lookup.get(str(row.get("student_id")), {}).get("section", ""),
-            "batch_name": student_lookup.get(str(row.get("student_id")), {}).get("batch_name", ""),
-            "date": _iso_datetime(row.get("attendance_date")),
-            "subject_id": row.get("subject_id"),
-            "subject_name": subjects.get(str(row.get("subject_id")), {}).get("name", ""),
-            "status": row.get("status") or "present",
-            "absence_reason": row.get("absence_reason"),
-            "marked_by": _normalize((row.get("metadata") or {}).get("marked_by")) or "System",
-            "created_at": _iso(row.get("created_at")),
-        }
-        for row in rows
-    ]
+    student_lookup = {str(item.get("id")): item for item in student_rows}
+    batch_rows = list(batches.values())
+
+    def _resolve_payload_batch_name(
+        student_row: dict[str, Any],
+        effective_class_name: str,
+        effective_section: str,
+    ) -> str:
+        explicit_batch_name = _normalize(student_row.get("batch_name"))
+        if explicit_batch_name:
+            return explicit_batch_name
+        if not effective_class_name:
+            return ""
+        for batch_row in batch_rows:
+            batch_class_name = _normalize(batch_row.get("class_name"))
+            batch_section = _normalize(batch_row.get("section"))
+            if _cf(batch_class_name) != _cf(effective_class_name):
+                continue
+            if effective_section and _cf(batch_section) != _cf(effective_section):
+                continue
+            return _normalize(batch_row.get("name"))
+        return ""
+
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        student_row = student_lookup.get(str(row.get("student_id")), {})
+        effective_class_name = (
+            _normalize((row.get("metadata") or {}).get("class_name"))
+            or _normalize(student_row.get("class_name"))
+        )
+        effective_section = (
+            _normalize((row.get("metadata") or {}).get("section"))
+            or _normalize(student_row.get("section"))
+        )
+        payload.append(
+            {
+                "id": row.get("id"),
+                "student_id": row.get("student_id"),
+                "student_name": _normalize(student_row.get("name")),
+                "roll_no": _normalize(student_row.get("roll_no")),
+                "class_name": effective_class_name,
+                "section": effective_section,
+                "batch_name": _resolve_payload_batch_name(
+                    student_row,
+                    effective_class_name,
+                    effective_section,
+                ),
+                "date": _iso_datetime(row.get("attendance_date")),
+                "subject_id": row.get("subject_id"),
+                "subject_name": subjects.get(str(row.get("subject_id")), {}).get("name", ""),
+                "status": row.get("status") or "present",
+                "absence_reason": row.get("absence_reason"),
+                "marked_by": _normalize((row.get("metadata") or {}).get("marked_by")) or "System",
+                "created_at": _iso(row.get("created_at")),
+            }
+        )
+
+    wants_student_name = bool(student_name and student_name.strip())
+    wants_class_name = bool(class_name and class_name.strip())
+    wants_section = bool(section and section.strip())
+    wants_batch_filters = bool(normalized_batch_filters or normalized_batch_filter_names)
+    if wants_student_name or wants_class_name or wants_section or wants_batch_filters:
+        wanted_student = _cf(student_name) if wants_student_name else ""
+        wanted_class_name = _cf(class_name) if wants_class_name else ""
+        wanted_section = _cf(section) if wants_section else ""
+
+        def _payload_matches_filters(item: dict[str, Any]) -> bool:
+            effective_class_name = _normalize(item.get("class_name"))
+            effective_section = _normalize(item.get("section"))
+            effective_batch_name = _normalize(item.get("batch_name"))
+            effective_student_name = _normalize(item.get("student_name"))
+            effective_roll_no = _normalize(item.get("roll_no"))
+
+            if wants_student_name:
+                if wanted_student not in _cf(effective_student_name) and wanted_student not in _cf(effective_roll_no):
+                    return False
+            if wants_class_name and _cf(effective_class_name) != wanted_class_name:
+                return False
+            if wants_section and _cf(effective_section) != wanted_section:
+                return False
+            if normalized_batch_filter_names:
+                effective_batch_key = _canonical_batch_key(effective_batch_name)
+                effective_class_section_key = _canonical_batch_key(f"{effective_class_name} | {effective_section}")
+                if not any(
+                    effective_batch_key == _canonical_batch_key(batch_name)
+                    or effective_class_section_key == _canonical_batch_key(batch_name)
+                    for batch_name in normalized_batch_filter_names
+                ):
+                    return False
+            elif normalized_batch_filters and not any(
+                _cf(effective_class_name) == _cf(filter_item.get("class_name"))
+                and (
+                    not filter_item.get("section")
+                    or _cf(effective_section) == _cf(filter_item.get("section"))
+                )
+                for filter_item in normalized_batch_filters
+            ):
+                return False
+            return True
+
+        payload = [item for item in payload if _payload_matches_filters(item)]
     logger.info(
         "attendance.student_records.response_size",
         extra={
@@ -2861,6 +2898,9 @@ def delete_student_record(school_id: str, *, record_id: str) -> dict[str, Any]:
     deleted_rows = list(response.data or [])
     if not deleted_rows:
         raise ValueError("Student attendance record not found")
+    ATTENDANCE_STUDENT_RECORDS_CACHE.clear()
+    ATTENDANCE_STUDENT_DASHBOARD_CACHE.clear()
+    ATTENDANCE_OVERVIEW_CACHE.clear()
     return {
         "message": "Student attendance record deleted successfully",
         "deleted_count": len(deleted_rows),
@@ -2896,19 +2936,21 @@ def delete_all_student_records(
             "deleted_count": 0,
         }
 
-    query = (
-        get_supabase_admin_client()
-        .schema("attendance")
-        .table("student_attendance")
-        .select("id")
-        .eq("school_id", school_id)
-        .in_("student_id", student_ids)
-    )
-    if date_from:
-        query = query.gte("attendance_date", date_from[:10])
-    if date_to:
-        query = query.lte("attendance_date", date_to[:10])
-    candidate_rows = list(query.execute().data or [])
+    candidate_rows: list[dict[str, Any]] = []
+    for chunk in _chunk_values(student_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE):
+        query = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("student_attendance")
+            .select("id")
+            .eq("school_id", school_id)
+            .in_("student_id", chunk)
+        )
+        if date_from:
+            query = query.gte("attendance_date", date_from[:10])
+        if date_to:
+            query = query.lte("attendance_date", date_to[:10])
+        candidate_rows.extend(list(query.execute().data or []))
     record_ids = _sanitize_lookup_ids([row.get("id") for row in candidate_rows], require_uuid=True)
     if not record_ids:
         return {
@@ -2928,6 +2970,10 @@ def delete_all_student_records(
             .execute()
         )
         deleted_count += len(list(deleted_response.data or []))
+
+    ATTENDANCE_STUDENT_RECORDS_CACHE.clear()
+    ATTENDANCE_STUDENT_DASHBOARD_CACHE.clear()
+    ATTENDANCE_OVERVIEW_CACHE.clear()
 
     return {
         "message": f"{deleted_count} student attendance record(s) deleted successfully",
@@ -2950,6 +2996,301 @@ def _staff_dashboard_cache_key(
             (date_to or "")[:10],
         ]
     )
+
+
+def _student_dashboard_cache_key(
+    school_id: str,
+    *,
+    date_value: str | None = None,
+    class_name: str | None = None,
+    batch_name: str | None = None,
+    scope: str | None = None,
+) -> str:
+    return "|".join(
+        [
+            school_id,
+            (date_value or "")[:10],
+            _cf(class_name),
+            _cf(batch_name),
+            _cf(scope),
+        ]
+    )
+
+
+def _student_calendar_cache_key(
+    school_id: str,
+    *,
+    month: str | None = None,
+    class_name: str | None = None,
+    batch_name: str | None = None,
+    scope: str | None = None,
+) -> str:
+    return "|".join([
+        school_id,
+        (month or "")[:7],
+        _cf(class_name),
+        _cf(batch_name),
+        _cf(scope),
+    ])
+
+
+async def get_student_calendar(
+    school_id: str,
+    *,
+    month: str | None = None,
+    class_name: str | None = None,
+    batch_name: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    """Return server-driven monthly calendar aggregation for students.
+
+    Payload:
+    - month: YYYY-MM
+    - marked_dates: list of ISO date strings with attendance
+    - day_summary: list of per-day summaries with present/absent/late/total/status
+    - monthly_totals: totals for the month
+    """
+    cache_key = _student_calendar_cache_key(
+        school_id, month=month, class_name=class_name, batch_name=batch_name, scope=scope
+    )
+    cached = _get_ttl_cache_entry(ATTENDANCE_STUDENT_DASHBOARD_CACHE, cache_key)
+    if cached:
+        logger.info("attendance.student_calendar.cache_hit", extra={"school_id": school_id, "cache_key": cache_key})
+        return cached
+
+    # Determine month range
+    today = datetime.utcnow().date()
+    month_text = (month or today.isoformat())[:7]
+    try:
+        year_int, month_int = map(int, month_text.split("-"))
+    except Exception:
+        year_int = today.year
+        month_int = today.month
+    first_day = date(year_int, month_int, 1)
+    last_day = date(year_int, month_int, calendar.monthrange(year_int, month_int)[1])
+    date_from = first_day.isoformat()
+    date_to = last_day.isoformat()
+
+    # Use list_student_records to obtain authoritative, augmented rows and page through results.
+    page = 0
+    page_size = 500
+    all_rows: list[dict[str, Any]] = []
+    max_pages = 100  # safety cap
+    batch_filters = None
+    if batch_name:
+        batch_filters = [(batch_name, None)]
+
+    while True:
+        rows = await list_student_records(
+            school_id,
+            class_name=class_name,
+            section=None,
+            student_name=None,
+            date_from=date_from,
+            date_to=date_to,
+            skip=page * page_size,
+            limit=page_size,
+            batch_filters=batch_filters,
+        )
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+        if page >= max_pages:
+            break
+
+    # Aggregate per-day
+    day_map: dict[str, dict[str, int | str]] = {}
+    marked_dates_set: set[str] = set()
+    for r in all_rows:
+        dt = _normalize(r.get("date"))[:10]
+        if not dt:
+            continue
+        marked_dates_set.add(dt)
+        bucket = day_map.setdefault(dt, {"present": 0, "absent": 0, "late": 0, "total": 0})
+        status = _normalize(r.get("status")) or "present"
+        if status == "present":
+            bucket["present"] += 1
+        elif status == "absent":
+            bucket["absent"] += 1
+        elif status == "late":
+            bucket["late"] += 1
+        else:
+            # treat unknown as present
+            bucket["present"] += 1
+        bucket["total"] += 1
+
+    # Build ordered day summary for entire month
+    days_in_month = calendar.monthrange(year_int, month_int)[1]
+    day_summary: list[dict[str, Any]] = []
+    monthly_present = monthly_absent = monthly_late = monthly_total = 0
+    for day in range(1, days_in_month + 1):
+        dt = date(year_int, month_int, day).isoformat()
+        bucket = day_map.get(dt, {"present": 0, "absent": 0, "late": 0, "total": 0})
+        present = int(bucket.get("present") or 0)
+        absent = int(bucket.get("absent") or 0)
+        late = int(bucket.get("late") or 0)
+        total = int(bucket.get("total") or 0)
+        if absent > 0:
+            status = "absent"
+        elif present > 0:
+            status = "present"
+        elif late > 0:
+            status = "late"
+        else:
+            status = ""
+        day_summary.append(
+            {
+                "date": dt,
+                "day": day,
+                "status": status,
+                "present": present,
+                "absent": absent,
+                "late": late,
+                "total": total,
+            }
+        )
+        monthly_present += present
+        monthly_absent += absent
+        monthly_late += late
+        monthly_total += total
+
+    payload = {
+        "month": f"{year_int:04d}-{month_int:02d}",
+        "marked_dates": sorted(list(marked_dates_set)),
+        "day_summary": day_summary,
+        "monthly_totals": {
+            "present_count": monthly_present,
+            "absent_count": monthly_absent,
+            "late_count": monthly_late,
+            "total": monthly_total,
+        },
+    }
+
+    _set_ttl_cache_entry(
+        ATTENDANCE_STUDENT_DASHBOARD_CACHE,
+        cache_key,
+        payload,
+        ATTENDANCE_STUDENT_DASHBOARD_CACHE_TTL_SECONDS,
+    )
+    logger.info(
+        "attendance.student_calendar.complete",
+        extra={
+            "school_id": school_id,
+            "month": payload["month"],
+            "record_count": len(all_rows),
+            "day_count": len(payload["day_summary"]),
+        },
+    )
+    return payload
+
+
+def _rpc_student_dashboard(
+    school_id: str,
+    *,
+    date_value: str | None = None,
+    class_name: str | None = None,
+    batch_name: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    params = {
+        "p_school_id": school_id,
+        "p_date": date_value[:10] if date_value else None,
+        "p_class_name": _normalize(class_name) or None,
+        "p_batch_name": _normalize(batch_name) or None,
+        "p_scope": _normalize(scope) or None,
+    }
+    started_at = time.monotonic()
+    response = get_supabase_admin_client().rpc("attendance_student_dashboard_summary", params).execute()
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    rows = list(response.data or [])
+    row = rows[0] if rows else {}
+    class_summary = row.get("class_summary") or []
+    batch_summary = row.get("batch_summary") or []
+    date_summary = row.get("date_summary") or []
+    if not isinstance(class_summary, list):
+        class_summary = []
+    if not isinstance(batch_summary, list):
+        batch_summary = []
+    if not isinstance(date_summary, list):
+        date_summary = []
+    payload = {
+        "scope": params["p_scope"],
+        "date": params["p_date"],
+        "class_name": params["p_class_name"],
+        "batch_name": params["p_batch_name"],
+        "total_count": int(row.get("total_count") or 0),
+        "present_count": int(row.get("present_count") or 0),
+        "absent_count": int(row.get("absent_count") or 0),
+        "late_count": int(row.get("late_count") or 0),
+        "class_summary": class_summary,
+        "batch_summary": batch_summary,
+        "date_summary": date_summary,
+    }
+    logger.info(
+        "attendance.student_dashboard.rpc_complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": duration_ms,
+            "date": params["p_date"],
+            "class_name": params["p_class_name"],
+            "batch_name": params["p_batch_name"],
+            "scope": params["p_scope"],
+            "total_count": payload["total_count"],
+            "batch_count": len(batch_summary),
+        },
+    )
+    return payload
+
+
+def get_student_dashboard(
+    school_id: str,
+    *,
+    date_value: str | None = None,
+    class_name: str | None = None,
+    batch_name: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    cache_key = _student_dashboard_cache_key(
+        school_id,
+        date_value=date_value,
+        class_name=class_name,
+        batch_name=batch_name,
+        scope=scope,
+    )
+    cached_payload = _get_ttl_cache_entry(ATTENDANCE_STUDENT_DASHBOARD_CACHE, cache_key)
+    if cached_payload:
+        logger.info("attendance.student_dashboard.cache_hit", extra={"school_id": school_id, "cache_key": cache_key})
+        return cached_payload
+
+    started_at = time.monotonic()
+    payload = _rpc_student_dashboard(
+        school_id,
+        date_value=date_value,
+        class_name=class_name,
+        batch_name=batch_name,
+        scope=scope,
+    )
+    _set_ttl_cache_entry(
+        ATTENDANCE_STUDENT_DASHBOARD_CACHE,
+        cache_key,
+        payload,
+        ATTENDANCE_STUDENT_DASHBOARD_CACHE_TTL_SECONDS,
+    )
+    logger.info(
+        "attendance.student_dashboard.complete",
+        extra={
+            "school_id": school_id,
+            "duration_ms": round((time.monotonic() - started_at) * 1000),
+            "date": date_value,
+            "class_name": _normalize(class_name) or None,
+            "batch_name": _normalize(batch_name) or None,
+            "scope": _normalize(scope) or None,
+        },
+    )
+    return payload
 
 
 def _rpc_staff_dashboard(

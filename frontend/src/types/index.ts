@@ -473,6 +473,7 @@ export interface AttendanceStudent {
   name: string;
   class_name: string;
   section: string;
+  batch_name?: string;
   roll_no: string;
   parent_contact?: string;
   attendance_percentage?: number;
@@ -527,6 +528,39 @@ export interface StudentAttendanceRecord {
   marked_by?: string;
   created_at?: string;
   [key: string]: unknown;
+}
+
+export interface StudentAttendanceDashboardBucket {
+  label: string;
+  present: number;
+  absent: number;
+  late: number;
+  total: number;
+  class_name?: string;
+  section?: string;
+  batch_name?: string;
+}
+
+export interface StudentAttendanceDashboardDateBucket {
+  date: string;
+  present: number;
+  absent: number;
+  late: number;
+  total: number;
+}
+
+export interface StudentAttendanceDashboardSummary {
+  scope?: 'batch' | 'class' | string;
+  date?: string;
+  class_name?: string;
+  batch_name?: string;
+  total_count: number;
+  present_count: number;
+  absent_count: number;
+  late_count: number;
+  class_summary: StudentAttendanceDashboardBucket[];
+  batch_summary: StudentAttendanceDashboardBucket[];
+  date_summary: StudentAttendanceDashboardDateBucket[];
 }
 
 export interface TeacherAttendanceContext {

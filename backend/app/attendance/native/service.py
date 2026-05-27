@@ -5,7 +5,9 @@ from app.services.supabase_attendance import (
     get_integrated_overview,
     get_overview,
     get_staff_marking,
+    get_student_dashboard,
     get_student_marking,
+    get_student_calendar,
     list_integrated_staff,
     list_integrated_students,
     list_leaves,
@@ -150,6 +152,18 @@ class NativeAttendanceService:
 
     async def list_student_records(self, **kwargs):
         return await list_student_records(**kwargs)
+
+    def get_student_dashboard(self, **kwargs):
+        return get_student_dashboard(**kwargs)
+
+    async def get_student_calendar(self, *, school_id: str, month: str | None = None, class_name: str | None = None, batch_name: str | None = None, scope: str | None = None):
+        return await get_student_calendar(
+            school_id,
+            month=month,
+            class_name=class_name,
+            batch_name=batch_name,
+            scope=scope,
+        )
 
     def delete_student_record(self, *, school_id: str, record_id: str):
         return delete_student_record(school_id, record_id=record_id)
