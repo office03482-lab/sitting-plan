@@ -1838,7 +1838,7 @@ def save_student_marking(
 
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])
-def list_student_records(
+async def list_student_records(
     school_id: str = Depends(resolve_school_id_from_actor),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -1854,7 +1854,7 @@ def list_student_records(
         batch_filters = None
         if batch_name:
             batch_filters = [(batch_name, None)]
-        return list_supabase_student_records(
+        return await list_supabase_student_records(
             school_id,
             class_name=class_name,
             section=section,
