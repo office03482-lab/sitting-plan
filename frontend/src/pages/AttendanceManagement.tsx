@@ -2706,7 +2706,7 @@ function AttendanceManagementContent() {
     }
   };
 
-  const loadStudentRecords = async () => {
+  const loadStudentRecords = async (options?: { force?: boolean }) => {
     if (!canRunAttendanceRequests) {
       debugAttendanceLoader('loadStudentRecords.skipped.auth_not_ready');
       return;
@@ -2714,11 +2714,13 @@ function AttendanceManagementContent() {
     const recordClassName = (studentFilters.record_class_name || '').trim();
     const recordBatchName = (studentFilters.record_batch_name || '').trim();
     const requestKey = `class:${recordClassName}|batch:${recordBatchName}|name:${studentFilters.recordStudentName}|dates:${studentFilters.date_from}|${studentFilters.date_to}|limit:${attendanceStudentRecordPageSize}`;
-    const cachedRecords = readStudentRecordCache(requestKey);
-    if (cachedRecords) {
-      debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
-      setStudentRecords(cachedRecords);
-      return;
+    if (!options?.force) {
+      const cachedRecords = readStudentRecordCache(requestKey);
+      if (cachedRecords) {
+        debugAttendanceLoader('loadStudentRecords.cache_hit', { requestKey, count: cachedRecords.length });
+        setStudentRecords(cachedRecords);
+        return;
+      }
     }
     if (
       studentRecordsRequestKeyRef.current === requestKey &&
@@ -3659,7 +3661,7 @@ function AttendanceManagementContent() {
                       <p className="mt-2 text-sm text-slate-500">Batch-wise records with total students count.</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button onClick={loadStudentRecords} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                      <button onClick={() => loadStudentRecords({ force: true })} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
                         Apply Filters
                       </button>
                       <button type="button" onClick={handleDeleteAllStudentRecords} className={deleteAllButtonClass}>
