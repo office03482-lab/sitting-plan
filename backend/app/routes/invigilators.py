@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from typing import List, Optional
 from app.database import get_db
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
 from app.models import Invigilator, RoomInvigilator, Room
 from app.schemas import (
     InvigilatorResponse, InvigilatorCreate, InvigilatorUpdate,
@@ -16,7 +16,18 @@ from app.schemas import (
     InvigilatorWithRoomsResponse
 )
 
-router = APIRouter(prefix="/api/invigilators", tags=["invigilators"])
+router = APIRouter(
+    prefix="/api/invigilators",
+    tags=["invigilators"],
+    dependencies=[
+        Depends(
+            build_legacy_sqlite_route_blocker(
+                "Invigilator management",
+                reason="This module still depends on legacy SQLite invigilator and room assignment tables.",
+            )
+        )
+    ],
+)
 
 
 # ==================== Invigilator CRUD ====================

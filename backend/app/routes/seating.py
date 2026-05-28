@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models import SeatingPlan, Exam, Room, Student, Desk, Seat
 from app.schemas import GenerateSeatingRequest, SeatingPlanResponse, PlansComparisonResponse, RoomLayout, DeskLayout, SeatPosition, SeatingPlanImportResponse
 from app.services.seating_engine import SeatingAlgorithmEngine
-from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
+from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode, resolve_school_id_from_actor
 from app.services.supabase_seating import (
     delete_all_seating_plans,
     delete_seating_plan,
@@ -204,6 +204,10 @@ async def generate_seating_plans(
     """
     Generate seating plans for the requested plan type.
     """
+    ensure_legacy_sqlite_route_available(
+        "Seating plan generation",
+        reason="Native seating reads remain enabled, but plan generation still depends on legacy SQLite room and student tables.",
+    )
     # Get exam and students
     exam = db.query(Exam).filter(Exam.id == request.exam_id).first()
     if not exam:
@@ -646,6 +650,10 @@ async def import_seating_plan(
     """
     Import seating plan from Excel file
     """
+    ensure_legacy_sqlite_route_available(
+        "Seating plan import",
+        reason="This import flow still depends on legacy SQLite student storage.",
+    )
     # Validate file type
     if not file.filename.lower().endswith('.xlsx'):
         raise HTTPException(

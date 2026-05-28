@@ -39,6 +39,7 @@ from app.schemas import (
     EduPayTrendPoint,
 )
 from app.services.supabase_context import (
+    ensure_legacy_sqlite_route_available,
     ensure_supabase_school_exists,
     is_legacy_sqlite_mode,
     resolve_school_id_from_actor,
@@ -61,6 +62,14 @@ WRITE_ROLES = {
     "accountant",
     "staff",
 }
+
+
+def ensure_edupay_legacy_route_available(school_id: str) -> None:
+    ensure_legacy_sqlite_route_available(
+        "EduPay legacy workflow",
+        school_id,
+        reason="Only the Supabase-backed EduPay dashboard, listing, and payment flows remain enabled during migration.",
+    )
 
 
 
@@ -430,6 +439,7 @@ def create_student(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
+    ensure_edupay_legacy_route_available(school_id)
     ensure_school_context(school_id)
     existing = (
         db.query(EduPayStudent)
@@ -538,6 +548,7 @@ def create_fee_structure(
     actor: Dict[str, str] = Depends(require_write_access),
     db: Session = Depends(get_db),
 ):
+    ensure_edupay_legacy_route_available(school_id)
     ensure_school_context(school_id)
     structure = EduPayFeeStructure(
         name=payload.name.strip(),
@@ -707,6 +718,7 @@ def get_parent_portal(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_edupay_legacy_route_available(school_id)
     ensure_school_context(school_id)
     query = db.query(EduPayParent).filter(EduPayParent.school_id == school_id, EduPayParent.is_active == True)
     parent = query.filter(EduPayParent.id == parent_id).first() if parent_id else query.order_by(EduPayParent.id.asc()).first()

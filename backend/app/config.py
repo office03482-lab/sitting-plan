@@ -204,7 +204,10 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     class Config:
-        env_file = str(BASE_DIR / ".env")
+        env_file = (
+            str(BASE_DIR / ".env.local"),
+            str(BASE_DIR / ".env"),
+        )
         case_sensitive = False
 
 

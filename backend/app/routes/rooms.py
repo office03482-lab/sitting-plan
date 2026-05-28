@@ -3,7 +3,7 @@ Room configuration routes
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -13,7 +13,16 @@ from app.schemas import RoomCreate, RoomResponse, RoomUpdate
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[
+        Depends(
+            build_legacy_sqlite_route_blocker(
+                "Room management",
+                reason="This module still depends on legacy SQLite room and school tables.",
+            )
+        )
+    ]
+)
 
 
 def ensure_school_exists(db: Session, school_id: str) -> str:

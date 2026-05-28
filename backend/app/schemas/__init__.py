@@ -1523,7 +1523,7 @@ class StudentAttendanceDashboardDateBucketResponse(BaseModel):
 
 class StudentAttendanceDashboardSummaryResponse(BaseModel):
     scope: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[str] = None
     class_name: Optional[str] = None
     batch_name: Optional[str] = None
     total_count: int

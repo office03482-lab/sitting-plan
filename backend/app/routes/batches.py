@@ -6,14 +6,25 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.database import get_db
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
 from app.models import BatchTable, Student
 from app.schemas import BatchCreate, BatchUpdate, BatchResponse, BatchWithStudentCount, BatchReorderRequest
 from app.utils.academic_batches import looks_like_academic_batch_name
 # from app.middleware.auth import get_current_user  # Temporarily disabled
 from typing import List
 
-router = APIRouter(prefix="/api/batches", tags=["batches"])
+router = APIRouter(
+    prefix="/api/batches",
+    tags=["batches"],
+    dependencies=[
+        Depends(
+            build_legacy_sqlite_route_blocker(
+                "Batch management",
+                reason="This module still depends on legacy SQLite batch and student relationships.",
+            )
+        )
+    ],
+)
 
 
 def _is_invalid_class_name(name: str | None, category: str | None) -> bool:

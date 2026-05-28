@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock3, Pencil, Plus, Trash2, Users } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 import type { Invigilator } from '@types';
 
 export default function NonTeachingManagement() {
@@ -40,6 +40,9 @@ export default function NonTeachingManagement() {
         working_hours_end: settingsRes.data.working_hours_end,
       });
       setThreshold(settingsRes.data.minimum_attendance_threshold);
+    } catch (error) {
+      setStaff([]);
+      setMessage(getRequestErrorMessage(error, 'Failed to load non-teaching staff.'));
     } finally {
       setLoading(false);
     }

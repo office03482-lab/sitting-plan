@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib import colors
@@ -74,7 +74,18 @@ from app.utils.excel import (
     parse_inventory_material_excel,
 )
 
-router = APIRouter(prefix="/api/inventory", tags=["inventory"])
+router = APIRouter(
+    prefix="/api/inventory",
+    tags=["inventory"],
+    dependencies=[
+        Depends(
+            build_legacy_sqlite_route_blocker(
+                "Inventory management",
+                reason="This module still depends on legacy SQLite inventory and supplier tables.",
+            )
+        )
+    ],
+)
 
 WRITE_ROLES = {UserRole.ADMIN.value, UserRole.STORE_MANAGER.value}
 

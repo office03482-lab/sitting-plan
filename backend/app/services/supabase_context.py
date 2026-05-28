@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from fastapi import HTTPException, Query, Depends, Request
@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 LEGACY_SCHOOL_FALLBACK = "1"
 _PLACEHOLDER_SCHOOL_IDS = {"", "1", "none", "null", "undefined"}
+_MIGRATION_UNAVAILABLE_STATUS_CODE = 503
+_MIGRATION_UNAVAILABLE_DETAIL = "This module is temporarily unavailable during Supabase migration."
 
 
 def should_use_supabase_native_services() -> bool:
@@ -46,6 +48,36 @@ def _is_valid_uuid(value: Any) -> bool:
 
 def _is_placeholder_school_id(value: Any) -> bool:
     return _normalize_school_id_candidate(value).lower() in _PLACEHOLDER_SCHOOL_IDS
+
+
+def _raise_migration_block(module_name: str, reason: str | None, school_id: Any) -> None:
+    normalized_school_id = _normalize_school_id_candidate(school_id)
+    logger.warning(
+        "storage.migration_route_blocked",
+        extra={
+            "guarded_module": module_name,
+            "school_id": normalized_school_id,
+            "native_mode": should_use_supabase_native_services(),
+            "reason": reason or "",
+        },
+    )
+    raise HTTPException(
+        status_code=_MIGRATION_UNAVAILABLE_STATUS_CODE,
+        detail=_MIGRATION_UNAVAILABLE_DETAIL,
+    )
+
+
+def ensure_legacy_sqlite_route_available(
+    module_name: str,
+    school_id: Any = None,
+    *,
+    reason: str | None = None,
+) -> None:
+    if not should_use_supabase_native_services():
+        return
+    if school_id is not None and not _is_valid_uuid(school_id):
+        return
+    _raise_migration_block(module_name, reason, school_id)
 
 
 def _resolve_school_id_from_actor_claims(actor: dict[str, Any]) -> str:
@@ -314,3 +346,16 @@ def ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:
     if rows:
         return rows[0]
     raise HTTPException(status_code=404, detail="School not found")
+
+
+def build_legacy_sqlite_route_blocker(
+    module_name: str,
+    *,
+    reason: str | None = None,
+) -> Callable[[], None]:
+    def dependency(
+        school_id: str = Depends(resolve_school_id_from_actor),
+    ) -> None:
+        ensure_legacy_sqlite_route_available(module_name, school_id, reason=reason)
+
+    return dependency

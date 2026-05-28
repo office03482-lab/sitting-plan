@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
 type StaffType = 'teaching' | 'non_teaching';
@@ -140,7 +140,7 @@ export default function InvigilatorManagement() {
       }
     } catch (error) {
       console.error('Error loading data:', error);
-      showMessage('Failed to load data', 'error');
+      showMessage(getRequestErrorMessage(error, 'Failed to load data'), 'error');
     } finally {
       setLoading(false);
     }

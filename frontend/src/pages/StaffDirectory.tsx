@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, Pencil, Search, Trash2, Upload, UserPlus2, Users, X } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 import {
   findStaffDirectoryNameMatches,
   getStaffDirectoryDuplicateGroups,
@@ -215,7 +215,7 @@ export default function StaffDirectory() {
     } catch (error) {
       console.error('Failed to load staff directory from Supabase', error);
       setRecords([]);
-      showMessage('Staff directory Supabase se load nahi ho paayi.', 'error');
+      showMessage(getRequestErrorMessage(error, 'Staff directory Supabase se load nahi ho paayi.'), 'error');
     }
   };
 

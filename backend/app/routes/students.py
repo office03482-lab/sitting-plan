@@ -4,7 +4,7 @@ Student management routes
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_context import ensure_legacy_sqlite_route_available, resolve_school_id_from_actor
 from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -39,6 +39,14 @@ import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def ensure_students_legacy_routes_available(school_id: str) -> None:
+    ensure_legacy_sqlite_route_available(
+        "Student management",
+        school_id,
+        reason="Only the Supabase-backed student import flow remains enabled during migration.",
+    )
 
 
 def build_batch_code(batch_name: str, fallback_index: int) -> str:
@@ -623,6 +631,7 @@ async def create_student(
     """
     Create a new student
     """
+    ensure_students_legacy_routes_available(school_id)
     # Check if roll number already exists
     existing = db.query(Student).filter(
         Student.roll_number == student.roll_number,
@@ -695,6 +704,7 @@ async def list_students(
     """
     List students for a school
     """
+    ensure_students_legacy_routes_available(school_id)
     query = db.query(Student).filter(Student.school_id == school_id)
     
     if batch:
@@ -711,6 +721,7 @@ async def list_hostels(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     try:
         hostels = (
             db.query(Hostel)
@@ -732,6 +743,7 @@ async def create_hostel(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     try:
         hostel = Hostel(
             school_id=school_id,
@@ -786,6 +798,7 @@ async def update_hostel(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
     if not hostel:
         raise HTTPException(status_code=404, detail="Hostel not found")
@@ -806,6 +819,7 @@ async def delete_hostel(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
     if not hostel:
         raise HTTPException(status_code=404, detail="Hostel not found")
@@ -851,6 +865,7 @@ async def add_hostel_room(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
     if not hostel:
         raise HTTPException(status_code=404, detail="Hostel not found")
@@ -876,6 +891,7 @@ async def list_hostel_requests(
     status_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     try:
         query = (
             db.query(StudentHostelRequest)
@@ -903,6 +919,7 @@ async def create_or_update_hostel_request(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -959,6 +976,7 @@ async def approve_hostel_request(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
         StudentHostelRequest.school_id == school_id,
@@ -1026,6 +1044,7 @@ async def move_hostel_allocation(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
         StudentHostelRequest.school_id == school_id,
@@ -1091,6 +1110,7 @@ async def reject_hostel_request(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
         StudentHostelRequest.school_id == school_id,
@@ -1126,6 +1146,7 @@ async def transfer_students_to_batch(
     """
     Transfer selected students or a whole batch to another batch.
     """
+    ensure_students_legacy_routes_available(school_id)
     target_batch = get_or_create_batch(db, school_id, transfer_data.target_batch)
     normalized_source_batch = (transfer_data.source_batch or "").strip() or None
 
@@ -1207,6 +1228,7 @@ async def get_student(
     """
     Get student by ID
     """
+    ensure_students_legacy_routes_available(school_id)
     student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
@@ -1227,6 +1249,7 @@ async def update_student(
     """
     Update student information
     """
+    ensure_students_legacy_routes_available(school_id)
     student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
@@ -1309,6 +1332,7 @@ async def delete_student(
     """
     Delete student
     """
+    ensure_students_legacy_routes_available(school_id)
     student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
     
     if not student:
@@ -1335,6 +1359,7 @@ async def delete_all_students(
     """
     Delete all students for a school (Admin only).
     """
+    ensure_students_legacy_routes_available(school_id)
     if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

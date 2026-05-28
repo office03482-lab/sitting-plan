@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import type { 
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
-  Teacher, TimetableEntry, TimetableView, DayOfWeek
+  Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator
 } from '@types';
 
 export function isRequestCanceled(error: unknown): boolean {
@@ -12,7 +12,11 @@ export function getRequestErrorMessage(error: any, fallback: string): string {
   if (isRequestCanceled(error)) {
     return '';
   }
-  return error?.response?.data?.detail || error?.message || fallback;
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  return error?.message || fallback;
 }
 
 function readStoredAuthUser(): any | null {
@@ -51,7 +55,8 @@ class ApiService {
         || localStorage.getItem('access_token');
       const resolvedSchoolId = resolveStoredSchoolId(storedUser);
 
-      config.headers = config.headers ?? {};
+      const headers = (config.headers ?? {}) as Record<string, unknown>;
+      config.headers = headers as typeof config.headers;
       const params =
         config.params && typeof config.params === 'object' && !Array.isArray(config.params)
           ? (config.params as Record<string, unknown>)
@@ -59,21 +64,21 @@ class ApiService {
       config.params = params;
 
       if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
       }
       if (storedUser?.role) {
-        config.headers['X-User-Role'] = String(storedUser.role).trim().toLowerCase();
+        headers['X-User-Role'] = String(storedUser.role).trim().toLowerCase();
       }
       if (storedUser?.full_name || storedUser?.username || storedUser?.email) {
-        config.headers['X-User-Name'] = String(
+        headers['X-User-Name'] = String(
           storedUser.full_name || storedUser.username || storedUser.email
         ).trim();
       }
       if (storedUser?.email) {
-        config.headers['X-User-Email'] = String(storedUser.email).trim();
+        headers['X-User-Email'] = String(storedUser.email).trim();
       }
       if (Array.isArray(storedUser?.permissions) && storedUser.permissions.length) {
-        config.headers['X-User-Permissions'] = storedUser.permissions.join(',');
+        headers['X-User-Permissions'] = storedUser.permissions.join(',');
       }
       if (resolvedSchoolId) {
         const currentSchoolId = String(params.school_id ?? '').trim();
@@ -84,10 +89,8 @@ class ApiService {
 
       // Ensure multipart uploads do not send a JSON content type header.
       if (config.data instanceof FormData) {
-        if (config.headers) {
-          delete config.headers['Content-Type'];
-          delete config.headers['content-type'];
-        }
+        delete headers['Content-Type'];
+        delete headers['content-type'];
       }
       return config;
     });
@@ -280,6 +283,78 @@ class ApiService {
 
   async deleteTeacher(teacherId: number) {
     return this.api.delete(`/teachers/${teacherId}`);
+  }
+
+  // ==================== Invigilators ====================
+
+  async createInvigilator(invigilatorData: Partial<Invigilator>, schoolId: number = 1) {
+    return this.api.post<Invigilator>('/invigilators', invigilatorData, {
+      params: { school_id: schoolId },
+    });
+  }
+
+  async listInvigilators(schoolId: number = 1, isActive?: boolean, skip = 0, limit = 100) {
+    return this.api.get<Invigilator[]>('/invigilators', {
+      params: { school_id: schoolId, is_active: isActive, skip, limit },
+    });
+  }
+
+  async getInvigilator(invigilatorId: number) {
+    return this.api.get<Invigilator>(`/invigilators/${invigilatorId}`);
+  }
+
+  async updateInvigilator(invigilatorId: number, data: Partial<Invigilator>) {
+    return this.api.put<Invigilator>(`/invigilators/${invigilatorId}`, data);
+  }
+
+  async deleteInvigilator(invigilatorId: number) {
+    return this.api.delete(`/invigilators/${invigilatorId}`);
+  }
+
+  async listRoomAssignments(schoolId: number = 1, params: {
+    room_id?: number;
+    invigilator_id?: number;
+    is_active?: boolean;
+    skip?: number;
+    limit?: number;
+  } = {}) {
+    return this.api.get<RoomInvigilator[]>('/invigilators/assignments', {
+      params: { school_id: schoolId, ...params },
+    });
+  }
+
+  async assignInvigilatorToRoom(data: {
+    room_id: string | number;
+    invigilator_id: number;
+    exam_id?: number;
+    notes?: string;
+  }, schoolId: number = 1) {
+    return this.api.post<RoomInvigilator>('/invigilators/room-assignment', data, {
+      params: { school_id: schoolId },
+    });
+  }
+
+  async getRoomInvigilators(roomId: number) {
+    return this.api.get<Invigilator[]>(`/invigilators/room/${roomId}/invigilators`);
+  }
+
+  async updateRoomAssignment(assignmentId: number, data: {
+    invigilator_id?: number;
+    exam_id?: number;
+    notes?: string;
+    is_active?: boolean;
+  }) {
+    return this.api.put<RoomInvigilator>(`/invigilators/assignments/${assignmentId}`, data);
+  }
+
+  async deleteRoomAssignment(assignmentId: number) {
+    return this.api.delete(`/invigilators/assignments/${assignmentId}`);
+  }
+
+  async deleteAllInvigilatorAssignments(schoolId: number = 1) {
+    return this.api.delete('/invigilators/assignments', {
+      params: { school_id: schoolId },
+    });
   }
 
   // ==================== Timetable ====================

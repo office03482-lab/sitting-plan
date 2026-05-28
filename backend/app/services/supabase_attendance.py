@@ -373,11 +373,6 @@ def _rpc_list_student_records(
                 class_val = class_val or parsed_class
                 section_val = section_val or parsed_section
 
-        if class_val == "General" and not meta_class:
-            class_val = ""
-            if section_val == "A" and not meta_section:
-                section_val = ""
-
         row["class_name"] = class_val
         row["section"] = section_val
         row["batch_name"] = batch_name_val
@@ -2136,35 +2131,12 @@ def get_student_marking(
     search: str | None = None,
 ) -> dict[str, Any]:
     batch_lookup = _fetch_batches(school_id)
-    serialized_students = [
-        _serialize_student(row, batch_lookup)
-        for row in _fetch_students(
-            school_id,
-            search=search,
-            skip=0,
-            limit=MAX_STUDENT_LOOKUP,
-        )
-    ]
-    students = [
-        {
-            "id": row.get("id"),
-            "full_name": row.get("name"),
-            "roll_number": row.get("roll_no"),
-            "class_name": row.get("class_name"),
-            "section": row.get("section"),
-        }
-        for row in serialized_students
-        if _cf(row.get("class_name")) == _cf(class_name)
-        and _cf(row.get("section")) == _cf(section)
-    ]
-    students.sort(key=lambda row: (_normalize(row.get("roll_number")), _normalize(row.get("full_name"))))
-
     if not subject_id:
         raise HTTPException(status_code=422, detail="Subject selection is required to load student attendance marking.")
     subject_response = (
         get_supabase_admin_client()
         .table("subjects")
-        .select("id, name")
+        .select("id, name, class_name, batch_id, metadata")
         .eq("school_id", school_id)
         .eq("id", subject_id)
         .limit(1)
@@ -2175,9 +2147,51 @@ def get_student_marking(
         raise HTTPException(status_code=422, detail="Subject could not be resolved for the selected class and section.")
     subject = subject_rows[0]
 
+    serialized_students = [
+        _serialize_student(row, batch_lookup)
+        for row in _fetch_students(
+            school_id,
+            search=search,
+            skip=0,
+            limit=MAX_STUDENT_LOOKUP,
+        )
+    ]
+
+    def _build_student_marking_roster(target_class_name: str, target_section: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": row.get("id"),
+                "full_name": row.get("name"),
+                "roll_number": row.get("roll_no"),
+                "class_name": row.get("class_name"),
+                "section": row.get("section"),
+            }
+            for row in serialized_students
+            if _cf(row.get("class_name")) == _cf(target_class_name)
+            and _cf(row.get("section")) == _cf(target_section)
+        ]
+
+    resolved_class_name = _normalize(class_name)
+    resolved_section = _normalize(section)
+    students = _build_student_marking_roster(resolved_class_name, resolved_section)
+
+    if not students:
+        subject_metadata = subject.get("metadata") if isinstance(subject.get("metadata"), dict) else {}
+        subject_batch = batch_lookup.get(str(subject.get("batch_id")) or "")
+        subject_class_name = _normalize(subject.get("class_name")) or _normalize((subject_batch or {}).get("class_name"))
+        subject_section = (
+            _normalize(subject_metadata.get("section"))
+            or _normalize((subject_batch or {}).get("section"))
+        )
+        if subject_class_name and subject_section:
+            resolved_class_name = subject_class_name
+            resolved_section = subject_section
+            students = _build_student_marking_roster(resolved_class_name, resolved_section)
+
     existing_by_student_id: dict[str, dict[str, Any]] = {}
     student_ids = _sanitize_lookup_ids([row.get("id") for row in students], require_uuid=True)
-    if student_ids:
+    attendance_rows: list[dict[str, Any]] = []
+    if student_ids or not students:
         try:
             attendance_response = (
                 get_supabase_admin_client()
@@ -2187,12 +2201,12 @@ def get_student_marking(
                 .eq("school_id", school_id)
                 .eq("subject_id", subject.get("id"))
                 .eq("attendance_date", date_value[:10])
-                .in_("student_id", student_ids)
                 .execute()
             )
+            attendance_rows = list(attendance_response.data or [])
             existing_by_student_id = {
                 str(row.get("student_id")): row
-                for row in list(attendance_response.data or [])
+                for row in attendance_rows
             }
         except Exception:
             logger.exception(
@@ -2206,10 +2220,30 @@ def get_student_marking(
                 },
             )
 
+    if not students and attendance_rows:
+        attended_student_ids = _sanitize_lookup_ids(
+            [row.get("student_id") for row in attendance_rows],
+            require_uuid=True,
+        )
+        attended_student_id_set = set(attended_student_ids)
+        students = [
+            {
+                "id": row.get("id"),
+                "full_name": row.get("name"),
+                "roll_number": row.get("roll_no"),
+                "class_name": row.get("class_name"),
+                "section": row.get("section"),
+            }
+            for row in serialized_students
+            if str(row.get("id") or "") in attended_student_id_set
+        ]
+
+    students.sort(key=lambda row: (_normalize(row.get("roll_number")), _normalize(row.get("full_name"))))
+
     return {
         "date": datetime.fromisoformat(f"{date_value[:10]}T00:00:00").isoformat(),
-        "class_name": class_name,
-        "section": section,
+        "class_name": resolved_class_name or class_name,
+        "section": resolved_section or section,
         "subject_id": subject.get("id") if subject else None,
         "subject_name": subject.get("name") if subject else "",
         "students": [
