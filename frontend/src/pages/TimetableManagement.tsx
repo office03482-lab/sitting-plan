@@ -1,8 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Edit, Trash2, Clock, Users, Filter, Download, Building2, Layers3 } from 'lucide-react';
-import { apiService } from '../services/api';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  getRequestErrorMessage as getSharedRequestErrorMessage,
+  isMigrationGuardError,
+  isTemporarilyUnavailableDataError,
+} from '../services/api';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
+import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
 import { useAuthStore } from '@store/auth';
 import type {
   Batch,
@@ -77,7 +84,7 @@ const isNoTeacherSession = (sessionType?: TimetableSessionType) =>
 
 const ensureArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 const getRequestErrorMessage = (error: any, fallback: string) =>
-  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+  getSharedRequestErrorMessage(error, fallback);
 
 const hasValue = (value: unknown) => String(value ?? '').trim().length > 0;
 const sameId = (left: string | number | null | undefined, right: string | number | null | undefined) =>
@@ -123,6 +130,12 @@ const TimetableManagement: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimetableEntry | null>(null);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [referenceUnavailable, setReferenceUnavailable] = useState({
+    teachers: false,
+    rooms: false,
+    batches: false,
+    students: false,
+  });
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'teacher' | 'room' | 'batch'>('grid');
   const [selectedDay, setSelectedDay] = useState<DayOfWeek | 'all'>('all');
   const [selectedTeacher, setSelectedTeacher] = useState<string | number | 'all'>('all');
@@ -241,8 +254,21 @@ const TimetableManagement: React.FC = () => {
 
   const loadReferenceData = async () => {
     if (isTeacherSelfView) {
-      const teachersResponse = await apiService.listTeachers();
-      setTeachers(ensureArray<Teacher>(teachersResponse.data));
+      try {
+        const teachersResponse = await apiService.listTeachers();
+        setTeachers(ensureArray<Teacher>(teachersResponse.data));
+        setReferenceUnavailable({ teachers: false, rooms: false, batches: false, students: false });
+      } catch (error) {
+        const guarded = isMigrationGuardError(error);
+        setTeachers([]);
+        setReferenceUnavailable({ teachers: guarded, rooms: false, batches: false, students: false });
+        if (guarded) {
+          setAlert({
+            type: 'error',
+            message: getMigrationUnavailableMessage('Teacher reference data'),
+          });
+        }
+      }
       setRooms([]);
       setStudents([]);
       setManagedBatchOptions([]);
@@ -259,6 +285,14 @@ const TimetableManagement: React.FC = () => {
     setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
     setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
     setStudents([]);
+    const nextUnavailable = {
+      teachers: teachersResponse.status === 'rejected' && isMigrationGuardError(teachersResponse.reason),
+      rooms: roomsResponse.status === 'rejected' && isMigrationGuardError(roomsResponse.reason),
+      batches:
+        (batchResponse.status === 'rejected' && (isMigrationGuardError(batchResponse.reason) || isTemporarilyUnavailableDataError(batchResponse.reason)))
+        || (classResponse.status === 'rejected' && (isMigrationGuardError(classResponse.reason) || isTemporarilyUnavailableDataError(classResponse.reason))),
+      students: false,
+    };
     const managedOptions = [
       ...ensureArray<Batch>(batchResponse.status === 'fulfilled' ? batchResponse.value.data : []),
       ...ensureArray<Batch>(classResponse.status === 'fulfilled' ? classResponse.value.data : []),
@@ -266,12 +300,16 @@ const TimetableManagement: React.FC = () => {
       .map((item: Batch) => String(item.name || '').trim())
       .filter(Boolean);
     setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
+    setReferenceUnavailable(nextUnavailable);
     apiService.listStudents()
       .then((response) => {
         setStudents(ensureArray<Student>(response.data));
+        setReferenceUnavailable((current) => ({ ...current, students: false }));
       })
-      .catch(() => {
+      .catch((error) => {
         setStudents([]);
+        const guarded = isMigrationGuardError(error);
+        setReferenceUnavailable((current) => ({ ...current, students: guarded }));
       });
   };
 
@@ -700,6 +738,12 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
     return <LoadingSpinner />;
   }
 
+  const hasUnavailableReferences =
+    referenceUnavailable.teachers
+    || referenceUnavailable.rooms
+    || referenceUnavailable.batches
+    || referenceUnavailable.students;
+
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -708,6 +752,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <button
               onClick={handleDeleteAllEntries}
+              disabled={hasUnavailableReferences}
               className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center gap-2"
             >
               <Trash2 size={20} />
@@ -715,6 +760,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             </button>
             <button
               onClick={openCreateForm}
+              disabled={hasUnavailableReferences}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
             >
               <Plus size={20} />
@@ -722,6 +768,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             </button>
             <button
               onClick={() => setShowBulkForm(true)}
+              disabled={hasUnavailableReferences}
               className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2"
             >
               <Plus size={20} />
@@ -738,6 +785,14 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           onClose={() => setAlert(null)}
         />
       )}
+
+      {hasUnavailableReferences ? (
+        <div className="mb-6">
+          <MigrationUnavailableNotice
+            message="Teacher, room, batch, or student reference data is temporarily unavailable during the ongoing Supabase migration. Existing timetable entries can still be viewed and exported."
+          />
+        </div>
+      ) : null}
 
       {/* View Controls */}
       <div className="mb-6 bg-white rounded-lg shadow p-4">
@@ -862,6 +917,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             <select
               value={selectedTeacher}
               onChange={(e) => setSelectedTeacher(e.target.value === 'all' ? 'all' : e.target.value)}
+              disabled={referenceUnavailable.teachers}
               className="px-3 py-1 border border-gray-300 rounded"
             >
               <option value="all">{isTeacherSelfView ? 'My Timetable' : 'All Teachers'}</option>
@@ -874,6 +930,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               <select
                 value={selectedRoom}
                 onChange={(e) => setSelectedRoom(e.target.value === 'all' ? 'all' : e.target.value)}
+                disabled={referenceUnavailable.rooms}
                 className="px-3 py-1 border border-gray-300 rounded"
               >
                 <option value="all">All Rooms</option>
@@ -887,6 +944,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               <select
                 value={selectedBatch}
                 onChange={(e) => setSelectedBatch(e.target.value)}
+                disabled={referenceUnavailable.batches}
                 className="px-3 py-1 border border-gray-300 rounded"
               >
                 <option value="all">All Batches</option>

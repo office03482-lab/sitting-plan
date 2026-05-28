@@ -3,11 +3,19 @@ import { BarChart3, FileSpreadsheet, FileText, Users } from 'lucide-react';
 
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { apiService } from '../services/api';
+import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
+import { UnavailableStatCard } from '../components/UnavailableStatCard';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  getRequestErrorMessage as getSharedRequestErrorMessage,
+  isMigrationGuardError,
+  isTemporarilyUnavailableDataError,
+} from '../services/api';
 import type { SeatingPlan, Student, Teacher } from '../types';
 
 const getRequestErrorMessage = (error: any, fallback: string) =>
-  error?.response?.data?.detail || error?.response?.data?.error || error?.message || fallback;
+  getSharedRequestErrorMessage(error, fallback);
 
 const getPlanTypeLabel = (type: SeatingPlan['plan_type']) => {
   if (type === 'all_in_one') return 'All-in-One';
@@ -21,6 +29,10 @@ const Reports: React.FC = () => {
   const [seatingPlans, setSeatingPlans] = useState<SeatingPlan[]>([]);
   const [teacherCount, setTeacherCount] = useState(0);
   const [studentCount, setStudentCount] = useState(0);
+  const [availability, setAvailability] = useState({
+    teachers: false,
+    students: false,
+  });
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -61,17 +73,25 @@ const Reports: React.FC = () => {
 
       if (teachersCountRes.status === 'fulfilled') {
         setTeacherCount(Number(teachersCountRes.value.data || 0));
+        setAvailability((current) => ({ ...current, teachers: false }));
       } else {
         console.error('Error loading teachers count:', teachersCountRes.reason);
-        setTeacherCount(0);
+        setAvailability((current) => ({
+          ...current,
+          teachers: isMigrationGuardError(teachersCountRes.reason) || isTemporarilyUnavailableDataError(teachersCountRes.reason),
+        }));
         failedSections.push('teachers');
       }
 
       if (studentsCountRes.status === 'fulfilled') {
         setStudentCount(Number(studentsCountRes.value.data || 0));
+        setAvailability((current) => ({ ...current, students: false }));
       } else {
         console.error('Error loading students count:', studentsCountRes.reason);
-        setStudentCount(0);
+        setAvailability((current) => ({
+          ...current,
+          students: isMigrationGuardError(studentsCountRes.reason) || isTemporarilyUnavailableDataError(studentsCountRes.reason),
+        }));
         failedSections.push('students');
       }
 
@@ -103,6 +123,9 @@ const Reports: React.FC = () => {
 
   const ensureTeachersLoaded = async () => {
     if (teachers.length > 0) return teachers;
+    if (availability.teachers) {
+      throw new Error(getMigrationUnavailableMessage('Teachers report data'));
+    }
     const response = await apiService.listTeachers();
     setTeachers(response.data);
     return response.data;
@@ -110,6 +133,9 @@ const Reports: React.FC = () => {
 
   const ensureStudentsLoaded = async () => {
     if (students.length > 0) return students;
+    if (availability.students) {
+      throw new Error(getMigrationUnavailableMessage('Students report data'));
+    }
     const response = await apiService.listStudents();
     setStudents(response.data);
     return response.data;
@@ -275,30 +301,44 @@ ${studentRows
 
       {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Users className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Teachers</p>
-              <p className="text-2xl font-bold text-gray-900">{teacherCount}</p>
-            </div>
-          </div>
+      {availability.teachers || availability.students ? (
+        <div className="mb-6">
+          <MigrationUnavailableNotice message="Teacher or student report data is temporarily unavailable during the ongoing Supabase migration. Seating plan exports remain available." />
         </div>
+      ) : null}
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <BarChart3 className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Students</p>
-              <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {availability.teachers ? (
+          <UnavailableStatCard icon={Users} label="Total Teachers" />
+        ) : (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <Users className="h-6 w-6 text-green-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Teachers</p>
+                <p className="text-2xl font-bold text-gray-900">{teacherCount}</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {availability.students ? (
+          <UnavailableStatCard icon={BarChart3} label="Total Students" />
+        ) : (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-purple-100 rounded-lg">
+                <BarChart3 className="h-6 w-6 text-purple-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Students</p>
+                <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
@@ -386,7 +426,7 @@ ${studentRows
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 onClick={() => handleExportPDF('teachers')}
-                disabled={exporting === 'teachers-pdf'}
+                disabled={exporting === 'teachers-pdf' || availability.teachers}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
               >
                 <FileText size={16} />
@@ -394,7 +434,7 @@ ${studentRows
               </button>
               <button
                 onClick={() => handleExportExcel('teachers')}
-                disabled={exporting === 'teachers-excel'}
+                disabled={exporting === 'teachers-excel' || availability.teachers}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
               >
                 <FileSpreadsheet size={16} />
@@ -411,7 +451,7 @@ ${studentRows
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 onClick={() => handleExportPDF('students')}
-                disabled={exporting === 'students-pdf'}
+                disabled={exporting === 'students-pdf' || availability.students}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
               >
                 <FileText size={16} />
@@ -419,7 +459,7 @@ ${studentRows
               </button>
               <button
                 onClick={() => handleExportExcel('students')}
-                disabled={exporting === 'students-excel'}
+                disabled={exporting === 'students-excel' || availability.students}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
               >
                 <FileSpreadsheet size={16} />

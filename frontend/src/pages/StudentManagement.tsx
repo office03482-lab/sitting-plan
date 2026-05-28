@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type Rea
 import { Upload, Download, RefreshCw, CheckCircle, XCircle, AlertTriangle, Edit2, Trash2, Plus, Camera, ExternalLink, FileText, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
-import { apiService } from '@services/api';
+import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
 import { looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
@@ -377,6 +378,7 @@ export default function StudentManagement() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [studentsLoading, setStudentsLoading] = useState(false);
+  const [migrationUnavailable, setMigrationUnavailable] = useState(false);
   const [importResult, setImportResult] = useState<StudentImportResponse | null>(null);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -532,6 +534,7 @@ export default function StudentManagement() {
     try {
       const response = await apiService.listStudents();
       setStudents(response.data);
+      setMigrationUnavailable(false);
       const sessions = response.data
         .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
         .filter(Boolean);
@@ -539,6 +542,7 @@ export default function StudentManagement() {
       return response.data;
     } catch (error) {
       console.error('Failed to load students:', error);
+      setMigrationUnavailable(isMigrationGuardError(error));
       return [];
     } finally {
       setStudentsLoading(false);
@@ -1470,12 +1474,17 @@ export default function StudentManagement() {
             {message}
           </div>
         )}
+        {migrationUnavailable ? (
+          <div className="mb-6">
+            <MigrationUnavailableNotice message={getMigrationUnavailableMessage('Student management')} />
+          </div>
+        ) : null}
         <StudentOperationStatusCard progress={operationProgress} />
           <div ref={importSectionRef} className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-gray-800">Import Student Data</h2>
             <button
               onClick={handleDownloadTemplate}
-              disabled={uploading}
+              disabled={uploading || migrationUnavailable}
               className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-60"
             >
               <Download className="w-4 h-4 mr-2" />
@@ -1493,7 +1502,7 @@ export default function StudentManagement() {
               <button
                 type="button"
                 onClick={handleChooseImportFile}
-                disabled={uploading}
+                disabled={uploading || migrationUnavailable}
                 className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white transition hover:bg-blue-700 disabled:opacity-60"
               >
                 Choose Excel File
@@ -1521,7 +1530,7 @@ export default function StudentManagement() {
               <div className="mt-6 flex justify-center space-x-4">
                 <button
                   onClick={handleImportStudents}
-                  disabled={uploading}
+                  disabled={uploading || migrationUnavailable}
                   className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   <Upload className="w-4 h-4 mr-2" />
@@ -1580,7 +1589,7 @@ export default function StudentManagement() {
             <div className="flex space-x-2">
               <button
                 onClick={openAddModal}
-                disabled={uploading || deletingAll || studentsLoading}
+                disabled={uploading || deletingAll || studentsLoading || migrationUnavailable}
                 className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-60"
               >
                 <Plus className="w-4 h-4 mr-2" />
@@ -1588,7 +1597,7 @@ export default function StudentManagement() {
               </button>
               <button
                 onClick={() => setDeleteAllConfirm(true)}
-                disabled={uploading || deletingAll || studentsLoading}
+                disabled={uploading || deletingAll || studentsLoading || migrationUnavailable}
                 className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-60"
               >
                 <AlertTriangle className="w-4 h-4 mr-2" />
@@ -1727,7 +1736,11 @@ export default function StudentManagement() {
                   {filteredStudents.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
-                        {searchTerm ? 'No students found matching your search.' : 'No students added yet.'}
+                        {migrationUnavailable
+                          ? 'Student data temporarily unavailable.'
+                          : searchTerm
+                            ? 'No students found matching your search.'
+                            : 'No students added yet.'}
                       </td>
                     </tr>
                   ) : (

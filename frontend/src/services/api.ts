@@ -8,9 +8,42 @@ export function isRequestCanceled(error: unknown): boolean {
   return axios.isCancel(error);
 }
 
+const MIGRATION_GUARD_DETAIL_FRAGMENT = 'temporarily unavailable during supabase migration';
+
+export function isMigrationGuardError(error: any): boolean {
+  const status = Number(error?.response?.status || error?.status || 0);
+  const detail = String(error?.response?.data?.detail || error?.message || '')
+    .trim()
+    .toLowerCase();
+  return status === 503 && detail.includes(MIGRATION_GUARD_DETAIL_FRAGMENT);
+}
+
+export function isTemporarilyUnavailableDataError(error: any): boolean {
+  if (isMigrationGuardError(error)) {
+    return true;
+  }
+
+  const status = Number(error?.response?.status || error?.status || 0);
+  const detail = String(error?.response?.data?.detail || error?.message || '')
+    .trim()
+    .toLowerCase();
+
+  return (
+    (status === 422 && detail.includes('input should be a valid integer') && detail.includes('count')) ||
+    (status === 500 && detail.includes('invalid input syntax for type uuid') && detail.includes('"count"'))
+  );
+}
+
+export function getMigrationUnavailableMessage(subject = 'This module'): string {
+  return `${subject} is temporarily unavailable during the ongoing Supabase migration.`;
+}
+
 export function getRequestErrorMessage(error: any, fallback: string): string {
   if (isRequestCanceled(error)) {
     return '';
+  }
+  if (isMigrationGuardError(error)) {
+    return getMigrationUnavailableMessage('This module');
   }
   const detail = error?.response?.data?.detail;
   if (typeof detail === 'string' && detail.trim()) {

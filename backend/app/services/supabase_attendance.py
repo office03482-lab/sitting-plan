@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime
 import calendar
+import json
 import logging
 import re
 import time
@@ -287,10 +288,32 @@ def _rpc_list_student_records(
         "p_limit": max(limit, 1),
         "p_batch_filters": batch_filter_payload,
     }
+    logger.info(
+        "attendance.student_records.rpc_call",
+        extra={
+            "school_id": school_id,
+            "p_class_name": params["p_class_name"],
+            "p_section": params["p_section"],
+            "p_student_name": params["p_student_name"],
+            "p_date_from": params["p_date_from"],
+            "p_date_to": params["p_date_to"],
+            "p_skip": params["p_skip"],
+            "p_limit": params["p_limit"],
+            "p_batch_filters": json.dumps(params["p_batch_filters"]) if params["p_batch_filters"] else None,
+        },
+    )
     started_at = time.monotonic()
     response = get_supabase_admin_client().rpc("attendance_student_report_rows", params).execute()
     duration_ms = round((time.monotonic() - started_at) * 1000)
     rows = list(response.data or [])
+    logger.info(
+        "attendance.student_records.rpc_result",
+        extra={
+            "school_id": school_id,
+            "row_count": len(rows),
+            "duration_ms": duration_ms,
+        },
+    )
 
     # Augment rows when class/section or subject_name are missing by fetching student details.
     try:

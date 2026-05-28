@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Upload, Download, CheckCircle, XCircle, Eye, Users, MapPin, AlertTriangle, Trash2 } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, isMigrationGuardError, isTemporarilyUnavailableDataError } from '@services/api';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
+import { UnavailableStatCard } from '@components/UnavailableStatCard';
 import type { Batch, RoomLayout, SeatingPlan } from '@types';
 
 
@@ -37,6 +39,10 @@ export default function SeatingPlanManagement() {
   const [deletingAll, setDeletingAll] = useState(false);
   const [deletingPlan, setDeletingPlan] = useState(false);
   const [message, setMessage] = useState('');
+  const [summaryUnavailable, setSummaryUnavailable] = useState<{ students: boolean; batches: boolean }>({
+    students: false,
+    batches: false,
+  });
 
   useEffect(() => {
     loadSummary();
@@ -53,9 +59,13 @@ export default function SeatingPlanManagement() {
 
       if (studentsRes.status === 'fulfilled') {
         setStudentCount(Number(studentsRes.value.data || 0));
+        setSummaryUnavailable((current) => ({ ...current, students: false }));
       } else {
         console.error('Failed to load students count:', studentsRes.reason);
-        setStudentCount(0);
+        setSummaryUnavailable((current) => ({
+          ...current,
+          students: isTemporarilyUnavailableDataError(studentsRes.reason),
+        }));
       }
 
       if (batchesRes.status === 'fulfilled') {
@@ -67,9 +77,13 @@ export default function SeatingPlanManagement() {
             .filter(Boolean)
         );
         setBatchCount(uniqueBatchNames.size);
+        setSummaryUnavailable((current) => ({ ...current, batches: false }));
       } else {
         console.error('Failed to load batches summary:', batchesRes.reason);
-        setBatchCount(0);
+        setSummaryUnavailable((current) => ({
+          ...current,
+          batches: isMigrationGuardError(batchesRes.reason) || isTemporarilyUnavailableDataError(batchesRes.reason),
+        }));
       }
     } catch (error) {
       console.error('Failed to load seating summary:', error);
@@ -319,15 +333,31 @@ export default function SeatingPlanManagement() {
           <p className="text-gray-600">Upload and manage student seating arrangements from Excel</p>
         </div>
 
+        {summaryUnavailable.students || summaryUnavailable.batches ? (
+          <div className="mb-6">
+            <MigrationUnavailableNotice
+              message="Student and batch summary data is temporarily unavailable during the ongoing Supabase migration. Existing seating plans can still be reviewed."
+            />
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="bg-white rounded-lg shadow-md p-5">
-            <p className="text-sm text-gray-600">Available Students</p>
-            <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow-md p-5">
-            <p className="text-sm text-gray-600">Batches</p>
-            <p className="text-2xl font-bold text-gray-900">{batchCount}</p>
-          </div>
+          {summaryUnavailable.students ? (
+            <UnavailableStatCard icon={Users} label="Available Students" />
+          ) : (
+            <div className="bg-white rounded-lg shadow-md p-5">
+              <p className="text-sm text-gray-600">Available Students</p>
+              <p className="text-2xl font-bold text-gray-900">{studentCount}</p>
+            </div>
+          )}
+          {summaryUnavailable.batches ? (
+            <UnavailableStatCard icon={MapPin} label="Batches" />
+          ) : (
+            <div className="bg-white rounded-lg shadow-md p-5">
+              <p className="text-sm text-gray-600">Batches</p>
+              <p className="text-2xl font-bold text-gray-900">{batchCount}</p>
+            </div>
+          )}
           <div className="bg-white rounded-lg shadow-md p-5">
             <p className="text-sm text-gray-600">Seat Source</p>
             <p className="text-base font-semibold text-gray-900">Student Management Data</p>

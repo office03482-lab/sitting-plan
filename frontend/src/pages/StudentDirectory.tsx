@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ChevronLeft, Eye, Pencil, Search, Trash2, X } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
 import { useAppStore } from '@store/app';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { Batch, Student } from '@types';
 import { getSafeStudentClassName, looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
@@ -112,6 +113,7 @@ export default function StudentDirectory() {
   const [viewMode, setViewMode] = useState<'card' | 'row'>('card');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
+  const [migrationUnavailable, setMigrationUnavailable] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [viewingDetails, setViewingDetails] = useState<StudentDetailsState | null>(null);
@@ -143,8 +145,10 @@ export default function StudentDirectory() {
         ? response.data.map(normalizeStudent).filter((student) => student.id > 0 && (student.name || student.roll_number))
         : [];
       setStudents(nextStudents);
+      setMigrationUnavailable(false);
       return nextStudents;
     } catch (error: any) {
+      setMigrationUnavailable(isMigrationGuardError(error));
       showMessage(error?.response?.data?.detail || 'Students load nahi ho paaye.', 'error');
       return [];
     } finally {
@@ -484,6 +488,12 @@ export default function StudentDirectory() {
           <div />
         </div>
 
+        {migrationUnavailable ? (
+          <div className="mb-6">
+            <MigrationUnavailableNotice message={getMigrationUnavailableMessage('Student directory')} />
+          </div>
+        ) : null}
+
         {message ? (
           <div
             className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
@@ -588,6 +598,7 @@ export default function StudentDirectory() {
               <select
                 value={batchFilter}
                 onChange={(event) => setBatchFilter(event.target.value)}
+                disabled={migrationUnavailable}
                 className={inputClass}
               >
                 <option value="all">All Batches</option>
@@ -600,6 +611,7 @@ export default function StudentDirectory() {
               <select
                 value={classFilter}
                 onChange={(event) => setClassFilter(event.target.value)}
+                disabled={migrationUnavailable}
                 className={inputClass}
               >
                 <option value="all">All Classes</option>

@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Zap, Download, PlusCircle, Trash2, AlertTriangle, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
 import { useAppStore } from '@store/app';
-import { apiService, getRequestErrorMessage } from '@services/api';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  getRequestErrorMessage,
+  isMigrationGuardError,
+} from '@services/api';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { SeatingPlan, Exam, Batch, Student, Room, RoomLayout } from '@types';
 
 const toDateTimeLocalValue = (date: Date) => {
@@ -117,6 +123,11 @@ export default function SeatingGeneration() {
   const [roomBatchSummaries, setRoomBatchSummaries] = useState<Record<number, RoomBatchSummary>>({});
   const [loadingRoomBatchSummaries, setLoadingRoomBatchSummaries] = useState(false);
   const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<number | null>(null);
+  const [generationUnavailable, setGenerationUnavailable] = useState({
+    rooms: false,
+    batches: false,
+    students: false,
+  });
 
   const selectedExamDetails = exams.find((exam) => exam.id === selectedExam);
   const getPlanBatches = (plan: SeatingPlan) => {
@@ -276,6 +287,12 @@ export default function SeatingGeneration() {
 
       const requiredFailures = dataSources.filter((item, index) => item.required && results[index].status === 'rejected');
       const optionalFailures = dataSources.filter((item, index) => !item.required && results[index].status === 'rejected');
+      const nextUnavailable = {
+        rooms: resultMap.rooms?.status === 'rejected' && isMigrationGuardError(resultMap.rooms.reason),
+        batches: resultMap.batches?.status === 'rejected' && isMigrationGuardError(resultMap.batches.reason),
+        students: resultMap.students?.status === 'rejected' && isMigrationGuardError(resultMap.students.reason),
+      };
+      setGenerationUnavailable(nextUnavailable);
 
       if (requiredFailures.length > 0 || optionalFailures.length > 0) {
         console.error('Some data failed to load. Results:', {
@@ -295,12 +312,29 @@ export default function SeatingGeneration() {
           failedResult?.status === 'rejected'
             ? getRequestErrorMessage(failedResult.reason, '')
             : '';
-        setMessage(detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`);
+        const unavailableKeys = Object.entries(nextUnavailable)
+          .filter(([, unavailable]) => unavailable)
+          .map(([key]) => key);
+        setMessage(
+          unavailableKeys.length > 0
+            ? getMigrationUnavailableMessage(
+                unavailableKeys.length === 1
+                  ? unavailableKeys[0].charAt(0).toUpperCase() + unavailableKeys[0].slice(1)
+                  : 'Some seating dependencies'
+              )
+            : detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`
+        );
       } else if (optionalFailures.length > 0) {
+        setMessage('');
+      } else {
         setMessage('');
       }
     } catch (error) {
       console.error('Failed to load data:', error);
+      setGenerationUnavailable((current) => ({
+        ...current,
+        rooms: current.rooms || isMigrationGuardError(error),
+      }));
       setMessage(getRequestErrorMessage(error, 'Failed to load seating generation data'));
     } finally {
       setLoading(false);
@@ -360,6 +394,7 @@ export default function SeatingGeneration() {
     setLoadingBatchStudents(true);
     try {
       const studentData: { [batch: string]: any[] } = {};
+      let studentsGuarded = false;
       
       // Fetch students for each selected batch
       for (const batchName of batchNames) {
@@ -369,10 +404,18 @@ export default function SeatingGeneration() {
         } catch (error) {
           console.warn(`Failed to load students for batch ${batchName}:`, error);
           studentData[batchName] = [];
+          studentsGuarded = studentsGuarded || isMigrationGuardError(error);
         }
       }
       
       setStudentsByBatch(studentData);
+      setGenerationUnavailable((current) => ({
+        ...current,
+        students: studentsGuarded || current.students,
+      }));
+      if (studentsGuarded) {
+        setMessage(getMigrationUnavailableMessage('Student roster data'));
+      }
     } catch (error) {
       console.error('Error loading batch students:', error);
     } finally {
@@ -381,6 +424,11 @@ export default function SeatingGeneration() {
   };
 
   const handleGeneratePlans = async () => {
+    if (generationUnavailable.rooms || generationUnavailable.batches || generationUnavailable.students) {
+      setMessage(getMigrationUnavailableMessage('Seating generation'));
+      return;
+    }
+
     if (!selectedExam) {
       setMessage('Please select an exam');
       return;
@@ -689,6 +737,14 @@ export default function SeatingGeneration() {
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-800 mb-8">Generate Seating Plans</h1>
 
+        {generationUnavailable.rooms || generationUnavailable.batches || generationUnavailable.students ? (
+          <div className="mb-6">
+            <MigrationUnavailableNotice
+              message="Room, batch, or student selection is temporarily unavailable during the ongoing Supabase migration. Existing exams and generated seating plans can still be reviewed."
+            />
+          </div>
+        ) : null}
+
         {/* Configuration Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <h2 className="text-xl font-semibold text-gray-800 mb-6">Plan Configuration</h2>
@@ -797,7 +853,9 @@ export default function SeatingGeneration() {
               </label>
               {batches.length === 0 ? (
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-                  No batches available. Please create batches in Batch Management.
+                  {generationUnavailable.batches
+                    ? 'Batch data is temporarily unavailable during the ongoing Supabase migration.'
+                    : 'No batches available. Please create batches in Batch Management.'}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-y-auto border border-gray-300 rounded-lg p-3">
@@ -810,6 +868,7 @@ export default function SeatingGeneration() {
                         type="checkbox"
                         checked={selectedBatches.includes(batch.name)}
                         onChange={() => handleBatchToggle(batch.name)}
+                        disabled={generationUnavailable.batches || generationUnavailable.students}
                         className="w-4 h-4"
                       />
                       <span className="text-gray-700 font-medium">
@@ -832,18 +891,22 @@ export default function SeatingGeneration() {
                       <p className="text-xs font-semibold text-blue-900 mb-2">Batch Summary:</p>
                       <div className="space-y-1">
                         {selectedBatches.map((batch) => {
-                          const studentCount = studentsByBatch[batch]?.length || 0;
+                          const studentCount = generationUnavailable.students ? null : (studentsByBatch[batch]?.length || 0);
                           return (
                             <div key={batch} className="text-xs text-blue-800 flex justify-between">
                               <span>{batch}:</span>
-                              <span className="font-semibold">{studentCount} students</span>
+                              <span className="font-semibold">
+                                {studentCount == null ? 'Data temporarily unavailable' : `${studentCount} students`}
+                              </span>
                             </div>
                           );
                         })}
                         <div className="border-t border-blue-200 pt-1 mt-1 font-semibold text-blue-900 flex justify-between">
                           <span>Total:</span>
                           <span>
-                            {Object.values(studentsByBatch).reduce((sum, students) => sum + (students?.length || 0), 0)} students
+                            {generationUnavailable.students
+                              ? 'Data temporarily unavailable'
+                              : `${Object.values(studentsByBatch).reduce((sum, students) => sum + (students?.length || 0), 0)} students`}
                           </span>
                         </div>
                       </div>
@@ -987,7 +1050,9 @@ export default function SeatingGeneration() {
             </label>
             {rooms.length === 0 ? (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800">
-                No rooms configured. Please create rooms first in Room Configuration.
+                {generationUnavailable.rooms
+                  ? 'Room data is temporarily unavailable during the ongoing Supabase migration.'
+                  : 'No rooms configured. Please create rooms first in Room Configuration.'}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1000,6 +1065,7 @@ export default function SeatingGeneration() {
                       type="checkbox"
                       checked={selectedRooms.includes(room.id)}
                       onChange={() => handleRoomToggle(room.id)}
+                      disabled={generationUnavailable.rooms}
                       className="w-4 h-4 mt-1"
                     />
                     <div>
@@ -1066,7 +1132,15 @@ export default function SeatingGeneration() {
           <div className="mt-8">
             <button
               onClick={handleGeneratePlans}
-              disabled={!selectedExam || selectedBatches.length === 0 || selectedRooms.length === 0 || loading}
+              disabled={
+                !selectedExam
+                || selectedBatches.length === 0
+                || selectedRooms.length === 0
+                || loading
+                || generationUnavailable.rooms
+                || generationUnavailable.batches
+                || generationUnavailable.students
+              }
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-8 py-3 rounded-lg transition font-semibold"
             >
               <Zap className="w-5 h-5" />

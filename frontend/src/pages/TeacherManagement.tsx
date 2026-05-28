@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Edit, Trash2, Search, User, Mail, Phone } from 'lucide-react';
-import { apiService } from '../services/api';
+import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '../services/api';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
+import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
 import type { Teacher } from '../types';
 
 const TeacherManagement: React.FC = () => {
@@ -13,6 +14,7 @@ const TeacherManagement: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [migrationUnavailable, setMigrationUnavailable] = useState(false);
   const [shiftForm, setShiftForm] = useState({ working_hours_start: '09:00', working_hours_end: '17:00' });
   const [attendanceThreshold, setAttendanceThreshold] = useState(75);
   const navigate = useNavigate();
@@ -35,9 +37,17 @@ const TeacherManagement: React.FC = () => {
       setLoading(true);
       const response = await apiService.listTeachers();
       setTeachers(response.data);
+      setMigrationUnavailable(false);
     } catch (error) {
       console.error('Error loading teachers:', error);
-      setAlert({ type: 'error', message: 'Failed to load teachers' });
+      const guarded = isMigrationGuardError(error);
+      setMigrationUnavailable(guarded);
+      setAlert({
+        type: 'error',
+        message: guarded
+          ? getMigrationUnavailableMessage('Teaching staff management')
+          : 'Failed to load teachers',
+      });
     } finally {
       setLoading(false);
     }
@@ -145,6 +155,7 @@ const TeacherManagement: React.FC = () => {
         <h1 className="text-2xl font-bold text-gray-900">Teaching Managment</h1>
         <button
           onClick={() => navigate('/staff/add')}
+          disabled={migrationUnavailable}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
         >
           <Plus size={20} />
@@ -159,6 +170,12 @@ const TeacherManagement: React.FC = () => {
           onClose={() => setAlert(null)}
         />
       )}
+
+      {migrationUnavailable ? (
+        <div className="mb-6">
+          <MigrationUnavailableNotice message={getMigrationUnavailableMessage('Teaching staff management')} />
+        </div>
+      ) : null}
 
       {/* Search */}
       <div className="mb-6">
@@ -298,7 +315,11 @@ const TeacherManagement: React.FC = () => {
               {filteredTeachers.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
-                    {searchTerm ? 'No teachers found matching your search.' : 'No teachers added yet.'}
+                    {migrationUnavailable
+                      ? 'Teaching staff data temporarily unavailable.'
+                      : searchTerm
+                        ? 'No teachers found matching your search.'
+                        : 'No teachers added yet.'}
                   </td>
                 </tr>
               ) : (

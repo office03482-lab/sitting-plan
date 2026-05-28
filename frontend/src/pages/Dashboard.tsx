@@ -23,7 +23,12 @@ import {
   Wallet,
   Zap,
 } from 'lucide-react';
-import { apiService } from '@services/api';
+import {
+  apiService,
+  isMigrationGuardError,
+  isTemporarilyUnavailableDataError,
+} from '@services/api';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
 
@@ -208,6 +213,13 @@ export default function Dashboard() {
     recentActivity: [],
   });
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [dashboardAvailability, setDashboardAvailability] = useState({
+    students: false,
+    teachers: false,
+    rooms: false,
+    timetable: false,
+    inventory: false,
+  });
   const [eduPaySummary, setEduPaySummary] = useState<EduPaySummaryState>({
     totalCollected: 0,
     pendingAmount: 0,
@@ -284,6 +296,13 @@ export default function Dashboard() {
     if (!showDetailedDashboard) {
       debugDashboardLoader('loadStatistics.skipped.hidden_dashboard');
       setLoadError(null);
+      setDashboardAvailability({
+        students: false,
+        teachers: false,
+        rooms: false,
+        timetable: false,
+        inventory: false,
+      });
       setStats({
         totalStudents: 0,
         totalTeachers: 0,
@@ -360,8 +379,16 @@ export default function Dashboard() {
           roomsSummary.count > 0
             ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
             : 0;
+        const nextAvailability = {
+          students: studentCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(studentCountRes.reason),
+          teachers: teacherCountRes.status === 'rejected' && (isMigrationGuardError(teacherCountRes.reason) || isTemporarilyUnavailableDataError(teacherCountRes.reason)),
+          rooms: roomsSummaryRes.status === 'rejected' && (isMigrationGuardError(roomsSummaryRes.reason) || isTemporarilyUnavailableDataError(roomsSummaryRes.reason)),
+          timetable: timetableCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(timetableCountRes.reason),
+          inventory: false,
+        };
 
         if (!dashboardMountedRef.current) return;
+        setDashboardAvailability(nextAvailability);
 
         setStats({
           totalStudents: studentCount,
@@ -424,6 +451,12 @@ export default function Dashboard() {
           inventoryStock: inventoryDashboard?.current_stock_available || 0,
           recentActivity,
         }));
+        setDashboardAvailability((current) => ({
+          ...current,
+          inventory:
+            inventoryRes.status === 'rejected'
+            && (isMigrationGuardError(inventoryRes.reason) || isTemporarilyUnavailableDataError(inventoryRes.reason)),
+        }));
         setEduPaySummary({
           totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
           pendingAmount: Number(eduPayDashboard?.pending_amount ?? eduPayDashboard?.total_pending ?? 0),
@@ -446,7 +479,14 @@ export default function Dashboard() {
         });
         console.warn('Backend not available, using default statistics:', error);
         if (!dashboardMountedRef.current) return;
-        setLoadError('Dashboard data load nahi ho paya. Backend/API unavailable hai, isliye fallback numbers dikh rahe hain.');
+        setLoadError('Dashboard data load nahi ho paya.');
+        setDashboardAvailability({
+          students: false,
+          teachers: false,
+          rooms: false,
+          timetable: false,
+          inventory: false,
+        });
         setStats({
           totalStudents: 0,
           totalTeachers: 0,
@@ -587,6 +627,16 @@ export default function Dashboard() {
     .split(/\s+/)
     .filter((part) => part && part.toLowerCase() !== 'main')
     .join(' ') || 'User';
+  const showPartialAvailability =
+    dashboardAvailability.students
+    || dashboardAvailability.teachers
+    || dashboardAvailability.rooms
+    || dashboardAvailability.timetable
+    || dashboardAvailability.inventory;
+  const studentsUnavailable = dashboardAvailability.students;
+  const teachersUnavailable = dashboardAvailability.teachers;
+  const roomsUnavailable = dashboardAvailability.rooms;
+  const inventoryUnavailable = dashboardAvailability.inventory;
 
   if (!showDetailedDashboard) {
     return (
@@ -715,22 +765,31 @@ export default function Dashboard() {
           </section>
         ) : null}
 
+        {showPartialAvailability ? (
+          <section className="mt-3">
+            <MigrationUnavailableNotice
+              compact
+              message="Some admin-office data is temporarily unavailable during the ongoing Supabase migration. Attendance, fee, and other native dashboard sections remain available."
+            />
+          </section>
+        ) : null}
+
         <section className="mt-3 grid gap-3 xl:grid-cols-4">
           <MetricTile
             title="Headcount"
             primaryLabel="Students"
-            primaryValue={stats.totalStudents}
+            primaryValue={studentsUnavailable ? 'Data temporarily unavailable' : stats.totalStudents}
             secondaryLabel="Staff"
-            secondaryValue={stats.totalTeachers}
+            secondaryValue={teachersUnavailable ? 'Data temporarily unavailable' : stats.totalTeachers}
             tone="sky"
             Icon={Users}
           />
           <MetricTile
             title="Accounts"
             primaryLabel="Rooms"
-            primaryValue={stats.totalRooms}
+            primaryValue={roomsUnavailable ? 'Data temporarily unavailable' : stats.totalRooms}
             secondaryLabel="Utilization"
-            secondaryValue={formatPercent(stats.roomUtilization)}
+            secondaryValue={roomsUnavailable ? 'Data temporarily unavailable' : formatPercent(stats.roomUtilization)}
             tone="teal"
             Icon={Briefcase}
           />
@@ -752,7 +811,7 @@ export default function Dashboard() {
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-slate-700">
                   <span>Students</span>
-                  <span>{studentPresent}/{stats.totalStudents}</span>
+                  <span>{studentsUnavailable ? 'Data temporarily unavailable' : `${studentPresent}/${stats.totalStudents}`}</span>
                 </div>
                 <div className="h-3.5 overflow-hidden rounded-full bg-rose-100">
                   <div className="h-full rounded-full bg-rose-500" style={{ width: `${stats.totalStudents ? (studentPresent / stats.totalStudents) * 100 : 0}%` }} />
@@ -761,7 +820,7 @@ export default function Dashboard() {
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-slate-700">
                   <span>Staff</span>
-                  <span>{staffPresent}/{stats.totalTeachers}</span>
+                  <span>{teachersUnavailable ? 'Data temporarily unavailable' : `${staffPresent}/${stats.totalTeachers}`}</span>
                 </div>
                 <div className="h-3.5 overflow-hidden rounded-full bg-emerald-100">
                   <div className="h-full rounded-full bg-emerald-500" style={{ width: `${stats.totalTeachers ? (staffPresent / stats.totalTeachers) * 100 : 0}%` }} />
@@ -776,8 +835,8 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-700">
-                  <span>Students ({stats.totalStudents})</span>
-                  <span>{formatPercent(100)}</span>
+                  <span>{studentsUnavailable ? 'Students' : `Students (${stats.totalStudents})`}</span>
+                  <span>{studentsUnavailable ? 'Data temporarily unavailable' : formatPercent(100)}</span>
                 </div>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-200">
                   <div className="h-full rounded-full bg-teal-500" style={{ width: '100%' }} />
@@ -786,7 +845,7 @@ export default function Dashboard() {
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-700">
                   <span>Today's Student Attendance</span>
-                  <span>{attendanceToday.studentMarked}/{stats.totalStudents}</span>
+                  <span>{studentsUnavailable ? 'Data temporarily unavailable' : `${attendanceToday.studentMarked}/${stats.totalStudents}`}</span>
                 </div>
                 <div className="flex h-3 overflow-hidden rounded-full bg-slate-200">
                   <div className="bg-emerald-500" style={{ width: `${stats.totalStudents ? (studentPresent / stats.totalStudents) * 100 : 0}%` }} />
@@ -794,10 +853,16 @@ export default function Dashboard() {
                   <div className="bg-slate-400" style={{ width: `${stats.totalStudents ? (studentPending / stats.totalStudents) * 100 : 0}%` }} />
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                  <p>Present {attendanceToday.studentPresent}</p>
-                  <p>Late {attendanceToday.studentLate}</p>
-                  <p>Absent {attendanceToday.studentAbsent}</p>
-                  <p>Pending {studentPending}</p>
+                  {studentsUnavailable ? (
+                    <p>Data temporarily unavailable.</p>
+                  ) : (
+                    <>
+                      <p>Present {attendanceToday.studentPresent}</p>
+                      <p>Late {attendanceToday.studentLate}</p>
+                      <p>Absent {attendanceToday.studentAbsent}</p>
+                      <p>Pending {studentPending}</p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -814,8 +879,8 @@ export default function Dashboard() {
                 </div>
                 <div className="mt-2.5 space-y-1.5 text-[11px]">
                   <div className="flex justify-between"><span className="text-slate-600">Materials</span><span className="font-semibold">{inventorySnapshot?.total_materials_registered || 0}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Available Stock</span><span className="font-semibold">{inventorySnapshot?.current_stock_available || 0}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-600">Low Stock Alerts</span><span className="font-semibold text-rose-600">{inventorySnapshot?.low_stock_alert_count || 0}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Available Stock</span><span className="font-semibold">{inventoryUnavailable ? 'Data temporarily unavailable' : inventorySnapshot?.current_stock_available || 0}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-600">Low Stock Alerts</span><span className="font-semibold text-rose-600">{inventoryUnavailable ? 'Data temporarily unavailable' : inventorySnapshot?.low_stock_alert_count || 0}</span></div>
                 </div>
               </div>
               <div className="rounded-[1rem] bg-slate-50 p-2.5">
