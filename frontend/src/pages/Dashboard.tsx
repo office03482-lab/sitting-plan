@@ -637,6 +637,7 @@ export default function Dashboard() {
   const teachersUnavailable = dashboardAvailability.teachers;
   const roomsUnavailable = dashboardAvailability.rooms;
   const inventoryUnavailable = dashboardAvailability.inventory;
+  const adminOfficeMetricsUnavailable = teachersUnavailable || roomsUnavailable;
 
   if (!showDetailedDashboard) {
     return (
@@ -775,24 +776,48 @@ export default function Dashboard() {
         ) : null}
 
         <section className="mt-3 grid gap-3 xl:grid-cols-4">
-          <MetricTile
-            title="Headcount"
-            primaryLabel="Students"
-            primaryValue={studentsUnavailable ? 'Data temporarily unavailable' : stats.totalStudents}
-            secondaryLabel="Staff"
-            secondaryValue={teachersUnavailable ? 'Data temporarily unavailable' : stats.totalTeachers}
-            tone="sky"
-            Icon={Users}
-          />
-          <MetricTile
-            title="Accounts"
-            primaryLabel="Rooms"
-            primaryValue={roomsUnavailable ? 'Data temporarily unavailable' : stats.totalRooms}
-            secondaryLabel="Utilization"
-            secondaryValue={roomsUnavailable ? 'Data temporarily unavailable' : formatPercent(stats.roomUtilization)}
-            tone="teal"
-            Icon={Briefcase}
-          />
+          {adminOfficeMetricsUnavailable ? (
+            <section className="rounded-[1.2rem] border border-amber-200 bg-amber-50 p-3 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.35)] xl:col-span-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-700">Admin Office</p>
+                  <h3 className="mt-1 text-lg font-bold text-slate-900">Admin-office metrics are temporarily unavailable</h3>
+                  <p className="mt-1.5 max-w-2xl text-xs text-slate-700 md:text-sm">
+                    Attendance, fee, and other native dashboard sections remain available while staffing and room metrics are migrated to Supabase.
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white/80 p-2 text-amber-700">
+                  <Building className="h-4 w-4" />
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-medium text-amber-900">
+                <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1">Teachers unavailable</span>
+                <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1">Rooms unavailable</span>
+                <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1">No placeholder zeros shown</span>
+              </div>
+            </section>
+          ) : (
+            <>
+              <MetricTile
+                title="Headcount"
+                primaryLabel="Students"
+                primaryValue={studentsUnavailable ? 'Data temporarily unavailable' : stats.totalStudents}
+                secondaryLabel="Staff"
+                secondaryValue={teachersUnavailable ? 'Data temporarily unavailable' : stats.totalTeachers}
+                tone="sky"
+                Icon={Users}
+              />
+              <MetricTile
+                title="Accounts"
+                primaryLabel="Rooms"
+                primaryValue={roomsUnavailable ? 'Data temporarily unavailable' : stats.totalRooms}
+                secondaryLabel="Utilization"
+                secondaryValue={roomsUnavailable ? 'Data temporarily unavailable' : formatPercent(stats.roomUtilization)}
+                tone="teal"
+                Icon={Briefcase}
+              />
+            </>
+          )}
           <MetricTile
             title="Fee"
             primaryLabel="Today's Collection"
@@ -831,7 +856,7 @@ export default function Dashboard() {
         </section>
 
         <section className="mt-3 grid gap-3 xl:grid-cols-[1.15fr_1fr_0.9fr]">
-          <SectionCard title="Headcount">
+          <SectionCard title="Student Snapshot">
             <div className="space-y-3">
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-700">

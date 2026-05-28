@@ -722,6 +722,25 @@ async def list_timetable_entries(
     return [build_timetable_view(result.TimetableEntry, result.teacher_name, result.room_name) for result in results]
 
 
+@router.get("/count")
+async def get_timetable_entries_count(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db),
+):
+    if not is_legacy_sqlite_mode():
+        entries = list_timetable_entries_supabase(school_id)
+        return len(entries)
+
+    actor_teacher = resolve_teacher_for_actor(db, school_id, actor)
+    query = db.query(TimetableEntry).filter(TimetableEntry.school_id == school_id)
+    if actor.get("role") == UserRole.TEACHER.value:
+        if not actor_teacher:
+            return 0
+        query = query.filter(TimetableEntry.teacher_id == actor_teacher.id)
+    return query.count()
+
+
 @router.get("/export")
 async def export_timetable(
     export_format: str = Query(..., pattern="^(excel|pdf)$"),

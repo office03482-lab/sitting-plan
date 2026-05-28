@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Edit, Trash2, Search, User, Mail, Phone } from 'lucide-react';
-import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '../services/api';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  isMigrationGuardError,
+  logIfUnexpectedRequestError,
+} from '../services/api';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
@@ -39,7 +44,7 @@ const TeacherManagement: React.FC = () => {
       setTeachers(response.data);
       setMigrationUnavailable(false);
     } catch (error) {
-      console.error('Error loading teachers:', error);
+      logIfUnexpectedRequestError('Error loading teachers:', error);
       const guarded = isMigrationGuardError(error);
       setMigrationUnavailable(guarded);
       setAlert({

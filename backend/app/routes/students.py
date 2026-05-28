@@ -4,7 +4,7 @@ Student management routes
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from app.services.supabase_context import ensure_legacy_sqlite_route_available, resolve_school_id_from_actor
+from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode, resolve_school_id_from_actor
 from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -35,6 +35,7 @@ from app.utils.academic_batches import (
 )
 from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
+from app.services.supabase_attendance import get_students_count as get_supabase_students_count
 import re
 
 logger = logging.getLogger(__name__)
@@ -714,6 +715,23 @@ async def list_students(
     
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(students)}")
     return [serialize_student(student) for student in students]
+
+
+@router.get("/count")
+async def get_students_count(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db),
+):
+    if not is_legacy_sqlite_mode():
+        total = get_supabase_students_count(school_id)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {total}")
+        return total
+
+    ensure_students_legacy_routes_available(school_id)
+    total = db.query(Student).filter(Student.school_id == school_id).count()
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {total}")
+    return total
 
 @router.get("/hostels", response_model=List[HostelResponse])
 async def list_hostels(

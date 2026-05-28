@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, Edit2, Save, X } from 'lucide-react';
 import { useAppStore } from '@store/app';
-import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  isMigrationGuardError,
+  logIfUnexpectedRequestError,
+} from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { Room } from '@types';
 
@@ -78,7 +83,7 @@ export default function RoomConfiguration() {
       setRooms(response.data);
       setMigrationUnavailable(false);
     } catch (error) {
-      console.error('Failed to load rooms:', error);
+      logIfUnexpectedRequestError('Failed to load rooms:', error);
       setMigrationUnavailable(isMigrationGuardError(error));
     } finally {
       setLoading(false);

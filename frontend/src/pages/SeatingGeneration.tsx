@@ -6,6 +6,7 @@ import {
   getMigrationUnavailableMessage,
   getRequestErrorMessage,
   isMigrationGuardError,
+  logIfUnexpectedRequestError,
 } from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { SeatingPlan, Exam, Batch, Student, Room, RoomLayout } from '@types';
@@ -294,7 +295,12 @@ export default function SeatingGeneration() {
       };
       setGenerationUnavailable(nextUnavailable);
 
-      if (requiredFailures.length > 0 || optionalFailures.length > 0) {
+      const unexpectedFailures = [...requiredFailures, ...optionalFailures].filter((item) => {
+        const result = resultMap[item.key];
+        return result?.status === 'rejected' && !isMigrationGuardError(result.reason);
+      });
+
+      if (unexpectedFailures.length > 0) {
         console.error('Some data failed to load. Results:', {
           dataSources: dataSources.map((item, index) => ({
             key: item.key,
@@ -330,7 +336,7 @@ export default function SeatingGeneration() {
         setMessage('');
       }
     } catch (error) {
-      console.error('Failed to load data:', error);
+      logIfUnexpectedRequestError('Failed to load data:', error);
       setGenerationUnavailable((current) => ({
         ...current,
         rooms: current.rooms || isMigrationGuardError(error),

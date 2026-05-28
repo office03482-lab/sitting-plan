@@ -11,6 +11,7 @@ import {
   getRequestErrorMessage as getSharedRequestErrorMessage,
   isMigrationGuardError,
   isTemporarilyUnavailableDataError,
+  logIfUnexpectedRequestError,
 } from '../services/api';
 import type { SeatingPlan, Student, Teacher } from '../types';
 
@@ -75,7 +76,7 @@ const Reports: React.FC = () => {
         setTeacherCount(Number(teachersCountRes.value.data || 0));
         setAvailability((current) => ({ ...current, teachers: false }));
       } else {
-        console.error('Error loading teachers count:', teachersCountRes.reason);
+        logIfUnexpectedRequestError('Error loading teachers count:', teachersCountRes.reason);
         setAvailability((current) => ({
           ...current,
           teachers: isMigrationGuardError(teachersCountRes.reason) || isTemporarilyUnavailableDataError(teachersCountRes.reason),
@@ -87,7 +88,7 @@ const Reports: React.FC = () => {
         setStudentCount(Number(studentsCountRes.value.data || 0));
         setAvailability((current) => ({ ...current, students: false }));
       } else {
-        console.error('Error loading students count:', studentsCountRes.reason);
+        logIfUnexpectedRequestError('Error loading students count:', studentsCountRes.reason);
         setAvailability((current) => ({
           ...current,
           students: isMigrationGuardError(studentsCountRes.reason) || isTemporarilyUnavailableDataError(studentsCountRes.reason),
@@ -98,7 +99,7 @@ const Reports: React.FC = () => {
       if (plansRes.status === 'fulfilled') {
         setSeatingPlans(plansRes.value.data);
       } else {
-        console.error('Error loading seating plans:', plansRes.reason);
+        logIfUnexpectedRequestError('Error loading seating plans:', plansRes.reason);
         setSeatingPlans([]);
         failedSections.push('seating plans');
       }

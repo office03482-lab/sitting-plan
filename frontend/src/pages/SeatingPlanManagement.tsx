@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Upload, Download, CheckCircle, XCircle, Eye, Users, MapPin, AlertTriangle, Trash2 } from 'lucide-react';
-import { apiService, isMigrationGuardError, isTemporarilyUnavailableDataError } from '@services/api';
+import {
+  apiService,
+  isMigrationGuardError,
+  isTemporarilyUnavailableDataError,
+  logIfUnexpectedRequestError,
+} from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import { UnavailableStatCard } from '@components/UnavailableStatCard';
 import type { Batch, RoomLayout, SeatingPlan } from '@types';
@@ -61,7 +66,7 @@ export default function SeatingPlanManagement() {
         setStudentCount(Number(studentsRes.value.data || 0));
         setSummaryUnavailable((current) => ({ ...current, students: false }));
       } else {
-        console.error('Failed to load students count:', studentsRes.reason);
+        logIfUnexpectedRequestError('Failed to load students count:', studentsRes.reason);
         setSummaryUnavailable((current) => ({
           ...current,
           students: isTemporarilyUnavailableDataError(studentsRes.reason),
@@ -79,14 +84,14 @@ export default function SeatingPlanManagement() {
         setBatchCount(uniqueBatchNames.size);
         setSummaryUnavailable((current) => ({ ...current, batches: false }));
       } else {
-        console.error('Failed to load batches summary:', batchesRes.reason);
+        logIfUnexpectedRequestError('Failed to load batches summary:', batchesRes.reason);
         setSummaryUnavailable((current) => ({
           ...current,
           batches: isMigrationGuardError(batchesRes.reason) || isTemporarilyUnavailableDataError(batchesRes.reason),
         }));
       }
     } catch (error) {
-      console.error('Failed to load seating summary:', error);
+      logIfUnexpectedRequestError('Failed to load seating summary:', error);
     } finally {
       setUploading(false);
     }

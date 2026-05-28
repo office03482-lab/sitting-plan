@@ -52,6 +52,23 @@ export function getRequestErrorMessage(error: any, fallback: string): string {
   return error?.message || fallback;
 }
 
+export function logIfUnexpectedRequestError(
+  message: string,
+  error: any,
+  level: 'error' | 'warn' = 'error'
+): void {
+  if (isRequestCanceled(error) || isMigrationGuardError(error)) {
+    return;
+  }
+
+  if (level === 'warn') {
+    console.warn(message, error);
+    return;
+  }
+
+  console.error(message, error);
+}
+
 function readStoredAuthUser(): any | null {
   try {
     const rawUser = localStorage.getItem('user');
