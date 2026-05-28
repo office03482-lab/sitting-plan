@@ -151,7 +151,6 @@ const TimetableManagement: React.FC = () => {
   const [appliedDateFrom, setAppliedDateFrom] = useState('');
   const [appliedDateTo, setAppliedDateTo] = useState('');
   const [showBulkForm, setShowBulkForm] = useState(false);
-  const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [copyDayForm, setCopyDayForm] = useState<{
     source_day: DayOfWeek;
     target_day: DayOfWeek;
@@ -353,6 +352,7 @@ const TimetableManagement: React.FC = () => {
       end_time: '',
       class_names: [],
       subject: '',
+      picked_date: '',
     });
     setEditingEntry(null);
     setShowForm(false);
@@ -506,7 +506,7 @@ const TimetableManagement: React.FC = () => {
 
   const handleEdit = (entry: TimetableView) => {
     if (String(entry.id).startsWith('temp-')) {
-      setAlert({ type: 'warning', message: 'Yeh entry abhi save ho rahi hai. Kuch der baad try karein.' });
+      setAlert({ type: 'error', message: 'Yeh entry abhi save ho rahi hai. Kuch der baad try karein.' });
       return;
     }
     populateFormFromEntry(entry);
@@ -1773,7 +1773,6 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
               );
             }).filter(Boolean)}
             {daysOfWeek.every(day => {
-              const allSlots = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00'];
               const filledSlots = new Set<string>();
               entries.forEach(e => {
                 if (e.day_of_week !== day) return;
