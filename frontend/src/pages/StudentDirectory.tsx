@@ -141,6 +141,7 @@ export default function StudentDirectory() {
     setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
+      console.log('[StudentDirectory]', 'API_ROWS', response.data?.length, response.data);
       const nextStudents = Array.isArray(response.data)
         ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];
@@ -247,6 +248,17 @@ export default function StudentDirectory() {
       return matchesBatch && matchesClass && matchesSession && matchesSearch;
     });
   }, [students, search, batchFilter, classFilter, sessionFilter]);
+  const displayedStudents = filteredStudents;
+
+  useEffect(() => {
+    console.log('[StudentDirectory]', 'SET_STATE_ROWS', students.length);
+  }, [students]);
+
+  useEffect(() => {
+    console.log('[StudentDirectory]', 'FILTERED_ROWS', filteredStudents.length);
+  }, [filteredStudents]);
+
+  console.log('[StudentDirectory]', 'RENDER_ROWS', displayedStudents.length);
 
   const openEdit = (student: Student) => {
     setEditingStudent(student);

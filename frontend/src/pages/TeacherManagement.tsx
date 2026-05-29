@@ -41,6 +41,7 @@ const TeacherManagement: React.FC = () => {
     try {
       setLoading(true);
       const response = await apiService.listTeachers();
+      console.log('[TeacherManagement]', 'API_ROWS', response.data?.length, response.data);
       setTeachers(response.data);
       setMigrationUnavailable(false);
     } catch (error) {
@@ -90,6 +91,17 @@ const TeacherManagement: React.FC = () => {
     teacher.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     teacher.subject.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  const displayedTeachers = filteredTeachers;
+
+  useEffect(() => {
+    console.log('[TeacherManagement]', 'SET_STATE_ROWS', teachers.length);
+  }, [teachers]);
+
+  useEffect(() => {
+    console.log('[TeacherManagement]', 'FILTERED_ROWS', filteredTeachers.length);
+  }, [filteredTeachers]);
+
+  console.log('[TeacherManagement]', 'RENDER_ROWS', displayedTeachers.length);
 
   const resetForm = () => {
     setFormData({
@@ -317,7 +329,7 @@ const TeacherManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredTeachers.length === 0 ? (
+              {displayedTeachers.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-4 text-center text-gray-500">
                     {migrationUnavailable
@@ -328,7 +340,7 @@ const TeacherManagement: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredTeachers.map((teacher) => (
+                displayedTeachers.map((teacher) => (
                   <tr key={teacher.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
@@ -398,7 +410,7 @@ const TeacherManagement: React.FC = () => {
         <div className="text-sm text-gray-600">
           Total Teachers: <span className="font-semibold text-gray-900">{teachers.length}</span>
           {searchTerm && (
-            <> | Showing: <span className="font-semibold text-gray-900">{filteredTeachers.length}</span></>
+            <> | Showing: <span className="font-semibold text-gray-900">{displayedTeachers.length}</span></>
           )}
         </div>
       </div>

@@ -533,6 +533,7 @@ export default function StudentManagement() {
     setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
+      console.log('[StudentManagement]', 'API_ROWS', response.data?.length, response.data);
       setStudents(response.data);
       setMigrationUnavailable(false);
       const sessions = response.data
@@ -1390,6 +1391,17 @@ export default function StudentManagement() {
     const matchesBatch = !selectedBatch || student.batch === selectedBatch;
     return matchesSearch && matchesBatch;
   });
+  const displayedStudents = filteredStudents;
+
+  useEffect(() => {
+    console.log('[StudentManagement]', 'SET_STATE_ROWS', students.length);
+  }, [students]);
+
+  useEffect(() => {
+    console.log('[StudentManagement]', 'FILTERED_ROWS', filteredStudents.length);
+  }, [filteredStudents]);
+
+  console.log('[StudentManagement]', 'RENDER_ROWS', displayedStudents.length);
 
   const existingBatches = Array.from(new Set(students.map((s) => s.batch)));
   const allBatchNames = sortBatchNames(
@@ -1733,7 +1745,7 @@ export default function StudentManagement() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredStudents.length === 0 ? (
+                  {displayedStudents.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
                         {migrationUnavailable
@@ -1744,7 +1756,7 @@ export default function StudentManagement() {
                       </td>
                     </tr>
                   ) : (
-                    filteredStudents.map((student, index) => (
+                    displayedStudents.map((student, index) => (
                       <tr key={student.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <input

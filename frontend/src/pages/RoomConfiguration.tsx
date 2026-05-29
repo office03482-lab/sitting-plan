@@ -80,6 +80,7 @@ export default function RoomConfiguration() {
     setLoading(true);
     try {
       const response = await apiService.listRooms();
+      console.log('[RoomConfiguration]', 'API_ROWS', response.data?.length, response.data);
       setRooms(response.data);
       setMigrationUnavailable(false);
     } catch (error) {
@@ -198,6 +199,19 @@ export default function RoomConfiguration() {
       is_accessible: false,
     });
   };
+
+  const filteredRooms = rooms;
+  const displayedRooms = filteredRooms;
+
+  useEffect(() => {
+    console.log('[RoomConfiguration]', 'SET_STATE_ROWS', rooms.length);
+  }, [rooms]);
+
+  useEffect(() => {
+    console.log('[RoomConfiguration]', 'FILTERED_ROWS', filteredRooms.length);
+  }, [filteredRooms]);
+
+  console.log('[RoomConfiguration]', 'RENDER_ROWS', displayedRooms.length);
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -457,14 +471,14 @@ export default function RoomConfiguration() {
 
         {/* Rooms Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {loading && rooms.length === 0 ? (
+          {loading && displayedRooms.length === 0 ? (
             <div className="col-span-3 text-center text-gray-600 py-8">Loading rooms...</div>
-          ) : rooms.length === 0 ? (
+          ) : displayedRooms.length === 0 ? (
             <div className="col-span-3 text-center text-gray-600 py-8">
               {migrationUnavailable ? 'Room data temporarily unavailable.' : 'No rooms configured yet. Create the first one!'}
             </div>
           ) : (
-            rooms.map((room) => (
+            displayedRooms.map((room) => (
               <div key={room.id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">{room.name}</h3>
 

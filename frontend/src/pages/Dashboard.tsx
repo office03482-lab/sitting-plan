@@ -104,6 +104,13 @@ function formatPercent(value: number) {
   return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
 }
 
+const getTraceRowCount = (value: unknown) => {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof value === 'object') return Object.keys(value as Record<string, unknown>).length;
+  return 0;
+};
+
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function MetricTile({
@@ -259,6 +266,8 @@ export default function Dashboard() {
       ...details,
     });
   };
+  const filteredDashboardData = stats.recentActivity;
+  const displayedDashboardData = filteredDashboardData;
 
   useEffect(() => {
     const nextFingerprint = `${user?.id || 'anon'}:${user?.school_id || ''}:${user?.role || ''}:${user?.role_key || ''}`;
@@ -373,6 +382,21 @@ export default function Dashboard() {
             ? roomsSummaryRes.value.data
             : { count: 0, totalCapacity: 0 };
         const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
+        if (studentCountRes.status === 'fulfilled') {
+          console.log('[Dashboard][StudentsCount]', 'API_ROWS', getTraceRowCount(studentCountRes.value.data), studentCountRes.value.data);
+        }
+        if (teacherCountRes.status === 'fulfilled') {
+          console.log('[Dashboard][TeachersCount]', 'API_ROWS', getTraceRowCount(teacherCountRes.value.data), teacherCountRes.value.data);
+        }
+        if (roomsSummaryRes.status === 'fulfilled') {
+          console.log('[Dashboard][RoomsSummary]', 'API_ROWS', getTraceRowCount(roomsSummaryRes.value.data), roomsSummaryRes.value.data);
+        }
+        if (timetableCountRes.status === 'fulfilled') {
+          console.log('[Dashboard][TimetableCount]', 'API_ROWS', getTraceRowCount(timetableCountRes.value.data), timetableCountRes.value.data);
+        }
+        if (attendanceOverviewRes.status === 'fulfilled') {
+          console.log('[Dashboard][AttendanceOverview]', 'API_ROWS', getTraceRowCount(attendanceOverviewRes.value.data), attendanceOverviewRes.value.data);
+        }
         const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
         const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
         const roomUtilization =
@@ -439,6 +463,15 @@ export default function Dashboard() {
         const inventoryDashboard = inventoryRes.status === 'fulfilled' ? inventoryRes.value.data : null;
         const eduPayDashboard = eduPayDashboardRes.status === 'fulfilled' ? eduPayDashboardRes.value.data : null;
         const staffAttendance = staffAttendanceRes.status === 'fulfilled' ? staffAttendanceRes.value.data : null;
+        if (staffAttendanceRes.status === 'fulfilled') {
+          console.log('[Dashboard][StaffAttendance]', 'API_ROWS', getTraceRowCount(staffAttendanceRes.value.data), staffAttendanceRes.value.data);
+        }
+        if (inventoryRes.status === 'fulfilled') {
+          console.log('[Dashboard][InventoryDashboard]', 'API_ROWS', getTraceRowCount(inventoryRes.value.data), inventoryRes.value.data);
+        }
+        if (eduPayDashboardRes.status === 'fulfilled') {
+          console.log('[Dashboard][EduPayDashboard]', 'API_ROWS', getTraceRowCount(eduPayDashboardRes.value.data), eduPayDashboardRes.value.data);
+        }
         const recentPayments = Array.isArray(eduPayDashboard?.recent_payments) ? eduPayDashboard.recent_payments : [];
         const recentActivity = [
           ...notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
@@ -618,6 +651,16 @@ export default function Dashboard() {
   const occupancyPercent = totalCapacity ? Math.round((stats.totalStudents / totalCapacity) * 100) : 0;
   const trendValues = Array.isArray(eduPayDashboardData?.collection_trend) ? eduPayDashboardData.collection_trend : [];
   const trendMax = Math.max(...trendValues.map((item: any) => Number(item?.amount || 0)), 1);
+
+  useEffect(() => {
+    console.log('[Dashboard]', 'SET_STATE_ROWS', stats.recentActivity.length);
+  }, [stats]);
+
+  useEffect(() => {
+    console.log('[Dashboard]', 'FILTERED_ROWS', filteredDashboardData.length);
+  }, [filteredDashboardData]);
+
+  console.log('[Dashboard]', 'RENDER_ROWS', displayedDashboardData.length);
   const rawGreetingName =
     String(user?.full_name || '').trim() ||
     String(user?.username || '').trim() ||

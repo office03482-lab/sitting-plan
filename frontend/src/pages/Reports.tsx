@@ -56,6 +56,8 @@ const Reports: React.FC = () => {
       (plan) => plan.exam_id === group.examId && plan.plan_type === group.planType
     ).length,
   }));
+  const filteredSeatingPlans = seatingPlans;
+  const displayedSeatingPlans = filteredSeatingPlans;
 
   useEffect(() => {
     loadData();
@@ -97,6 +99,7 @@ const Reports: React.FC = () => {
       }
 
       if (plansRes.status === 'fulfilled') {
+        console.log('[Reports]', 'API_ROWS', plansRes.value.data?.length, plansRes.value.data);
         setSeatingPlans(plansRes.value.data);
       } else {
         logIfUnexpectedRequestError('Error loading seating plans:', plansRes.reason);
@@ -128,6 +131,7 @@ const Reports: React.FC = () => {
       throw new Error(getMigrationUnavailableMessage('Teachers report data'));
     }
     const response = await apiService.listTeachers();
+    console.log('[Reports][Teachers]', 'API_ROWS', response.data?.length, response.data);
     setTeachers(response.data);
     return response.data;
   };
@@ -138,9 +142,20 @@ const Reports: React.FC = () => {
       throw new Error(getMigrationUnavailableMessage('Students report data'));
     }
     const response = await apiService.listStudents();
+    console.log('[Reports][Students]', 'API_ROWS', response.data?.length, response.data);
     setStudents(response.data);
     return response.data;
   };
+
+  useEffect(() => {
+    console.log('[Reports]', 'SET_STATE_ROWS', seatingPlans.length);
+  }, [seatingPlans]);
+
+  useEffect(() => {
+    console.log('[Reports]', 'FILTERED_ROWS', filteredSeatingPlans.length);
+  }, [filteredSeatingPlans]);
+
+  console.log('[Reports]', 'RENDER_ROWS', displayedSeatingPlans.length);
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const url = window.URL.createObjectURL(blob);
@@ -387,7 +402,7 @@ ${studentRows
                     </div>
                   </div>
                 ))}
-                {seatingPlans.map((plan) => (
+                {displayedSeatingPlans.map((plan) => (
                   <div key={plan.id} className="flex flex-col gap-3 rounded-lg border border-gray-200 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="font-medium text-gray-900">{plan.name}</p>
