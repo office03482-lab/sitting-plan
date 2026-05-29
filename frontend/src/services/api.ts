@@ -90,6 +90,27 @@ function resolveStoredSchoolId(user: any): string | null {
   return candidate && candidate !== '1' ? candidate : null;
 }
 
+function normalizeRequestSchoolId(
+  params: Record<string, unknown>,
+  resolvedSchoolId: string | null,
+  hasAuthorization: boolean
+) {
+  const currentSchoolId = String(params.school_id ?? '').trim();
+
+  if (resolvedSchoolId) {
+    if (!currentSchoolId || currentSchoolId === '1') {
+      params.school_id = resolvedSchoolId;
+    }
+    return;
+  }
+
+  // Do not force the legacy fallback school on authenticated live requests.
+  // If we don't have a stored school id, let the backend infer it from the actor.
+  if (hasAuthorization && currentSchoolId === '1') {
+    delete params.school_id;
+  }
+}
+
 class ApiService {
   private api: AxiosInstance;
 
@@ -131,12 +152,7 @@ class ApiService {
       if (Array.isArray(storedUser?.permissions) && storedUser.permissions.length) {
         headers['X-User-Permissions'] = storedUser.permissions.join(',');
       }
-      if (resolvedSchoolId) {
-        const currentSchoolId = String(params.school_id ?? '').trim();
-        if (!currentSchoolId || currentSchoolId === '1') {
-          params.school_id = resolvedSchoolId;
-        }
-      }
+      normalizeRequestSchoolId(params, resolvedSchoolId, Boolean(token));
 
       // Ensure multipart uploads do not send a JSON content type header.
       if (config.data instanceof FormData) {
