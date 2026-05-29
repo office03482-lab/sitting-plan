@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, Pencil, Search, Trash2, Upload, UserPlus2, Users, X } from 'lucide-react';
-import { apiService, getRequestErrorMessage } from '@services/api';
+import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
+import {
+  apiService,
+  getMigrationUnavailableMessage,
+  getRequestErrorMessage,
+  isMigrationGuardError,
+  logIfUnexpectedRequestError,
+} from '@services/api';
 import {
   findStaffDirectoryNameMatches,
   getStaffDirectoryDuplicateGroups,
@@ -179,6 +186,7 @@ export default function StaffDirectory() {
   const [category, setCategory] = useState('all');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
+  const [invigilatorsUnavailable, setInvigilatorsUnavailable] = useState(false);
   const [editingRecord, setEditingRecord] = useState<StaffDirectoryRecord | null>(null);
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [viewingRecord, setViewingRecord] = useState<StaffDirectoryRecord | null>(null);
@@ -187,14 +195,38 @@ export default function StaffDirectory() {
 
   const loadRecords = async () => {
     try {
-      const [teachersRes, invigilatorsRes] = await Promise.all([
+      const [teachersRes, invigilatorsRes] = await Promise.allSettled([
         apiService.listTeachers(1, 0, 1000),
         apiService.listInvigilators(1, undefined, 0, 1000),
       ]);
 
+      const teacherRows =
+        teachersRes.status === 'fulfilled' && Array.isArray(teachersRes.value.data)
+          ? teachersRes.value.data.map(mapTeacherToDirectoryRecord)
+          : [];
+      const invigilatorRows =
+        invigilatorsRes.status === 'fulfilled' && Array.isArray(invigilatorsRes.value.data)
+          ? invigilatorsRes.value.data.map(mapInvigilatorToDirectoryRecord)
+          : [];
+
+      if (teachersRes.status === 'rejected') {
+        logIfUnexpectedRequestError('Failed to load teaching staff for directory', teachersRes.reason);
+      }
+      if (invigilatorsRes.status === 'rejected') {
+        logIfUnexpectedRequestError('Failed to load non-teaching staff for directory', invigilatorsRes.reason, 'warn');
+      }
+
+      const invigilatorGuarded =
+        invigilatorsRes.status === 'rejected' && isMigrationGuardError(invigilatorsRes.reason);
+      setInvigilatorsUnavailable(invigilatorGuarded);
+
+      if (teachersRes.status === 'rejected' && invigilatorsRes.status === 'rejected') {
+        throw teachersRes.reason;
+      }
+
       const backendRecords = [
-        ...(Array.isArray(teachersRes.data) ? teachersRes.data.map(mapTeacherToDirectoryRecord) : []),
-        ...(Array.isArray(invigilatorsRes.data) ? invigilatorsRes.data.map(mapInvigilatorToDirectoryRecord) : []),
+        ...teacherRows,
+        ...invigilatorRows,
       ];
 
       const merged = new Map<string, StaffDirectoryRecord>();
@@ -212,8 +244,13 @@ export default function StaffDirectory() {
       const nextRecords = Array.from(deduped.values())
         .sort((a, b) => a.fullName.localeCompare(b.fullName));
       setRecords(nextRecords);
+
+      if (invigilatorGuarded) {
+        showMessage(getMigrationUnavailableMessage('Non-teaching staff directory data'), 'error');
+      }
     } catch (error) {
       console.error('Failed to load staff directory from Supabase', error);
+      setInvigilatorsUnavailable(isMigrationGuardError(error));
       setRecords([]);
       showMessage(getRequestErrorMessage(error, 'Staff directory Supabase se load nahi ho paayi.'), 'error');
     }
@@ -513,6 +550,12 @@ export default function StaffDirectory() {
         </section>
 
         <section className="mt-6 rounded-3xl bg-white p-6 shadow-sm">
+          {invigilatorsUnavailable ? (
+            <div className="mb-6">
+              <MigrationUnavailableNotice message="Non-teaching staff / invigilator data is temporarily unavailable during the ongoing Supabase migration. Teaching staff records are still shown below." />
+            </div>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="relative xl:col-span-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
