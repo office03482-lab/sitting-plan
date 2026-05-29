@@ -36,6 +36,10 @@ from app.utils.academic_batches import (
 from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 from app.services.supabase_attendance import get_students_count as get_supabase_students_count
+from app.services.supabase_students import (
+    get_student as get_student_supabase,
+    list_students as list_students_supabase,
+)
 import re
 
 logger = logging.getLogger(__name__)
@@ -705,6 +709,9 @@ async def list_students(
     """
     List students for a school
     """
+    if not is_legacy_sqlite_mode():
+        return list_students_supabase(school_id, batch=batch, skip=skip, limit=limit)
+
     ensure_students_legacy_routes_available(school_id)
     query = db.query(Student).filter(Student.school_id == school_id)
     
@@ -931,14 +938,18 @@ async def list_hostel_requests(
 
 @router.post("/{student_id}/hostel-request", response_model=StudentHostelRequestResponse)
 async def create_or_update_hostel_request(
-    student_id: int,
+    student_id: str,
     payload: StudentHostelRequestCreate,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
     ensure_students_legacy_routes_available(school_id)
-    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
+    try:
+        legacy_student_id = int(str(student_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Student not found")
+    student = db.query(Student).filter(Student.id == legacy_student_id, Student.school_id == school_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
@@ -947,7 +958,7 @@ async def create_or_update_hostel_request(
         raise HTTPException(status_code=404, detail="Hostel not found")
 
     request = db.query(StudentHostelRequest).filter(
-        StudentHostelRequest.student_id == student_id,
+        StudentHostelRequest.student_id == legacy_student_id,
         StudentHostelRequest.status.in_(["pending", "approved"]),
     ).order_by(StudentHostelRequest.id.desc()).first()
 
@@ -966,7 +977,7 @@ async def create_or_update_hostel_request(
     else:
         request = StudentHostelRequest(
             school_id=school_id,
-            student_id=student_id,
+            student_id=legacy_student_id,
             hostel_id=hostel.id,
             requested_notes=payload.requested_notes,
             status="pending",
@@ -1238,7 +1249,7 @@ async def transfer_students_to_batch(
 
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
-    student_id: int,
+    student_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
@@ -1246,8 +1257,15 @@ async def get_student(
     """
     Get student by ID
     """
-    ensure_students_legacy_routes_available(school_id)
-    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
+    if not is_legacy_sqlite_mode():
+        return get_student_supabase(school_id, student_id)
+
+    try:
+        legacy_student_id = int(str(student_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    student = db.query(Student).filter(Student.id == legacy_student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -1258,7 +1276,7 @@ async def get_student(
 
 @router.put("/{student_id}", response_model=StudentResponse)
 async def update_student(
-    student_id: int,
+    student_id: str,
     update_data: StudentUpdate,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -1268,7 +1286,11 @@ async def update_student(
     Update student information
     """
     ensure_students_legacy_routes_available(school_id)
-    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
+    try:
+        legacy_student_id = int(str(student_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Student not found")
+    student = db.query(Student).filter(Student.id == legacy_student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -1342,7 +1364,7 @@ async def update_student(
 
 @router.delete("/{student_id}")
 async def delete_student(
-    student_id: int,
+    student_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
@@ -1351,7 +1373,11 @@ async def delete_student(
     Delete student
     """
     ensure_students_legacy_routes_available(school_id)
-    student = db.query(Student).filter(Student.id == student_id, Student.school_id == school_id).first()
+    try:
+        legacy_student_id = int(str(student_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Student not found")
+    student = db.query(Student).filter(Student.id == legacy_student_id, Student.school_id == school_id).first()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")

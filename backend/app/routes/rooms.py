@@ -3,26 +3,18 @@ Room configuration routes
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
+from app.services.supabase_context import is_legacy_sqlite_mode, ensure_legacy_sqlite_route_available, resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import Room, Desk, Seat, School, User, UserRole
 from app.schemas import RoomCreate, RoomResponse, RoomUpdate
+from app.services import supabase_rooms
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    dependencies=[
-        Depends(
-            build_legacy_sqlite_route_blocker(
-                "Room management",
-                reason="This module still depends on legacy SQLite room and school tables.",
-            )
-        )
-    ]
-)
+router = APIRouter()
 
 
 def ensure_school_exists(db: Session, school_id: str) -> str:
@@ -93,6 +85,7 @@ async def create_room(
     """
     Create a new room configuration
     """
+    ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
     ensure_school_exists(db, school_id)
 
     # Create room
@@ -148,11 +141,18 @@ async def create_room(
 async def list_rooms(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(get_db),
 ):
     """
     List all rooms for a school
     """
+    if not is_legacy_sqlite_mode():
+        rows = supabase_rooms.list_rooms(school_id, skip=skip, limit=limit)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(rows)}, Execution mode: supabase_native")
+        return [RoomResponse(**row) for row in rows]
+
     ensure_school_exists(db, school_id)
 
     rooms = db.query(Room).filter(
@@ -164,14 +164,40 @@ async def list_rooms(
     return [serialize_room(room) for room in rooms]
 
 
+@router.get("/summary")
+async def get_rooms_summary(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    db: Session = Depends(get_db),
+):
+    """
+    Get rooms summary (count and total capacity)
+    """
+    if not is_legacy_sqlite_mode():
+        return supabase_rooms.get_rooms_summary(school_id)
+
+    rooms = db.query(Room).filter(
+        Room.school_id == school_id,
+        Room.is_active == True
+    ).all()
+    return {
+        "count": len(rooms),
+        "totalCapacity": sum(room.capacity or 0 for room in rooms),
+    }
+
+
 @router.get("/{room_id}", response_model=RoomResponse)
 async def get_room(
-    room_id: int,
+    room_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
     Get details of a specific room
     """
+    if not is_legacy_sqlite_mode():
+        row = supabase_rooms.get_room(school_id, room_id)
+        return RoomResponse(**row)
+
     room = db.query(Room).filter(Room.id == room_id).first()
     
     if not room:
@@ -184,11 +210,13 @@ async def get_room(
 async def update_room(
     room_id: int,
     update_data: RoomUpdate,
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
     Update room configuration
     """
+    ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
     room = db.query(Room).filter(Room.id == room_id).first()
     
     if not room:
@@ -209,11 +237,13 @@ async def update_room(
 @router.delete("/{room_id}")
 async def delete_room(
     room_id: int,
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
     Delete a room
     """
+    ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
     room = db.query(Room).filter(Room.id == room_id).first()
     
     if not room:
@@ -234,6 +264,7 @@ async def delete_all_rooms(
     Delete all rooms for a school (Admin only).
     Requires is_admin=true query parameter for safety.
     """
+    ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
     if not is_admin:
         raise HTTPException(
             status_code=403,
@@ -270,30 +301,4 @@ async def delete_all_rooms(
         "deleted_rooms": rooms_count,
         "deleted_desks": deleted_desks,
         "deleted_seats": deleted_seats
-    }
-
-@router.delete("", summary="Delete all rooms")
-async def delete_all_rooms(
-    school_id: str = Depends(resolve_school_id_from_actor),
-    is_admin: bool = False,
-    db: Session = Depends(get_db),
-):
-    """
-    Delete all rooms for a school (Admin only).
-    """
-    if not is_admin:
-        raise HTTPException(
-            status_code=403,
-            detail="Only administrators can delete all rooms"
-        )
-    
-    rooms = db.query(Room).filter(Room.school_id == school_id).all()
-    deleted_count = len(rooms)
-    for room in rooms:
-        db.delete(room)
-    db.commit()
-    
-    return {
-        "message": f"All {deleted_count} rooms deleted successfully",
-        "deleted_count": deleted_count
     }

@@ -2,27 +2,19 @@
 Teacher management routes
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.services.supabase_context import is_legacy_sqlite_mode, ensure_legacy_sqlite_route_available, resolve_school_id_from_actor
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
-from app.models import Teacher, School, User, UserRole
+from app.models import Teacher, School
 from app.schemas import TeacherCreate, TeacherResponse, TeacherUpdate
+from app.services import supabase_teachers
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    dependencies=[
-        Depends(
-            build_legacy_sqlite_route_blocker(
-                "Teacher management",
-                reason="This module still depends on legacy SQLite teacher tables.",
-            )
-        )
-    ]
-)
+router = APIRouter()
 
 
 @router.post("", response_model=TeacherResponse)
@@ -35,6 +27,8 @@ async def create_teacher(
     """
     Create a new teacher
     """
+    ensure_legacy_sqlite_route_available("Teacher management", school_id, reason="This module still depends on legacy SQLite teacher tables.")
+
     # Ensure school exists
     school_row = db.query(School.id).filter(School.id == school_id).first()
     if not school_row:
@@ -93,6 +87,11 @@ async def list_teachers(
     """
     List all teachers
     """
+    if not is_legacy_sqlite_mode():
+        rows = supabase_teachers.list_teachers(school_id, skip=skip, limit=limit)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(rows)}, Execution mode: supabase_native")
+        return [TeacherResponse(**row) for row in rows]
+
     teachers = db.query(Teacher).filter(
         Teacher.school_id == school_id,
         Teacher.is_active == True,
@@ -115,15 +114,37 @@ async def list_teachers(
     ]
 
 
+@router.get("/count")
+async def get_teachers_count(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    db: Session = Depends(get_db),
+):
+    """
+    Get total count of active teachers
+    """
+    if not is_legacy_sqlite_mode():
+        return supabase_teachers.count_teachers(school_id)
+
+    count = db.query(Teacher).filter(
+        Teacher.school_id == school_id,
+        Teacher.is_active == True,
+    ).count()
+    return count
+
+
 @router.get("/{teacher_id}", response_model=TeacherResponse)
 async def get_teacher(
-    teacher_id: int,
+    teacher_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
     Get a specific teacher
     """
+    if not is_legacy_sqlite_mode():
+        row = supabase_teachers.get_teacher(school_id, teacher_id)
+        return TeacherResponse(**row)
+
     teacher = db.query(Teacher).filter(
         Teacher.id == teacher_id,
         Teacher.school_id == school_id,
@@ -158,6 +179,8 @@ async def update_teacher(
     """
     Update a teacher
     """
+    ensure_legacy_sqlite_route_available("Teacher management", school_id, reason="This module still depends on legacy SQLite teacher tables.")
+
     teacher = db.query(Teacher).filter(
         Teacher.id == teacher_id,
         Teacher.school_id == school_id,
@@ -199,6 +222,8 @@ async def delete_teacher(
     """
     Delete a teacher (soft delete)
     """
+    ensure_legacy_sqlite_route_available("Teacher management", school_id, reason="This module still depends on legacy SQLite teacher tables.")
+
     teacher = db.query(Teacher).filter(
         Teacher.id == teacher_id,
         Teacher.school_id == school_id,

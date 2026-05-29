@@ -142,6 +142,18 @@ class ApiService {
         delete headers['Content-Type'];
         delete headers['content-type'];
       }
+
+      const requestUrl = `${config.baseURL || ''}${config.url || ''}`;
+      console.debug('[api-auth-trace]', {
+        url: requestUrl,
+        method: String(config.method || 'get').toUpperCase(),
+        hasAuthorization: Boolean(headers.Authorization),
+        hasUserRole: Boolean(headers['X-User-Role']),
+        hasUserName: Boolean(headers['X-User-Name']),
+        hasStoredUser: Boolean(storedUser),
+        hasStoredToken: Boolean(token),
+      });
+
       return config;
     });
   }
@@ -921,6 +933,14 @@ class ApiService {
 
   async getStudentsCount(schoolId: string | number = 1) {
     return this.api.get('/students/count', { params: { school_id: schoolId } });
+  }
+
+  async getInventoryDashboard() {
+    return this.api.get('/inventory/dashboard');
+  }
+
+  async getEduPayDashboard() {
+    return this.api.get('/edupay/dashboard');
   }
 
   async getRoomsSummary(schoolId: string | number = 1) {

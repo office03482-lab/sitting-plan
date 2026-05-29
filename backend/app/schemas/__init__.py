@@ -145,8 +145,8 @@ class BatchUpdate(BaseModel):
 
 class BatchResponse(BatchBase):
     """Batch response schema"""
-    id: int
-    school_id: int
+    id: str | int
+    school_id: str | int
     created_at: datetime
     updated_at: datetime
 
@@ -160,7 +160,7 @@ class BatchWithStudentCount(BatchResponse):
 
 
 class BatchReorderItem(BaseModel):
-    batch_id: int
+    batch_id: str | int
     display_order: int
 
 
@@ -186,11 +186,11 @@ class StudentBase(BaseModel):
     requires_extra_time: bool = False
     boarding_type: Optional[str] = None
     hostel_required: bool = False
-    preferred_hostel_id: Optional[int] = None
+    preferred_hostel_id: Optional[Any] = None
     hostel_request_status: Optional[str] = None
-    assigned_hostel_id: Optional[int] = None
+    assigned_hostel_id: Optional[Any] = None
     assigned_hostel_name: Optional[str] = None
-    assigned_room_id: Optional[int] = None
+    assigned_room_id: Optional[Any] = None
     assigned_room_number: Optional[str] = None
     assigned_bed_label: Optional[str] = None
     hostel_notes: Optional[str] = None
@@ -234,8 +234,8 @@ class StudentUpdate(BaseModel):
 
 class StudentResponse(StudentBase):
     """Student response schema"""
-    id: int
-    school_id: int
+    id: str | int
+    school_id: str | int
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -441,7 +441,7 @@ class RoomUpdate(BaseModel):
 
 
 class RoomResponse(BaseModel):
-    id: int
+    id: int | str
     name: str
     length_feet: float
     width_feet: float
@@ -575,8 +575,8 @@ class TeacherUpdate(BaseModel):
 
 class TeacherResponse(TeacherBase):
     """Teacher response schema"""
-    id: int
-    school_id: int
+    id: int | str
+    school_id: int | str
     is_active: bool
     created_at: datetime
     updated_at: datetime

@@ -6,7 +6,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.database import get_db
-from app.services.supabase_context import build_legacy_sqlite_route_blocker, resolve_school_id_from_actor
+from app.services.supabase_batches import (
+    create_batch as create_batch_supabase,
+    delete_all_batches as delete_all_batches_supabase,
+    delete_batch as delete_batch_supabase,
+    get_batch as get_batch_supabase,
+    get_batch_by_name as get_batch_by_name_supabase,
+    list_batches as list_batches_supabase,
+    reorder_batches as reorder_batches_supabase,
+    update_batch as update_batch_supabase,
+)
+from app.services.supabase_context import is_legacy_sqlite_mode, resolve_school_id_from_actor
 from app.models import BatchTable, Student
 from app.schemas import BatchCreate, BatchUpdate, BatchResponse, BatchWithStudentCount, BatchReorderRequest
 from app.utils.academic_batches import looks_like_academic_batch_name
@@ -16,14 +26,6 @@ from typing import List
 router = APIRouter(
     prefix="/api/batches",
     tags=["batches"],
-    dependencies=[
-        Depends(
-            build_legacy_sqlite_route_blocker(
-                "Batch management",
-                reason="This module still depends on legacy SQLite batch and student relationships.",
-            )
-        )
-    ],
 )
 
 
@@ -62,6 +64,9 @@ def create_batch(
     Create a new batch for a school.
     Prevents duplicate batch names per school.
     """
+    if not is_legacy_sqlite_mode():
+        return create_batch_supabase(school_id, batch.model_dump())
+
     # Check if batch already exists (case-insensitive)
     normalized_category = (batch.category or "batch").strip().lower() or "batch"
     if _is_invalid_class_name(batch.name, normalized_category):
@@ -115,6 +120,9 @@ def list_batches(
     Optionally filter by active status.
     Returns student count for each batch.
     """
+    if not is_legacy_sqlite_mode():
+        return list_batches_supabase(school_id, is_active=is_active, category=category)
+
     query = db.query(BatchTable).filter(BatchTable.school_id == school_id)
     
     if is_active is not None:
@@ -155,14 +163,22 @@ def list_batches(
 
 @router.get("/{batch_id}", response_model=BatchWithStudentCount)
 def get_batch(
-    batch_id: int,
+    batch_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get a specific batch with student count"""
+    if not is_legacy_sqlite_mode():
+        return get_batch_supabase(school_id, batch_id)
+
+    try:
+        legacy_batch_id = int(str(batch_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Batch not found")
+
     batch = db.query(BatchTable).filter(
-        BatchTable.id == batch_id,
+        BatchTable.id == legacy_batch_id,
         BatchTable.school_id == school_id
     ).first()
     
@@ -184,7 +200,7 @@ def get_batch(
 
 @router.put("/{batch_id}", response_model=BatchResponse)
 def update_batch(
-    batch_id: int,
+    batch_id: str,
     batch_update: BatchUpdate,
     school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
@@ -194,8 +210,16 @@ def update_batch(
     Update a batch (name and/or status).
     Name change is allowed even if students are assigned.
     """
+    if not is_legacy_sqlite_mode():
+        return update_batch_supabase(school_id, batch_id, batch_update.model_dump(exclude_unset=True))
+
+    try:
+        legacy_batch_id = int(str(batch_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Batch not found")
+
     batch = db.query(BatchTable).filter(
-        BatchTable.id == batch_id,
+        BatchTable.id == legacy_batch_id,
         BatchTable.school_id == school_id
     ).first()
     
@@ -219,7 +243,7 @@ def update_batch(
             normalized_name = batch_update.name.strip()
             existing = db.query(BatchTable).filter(
                 BatchTable.school_id == school_id,
-                BatchTable.id != batch_id,
+                BatchTable.id != legacy_batch_id,
                 BatchTable.category == next_category,
                 BatchTable.name.ilike(normalized_name)
             ).first()
@@ -290,6 +314,12 @@ def reorder_batches(
     db: Session = Depends(get_db)
 ):
     """Persist manual batch ordering for a school."""
+    if not is_legacy_sqlite_mode():
+        return reorder_batches_supabase(
+            school_id,
+            [item.model_dump() for item in payload.items],
+        )
+
     if not payload.items:
         raise HTTPException(status_code=400, detail="At least one batch order item is required")
 
@@ -332,7 +362,7 @@ def reorder_batches(
 
 @router.delete("/{batch_id}")
 def delete_batch(
-    batch_id: int,
+    batch_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     # current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -341,8 +371,16 @@ def delete_batch(
     Delete a batch.
     Prevents deletion if students are assigned.
     """
+    if not is_legacy_sqlite_mode():
+        return delete_batch_supabase(school_id, batch_id)
+
+    try:
+        legacy_batch_id = int(str(batch_id).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="Batch not found")
+
     batch = db.query(BatchTable).filter(
-        BatchTable.id == batch_id,
+        BatchTable.id == legacy_batch_id,
         BatchTable.school_id == school_id
     ).first()
     
@@ -357,7 +395,7 @@ def delete_batch(
         ).count()
     else:
         student_count = db.query(Student).filter(
-            Student.batch_id == batch_id
+            Student.batch_id == legacy_batch_id
         ).count()
     
     if student_count > 0:
@@ -382,6 +420,9 @@ def delete_all_batches(
     Delete all batches for a school.
     Prevents deletion if any students are still assigned to any batch.
     """
+    if not is_legacy_sqlite_mode():
+        return delete_all_batches_supabase(school_id, category=category)
+
     query = db.query(BatchTable).filter(BatchTable.school_id == school_id)
     if category:
         query = query.filter(BatchTable.category == category.strip().lower())
@@ -428,6 +469,9 @@ def get_batch_by_name(
     Get batch by name (for internal use, no auth required for migration).
     Used during Excel import to find or verify batches.
     """
+    if not is_legacy_sqlite_mode():
+        return get_batch_by_name_supabase(school_id, batch_name)
+
     batch = db.query(BatchTable).filter(
         BatchTable.school_id == school_id,
         BatchTable.name.ilike(batch_name.strip())
