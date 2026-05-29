@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { runtimeConfig } from '@lib/runtimeConfig';
 import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator
@@ -94,7 +95,7 @@ class ApiService {
 
   constructor() {
     this.api = axios.create({
-      baseURL: "/api",
+      baseURL: runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || "/api",
     });
 
     this.api.interceptors.request.use((config) => {
