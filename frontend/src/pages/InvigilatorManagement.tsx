@@ -6,6 +6,8 @@ import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 type StaffType = 'teaching' | 'non_teaching';
 
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const isTemporaryAssignmentId = (value: string | number | null | undefined) =>
+  String(value ?? '').trim().startsWith('temp-');
 const isTeachingMirrorInvigilator = (staff: Invigilator) =>
   /^TCH-\d+$/i.test((staff.staff_id || '').trim()) || (staff.designation || '').trim().toLowerCase() === 'teacher';
 const teacherIdFromStaffCode = (staffId?: string) => {
@@ -120,7 +122,7 @@ export default function InvigilatorManagement() {
           const room = roomsData[index];
           const roomInvigilators = toArray<Invigilator>(result.value.data);
           return roomInvigilators.map((invigilator) => ({
-            id: -((index + 1) * 1000 + invigilator.id),
+            id: `temp-assignment-${index + 1}-${String(invigilator.id)}`,
             room_id: room.id,
             invigilator_id: invigilator.id,
             school_id: schoolId,
@@ -203,20 +205,21 @@ export default function InvigilatorManagement() {
       rooms
         .map((room) => ({
           room,
-          assignments: activeAssignments.filter((item) => item.room_id === room.id),
+          assignments: activeAssignments.filter((item) => String(item.room_id) === String(room.id)),
         }))
         .filter((item) => item.assignments.length > 0),
     [rooms, activeAssignments]
   );
   const assignmentsByInvigilator = useMemo(
     () =>
-      activeAssignments.reduce<Record<number, typeof activeAssignments>>((acc, item) => {
-        if (!acc[item.invigilator_id]) {
-          acc[item.invigilator_id] = [];
+      activeAssignments.reduce<Record<string, typeof activeAssignments>>((acc, item) => {
+        const invigilatorKey = String(item.invigilator_id);
+        if (!acc[invigilatorKey]) {
+          acc[invigilatorKey] = [];
         }
-        acc[item.invigilator_id].push(item);
+        acc[invigilatorKey].push(item);
         return acc;
-      }, {}),
+      }, {} as Record<string, typeof activeAssignments>),
     [activeAssignments]
   );
   const assignmentsByStaffCode = useMemo(
@@ -398,8 +401,8 @@ export default function InvigilatorManagement() {
     }
   };
 
-  const handleRemoveAssignment = async (assignmentId: number) => {
-    if (assignmentId < 0) {
+  const handleRemoveAssignment = async (assignmentId: string | number) => {
+    if (isTemporaryAssignmentId(assignmentId)) {
       showMessage('Please refresh/restart backend once. Temporary assignment view cannot remove directly.', 'error');
       return;
     }
@@ -420,7 +423,7 @@ export default function InvigilatorManagement() {
 
     try {
       setDeletingAllAssignments(true);
-      const persistedAssignments = activeAssignments.filter((item) => item.id > 0);
+      const persistedAssignments = activeAssignments.filter((item) => !isTemporaryAssignmentId(item.id));
 
       if (persistedAssignments.length === 0) {
         setAssignments([]);
@@ -432,7 +435,7 @@ export default function InvigilatorManagement() {
         persistedAssignments.map((item) => apiService.deleteRoomAssignment(item.id))
       );
 
-      setAssignments((current) => current.filter((item) => item.id < 0));
+      setAssignments((current) => current.filter((item) => isTemporaryAssignmentId(item.id)));
       await loadData();
       showMessage('All invigilator assignments deleted successfully', 'success');
     } catch (error: any) {

@@ -61,7 +61,7 @@ const splitNameParts = (fullName: string) => {
   };
 };
 
-const buildDirectoryId = (backendType: 'teaching' | 'non_teaching', backendId: number) =>
+const buildDirectoryId = (backendType: 'teaching' | 'non_teaching', backendId: string | number) =>
   `${backendType}:${backendId}`;
 
 const normalizeDirectoryRecord = (record: StaffDirectoryRecord): StaffDirectoryRecord => {
@@ -69,7 +69,7 @@ const normalizeDirectoryRecord = (record: StaffDirectoryRecord): StaffDirectoryR
   return {
     ...record,
     id:
-      record.backendId && normalizedType
+      record.backendId != null && String(record.backendId).trim() && normalizedType
         ? buildDirectoryId(normalizedType, record.backendId)
         : record.id,
     backendType: normalizedType,
@@ -78,7 +78,7 @@ const normalizeDirectoryRecord = (record: StaffDirectoryRecord): StaffDirectoryR
 };
 
 const buildDirectoryDedupKey = (record: StaffDirectoryRecord) => {
-  if (record.backendId && record.backendType) {
+  if (record.backendId != null && String(record.backendId).trim() && record.backendType) {
     return buildDirectoryId(record.backendType, record.backendId);
   }
 
@@ -114,8 +114,8 @@ const mapTeacherToDirectoryRecord = (teacher: any): StaffDirectoryRecord => {
   const metadata = teacher?.metadata || {};
   const directoryDetails = metadata.directory_details || {};
   return {
-    id: buildDirectoryId('teaching', Number(teacher?.id)),
-    backendId: Number(teacher?.id),
+    id: buildDirectoryId('teaching', String(teacher?.id || '').trim()),
+    backendId: teacher?.id ?? undefined,
     backendType: 'teaching',
     staffType: 'teaching',
     photoDataUrl: teacher?.photoDataUrl || undefined,
@@ -146,8 +146,8 @@ const mapInvigilatorToDirectoryRecord = (invigilator: any): StaffDirectoryRecord
   const metadata = invigilator?.metadata || {};
   const directoryDetails = metadata.directory_details || {};
   return {
-    id: buildDirectoryId('non_teaching', Number(invigilator?.id)),
-    backendId: Number(invigilator?.id),
+    id: buildDirectoryId('non_teaching', String(invigilator?.id || '').trim()),
+    backendId: invigilator?.id ?? undefined,
     backendType: 'non_teaching',
     staffType: 'non_teaching',
     photoDataUrl: invigilator?.photoDataUrl || undefined,

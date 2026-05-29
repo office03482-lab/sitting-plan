@@ -64,8 +64,8 @@ const readApiError = (error: any, fallback: string) =>
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const normalizeRoom = (room: any): HostelRoom => ({
-  id: Number(room?.id || 0),
-  hostel_id: Number(room?.hostel_id || 0),
+  id: room?.id ?? '',
+  hostel_id: room?.hostel_id ?? '',
   room_number: String(room?.room_number || ''),
   total_beds: Number(room?.total_beds || 0),
   occupied_beds: Number(room?.occupied_beds || 0),
@@ -76,7 +76,7 @@ const normalizeRoom = (room: any): HostelRoom => ({
 const normalizeHostel = (hostel: any): Hostel => {
   const rooms = toArray<unknown>(hostel?.rooms).map(normalizeRoom);
   return {
-    id: Number(hostel?.id || 0),
+    id: hostel?.id ?? '',
     name: String(hostel?.name || 'Unnamed Hostel'),
     hostel_head: hostel?.hostel_head ? String(hostel.hostel_head) : undefined,
     warden_name: hostel?.warden_name ? String(hostel.warden_name) : undefined,
@@ -92,17 +92,17 @@ const normalizeHostel = (hostel: any): Hostel => {
 };
 
 const normalizeRequest = (request: any): StudentHostelRequest => ({
-  id: Number(request?.id || 0),
-  student_id: Number(request?.student_id || 0),
+  id: request?.id ?? '',
+  student_id: request?.student_id ?? '',
   student_name: String(request?.student_name || ''),
   roll_number: String(request?.roll_number || ''),
   batch: String(request?.batch || ''),
   reference_name: request?.reference_name ? String(request.reference_name) : undefined,
   reference_number: request?.reference_number ? String(request.reference_number) : undefined,
   reference_remark: request?.reference_remark ? String(request.reference_remark) : undefined,
-  hostel_id: Number(request?.hostel_id || 0),
+  hostel_id: request?.hostel_id ?? '',
   hostel_name: String(request?.hostel_name || ''),
-  room_id: request?.room_id ? Number(request.room_id) : undefined,
+  room_id: request?.room_id ?? undefined,
   room_number: request?.room_number ? String(request.room_number) : undefined,
   requested_notes: request?.requested_notes ? String(request.requested_notes) : undefined,
   status: String(request?.status || ''),

@@ -30,7 +30,7 @@ const extractBatchesFromPlanName = (planName: string) => {
 };
 
 interface RoomBatchSummary {
-  planId: number;
+  planId: string | number;
   roomId: string | number;
   roomName: string;
   totalStudents: number;
@@ -114,7 +114,7 @@ export default function SeatingGeneration() {
   const [showExamForm, setShowExamForm] = useState(false);
   const [examForm, setExamForm] = useState({ name: '', exam_date: defaultExamDate });
   const [editingExamId, setEditingExamId] = useState<string | number | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ planId: number; planName: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ planId: string | number; planName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -123,7 +123,7 @@ export default function SeatingGeneration() {
   const [loadingBatchStudents, setLoadingBatchStudents] = useState(false);
   const [roomBatchSummaries, setRoomBatchSummaries] = useState<Record<number, RoomBatchSummary>>({});
   const [loadingRoomBatchSummaries, setLoadingRoomBatchSummaries] = useState(false);
-  const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<number | null>(null);
+  const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<string | number | null>(null);
   const [generationUnavailable, setGenerationUnavailable] = useState({
     rooms: false,
     batches: false,
@@ -468,18 +468,22 @@ export default function SeatingGeneration() {
       // Reload the plan list before rendering to avoid crashing the page with mismatched data.
       const plansResponse = await apiService.listAllPlans(selectedExam);
       const allExamPlans = toArray<SeatingPlan>(plansResponse.data);
-      const generatedIds = new Set<number>();
-      toArray<number>(response.data?.plan_ids).forEach((id) => {
-        if (typeof id === 'number') generatedIds.add(id);
+      const generatedIds = new Set<string>();
+      toArray<string | number>(response.data?.plan_ids).forEach((id) => {
+        const normalizedId = String(id || '').trim();
+        if (normalizedId) generatedIds.add(normalizedId);
       });
       toArray(response.data?.plans).forEach((item: any) => {
-        toArray<number>(item?.plan_ids).forEach((id) => {
-          if (typeof id === 'number') generatedIds.add(id);
+        toArray<string | number>(item?.plan_ids).forEach((id) => {
+          const normalizedId = String(id || '').trim();
+          if (normalizedId) generatedIds.add(normalizedId);
         });
-        if (typeof item?.plan_a_id === 'number') generatedIds.add(item.plan_a_id);
-        if (typeof item?.plan_b_id === 'number') generatedIds.add(item.plan_b_id);
+        const planAId = String(item?.plan_a_id || '').trim();
+        const planBId = String(item?.plan_b_id || '').trim();
+        if (planAId) generatedIds.add(planAId);
+        if (planBId) generatedIds.add(planBId);
       });
-      const plansForBatches = allExamPlans.filter((plan) => generatedIds.has(plan.id));
+      const plansForBatches = allExamPlans.filter((plan) => generatedIds.has(String(plan.id || '').trim()));
       const unassignedCount = Number(response.data?.unassigned_count || 0);
       const selectedStudentCount = Number(response.data?.selected_student_count || 0);
 
@@ -603,7 +607,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleExportPDF = async (planId: number) => {
+  const handleExportPDF = async (planId: string | number) => {
     try {
       const response = await apiService.exportPDF(planId);
       const url = window.URL.createObjectURL(response.data);
@@ -620,7 +624,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleExportExcel = async (planId: number) => {
+  const handleExportExcel = async (planId: string | number) => {
     try {
       const response = await apiService.exportExcel(planId);
       const url = window.URL.createObjectURL(response.data);
@@ -684,7 +688,7 @@ export default function SeatingGeneration() {
     }
   };
 
-  const handleDeletePlan = async (planId: number) => {
+  const handleDeletePlan = async (planId: string | number) => {
     if (!deleteConfirm) return;
 
     setDeleting(true);

@@ -384,7 +384,7 @@ export default function StudentManagement() {
   const [deletingAll, setDeletingAll] = useState(false);
   const [message, setMessage] = useState('');
   const [operationProgress, setOperationProgress] = useState<StudentOperationProgress | null>(null);
-  const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Array<string | number>>([]);
   const [transferTargetBatch, setTransferTargetBatch] = useState('');
   const [transferringSelected, setTransferringSelected] = useState(false);
   const [transferringBatch, setTransferringBatch] = useState(false);
@@ -1113,7 +1113,7 @@ export default function StudentManagement() {
     navigate({ pathname: location.pathname, hash: location.hash }, { replace: true, state: null });
   }, [location.state, location.pathname, location.hash, navigate]);
 
-  const handleDeleteStudent = async (id: number) => {
+  const handleDeleteStudent = async (id: string | number) => {
     if (!confirm('Are you sure you want to delete this student?')) return;
     try {
       await apiService.deleteStudent(id);
@@ -1126,7 +1126,7 @@ export default function StudentManagement() {
     }
   };
 
-  const toggleStudentSelection = (studentId: number) => {
+  const toggleStudentSelection = (studentId: string | number) => {
     setSelectedStudentIds((current) =>
       current.includes(studentId)
         ? current.filter((id) => id !== studentId)
@@ -1277,9 +1277,9 @@ export default function StudentManagement() {
         priorityContact: studentForm.priorityContact,
         photoDataUrl: studentPhotoDataUrl || undefined,
       });
-      const syncAdmissionSnapshot = (studentId: number, rollNumber: string, queueForEduPay: boolean) => {
+      const syncAdmissionSnapshot = (studentId: string | number, rollNumber: string, queueForEduPay: boolean) => {
         const existingRequest = readEduPayAdmissionRequests().find(
-          (item) => item.linkedStudentId === studentId || item.linkedStudentRollNumber === rollNumber,
+          (item) => String(item.linkedStudentId ?? '') === String(studentId) || item.linkedStudentRollNumber === rollNumber,
         );
         upsertEduPayAdmissionRequest({
           source: 'admin_request',

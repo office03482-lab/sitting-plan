@@ -98,7 +98,7 @@ export interface AuthResponse {
 
 // ==================== Student ====================
 export interface Student {
-  id: number;
+  id: string | number;
   roll_number: string;
   name: string;
   photoDataUrl?: string;
@@ -199,7 +199,7 @@ export interface StudentHostelRequest {
 }
 
 export interface StudentDashboard {
-  student_id: number;
+  student_id: string | number;
   student_name: string;
   class_name?: string;
   section?: string;
@@ -287,7 +287,7 @@ export interface RoomLayout {
 
 // ==================== Seating Plan ====================
 export interface SeatingPlan {
-  id: number;
+  id: string | number;
   exam_id: string | number;
   room_id: string | number;
   exam_name?: string;
@@ -390,11 +390,11 @@ export interface TimetableView {
 
 // ==================== Invigilator ====================
 export interface Invigilator {
-  id: number;
+  id: string | number;
   staff_id: string;
   name: string;
   photoDataUrl?: string;
-  school_id: number;
+  school_id: string | number;
   email?: string;
   phone?: string;
   department?: string;
@@ -408,11 +408,11 @@ export interface Invigilator {
 }
 
 export interface RoomInvigilator {
-  id: number;
+  id: string | number;
   room_id: string | number;
-  invigilator_id: number;
-  school_id: number;
-  exam_id?: number;
+  invigilator_id: string | number;
+  school_id: string | number;
+  exam_id?: string | number;
   notes?: string;
   is_active: boolean;
   created_at: string;

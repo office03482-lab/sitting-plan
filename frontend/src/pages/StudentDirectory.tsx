@@ -57,7 +57,7 @@ type BulkDeleteProgress = {
 
 const normalizeStudent = (student: any): Student => ({
   ...student,
-  id: Number(student?.id ?? 0),
+  id: student?.id ?? '',
   roll_number: safeText(student?.roll_number || student?.rollNo || student?.roll_no),
   name: safeText(student?.name),
   photoDataUrl: safeText(student?.photoDataUrl || student?.photo_data_url) || undefined,
@@ -142,7 +142,7 @@ export default function StudentDirectory() {
     try {
       const response = await apiService.listStudents();
       const nextStudents = Array.isArray(response.data)
-        ? response.data.map(normalizeStudent).filter((student) => student.id > 0 && (student.name || student.roll_number))
+        ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];
       setStudents(nextStudents);
       setMigrationUnavailable(false);

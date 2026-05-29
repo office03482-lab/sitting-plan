@@ -33,7 +33,7 @@ export type StaffDirectoryDetails = {
 
 export type StaffDirectoryRecord = {
   id: string;
-  backendId?: number;
+  backendId?: string | number;
   backendType: StaffDirectoryStaffType;
   staffType: StaffDirectoryStaffType;
   photoDataUrl?: string;

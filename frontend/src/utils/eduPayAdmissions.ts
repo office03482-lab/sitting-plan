@@ -104,7 +104,7 @@ export type EduPayAdmissionRequest = {
   id: string;
   source: 'admin_request';
   status: EduPayAdmissionRequestStatus;
-  linkedStudentId?: number;
+  linkedStudentId?: string | number;
   linkedStudentRollNumber?: string;
   processedEduPayStudentId?: number;
   createdAt: string;
@@ -181,7 +181,7 @@ export const upsertEduPayAdmissionRequest = (
   const existing = current.find((item) =>
     draft.id
       ? item.id === draft.id
-      : (typeof draft.linkedStudentId === 'number' && item.linkedStudentId === draft.linkedStudentId) ||
+      : ((draft.linkedStudentId != null && String(draft.linkedStudentId).trim()) && String(item.linkedStudentId ?? '') === String(draft.linkedStudentId)) ||
         (!!draft.linkedStudentRollNumber && item.linkedStudentRollNumber === draft.linkedStudentRollNumber) ||
         (!!draft.details.admissionId && item.details.admissionId === draft.details.admissionId),
   );

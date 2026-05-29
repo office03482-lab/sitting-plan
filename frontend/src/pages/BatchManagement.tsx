@@ -208,7 +208,7 @@ type BatchFormState = ReturnType<typeof toBatchFormState>;
 
 const normalizeStudent = (student: any): Student => ({
   ...student,
-  id: Number(student?.id ?? 0),
+  id: student?.id ?? '',
   name: String(student?.name ?? '').trim(),
   roll_number: String(student?.roll_number ?? student?.rollNo ?? student?.roll_no ?? '').trim(),
   father_name: String(student?.father_name ?? student?.fatherName ?? '').trim() || undefined,
@@ -273,7 +273,7 @@ const BatchManagement: React.FC = () => {
       const students = Array.isArray(studentsResponse.data)
         ? studentsResponse.data
             .map(normalizeStudent)
-            .filter((student) => student.id > 0 && (student.name || student.roll_number))
+            .filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];
       const batchStudents = students.filter((student) => student.batch.trim()).length;
       const classStudents = students.filter((student) => (student.class_name || '').trim()).length;
@@ -467,7 +467,7 @@ const BatchManagement: React.FC = () => {
       const students = (Array.isArray(response.data)
         ? response.data
             .map(normalizeStudent)
-            .filter((student) => student.id > 0 && (student.name || student.roll_number))
+            .filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [])
         .filter((student) => selectedCategory !== 'class' || student.class_name === batch.name);
       setBatchStudents(students);

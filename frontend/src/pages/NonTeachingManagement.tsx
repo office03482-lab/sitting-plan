@@ -131,7 +131,7 @@ export default function NonTeachingManagement() {
     }
   };
 
-  const handleDeleteStaff = async (id: number) => {
+  const handleDeleteStaff = async (id: string | number) => {
     if (!window.confirm('Delete this non-teaching staff member?')) return;
     try {
       setSaving(true);

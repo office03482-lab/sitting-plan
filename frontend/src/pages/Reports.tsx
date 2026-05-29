@@ -226,7 +226,7 @@ ${studentRows
     downloadFile(csv, 'students-report.csv', 'text/csv');
   };
 
-  const handleExportPDF = async (type: string, id?: number) => {
+  const handleExportPDF = async (type: string, id?: string | number) => {
     try {
       setExporting(`${type}-pdf`);
 
@@ -251,7 +251,7 @@ ${studentRows
     }
   };
 
-  const handleExportExcel = async (type: string, id?: number) => {
+  const handleExportExcel = async (type: string, id?: string | number) => {
     try {
       setExporting(`${type}-excel`);
 
