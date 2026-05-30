@@ -3,9 +3,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import logging
+import os
 import secrets
 import uuid
 from typing import Optional
+from gotrue import SyncGoTrueClient
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from app.config import settings
@@ -102,6 +104,56 @@ def decode_token(token: str) -> Optional[dict]:
             except JWTError as exc:
                 logger.info("decode_token.supabase_secret_failed", extra={"algorithm": alg, "error": str(exc)})
                 continue
+
+    # 3) Ask Supabase Auth to validate the token when JWT secret is not present
+    # or the token is signed by a different runtime secret.
+    supabase_url = (
+        settings.supabase_url
+        or os.getenv("SUPABASE_URL")
+        or os.getenv("VITE_SUPABASE_URL")
+        or ""
+    ).strip()
+    supabase_anon_key = (
+        settings.supabase_anon_key
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("VITE_SUPABASE_ANON_KEY")
+        or ""
+    ).strip()
+    if supabase_url and supabase_anon_key:
+        try:
+            auth_client = SyncGoTrueClient(
+                url=f"{supabase_url.rstrip('/')}/auth/v1",
+                headers={"apikey": supabase_anon_key},
+            )
+            response = auth_client.get_user(jwt=token)
+            user = getattr(response, "user", None)
+            if user:
+                app_metadata = getattr(user, "app_metadata", None) or {}
+                user_metadata = getattr(user, "user_metadata", None) or {}
+                payload = {
+                    "sub": str(getattr(user, "id", "") or ""),
+                    "email": str(getattr(user, "email", "") or ""),
+                    "role": str(app_metadata.get("role") or user_metadata.get("role") or ""),
+                    "full_name": str(
+                        user_metadata.get("full_name")
+                        or user_metadata.get("name")
+                        or getattr(user, "email", "")
+                        or ""
+                    ),
+                    "profile_id": str(getattr(user, "id", "") or ""),
+                    "school_id": str(app_metadata.get("school_id") or user_metadata.get("school_id") or ""),
+                    "active_school_id": str(
+                        app_metadata.get("active_school_id") or user_metadata.get("active_school_id") or ""
+                    ),
+                    "current_school_id": str(
+                        app_metadata.get("current_school_id") or user_metadata.get("current_school_id") or ""
+                    ),
+                    "type": "access",
+                }
+                logger.info("decode_token.success.using_supabase_auth_api")
+                return payload
+        except Exception as exc:
+            logger.info("decode_token.supabase_auth_api_failed", extra={"error": str(exc)})
 
     logger.warning("decode_token.all_attempts_failed")
     return None

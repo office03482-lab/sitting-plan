@@ -1,20 +1,19 @@
 """
 Middleware and shared auth helpers.
 
-JWT-ONLY authentication. No header-based fallback.
-No Supabase token fallback. No synthetic User objects.
+JWT-only authentication with local-user and Supabase principal support.
 """
 import logging
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
-from jose import JWTError, jwt
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models import User, UserRole
+from app.services.supabase_admin import get_supabase_admin_client
 from app.utils.auth import decode_token
 
 logger = logging.getLogger(__name__)
@@ -76,6 +75,276 @@ def extract_token_payload(authorization: Optional[str]) -> Optional[dict]:
     return payload
 
 
+def _normalize_role_key(role_key: str | None) -> str:
+    return str(role_key or "").strip().lower()
+
+
+def _map_supabase_role_to_legacy_role(role_key: str | None) -> UserRole:
+    normalized = _normalize_role_key(role_key)
+    if normalized in {"platform_admin", "school_admin"}:
+        return UserRole.ADMIN
+    if normalized == "teacher":
+        return UserRole.TEACHER
+    if normalized == "store_manager":
+        return UserRole.STORE_MANAGER
+    return UserRole.VIEWER
+
+
+def _map_supabase_role_to_user_type(role_key: str | None) -> str:
+    normalized = _normalize_role_key(role_key)
+    if normalized == "teacher":
+        return "teaching"
+    if normalized == "student":
+        return "student"
+    return "non_teaching"
+
+
+def _normalize_school_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    profile_id = str(payload.get("sub") or "").strip()
+    email = str(payload.get("email") or "").strip().lower()
+    if not profile_id and not email:
+        return None
+
+    try:
+        supabase = get_supabase_admin_client()
+    except Exception as exc:
+        logger.warning("auth.supabase_client_unavailable", extra={"error": str(exc)})
+        return None
+
+    profile_query = (
+        supabase.table("profiles")
+        .select("id,email,full_name,display_name,is_active,default_school_id")
+    )
+    if profile_id:
+        profile_query = profile_query.eq("id", profile_id)
+    elif email:
+        profile_query = profile_query.ilike("email", email)
+
+    profile_response = profile_query.limit(1).execute()
+    profiles = list(profile_response.data or [])
+    if not profiles:
+        logger.info(
+            "auth.supabase_profile_not_found",
+            extra={"profile_id": profile_id, "email": email},
+        )
+        return None
+
+    profile = profiles[0]
+    resolved_profile_id = str(profile.get("id") or profile_id or "").strip()
+    memberships_response = (
+        supabase.table("school_memberships")
+        .select(
+            """
+            id,
+            school_id,
+            role_id,
+            status,
+            is_primary,
+            is_active,
+            roles (
+              role_key,
+              role_name,
+              is_system
+            )
+            """
+        )
+        .eq("profile_id", resolved_profile_id)
+        .eq("is_active", True)
+        .eq("status", "active")
+        .execute()
+    )
+    memberships = list(memberships_response.data or [])
+    if not memberships:
+        logger.info("auth.supabase_membership_not_found", extra={"profile_id": resolved_profile_id})
+        return None
+
+    token_school_id = _normalize_school_id(
+        payload.get("school_id")
+        or payload.get("school_uuid")
+        or payload.get("active_school_id")
+        or payload.get("current_school_id")
+    )
+    default_school_id = _normalize_school_id(profile.get("default_school_id"))
+
+    def first_role(item: dict[str, Any]) -> dict[str, Any] | None:
+        role_data = item.get("roles")
+        if isinstance(role_data, list):
+            return role_data[0] if role_data else None
+        return role_data if isinstance(role_data, dict) else None
+
+    active_membership = None
+    if token_school_id:
+        active_membership = next(
+            (item for item in memberships if _normalize_school_id(item.get("school_id")) == token_school_id),
+            None,
+        )
+    if not active_membership and default_school_id:
+        active_membership = next(
+            (item for item in memberships if _normalize_school_id(item.get("school_id")) == default_school_id),
+            None,
+        )
+    if not active_membership:
+        active_membership = next((item for item in memberships if item.get("is_primary")), None) or memberships[0]
+
+    role = first_role(active_membership) or {}
+    role_id = str(active_membership.get("role_id") or "").strip()
+    permissions: list[str] = []
+    if role_id:
+        permissions_response = (
+            supabase.table("role_permissions")
+            .select("permissions(permission_key)")
+            .eq("role_id", role_id)
+            .execute()
+        )
+        for item in list(permissions_response.data or []):
+            permission_data = item.get("permissions")
+            permission_key = (
+                permission_data.get("permission_key")
+                if isinstance(permission_data, dict)
+                else None
+            )
+            if permission_key:
+                permissions.append(str(permission_key).strip().lower())
+
+    role_key = _normalize_role_key(role.get("role_key"))
+    return {
+        "profile_id": resolved_profile_id,
+        "membership_id": str(active_membership.get("id") or "").strip(),
+        "school_id": _normalize_school_id(active_membership.get("school_id")),
+        "default_school_id": default_school_id,
+        "email": str(profile.get("email") or payload.get("email") or "").strip(),
+        "full_name": str(
+            profile.get("full_name") or profile.get("display_name") or payload.get("email") or "User"
+        ).strip(),
+        "username": str(profile.get("display_name") or profile.get("email") or payload.get("email") or "").strip(),
+        "is_active": bool(profile.get("is_active")),
+        "role_key": role_key,
+        "role": _map_supabase_role_to_legacy_role(role_key),
+        "user_type": _map_supabase_role_to_user_type(role_key),
+        "permissions": permissions,
+        "auth_source": "supabase",
+    }
+
+
+def _build_synthetic_user_from_supabase(principal: dict[str, Any]) -> User:
+    synthetic_user = User(
+        id=0,
+        email=principal.get("email") or "supabase-user@example.com",
+        username=principal.get("username") or None,
+        full_name=principal.get("full_name") or "Supabase User",
+        password_hash="",
+        role=principal.get("role") or UserRole.VIEWER,
+        user_type=principal.get("user_type") or "non_teaching",
+        permissions=",".join(principal.get("permissions") or []),
+        is_active=bool(principal.get("is_active", True)),
+        is_verified=True,
+    )
+    synthetic_user.profile_id = principal.get("profile_id")
+    synthetic_user.membership_id = principal.get("membership_id")
+    synthetic_user.role_key = principal.get("role_key")
+    synthetic_user.school_id = principal.get("school_id")
+    synthetic_user.default_school_id = principal.get("default_school_id")
+    return synthetic_user
+
+
+def _resolve_request_principal(
+    request: Request,
+    payload: dict[str, Any],
+    db: Session,
+) -> dict[str, Any]:
+    cached = getattr(request.state, "resolved_auth_principal", None)
+    if cached:
+        return cached
+
+    user_id_raw = payload.get("sub")
+    user = None
+
+    try:
+        user_id = int(str(user_id_raw))
+        logger.info("auth.lookup.by_integer_id", extra={"user_id": user_id})
+        user = db.query(User).filter(User.id == user_id).first()
+    except (TypeError, ValueError):
+        logger.info("auth.lookup.sub_is_not_integer", extra={"sub": str(user_id_raw or "")})
+
+    if not user:
+        token_email = str(payload.get("email") or "").strip().lower()
+        if token_email:
+            logger.info("auth.lookup.by_email", extra={"email": token_email})
+            user = db.query(User).filter(func.lower(User.email) == token_email).first()
+
+    auth_source = "local"
+    role_key = ""
+    membership_id = ""
+    school_id = _normalize_school_id(
+        payload.get("school_id")
+        or payload.get("school_uuid")
+        or payload.get("active_school_id")
+        or payload.get("current_school_id")
+    )
+
+    if not user:
+        principal = _fetch_supabase_principal(payload)
+        if principal:
+            user = _build_synthetic_user_from_supabase(principal)
+            auth_source = principal.get("auth_source") or "supabase"
+            role_key = str(principal.get("role_key") or "")
+            membership_id = str(principal.get("membership_id") or "")
+            if not school_id:
+                school_id = _normalize_school_id(principal.get("school_id"))
+
+    if not user:
+        logger.warning(
+            "auth.user_not_found",
+            extra={"sub": str(user_id_raw or ""), "email": str(payload.get("email") or "")},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user not found",
+        )
+
+    actor_role = str(
+        payload.get("role")
+        or role_key
+        or getattr(getattr(user, "role", None), "value", getattr(user, "role", ""))
+    ).strip().lower()
+    actor_name = str(
+        payload.get("full_name")
+        or payload.get("username")
+        or getattr(user, "full_name", None)
+        or getattr(user, "username", None)
+        or getattr(user, "email", None)
+        or ""
+    ).strip()
+    actor_email = str(payload.get("email") or getattr(user, "email", "") or "").strip()
+    actor_username = str(
+        payload.get("username")
+        or getattr(user, "username", None)
+        or getattr(user, "email", None)
+        or ""
+    ).strip()
+
+    principal = {
+        "user": user,
+        "actor": {
+            "role": actor_role,
+            "name": actor_name,
+            "email": actor_email,
+            "username": actor_username,
+            "user_id": str(user_id_raw or getattr(user, "id", "") or "").strip(),
+            "profile_id": str(getattr(user, "profile_id", None) or user_id_raw or getattr(user, "id", "") or "").strip(),
+            "school_id": school_id,
+            "membership_id": membership_id,
+            "auth_source": auth_source,
+        },
+    }
+    request.state.resolved_auth_principal = principal
+    return principal
+
+
 def build_actor_context(
     authorization: Optional[str],
 ) -> Dict[str, str]:
@@ -94,6 +363,7 @@ def build_actor_context(
             "user_id": "",
             "profile_id": "",
             "school_id": "",
+            "membership_id": "",
             "auth_source": "",
         }
 
@@ -111,6 +381,7 @@ def build_actor_context(
             or payload.get("current_school_id")
             or ""
         ).strip(),
+        "membership_id": str(payload.get("membership_id") or "").strip(),
         "auth_source": "jwt",
     }
 
@@ -229,38 +500,8 @@ def get_authenticated_user(
             detail="Invalid authentication token type",
         )
 
-    user_id_raw = payload.get("sub")
-    user = None
-
-    # Try integer user ID (locally-issued tokens)
-    try:
-        user_id = int(str(user_id_raw))
-        logger.info("auth.lookup.by_integer_id", extra={"user_id": user_id})
-        user = db.query(User).filter(User.id == user_id).first()
-    except (TypeError, ValueError):
-        logger.info("auth.lookup.sub_is_not_integer", extra={"sub": str(user_id_raw or "")})
-
-    # Fall back to email lookup (Supabase-issued tokens put email in claims)
-    if not user:
-        token_email = str(payload.get("email") or "").strip().lower()
-        if token_email:
-            logger.info("auth.lookup.by_email", extra={"email": token_email})
-            user = db.query(User).filter(func.lower(User.email) == token_email).first()
-        else:
-            logger.warning(
-                "auth.no_email_in_token",
-                extra={"sub": str(user_id_raw or "")},
-            )
-
-    if not user:
-        logger.warning(
-            "auth.user_not_found",
-            extra={"sub": str(user_id_raw or ""), "email": str(payload.get("email") or "")},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user not found",
-        )
+    principal = _resolve_request_principal(request, payload, db)
+    user = principal["user"]
 
     logger.info("auth.user_found", extra={"user_id": str(getattr(user, "id", "")), "email": str(getattr(user, "email", ""))[:40]})
 
@@ -296,6 +537,7 @@ def build_authenticated_actor_context(user: User) -> Dict[str, str]:
 def get_authenticated_actor_context(
     request: Request,
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
 ) -> Dict[str, str]:
     if request.method == "OPTIONS":
         return {
@@ -322,6 +564,18 @@ def get_authenticated_actor_context(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",
         )
+
+    payload = extract_token_payload(resolved_auth)
+    if payload:
+        try:
+            principal = _resolve_request_principal(request, payload, db)
+            resolved_actor = principal.get("actor") or {}
+            for key in ("role", "name", "email", "username", "user_id", "profile_id", "school_id", "membership_id", "auth_source"):
+                if resolved_actor.get(key):
+                    actor[key] = str(resolved_actor.get(key))
+        except HTTPException:
+            # Keep JWT-derived actor context available for routes that only need claims.
+            pass
 
     logger.info(
         "auth.actor_context_built",
