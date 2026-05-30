@@ -450,6 +450,7 @@ export interface AttendanceNotification {
   message: string;
   created_at?: string;
   is_read?: boolean;
+  notification_type?: string;
 }
 
 export interface AttendanceHoliday {
@@ -582,6 +583,7 @@ export interface BatchDayClassOption extends TeacherAttendanceContext {}
 export interface StaffAttendanceMarkingRow {
   staff_member_id: number;
   name: string;
+  staff_name?: string;
   staff_id?: string;
   department: string;
   designation?: string;
@@ -665,10 +667,11 @@ export interface AttendanceReportResponse {
   generated_at?: string;
   rows: AttendanceReportRow[];
   summary?: Record<string, string | number>;
+  total_records?: number;
 }
 
 // ==================== Inventory ====================
-export type MaterialUnitType = 'book' | 'notebook' | 'sheet' | 'kit' | 'piece' | 'set' | 'box';
+export type MaterialUnitType = 'book' | 'notebook' | 'sheet' | 'kit' | 'piece' | 'set' | 'box' | 'material' | 'other';
 export type StockInType = 'purchase' | 'return' | 'adjustment' | 'donation';
 
 export interface Supplier {
@@ -694,6 +697,7 @@ export interface InventorySet {
   subject_id: number;
   name: string;
   is_active: boolean;
+  subject_name?: string;
 }
 
 export interface InventoryVolume {
@@ -703,9 +707,13 @@ export interface InventoryVolume {
   volume_number: string;
   name?: string;
   is_active: boolean;
+  subject_name?: string;
+  set_name?: string;
 }
 
 export interface InventoryCatalogSubject {
+  id?: number;
+  name?: string;
   subject: InventorySubject;
   sets: InventorySet[];
   volumes: InventoryVolume[];
@@ -788,6 +796,9 @@ export interface InventoryHistoryEntry {
   date?: string;
   actor?: string;
   notes?: string;
+  entry_kind?: string;
+  entry_id?: number;
+  counterparty?: string;
   [key: string]: unknown;
 }
 
@@ -798,6 +809,11 @@ export interface InventoryDashboard {
   total_stock_out?: number;
   low_stock_items?: MaterialItem[];
   recent_activity?: InventoryHistoryEntry[];
+  total_materials_registered?: number;
+  total_books_in_inventory?: number;
+  total_books_distributed?: number;
+  current_stock_available?: number;
+  low_stock_alert_count?: number;
   [key: string]: unknown;
 }
 
@@ -810,6 +826,7 @@ export interface InventoryReportResponse {
   generated_at?: string;
   rows: InventoryReportRow[];
   summary?: Record<string, string | number>;
+  total_records?: number;
 }
 
 // ==================== EduPay ====================
@@ -844,6 +861,7 @@ export interface EduPayFeeStructure {
   late_fee_rule?: string;
   description?: string;
   is_active?: boolean;
+  assigned_students?: number;
 }
 
 export interface EduPayAssignment {
@@ -859,6 +877,8 @@ export interface EduPayAssignment {
   due_date?: string;
   status: EduPayAssignmentStatus;
   created_at?: string;
+  late_fee_applied?: number;
+  installment_label?: string;
 }
 
 export interface EduPayPayment {
@@ -871,6 +891,7 @@ export interface EduPayPayment {
   transaction_reference?: string;
   receipt_number?: string;
   created_at?: string;
+  verification_status?: string;
 }
 
 export interface EduPayDashboard {

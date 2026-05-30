@@ -1,7 +1,6 @@
-// @ts-nocheck
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, ChevronLeft, Eye, Pencil, Search, Trash2, X } from 'lucide-react';
+import { Eye, Search, Trash2, X } from 'lucide-react';
 import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
 import { useAppStore } from '@store/app';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
@@ -10,31 +9,13 @@ import { getSafeStudentClassName, looksLikeAcademicBatchName } from '@utils/acad
 import {
   readEduPayAdmissionRequests,
   readEduPayStudentProfiles,
-  upsertEduPayAdmissionRequest,
-  type EduPayAdmissionSnapshot,
 } from '@utils/eduPayAdmissions';
 
 const inputClass =
   'w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-200/70';
-const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500';
 const detailLabelClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400';
 const DEFAULT_SESSION_OPTIONS = ['Apr 2026 - Mar 2027', 'Apr 2027 - Mar 2028'];
 const BULK_DELETE_STATUS_AUTO_HIDE_MS = 4000;
-
-type EditFormState = {
-  name: string;
-  rollNumber: string;
-  fatherName: string;
-  batch: string;
-  className: string;
-  section: string;
-  academicSession: string;
-  email: string;
-  phone: string;
-  specialNeeds: string;
-  isActive: boolean;
-  photoDataUrl: string;
-};
 
 const safeText = (value: unknown) => (value == null ? '' : String(value).trim());
 const getStudentClassLabel = (student: Pick<Student, 'class_name' | 'section' | 'batch'>) =>
@@ -75,21 +56,6 @@ const normalizeStudent = (student: any): Student => ({
   is_active: Boolean(student?.is_active ?? student?.isActive ?? true),
 });
 
-const toEditForm = (student: Student): EditFormState => ({
-  name: student.name,
-  rollNumber: student.roll_number,
-  fatherName: student.father_name || '',
-  batch: student.batch,
-  className: student.class_name || '',
-  section: student.section || '',
-  academicSession: student.academic_session || '',
-  email: student.email || '',
-  phone: student.phone || '',
-  specialNeeds: student.special_needs || '',
-  isActive: student.is_active,
-  photoDataUrl: student.photoDataUrl || '',
-});
-
 function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student; className?: string }) {
   const photo = student.photoDataUrl;
   if (photo) {
@@ -114,8 +80,6 @@ export default function StudentDirectory() {
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
   const [migrationUnavailable, setMigrationUnavailable] = useState(false);
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-  const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [viewingDetails, setViewingDetails] = useState<StudentDetailsState | null>(null);
   const [saving, setSaving] = useState(false);
   const [studentsLoading, setStudentsLoading] = useState(false);
@@ -260,10 +224,6 @@ export default function StudentDirectory() {
 
   console.log('[StudentDirectory]', 'RENDER_ROWS', displayedStudents.length);
 
-  const openEdit = (student: Student) => {
-    setEditingStudent(student);
-    setEditForm(toEditForm(student));
-  };
 
   const openDetails = async (student: Student) => {
     const requests = readEduPayAdmissionRequests();
@@ -296,114 +256,11 @@ export default function StudentDirectory() {
     }
   };
 
-  const closeEdit = () => {
-    setEditingStudent(null);
-    setEditForm(null);
-  };
-
-  const handleEditPhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setEditForm((current) => (current ? { ...current, photoDataUrl: reader.result } : current));
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!editingStudent || !editForm) return;
-    if (!editForm.name.trim() || !editForm.rollNumber.trim() || !editForm.batch.trim()) {
-      showMessage('Name, roll number aur batch required hain.', 'error');
-      return;
-    }
-
-    try {
-      setSaving(true);
-      const trimmedName = editForm.name.trim();
-      const trimmedRollNumber = editForm.rollNumber.trim();
-      const trimmedBatch = editForm.batch.trim();
-      const trimmedClassName = editForm.className.trim();
-      const trimmedSection = editForm.section.trim();
-      const trimmedSession = editForm.academicSession.trim();
-      const trimmedFatherName = editForm.fatherName.trim();
-      const trimmedEmail = editForm.email.trim();
-      const trimmedPhone = editForm.phone.trim();
-      const trimmedSpecialNeeds = editForm.specialNeeds.trim();
-
-      await apiService.updateStudent(editingStudent.id, {
-        name: trimmedName,
-        roll_number: trimmedRollNumber,
-        father_name: (trimmedFatherName || null) as unknown as string | undefined,
-        batch: trimmedBatch,
-        class_name: (trimmedClassName || null) as unknown as string | undefined,
-        section: (trimmedSection || null) as unknown as string | undefined,
-        academic_session: (trimmedSession || null) as unknown as string | undefined,
-        email: (trimmedEmail || null) as unknown as string | undefined,
-        phone: (trimmedPhone || null) as unknown as string | undefined,
-        special_needs: (trimmedSpecialNeeds || null) as unknown as string | undefined,
-        is_active: editForm.isActive,
-        photoDataUrl: editForm.photoDataUrl.trim(),
-      });
-      const existingRequest = readEduPayAdmissionRequests().find(
-        (item) => item.linkedStudentId === editingStudent.id || item.linkedStudentRollNumber === editingStudent.roll_number,
-      );
-      const existingDetails = (existingRequest?.details || {}) as Partial<EduPayAdmissionSnapshot>;
-      const nameParts = trimmedName.split(/\s+/).filter(Boolean);
-      const nextSnapshot: EduPayAdmissionSnapshot = {
-        ...(existingDetails as EduPayAdmissionSnapshot),
-        admissionId: safeText(existingDetails.admissionId),
-        academicYear: trimmedSession || safeText(existingDetails.academicYear),
-        course: (existingDetails.course as EduPayAdmissionSnapshot['course']) || '',
-        program: (existingDetails.program as EduPayAdmissionSnapshot['program']) || '',
-        managedBatch: trimmedBatch,
-        className: trimmedClassName,
-        section: trimmedSection,
-        rollNumber: trimmedRollNumber,
-        firstName: nameParts[0] || safeText(existingDetails.firstName),
-        middleName:
-          nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : safeText(existingDetails.middleName) || undefined,
-        lastName:
-          nameParts.length > 1 ? nameParts[nameParts.length - 1] : safeText(existingDetails.lastName) || undefined,
-        fullName: trimmedName,
-        email: trimmedEmail,
-        phone: trimmedPhone,
-        fatherName: trimmedFatherName,
-        specialNeeds: trimmedSpecialNeeds,
-        priorityContact:
-          existingDetails.priorityContact === 'mother' || existingDetails.priorityContact === 'guardian'
-            ? existingDetails.priorityContact
-            : 'father',
-        photoDataUrl: editForm.photoDataUrl.trim() || undefined,
-      };
-      upsertEduPayAdmissionRequest({
-        source: 'admin_request',
-        status: existingRequest?.status || 'processed',
-        linkedStudentId: editingStudent.id,
-        linkedStudentRollNumber: trimmedRollNumber,
-        details: nextSnapshot,
-      });
-      await loadStudents();
-      bumpStudentRefreshToken();
-      closeEdit();
-      showMessage('Student updated successfully.');
-    } catch (error: any) {
-      showMessage(error?.response?.data?.detail || 'Student update failed.', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDeleteStudent = async (student: Student) => {
     if (!window.confirm(`${student.name} ko delete karna hai?`)) return;
     try {
       await apiService.deleteStudent(student.id);
-      removeStudent(student.id);
+      removeStudent(Number(student.id));
       bumpStudentRefreshToken();
       showMessage('Student deleted successfully.');
     } catch (error: any) {
@@ -435,7 +292,7 @@ export default function StudentDirectory() {
       for (const [index, student] of filteredStudents.entries()) {
         try {
           await apiService.deleteStudent(student.id);
-          removeStudent(student.id);
+          removeStudent(Number(student.id));
           successCount += 1;
         } catch {
           failureCount += 1;

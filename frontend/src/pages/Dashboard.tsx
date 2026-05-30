@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +7,6 @@ import {
   Briefcase,
   Building,
   Calendar,
-  CheckCircle2,
   ClipboardCheck,
   FileText,
   GraduationCap,
@@ -640,15 +638,13 @@ export default function Dashboard() {
   ].filter((item) => isAdmin || hasPermission(item.key));
 
   const staffPresent = attendanceToday.staffPresent + attendanceToday.staffLate + attendanceToday.staffHalfDay;
-  const staffNotMarked = Math.max(0, stats.totalTeachers - (staffPresent + attendanceToday.staffAbsent));
+
   const studentPresent = attendanceToday.studentPresent + attendanceToday.studentLate;
   const studentPending = Math.max(0, stats.totalStudents - attendanceToday.studentMarked);
   const incomeAmount = eduPaySummary.totalCollected;
-  const expenseAmount = eduPaySummary.overdueAmount || 0;
+
   const todaysCollection = eduPaySummary.todayCollection;
   const pendingFees = eduPaySummary.pendingAmount;
-  const totalCapacity = Math.max(stats.totalRooms * 50, stats.totalStudents);
-  const occupancyPercent = totalCapacity ? Math.round((stats.totalStudents / totalCapacity) * 100) : 0;
   const trendValues = Array.isArray(eduPayDashboardData?.collection_trend) ? eduPayDashboardData.collection_trend : [];
   const trendMax = Math.max(...trendValues.map((item: any) => Number(item?.amount || 0)), 1);
 
@@ -872,7 +868,7 @@ export default function Dashboard() {
           />
           <section className="rounded-[1.2rem] bg-[#f3e6f7] p-3 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.55)]">
             <div className="flex items-center justify-between gap-4">
-              <h3 className="text-lg font-bold text-slate-900">Today's Attendance</h3>
+              <h3 className="text-lg font-bold text-slate-900">Today&apos;s Attendance</h3>
               <ClipboardCheck className="h-4 w-4 text-slate-500" />
             </div>
             <div className="mt-3 space-y-2.5">
@@ -912,7 +908,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-700">
-                  <span>Today's Student Attendance</span>
+                  <span>Today&apos;s Student Attendance</span>
                   <span>{studentsUnavailable ? 'Data temporarily unavailable' : `${attendanceToday.studentMarked}/${stats.totalStudents}`}</span>
                 </div>
                 <div className="flex h-3 overflow-hidden rounded-full bg-slate-200">
@@ -1008,7 +1004,7 @@ export default function Dashboard() {
           <SectionCard title="Fee Management">
             <div className="space-y-2 text-[11px]">
               <div className="rounded-[1rem] bg-slate-50 p-2.5">
-                <p className="text-slate-500">Today's Collection</p>
+                <p className="text-slate-500">Today&apos;s Collection</p>
                 <p className="mt-1 text-base font-bold text-slate-900">{formatCompactCurrency(todaysCollection)}</p>
               </div>
               <div className="rounded-[1rem] bg-slate-50 p-2.5">

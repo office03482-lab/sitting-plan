@@ -707,7 +707,7 @@ export default function InvigilatorManagement() {
                           <p className="mt-1 text-xs text-gray-600">
                             Room: {assign.room?.name || rooms.find((room) => room.id === assign.room_id)?.name || 'Unknown Room'}
                           </p>
-                          {assign.notes && <p className="mt-2 text-xs italic text-gray-500">"{assign.notes}"</p>}
+                           {assign.notes && <p className="mt-2 text-xs italic text-gray-500">&quot;{assign.notes}&quot;</p>}
                         </div>
                         <button
                           onClick={() => handleRemoveAssignment(assign.id)}
@@ -757,7 +757,7 @@ export default function InvigilatorManagement() {
                           <p className="font-semibold text-slate-900">{assign.invigilator?.name || 'Unknown Invigilator'}</p>
                           <p className="text-sm text-slate-500">{assign.invigilator?.staff_id || 'No Staff ID'}</p>
                           <p className="text-xs text-slate-500">{assign.invigilator?.department || assign.invigilator?.designation || 'Department not set'}</p>
-                          {assign.notes ? <p className="mt-2 text-xs italic text-slate-500">"{assign.notes}"</p> : null}
+                           {assign.notes ? <p className="mt-2 text-xs italic text-slate-500">&quot;{assign.notes}&quot;</p> : null}
                         </div>
                       ))}
                     </div>

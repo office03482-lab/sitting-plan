@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
 import {
@@ -12,7 +11,6 @@ import {
   applyMonthInputValue,
   getMonthRange,
 } from '../modules/attendance/utils/dateUtils';
-import { toArray } from '../modules/attendance/utils/commonUtils';
 import {
   readStudentCalendarCache,
   writeStudentCalendarCache,
@@ -39,7 +37,7 @@ export default function StudentCalendarPanel({
 }: StudentCalendarPanelProps) {
   const [calendarDate, setCalendarDate] = useState(new Date().toISOString().slice(0, 10));
   const [calendarPayload, setCalendarPayload] = useState<any | null>(null);
-  const [usingMonthFallback, setUsingMonthFallback] = useState(false);
+  const [, setUsingMonthFallback] = useState(false);
 
   const calendarCacheRef = useRef(
     new Map<string, { timestamp: number; data: any }>()

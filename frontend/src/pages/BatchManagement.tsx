@@ -1149,7 +1149,7 @@ const BatchManagement: React.FC = () => {
             {!deleteError && (
               <>
                 <p className="text-slate-300 mb-4">
-                  Are you sure you want to delete "{selectedBatch.name}"?
+                  Are you sure you want to delete &quot;{selectedBatch.name}&quot;?
                 </p>
                 {selectedBatch.student_count! > 0 && (
                   <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/50 rounded text-yellow-300 text-sm">

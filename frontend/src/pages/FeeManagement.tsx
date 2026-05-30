@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode, type SelectHTMLAttributes } from 'react';
 import {
   Bell,
@@ -14,7 +13,6 @@ import {
   Receipt,
   Wallet,
   BarChart3,
-  FileClock,
   Trash2,
   Upload,
   UsersRound,
@@ -70,16 +68,6 @@ type AdmissionMode = 'request' | 'direct';
 type StudentWorkspaceView = 'admission' | 'ledger';
 type PaymentWorkspaceView = 'collector' | 'links' | 'transactions';
 type AdmissionDeskStep = 'details' | 'finance_payment';
-type PlannerPaymentOption = {
-  id: string;
-  studentProfileId: string;
-  studentName: string;
-  admissionNo: string;
-  installmentLabel: string;
-  amountDue: number;
-  dueDate?: string;
-};
-
 type EduPaySideItem = {
   id: string;
   label: string;
@@ -391,10 +379,10 @@ export default function FeeManagement() {
   const [paymentWorkspaceView, setPaymentWorkspaceView] = useState<PaymentWorkspaceView>('collector');
   const [admissionDeskStep, setAdmissionDeskStep] = useState<AdmissionDeskStep>('details');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [, setRefreshing] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string } | null>(null);
 
-  const [dashboard, setDashboard] = useState<EduPayDashboard | null>(null);
+  const [, setDashboard] = useState<EduPayDashboard | null>(null);
   const [students, setStudents] = useState<EduPayStudent[]>([]);
   const [feeStructures, setFeeStructures] = useState<EduPayFeeStructure[]>([]);
   const [assignments, setAssignments] = useState<EduPayAssignment[]>([]);
@@ -904,7 +892,7 @@ export default function FeeManagement() {
   const plannerPaymentOptions = useMemo(() => {
     const profiles = ensureArray(readEduPayStudentProfiles());
 
-    return profiles.flatMap((profile) => {
+    return profiles.flatMap((profile: any) => {
       const financePlan = profile.details.financePlan;
       if (!financePlan?.installments?.length) return [];
 
@@ -1968,7 +1956,7 @@ export default function FeeManagement() {
                   <span>Status</span>
                 </div>
                 <div className="divide-y divide-slate-100">
-                  {filteredStudents.map((student) => {
+                  {filteredStudents.map((student: any) => {
                     const meta = getStudentMeta(student);
                     return (
                     <div key={student.id} className="grid min-w-[1180px] grid-cols-[1.25fr_1fr_0.85fr_0.8fr_0.95fr_0.9fr_0.9fr_0.85fr_0.95fr_0.95fr_0.9fr] gap-4 px-4 py-4 text-sm text-slate-700">

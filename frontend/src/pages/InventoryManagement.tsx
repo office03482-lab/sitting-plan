@@ -1,11 +1,9 @@
-// @ts-nocheck
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   BookOpen,
   Boxes,
-  ChevronDown,
   Download,
   FileText,
   History,
@@ -13,7 +11,6 @@ import {
   Send,
   Truck,
   Package,
-  Upload,
   X,
 } from 'lucide-react';
 
@@ -165,7 +162,6 @@ const successButtonClass = 'rounded-xl bg-gradient-to-r from-emerald-500 to-emer
 const infoButtonClass = 'rounded-lg bg-gradient-to-r from-blue-500 to-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:from-blue-600 hover:to-blue-700';
 const warningButtonClass = 'rounded-lg bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-200';
 const dangerButtonClass = 'rounded-lg bg-rose-100 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-200';
-const masterTabButtonClass = 'rounded-xl px-4 py-2 text-sm font-semibold transition';
 
 const inventoryRequestLabels: Record<string, string> = {
   dashboard: 'dashboard',
@@ -3293,43 +3289,6 @@ function StatCard({
   );
 }
 
-function CollapsiblePanel({
-  title,
-  description,
-  badge,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  description?: string;
-  badge?: string;
-  defaultOpen?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <details open={defaultOpen} className="group rounded-[2rem] bg-white shadow-xl">
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-4 rounded-[2rem] px-6 py-5">
-        <div>
-          <h3 className="text-xl font-semibold text-slate-900">{title}</h3>
-          {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
-        </div>
-        <div className="flex items-center gap-3">
-          {badge && (
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-              {badge}
-            </span>
-          )}
-          <span className="rounded-full bg-slate-100 p-2 text-slate-600 transition group-open:rotate-180">
-            <ChevronDown className="h-4 w-4" />
-          </span>
-        </div>
-      </summary>
-      <div className="border-t border-slate-100 px-6 pb-6 pt-2">
-        {children}
-      </div>
-    </details>
-  );
-}
 
 function MiniActionCard({
   title,

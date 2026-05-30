@@ -1,13 +1,10 @@
-// @ts-nocheck
-import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SelectHTMLAttributes } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Bell,
   CalendarDays,
   ChevronDown,
   ClipboardCheck,
-  Search,
   UserCheck,
   Users,
 } from 'lucide-react';
@@ -31,8 +28,6 @@ import type {
   StaffAttendanceRecord,
   StaffAttendanceStatus,
   StaffDashboard,
-  StudentAttendanceRecord,
-  TeacherAttendanceContext,
 } from '@types';
 
 import MarkStudentAttendance from './MarkStudentAttendance';
@@ -46,11 +41,8 @@ import {
   statusButtonBase,
   deleteButtonClass,
   deleteAllButtonClass,
-  studentRecordDeleteButtonClass,
-  studentRecordStatusBaseClass,
   staffStatusClass,
   staffCalendarShadeClass,
-  studentCalendarShadeClass,
 } from '../modules/attendance/utils/styleUtils';
 import {
   formatDate,
@@ -62,7 +54,6 @@ import {
   parseCalendarDate,
   dateToKeyFromDate,
   toDateKey,
-  getCurrentTimeHHMM,
 } from '../modules/attendance/utils/dateUtils';
 import {
   toArray,
@@ -70,15 +61,12 @@ import {
   parseCommaSeparatedValues,
   getUniqueDepartmentOptions,
   isTeachingStaffMember,
-  normalizeClassNameKey,
-  normalizeBatchComparisonKey,
 } from '../modules/attendance/utils/commonUtils';
 import {
   normalizeOverview,
   normalizeStaffDashboard,
-  buildStaffDashboardFromRecords,
 } from '../modules/attendance/utils/overviewUtils';
-import { studentMatchesBatchSelection, getAttendanceRecordBatchLabel } from '../modules/attendance/utils/batchUtils';
+
 
 type TabKey = 'overview' | 'student' | 'staff' | 'leaves' | 'reports';
 
@@ -100,7 +88,6 @@ const initialLeaveForm = {
 };
 
 function AttendanceManagementContent() {
-  const navigate = useNavigate();
   const location = useLocation();
   const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
@@ -1178,6 +1165,15 @@ function AttendanceManagementContent() {
     }
   };
 
+  const downloadBlob = (blob: Blob, filename: string = 'download') => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleExportReport = async (format: 'excel' | 'pdf') => {
     try {
       const response = await apiService.exportAttendanceReport({
@@ -2044,29 +2040,6 @@ function AttendanceManagementContent() {
           </div>
         ) : null}
       </main>
-    </div>
-  );
-}
-
-function SelectField({
-  children,
-  className = '',
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <div className="relative w-full overflow-hidden rounded-2xl border border-sky-200 bg-sky-50 shadow-sm">
-      <select
-        {...props}
-        className={`w-full cursor-pointer appearance-none bg-transparent px-4 py-3 pr-16 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:bg-white focus:ring-4 focus:ring-slate-200/70 ${className}`.trim()}
-        style={{
-          backgroundImage: 'none',
-        }}
-      >
-        {children}
-      </select>
-      <div className="pointer-events-none absolute inset-y-0 right-0 flex w-12 items-center justify-center border-l border-sky-200 bg-white/80 text-sky-700">
-        <ChevronDown className="h-4 w-4" />
-      </div>
     </div>
   );
 }

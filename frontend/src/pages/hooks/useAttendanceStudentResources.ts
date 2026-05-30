@@ -8,7 +8,7 @@ import {
 
 type UseAttendanceStudentResourcesOptions = {
   canRunAttendanceRequests: boolean;
-  currentSchoolId: number;
+  currentSchoolId: number | string;
   overviewSubjectOptions?: AttendanceSubject[];
 };
 
@@ -35,7 +35,7 @@ export function useAttendanceStudentResources({
 
     const loadPromise = (async () => {
       const payload = await fetchAttendanceStudentResources(
-        currentSchoolId,
+        Number(currentSchoolId),
         subjects.length ? subjects : overviewSubjectOptions,
       );
       setStudents(payload.students);
@@ -65,7 +65,7 @@ export function useAttendanceStudentResources({
     const refreshPromise = (async () => {
       lastManagedBatchRefreshAtRef.current = Date.now();
       try {
-        const nextManagedBatches = await fetchManagedAttendanceBatches(currentSchoolId, students);
+        const nextManagedBatches = await fetchManagedAttendanceBatches(Number(currentSchoolId), students);
         setManagedBatches(nextManagedBatches);
       } catch {
         // Keep current options if refresh fails.

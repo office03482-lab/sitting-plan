@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
 import type { Batch, AttendanceStudent, StudentAttendanceRecord } from '@types';
@@ -13,10 +12,7 @@ import { formatDate, toDateKey } from '../modules/attendance/utils/dateUtils';
 import {
   toArray,
   normalizeClassNameKey,
-  normalizeBatchComparisonKey,
   buildAttendanceBatchOptionNames,
-  getManagedAttendanceCategory,
-  buildAttendanceClassOptionNames,
 } from '../modules/attendance/utils/commonUtils';
 import {
   getAttendanceRecordBatchLabel,
@@ -57,7 +53,6 @@ export default function StudentRecordsPanel({
   const [records, setRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filters, setFilters] = useState({
-    record_scope: 'batch' as 'batch' | 'class',
     record_batch_name: '',
     record_class_name: '',
     recordStudentName: '',
@@ -70,11 +65,6 @@ export default function StudentRecordsPanel({
   );
   const recordsRequestKeyRef = useRef('');
   const recordsRequestPromiseRef = useRef<Promise<void> | null>(null);
-
-  const recordBatchOptions = useMemo(
-    () => (filters.record_scope === 'class' ? managedClassOptions : managedBatchOptions),
-    [managedBatchOptions, managedClassOptions, filters.record_scope]
-  );
 
   const recordBatchParts = useMemo(
     () => {

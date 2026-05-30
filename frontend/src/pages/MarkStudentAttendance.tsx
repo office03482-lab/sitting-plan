@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuthStore } from '@store/auth';
@@ -23,13 +22,9 @@ import {
   getCurrentTimeHHMM,
 } from '../modules/attendance/utils/dateUtils';
 import {
-  getManagedAttendanceCategory,
   normalizeClassNameKey,
-  normalizeBatchComparisonKey,
   toArray,
   buildAttendanceBatchOptionNames,
-  buildAttendanceClassOptionNames,
-  getAttendanceStudentBatchName,
 } from '../modules/attendance/utils/commonUtils';
 import {
   batchMatchesClassSelection,
@@ -66,7 +61,6 @@ export default function MarkStudentAttendance({
   const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, session } = useAuth();
   const canRunAttendanceRequests = authReady && sessionReady && !!session;
-  const currentSchoolId = user?.school_id || 1;
 
   const [filters, setFilters] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -95,11 +89,6 @@ export default function MarkStudentAttendance({
       (item: string) => batchMatchesClassSelection(item, filters.attendance_class_name)
     );
   }, [managedBatchOptions, filters.attendance_class_name, students]);
-
-  const batchOptions = useMemo(
-    () => (filters.attendance_scope === 'class' ? managedClassOptions : markingBatchOptions),
-    [managedClassOptions, markingBatchOptions, filters.attendance_scope]
-  );
 
   const selectedBatchParts = useMemo(
     () => inferAttendanceSelectionParts(filters.batch_name, filters.attendance_scope, students),
@@ -219,10 +208,6 @@ export default function MarkStudentAttendance({
 
   const getApiErrorMessage = (error: any, fallback: string) =>
     isRequestCanceled(error) ? '' : error?.response?.data?.detail || error?.message || fallback;
-
-  const upsertAttendanceSubject = (context: TeacherAttendanceContext | null | undefined) => {
-    // subjects are managed by the parent; this is a no-op in the panel
-  };
 
   const getAttendanceContextOptionValue = useCallback(
     (context: TeacherAttendanceContext | null | undefined) =>

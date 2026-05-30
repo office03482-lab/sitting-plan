@@ -1,7 +1,6 @@
-// @ts-nocheck
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
-import type { AttendanceStudent, StudentAttendanceDashboardSummary } from '@types';
+import type { AttendanceStudent, StudentAttendanceDashboardBucket, StudentAttendanceDashboardSummary } from '@types';
 import {
   sectionClass,
   inputClass,
@@ -115,7 +114,7 @@ export default function StudentDashboardPanel({
 
   const todayBatchWiseSummary = useMemo(
     () =>
-      toArray(dashboardSummary?.batch_summary)
+      toArray<StudentAttendanceDashboardBucket>(dashboardSummary?.batch_summary)
         .map((item) => ({
           batch_name: String(item.batch_name || item.label || '').trim(),
           present: Number(item.present || 0),

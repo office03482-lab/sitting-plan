@@ -666,6 +666,7 @@ class ApiService {
     batch_name?: string;
     class_name?: string;
     section?: string;
+    student_name?: string;
     date_from?: string;
     date_to?: string;
     skip?: number;
@@ -700,6 +701,7 @@ class ApiService {
     batch_name?: string;
     class_name?: string;
     section?: string;
+    student_name?: string;
     date_from?: string;
     date_to?: string;
   } = {}) {
@@ -754,6 +756,8 @@ class ApiService {
     school_id?: string | number;
     department?: string;
     target_date?: string;
+    date_from?: string;
+    date_to?: string;
   } = {}) {
     return this.api.get('/attendance/staff-dashboard', { params });
   }
@@ -960,6 +964,182 @@ class ApiService {
 
   async downloadSeatingTemplate() {
     return this.api.get('/seating/template/download', { responseType: 'blob' });
+  }
+
+  // ==================== EduPay ====================
+
+  async listEduPayStudents() {
+    return this.api.get('/edupay/students');
+  }
+
+  async listEduPayFeeStructures() {
+    return this.api.get('/edupay/fee-structures');
+  }
+
+  async listEduPayAssignments() {
+    return this.api.get('/edupay/assignments');
+  }
+
+  async listEduPayPayments() {
+    return this.api.get('/edupay/payments');
+  }
+
+  async getEduPayParentPortal() {
+    return this.api.get('/edupay/parent-portal');
+  }
+
+  async createEduPayStudent(data: Record<string, unknown>) {
+    return this.api.post('/edupay/students', data);
+  }
+
+  async createEduPayFeeStructure(data: Record<string, unknown>) {
+    return this.api.post('/edupay/fee-structures', data);
+  }
+
+  async createEduPayPayment(data: Record<string, unknown>) {
+    return this.api.post('/edupay/payments', data);
+  }
+
+  // ==================== Inventory ====================
+
+  async listMaterials(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/materials', { params });
+  }
+
+  async createMaterial(data: Record<string, unknown>) {
+    return this.api.post('/inventory/materials', data);
+  }
+
+  async updateMaterial(materialId: string | number, data: Record<string, unknown>) {
+    return this.api.put(`/inventory/materials/${materialId}`, data);
+  }
+
+  async deleteMaterial(materialId: string | number) {
+    return this.api.delete(`/inventory/materials/${materialId}`);
+  }
+
+  async listSuppliers(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/suppliers', { params });
+  }
+
+  async createSupplier(data: Record<string, unknown>) {
+    return this.api.post('/inventory/suppliers', data);
+  }
+
+  async updateSupplier(supplierId: string | number, data: Record<string, unknown>) {
+    return this.api.put(`/inventory/suppliers/${supplierId}`, data);
+  }
+
+  async deleteSupplier(supplierId: string | number) {
+    return this.api.delete(`/inventory/suppliers/${supplierId}`);
+  }
+
+  async listStockIn(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/stock-in', { params });
+  }
+
+  async createStockIn(data: Record<string, unknown>) {
+    return this.api.post('/inventory/stock-in', data);
+  }
+
+  async deleteStockIn(stockInId: string | number) {
+    return this.api.delete(`/inventory/stock-in/${stockInId}`);
+  }
+
+  async listStockOut(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/stock-out', { params });
+  }
+
+  async createStockOut(data: Record<string, unknown>) {
+    return this.api.post('/inventory/stock-out', data);
+  }
+
+  async deleteStockOut(stockOutId: string | number) {
+    return this.api.delete(`/inventory/stock-out/${stockOutId}`);
+  }
+
+  async listStudentIssues(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/student-issues', { params });
+  }
+
+  async createStudentIssues(data: Record<string, unknown>) {
+    return this.api.post('/inventory/student-issues', data);
+  }
+
+  async deleteStudentIssue(issueId: string | number) {
+    return this.api.delete(`/inventory/student-issues/${issueId}`);
+  }
+
+  async listInventorySubjects(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/subjects', { params });
+  }
+
+  async createInventorySubject(data: Record<string, unknown>) {
+    return this.api.post('/inventory/subjects', data);
+  }
+
+  async updateInventorySubject(subjectId: string | number, data: Record<string, unknown>) {
+    return this.api.put(`/inventory/subjects/${subjectId}`, data);
+  }
+
+  async deleteInventorySubject(subjectId: string | number) {
+    return this.api.delete(`/inventory/subjects/${subjectId}`);
+  }
+
+  async listInventorySets(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/sets', { params });
+  }
+
+  async createInventorySet(data: Record<string, unknown>) {
+    return this.api.post('/inventory/sets', data);
+  }
+
+  async updateInventorySet(setId: string | number, data: Record<string, unknown>) {
+    return this.api.put(`/inventory/sets/${setId}`, data);
+  }
+
+  async deleteInventorySet(setId: string | number) {
+    return this.api.delete(`/inventory/sets/${setId}`);
+  }
+
+  async listInventoryVolumes(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/volumes', { params });
+  }
+
+  async createInventoryVolume(data: Record<string, unknown>) {
+    return this.api.post('/inventory/volumes', data);
+  }
+
+  async updateInventoryVolume(volumeId: string | number, data: Record<string, unknown>) {
+    return this.api.put(`/inventory/volumes/${volumeId}`, data);
+  }
+
+  async deleteInventoryVolume(volumeId: string | number) {
+    return this.api.delete(`/inventory/volumes/${volumeId}`);
+  }
+
+  async getInventoryCatalog(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/catalog', { params });
+  }
+
+  async downloadInventoryMaterialTemplate() {
+    return this.api.get('/inventory/materials/template', { responseType: 'blob' });
+  }
+
+  async importInventoryMaterials(formData: FormData) {
+    return this.api.post('/inventory/materials/import', formData);
+  }
+
+  async getMaterialHistory(materialId: string | number) {
+    return this.api.get(`/inventory/materials/${materialId}/history`);
+  }
+
+  async getInventoryReport(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/reports/data', { params });
+  }
+
+  async exportInventoryReport(params?: Record<string, unknown>) {
+    return this.api.get('/inventory/reports/export', { params, responseType: 'blob' });
   }
 }
 
