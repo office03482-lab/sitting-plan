@@ -9,6 +9,7 @@ from typing import Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -120,6 +121,31 @@ def get_actor_context(
     return build_actor_context(authorization)
 
 
+def _resolve_authorization_header(request: Request, di_header: Optional[str]) -> Optional[str]:
+    """Resolve Authorization header from FastAPI DI or fall back to raw request headers.
+
+    FastAPI's Header() dependency can miss the header if middleware transforms the
+    ASGI scope.  Always fall back to request.headers.get() for robustness.
+    """
+    raw = request.headers.get("Authorization") or request.headers.get("authorization") or ""
+    di = (di_header or "").strip()
+
+    logger.info(
+        "auth.header_resolve",
+        extra={
+            "di_value_preview": di[:50] if di else "(empty)",
+            "raw_value_preview": raw[:50] if raw else "(empty)",
+            "di_present": bool(di),
+            "raw_present": bool(raw),
+            "match": di == raw,
+        },
+    )
+    # Trust the raw header over FastAPI DI (more reliable).
+    if raw:
+        return raw
+    return di if di else None
+
+
 def get_authenticated_user(
     request: Request,
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
@@ -139,55 +165,110 @@ def get_authenticated_user(
             is_verified=True,
         )
 
-    auth_header_present = bool((authorization or "").strip())
-    if not auth_header_present:
+    resolved_auth = _resolve_authorization_header(request, authorization)
+
+    if not resolved_auth:
+        logger.warning(
+            "auth.missing_header",
+            extra={
+                "path": str(request.url.path),
+                "method": request.method,
+                "all_headers": {k: v[:60] for k, v in request.headers.items()},
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization header",
         )
 
-    payload = extract_token_payload(authorization)
+    auth_header_present = bool(resolved_auth.strip())
+    if not auth_header_present:
+        logger.warning(
+            "auth.empty_header",
+            extra={
+                "path": str(request.url.path),
+                "method": request.method,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization header",
+        )
+
+    parts = resolved_auth.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        logger.warning(
+            "auth.bad_header_format",
+            extra={
+                "path": str(request.url.path),
+                "preview": resolved_auth[:60],
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format",
+        )
+
+    token = parts[1]
+    logger.info("auth.token_extracted", extra={"preview": token[:30] + "..."})
+
+    payload = decode_token(token)
     if not payload:
+        logger.warning("auth.decode_failed", extra={"path": str(request.url.path)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token",
         )
 
+    logger.info("auth.decode_succeeded", extra={"sub": str(payload.get("sub") or ""), "email": str(payload.get("email") or "")[:40]})
+
     if payload.get("type") not in {None, "access"}:
+        logger.warning("auth.wrong_token_type", extra={"type": str(payload.get("type"))})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token type",
         )
 
     user_id_raw = payload.get("sub")
+    user = None
+
+    # Try integer user ID (locally-issued tokens)
     try:
         user_id = int(str(user_id_raw))
+        logger.info("auth.lookup.by_integer_id", extra={"user_id": user_id})
+        user = db.query(User).filter(User.id == user_id).first()
     except (TypeError, ValueError):
-        logger.warning(
-            "auth.invalid_user_id_in_token",
-            extra={"sub": str(user_id_raw or "")},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token payload",
-        )
+        logger.info("auth.lookup.sub_is_not_integer", extra={"sub": str(user_id_raw or "")})
 
-    user = db.query(User).filter(User.id == user_id).first()
+    # Fall back to email lookup (Supabase-issued tokens put email in claims)
+    if not user:
+        token_email = str(payload.get("email") or "").strip().lower()
+        if token_email:
+            logger.info("auth.lookup.by_email", extra={"email": token_email})
+            user = db.query(User).filter(func.lower(User.email) == token_email).first()
+        else:
+            logger.warning(
+                "auth.no_email_in_token",
+                extra={"sub": str(user_id_raw or "")},
+            )
+
     if not user:
         logger.warning(
             "auth.user_not_found",
-            extra={"user_id": user_id},
+            extra={"sub": str(user_id_raw or ""), "email": str(payload.get("email") or "")},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authenticated user not found",
         )
 
+    logger.info("auth.user_found", extra={"user_id": str(getattr(user, "id", "")), "email": str(getattr(user, "email", ""))[:40]})
+
     if not user.is_active:
         logger.warning(
             "auth.user_inactive",
             extra={
-                "user_id": user_id,
+                "user_id": getattr(user, "id", ""),
                 "username": user.username or "",
             },
         )
@@ -228,13 +309,28 @@ def get_authenticated_actor_context(
             "auth_source": "preflight",
         }
 
-    actor = build_actor_context(authorization)
+    resolved_auth = _resolve_authorization_header(request, authorization)
+    logger.info("auth.actor_context_resolved", extra={"present": bool(resolved_auth)})
+
+    actor = build_actor_context(resolved_auth)
     if not actor.get("auth_source"):
+        logger.warning(
+            "auth.actor_context_missing",
+            extra={"path": str(request.url.path), "method": request.method},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",
         )
 
+    logger.info(
+        "auth.actor_context_built",
+        extra={
+            "user_id": actor.get("user_id", ""),
+            "role": actor.get("role", ""),
+            "school_id": actor.get("school_id", ""),
+        },
+    )
     return actor
 
 

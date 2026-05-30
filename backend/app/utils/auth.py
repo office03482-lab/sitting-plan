@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from typing import Optional
@@ -71,16 +72,39 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) 
 
 
 def decode_token(token: str) -> Optional[dict]:
-    """Decode and validate JWT token."""
+    """Decode and validate JWT token.
+
+    Tries local JWT secret first (HS256 tokens issued by this server).
+    Falls back to Supabase JWT secret (ES256 or HS256 tokens issued by Supabase Auth).
+    """
+    logger = logging.getLogger(__name__)
+
+    # 1) Try local HS256 secret
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm]
+            algorithms=[settings.jwt_algorithm],  # default HS256
         )
+        logger.info("decode_token.success.using_local_secret")
         return payload
-    except JWTError:
-        return None
+    except JWTError as exc:
+        logger.info("decode_token.local_secret_failed", extra={"error": str(exc)})
+
+    # 2) Try Supabase JWT secret (if configured)
+    supabase_secret = settings.supabase_jwt_secret
+    if supabase_secret:
+        for alg in ["HS256", "ES256"]:
+            try:
+                payload = jwt.decode(token, supabase_secret, algorithms=[alg])
+                logger.info("decode_token.success.using_supabase_secret", extra={"algorithm": alg})
+                return payload
+            except JWTError as exc:
+                logger.info("decode_token.supabase_secret_failed", extra={"algorithm": alg, "error": str(exc)})
+                continue
+
+    logger.warning("decode_token.all_attempts_failed")
+    return None
 
 
 def generate_otp(length: int = 6) -> str:
