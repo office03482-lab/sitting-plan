@@ -5,6 +5,7 @@ import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
 import { UnavailableStatCard } from '../components/UnavailableStatCard';
+import { useAuth } from '@/contexts/AuthProvider';
 import {
   apiService,
   getMigrationUnavailableMessage,
@@ -25,6 +26,8 @@ const getPlanTypeLabel = (type: SeatingPlan['plan_type']) => {
 };
 
 const Reports: React.FC = () => {
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [seatingPlans, setSeatingPlans] = useState<SeatingPlan[]>([]);
@@ -60,8 +63,9 @@ const Reports: React.FC = () => {
   const displayedSeatingPlans = filteredSeatingPlans;
 
   useEffect(() => {
+    if (!canRunRequests) return;
     loadData();
-  }, []);
+  }, [canRunRequests]);
 
   const loadData = async () => {
     try {

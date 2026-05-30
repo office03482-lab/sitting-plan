@@ -10,9 +10,12 @@ import {
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { Teacher } from '../types';
 
 const TeacherManagement: React.FC = () => {
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -33,9 +36,10 @@ const TeacherManagement: React.FC = () => {
   });
 
   useEffect(() => {
+    if (!canRunRequests) return;
     loadTeachers();
     loadShiftSettings();
-  }, []);
+  }, [canRunRequests]);
 
   const loadTeachers = async () => {
     try {

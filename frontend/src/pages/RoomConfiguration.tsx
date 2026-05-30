@@ -8,6 +8,7 @@ import {
   logIfUnexpectedRequestError,
 } from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { Room } from '@types';
 
 interface FormData {
@@ -52,6 +53,8 @@ const normalizeDoorLocation = (value: string): FormData['door_location'] => {
 };
 
 export default function RoomConfiguration() {
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const { rooms, setRooms } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [migrationUnavailable, setMigrationUnavailable] = useState(false);
@@ -73,8 +76,9 @@ export default function RoomConfiguration() {
   });
 
   useEffect(() => {
+    if (!canRunRequests) return;
     loadRooms();
-  }, []);
+  }, [canRunRequests]);
 
   const loadRooms = async () => {
     setLoading(true);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
 type StaffType = 'teaching' | 'non_teaching';
@@ -56,6 +57,8 @@ const formatApiError = (error: any, fallback: string) => {
 };
 
 export default function InvigilatorManagement() {
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const schoolId = 1;
   const [invigilators, setInvigilators] = useState<Invigilator[]>([]);
   const [teachingStaff, setTeachingStaff] = useState<Teacher[]>([]);
@@ -85,8 +88,9 @@ export default function InvigilatorManagement() {
   };
 
   useEffect(() => {
+    if (!canRunRequests) return;
     void loadData();
-  }, []);
+  }, [canRunRequests]);
 
   const teacherStaffCode = (teacher: Teacher) => `TCH-${teacher.id}`;
 

@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
 import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
 import { looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
@@ -370,6 +371,8 @@ function StudentOperationStatusCard({ progress }: { progress: StudentOperationPr
 export default function StudentManagement() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');
@@ -434,10 +437,11 @@ export default function StudentManagement() {
     error?.code === 'ECONNABORTED' || String(error?.message || '').toLowerCase().includes('timeout');
 
   useEffect(() => {
+    if (!canRunRequests) return;
     loadStudents();
     loadBatches();
     loadHostels();
-  }, []);
+  }, [canRunRequests]);
 
   useEffect(() => {
     const refreshBatchDependencies = () => {

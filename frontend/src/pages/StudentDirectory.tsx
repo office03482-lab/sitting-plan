@@ -4,6 +4,7 @@ import { Eye, Search, Trash2, X } from 'lucide-react';
 import { apiService, getMigrationUnavailableMessage, isMigrationGuardError } from '@services/api';
 import { useAppStore } from '@store/app';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { Batch, Student } from '@types';
 import { getSafeStudentClassName, looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
@@ -70,6 +71,8 @@ function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student;
 
 export default function StudentDirectory() {
   const navigate = useNavigate();
+  const { authReady, sessionReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && !!session;
   const { students, setStudents, removeStudent, studentRefreshToken, bumpStudentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
   const [search, setSearch] = useState('');
@@ -142,9 +145,10 @@ export default function StudentDirectory() {
   };
 
   useEffect(() => {
+    if (!canRunRequests) return;
     void loadStudents();
     void loadClassBatches();
-  }, [studentRefreshToken]);
+  }, [studentRefreshToken, canRunRequests]);
 
   useEffect(() => {
     return () => {
