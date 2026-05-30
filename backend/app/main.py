@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
 import traceback
+import uuid
 from sqlalchemy import text
 from app.attendance.guards import ensure_native_attendance_mode
 from app.attendance.schema_checks import verify_attendance_schema
@@ -56,14 +57,14 @@ app = FastAPI(
 
 app.add_middleware(SystemObservabilityEngine)
 
-# Add CORS middleware
+# Add CORS middleware (strict configuration)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
+    expose_headers=settings.cors_expose_headers,
     max_age=86400,
 )
 
@@ -126,15 +127,24 @@ async def http_exception_handler(request, exc):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request, exc):
-    """Expose useful error details in local development."""
+    """Handle unhandled exceptions without leaking stack traces."""
     logger.exception("Unhandled exception while processing request")
+    error_id = str(uuid.uuid4())[:8]
+    logger.error(
+        "Unhandled exception id=%s path=%s method=%s",
+        error_id,
+        str(request.url.path),
+        request.method,
+        exc_info=True,
+    )
     content = {
-        "detail": str(exc) or exc.__class__.__name__,
-        "error": str(exc) or exc.__class__.__name__,
+        "detail": "An unexpected error occurred",
+        "error": "internal_server_error",
         "status_code": 500,
+        "error_id": error_id,
     }
     if settings.debug:
-        content["traceback"] = traceback.format_exc()
+        content["detail"] = str(exc) or exc.__class__.__name__
     return JSONResponse(status_code=500, content=content)
 
 

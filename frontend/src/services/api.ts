@@ -138,20 +138,6 @@ class ApiService {
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
-      if (storedUser?.role) {
-        headers['X-User-Role'] = String(storedUser.role).trim().toLowerCase();
-      }
-      if (storedUser?.full_name || storedUser?.username || storedUser?.email) {
-        headers['X-User-Name'] = String(
-          storedUser.full_name || storedUser.username || storedUser.email
-        ).trim();
-      }
-      if (storedUser?.email) {
-        headers['X-User-Email'] = String(storedUser.email).trim();
-      }
-      if (Array.isArray(storedUser?.permissions) && storedUser.permissions.length) {
-        headers['X-User-Permissions'] = storedUser.permissions.join(',');
-      }
       normalizeRequestSchoolId(params, resolvedSchoolId, Boolean(token));
 
       // Ensure multipart uploads do not send a JSON content type header.

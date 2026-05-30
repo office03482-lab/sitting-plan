@@ -198,7 +198,10 @@ async def get_room(
         row = supabase_rooms.get_room(school_id, room_id)
         return RoomResponse(**row)
 
-    room = db.query(Room).filter(Room.id == room_id).first()
+    room = db.query(Room).filter(
+        Room.id == room_id,
+        Room.school_id == school_id
+    ).first()
     
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -217,7 +220,10 @@ async def update_room(
     Update room configuration
     """
     ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
-    room = db.query(Room).filter(Room.id == room_id).first()
+    room = db.query(Room).filter(
+        Room.id == room_id,
+        Room.school_id == school_id
+    ).first()
     
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -244,7 +250,10 @@ async def delete_room(
     Delete a room
     """
     ensure_legacy_sqlite_route_available("Room management", school_id, reason="This module still depends on legacy SQLite room and school tables.")
-    room = db.query(Room).filter(Room.id == room_id).first()
+    room = db.query(Room).filter(
+        Room.id == room_id,
+        Room.school_id == school_id
+    ).first()
     
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")

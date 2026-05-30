@@ -199,6 +199,7 @@ def serialize_seating_plan(plan: SeatingPlan) -> SeatingPlanResponse:
 @router.post("/generate")
 async def generate_seating_plans(
     request: GenerateSeatingRequest,
+    school_id: str = Depends(resolve_school_id_from_actor),
     db: Session = Depends(get_db),
 ):
     """
@@ -208,12 +209,18 @@ async def generate_seating_plans(
         "Seating plan generation",
         reason="Native seating reads remain enabled, but plan generation still depends on legacy SQLite room and student tables.",
     )
-    # Get exam and students
-    exam = db.query(Exam).filter(Exam.id == request.exam_id).first()
+    # Get exam and students (with school isolation)
+    exam = db.query(Exam).filter(
+        Exam.id == request.exam_id,
+        Exam.school_id == school_id
+    ).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
-    students_query = db.query(Student).filter(Student.is_active == True)
+    students_query = db.query(Student).filter(
+        Student.is_active == True,
+        Student.school_id == school_id
+    )
     if request.batches:
         students_query = students_query.filter(Student.batch.in_(request.batches))
     students = (
@@ -256,7 +263,10 @@ async def generate_seating_plans(
 
     room_contexts: List[Dict] = []
     for room_id in request.room_ids:
-        room = db.query(Room).filter(Room.id == room_id).first()
+        room = db.query(Room).filter(
+            Room.id == room_id,
+            Room.school_id == school_id
+        ).first()
         if not room:
             continue
 
@@ -450,7 +460,10 @@ async def list_plans(
     if not is_legacy_sqlite_mode():
         return list_seating_plans(school_id, exam_id=exam_id, room_id=room_id)
 
-    query = db.query(SeatingPlan).filter(SeatingPlan.room_id == room_id)
+    query = db.query(SeatingPlan).join(Room).filter(
+        SeatingPlan.room_id == room_id,
+        Room.school_id == school_id
+    )
     
     if exam_id:
         query = query.filter(SeatingPlan.exam_id == exam_id)
@@ -472,7 +485,9 @@ async def list_all_plans(
     if not is_legacy_sqlite_mode():
         return list_seating_plans(school_id, exam_id=exam_id)
 
-    query = db.query(SeatingPlan)
+    query = db.query(SeatingPlan).join(Room).filter(
+        Room.school_id == school_id
+    )
 
     if exam_id:
         query = query.filter(SeatingPlan.exam_id == exam_id)
@@ -493,7 +508,10 @@ async def get_plan_layout(
     if not is_legacy_sqlite_mode():
         return get_seating_plan_layout(school_id, plan_id)
 
-    plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
+    plan = db.query(SeatingPlan).join(Room).filter(
+        SeatingPlan.id == plan_id,
+        Room.school_id == school_id
+    ).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
@@ -563,7 +581,10 @@ async def finalize_plan(
     if not is_legacy_sqlite_mode():
         return finalize_seating_plan(school_id, plan_id)
 
-    plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
+    plan = db.query(SeatingPlan).join(Room).filter(
+        SeatingPlan.id == plan_id,
+        Room.school_id == school_id
+    ).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
@@ -585,7 +606,10 @@ async def delete_plan(
     if not is_legacy_sqlite_mode():
         return delete_seating_plan(school_id, plan_id)
 
-    plan = db.query(SeatingPlan).filter(SeatingPlan.id == plan_id).first()
+    plan = db.query(SeatingPlan).join(Room).filter(
+        SeatingPlan.id == plan_id,
+        Room.school_id == school_id
+    ).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
@@ -612,7 +636,9 @@ async def delete_all_plans(
     if not is_legacy_sqlite_mode():
         return delete_all_seating_plans(school_id)
 
-    plans = db.query(SeatingPlan).all()
+    plans = db.query(SeatingPlan).join(Room).filter(
+        Room.school_id == school_id
+    ).all()
     deleted_count = len(plans)
     for plan in plans:
         db.delete(plan)

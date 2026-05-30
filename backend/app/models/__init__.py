@@ -433,8 +433,9 @@ class SeatingPlan(Base):
     __tablename__ = "seating_plans"
     
     id = Column(Integer, primary_key=True, index=True)
-    exam_id = Column(Integer, ForeignKey("exams.id"), nullable=False)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    exam_id = Column(Integer, ForeignKey("exams.id"), nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -460,6 +461,7 @@ class SeatingPlan(Base):
     # Relationships
     exam = relationship("Exam", back_populates="seating_plans")
     room = relationship("Room", back_populates="seating_plans")
+    school = relationship("School", back_populates="seating_plans")
     
     def __repr__(self):
         return f"<SeatingPlan(id={self.id}, type={self.plan_type}, status={self.status})>"
@@ -1162,6 +1164,8 @@ class StaffAttendance(Base):
     staff_member = relationship("AttendanceStaff", back_populates="attendance_records")
 
 
+School.seating_plans = relationship("SeatingPlan", cascade="all, delete-orphan")
+School.hostels = relationship("Hostel", cascade="all, delete-orphan")
 Room.room_invigilators = relationship("RoomInvigilator", back_populates="room")
 School.batches = relationship("BatchTable", cascade="all, delete-orphan")
 School.invigilators = relationship("Invigilator", cascade="all, delete-orphan")

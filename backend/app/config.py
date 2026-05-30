@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
     upload_directory: str = "uploads"
 
-    # CORS
+    # CORS - Strict origins for production
     cors_origins: list = [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -105,6 +105,18 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "https://sitting-plan-frontend.onrender.com",
         "https://sitting-plan.onrender.com",
+    ]
+    cors_allow_methods: list = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+    cors_allow_headers: list = [
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ]
+    cors_expose_headers: list = [
+        "Content-Disposition",
+        "Content-Length",
     ]
 
     @field_validator("debug", "reload", "use_supabase_native_services", mode="before")
