@@ -53,8 +53,8 @@ const normalizeDoorLocation = (value: string): FormData['door_location'] => {
 };
 
 export default function RoomConfiguration() {
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { rooms, setRooms } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [migrationUnavailable, setMigrationUnavailable] = useState(false);

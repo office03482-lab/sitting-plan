@@ -23,7 +23,9 @@ import {
 } from 'lucide-react';
 import {
   apiService,
+  getMissingSchoolContextMessage,
   isMigrationGuardError,
+  isMissingSchoolContextError,
   isTemporarilyUnavailableDataError,
 } from '@services/api';
 import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
@@ -191,7 +193,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
-  const { signOut, authReady, sessionReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
+  const { signOut, authReady, sessionReady, schoolContextReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
   const isAdmin = user?.role === 'admin';
 
   const canViewAdminOffice = isAdmin || hasPermission('admin_office');
@@ -254,7 +256,7 @@ export default function Dashboard() {
   const dashboardMountedRef = useRef(true);
   const authIdentityFingerprintRef = useRef('');
   const integratedPanelEnabled = false;
-  const canRunDashboardRequests = authReady && sessionReady && !!session;
+  const canRunDashboardRequests = authReady && sessionReady && schoolContextReady && !!session;
   const activeSchoolId = String(user?.school_id || user?.default_school_id || '').trim();
 
   const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
@@ -263,6 +265,7 @@ export default function Dashboard() {
       showDetailedDashboard,
       authReady,
       sessionReady,
+      schoolContextReady,
       authInitialized,
       authLoading,
       ...details,
@@ -434,6 +437,13 @@ export default function Dashboard() {
           teacherCountRes.status === 'rejected' &&
           roomsSummaryRes.status === 'rejected'
         ) {
+          if (
+            isMissingSchoolContextError(studentCountRes.reason) &&
+            isMissingSchoolContextError(teacherCountRes.reason) &&
+            isMissingSchoolContextError(roomsSummaryRes.reason)
+          ) {
+            throw new Error(getMissingSchoolContextMessage('Dashboard'));
+          }
           throw new Error('Primary dashboard requests failed');
         }
 

@@ -22,6 +22,7 @@ import {
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
 import {
   appendEduPayPageTransaction,
   clearEduPayWorkspaceData,
@@ -373,6 +374,8 @@ function statusClass(status: EduPayAssignmentStatus) {
 }
 
 export default function FeeManagement() {
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [expandedEduPaySections, setExpandedEduPaySections] = useState<string[]>(['pay']);
   const [studentWorkspaceView, setStudentWorkspaceView] = useState<StudentWorkspaceView>('admission');
@@ -504,6 +507,9 @@ export default function FeeManagement() {
   }, [activeTab, studentWorkspaceView, paymentWorkspaceView]);
 
   const loadEduPayData = async (initial = false) => {
+    if (!canRunRequests) {
+      return;
+    }
     try {
       initial ? setLoading(true) : setRefreshing(true);
       const [dashboardRes, studentsRes, structuresRes, assignmentsRes, paymentsRes, parentResult] = await Promise.allSettled([
@@ -549,9 +555,10 @@ export default function FeeManagement() {
   };
 
   useEffect(() => {
-    loadEduPayData(true);
+    if (!canRunRequests) return;
+    void loadEduPayData(true);
     refreshAdmissionRequestState();
-  }, []);
+  }, [canRunRequests]);
 
   useEffect(() => {
     setPaymentLinks(ensureArray<EduPayPaymentLinkRecord>(readEduPayPaymentLinks()));

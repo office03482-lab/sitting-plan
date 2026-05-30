@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from app.attendance.logging_utils import log_attendance_mode
 from app.attendance.native.service import NativeAttendanceService
 from app.schemas import (
+    AttendanceSettingResponse,
+    AttendanceSettingUpdate,
     StaffAttendanceMarkRequest,
     StaffAttendanceMarkingResponse,
     AttendanceOverviewResponse,
@@ -129,6 +131,32 @@ def list_subjects_route(
 ):
     log_attendance_mode("subjects", school_id)
     return service.list_subjects(school_id=school_id)
+
+
+@router.get("/settings", response_model=AttendanceSettingResponse)
+def get_settings_route(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("settings", school_id)
+    return AttendanceSettingResponse(**service.get_settings(school_id=school_id))
+
+
+@router.put("/settings", response_model=AttendanceSettingResponse)
+def update_settings_route(
+    payload: AttendanceSettingUpdate,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    service: NativeAttendanceService = Depends(get_native_attendance_service),
+):
+    log_attendance_mode("settings.update", school_id)
+    return AttendanceSettingResponse(
+        **service.update_settings(
+            school_id=school_id,
+            minimum_attendance_threshold=payload.minimum_attendance_threshold,
+            working_hours_start=payload.working_hours_start,
+            working_hours_end=payload.working_hours_end,
+        )
+    )
 
 
 @router.get("/batch-current-class", response_model=TeacherAttendanceContextResponse)

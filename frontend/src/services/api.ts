@@ -16,6 +16,7 @@ export function isRequestTimeoutError(error: unknown): boolean {
 }
 
 const MIGRATION_GUARD_DETAIL_FRAGMENT = 'temporarily unavailable during supabase migration';
+const MISSING_SCHOOL_CONTEXT_DETAIL_FRAGMENT = 'valid uuid school_id missing from context';
 
 export function isMigrationGuardError(error: any): boolean {
   const status = Number(error?.response?.status || error?.status || 0);
@@ -23,6 +24,14 @@ export function isMigrationGuardError(error: any): boolean {
     .trim()
     .toLowerCase();
   return status === 503 && detail.includes(MIGRATION_GUARD_DETAIL_FRAGMENT);
+}
+
+export function isMissingSchoolContextError(error: any): boolean {
+  const status = Number(error?.response?.status || error?.status || 0);
+  const detail = String(error?.response?.data?.detail || error?.message || '')
+    .trim()
+    .toLowerCase();
+  return status === 403 && detail.includes(MISSING_SCHOOL_CONTEXT_DETAIL_FRAGMENT);
 }
 
 export function isTemporarilyUnavailableDataError(error: any): boolean {
@@ -45,6 +54,10 @@ export function getMigrationUnavailableMessage(subject = 'This module'): string 
   return `${subject} is temporarily unavailable during the ongoing Supabase migration.`;
 }
 
+export function getMissingSchoolContextMessage(subject = 'This module'): string {
+  return `${subject} could not load because the active school context is missing from the authenticated session. Please sign in again.`;
+}
+
 export function getRequestErrorMessage(error: any, fallback: string): string {
   if (isRequestCanceled(error)) {
     return '';
@@ -54,6 +67,9 @@ export function getRequestErrorMessage(error: any, fallback: string): string {
   }
   if (isMigrationGuardError(error)) {
     return getMigrationUnavailableMessage('This module');
+  }
+  if (isMissingSchoolContextError(error)) {
+    return getMissingSchoolContextMessage('This module');
   }
   const detail = error?.response?.data?.detail;
   if (typeof detail === 'string' && detail.trim()) {
@@ -67,7 +83,7 @@ export function logIfUnexpectedRequestError(
   error: any,
   level: 'error' | 'warn' = 'error'
 ): void {
-  if (isRequestCanceled(error) || isMigrationGuardError(error)) {
+  if (isRequestCanceled(error) || isMigrationGuardError(error) || isMissingSchoolContextError(error)) {
     return;
   }
 

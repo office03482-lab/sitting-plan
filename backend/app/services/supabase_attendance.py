@@ -1881,6 +1881,46 @@ def _fetch_settings(school_id: str) -> dict[str, Any]:
     }
 
 
+def get_attendance_settings(school_id: str) -> dict[str, Any]:
+    return _fetch_settings(school_id)
+
+
+def update_attendance_settings(
+    school_id: str,
+    *,
+    minimum_attendance_threshold: float,
+    working_hours_start: str,
+    working_hours_end: str,
+) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("settings")
+    normalized_payload = {
+        "school_id": school_id,
+        "minimum_attendance_threshold": float(minimum_attendance_threshold),
+        "working_hours_start": _normalize(working_hours_start) or "09:00",
+        "working_hours_end": _normalize(working_hours_end) or "17:00",
+        "is_active": True,
+    }
+    existing_response = (
+        supabase
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    existing_rows = list(existing_response.data or [])
+    if existing_rows:
+        (
+            supabase
+            .update(normalized_payload)
+            .eq("id", existing_rows[0].get("id"))
+            .execute()
+        )
+    else:
+        supabase.insert(normalized_payload).execute()
+    return _fetch_settings(school_id)
+
+
 def _serialize_subject(row: dict[str, Any], batch_lookup: dict[str, dict[str, Any]]) -> dict[str, Any]:
     batch = batch_lookup.get(str(row.get("batch_id")) or "")
     metadata = row.get("metadata") or {}

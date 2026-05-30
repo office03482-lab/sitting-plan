@@ -2,6 +2,7 @@ from app.services.supabase_attendance import (
     delete_all_student_records,
     delete_student_record,
     get_batch_current_class,
+    get_attendance_settings,
     get_integrated_overview,
     get_overview,
     get_staff_marking,
@@ -20,6 +21,7 @@ from app.services.supabase_attendance import (
     save_student_marking,
     get_staff_dashboard,
     list_batch_day_classes,
+    update_attendance_settings,
 )
 
 
@@ -106,6 +108,24 @@ class NativeAttendanceService:
 
     def list_subjects(self, *, school_id: str):
         return list_subjects(school_id)
+
+    def get_settings(self, *, school_id: str):
+        return get_attendance_settings(school_id)
+
+    def update_settings(
+        self,
+        *,
+        school_id: str,
+        minimum_attendance_threshold: float,
+        working_hours_start: str,
+        working_hours_end: str,
+    ):
+        return update_attendance_settings(
+            school_id,
+            minimum_attendance_threshold=minimum_attendance_threshold,
+            working_hours_start=working_hours_start,
+            working_hours_end=working_hours_end,
+        )
 
     def get_student_marking(self, *, school_id: str, date_value: str, class_name: str, section: str, subject_id: str | None = None, search: str | None = None):
         return get_student_marking(

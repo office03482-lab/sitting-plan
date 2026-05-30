@@ -14,8 +14,8 @@ import { useAuth } from '@/contexts/AuthProvider';
 import type { Teacher } from '../types';
 
 const TeacherManagement: React.FC = () => {
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');

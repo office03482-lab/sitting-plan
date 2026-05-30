@@ -90,7 +90,7 @@ const initialLeaveForm = {
 function AttendanceManagementContent() {
   const location = useLocation();
   const user = useAuthStore((state) => state.user);
-  const { authReady, sessionReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
+  const { authReady, sessionReady, schoolContextReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const permissionList = user?.permissions || [];
   const hasExactPermission = (permission: string) => user?.role === 'admin' || permissionList.includes(permission);
@@ -192,7 +192,7 @@ function AttendanceManagementContent() {
   const isOverviewTabVisible = activeTab === 'overview' && canViewOverviewTab && !isTeacherSelfView;
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
-  const canRunAttendanceRequests = authReady && sessionReady && !!session;
+  const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
   const currentSchoolId = user?.school_id || 1;
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
@@ -200,6 +200,7 @@ function AttendanceManagementContent() {
       activeTab,
       authReady,
       sessionReady,
+      schoolContextReady,
       authInitialized,
       authLoading,
       ...details,

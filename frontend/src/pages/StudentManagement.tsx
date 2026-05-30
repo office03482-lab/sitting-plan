@@ -371,8 +371,8 @@ function StudentOperationStatusCard({ progress }: { progress: StudentOperationPr
 export default function StudentManagement() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');

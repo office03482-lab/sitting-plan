@@ -71,8 +71,8 @@ function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student;
 
 export default function StudentDirectory() {
   const navigate = useNavigate();
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, removeStudent, studentRefreshToken, bumpStudentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
   const [search, setSearch] = useState('');

@@ -17,6 +17,7 @@ import {
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 import type {
   Batch,
@@ -279,6 +280,8 @@ const inventoryFeatureCards: Array<{
 export default function InventoryManagement() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const user = useAuthStore((state) => state.user);
   const canManageInventory = user?.role === 'admin' || user?.role === 'store_manager';
 
@@ -385,8 +388,9 @@ export default function InventoryManagement() {
   }, [location.hash]);
 
   useEffect(() => {
-    loadInventoryData(true, 'dashboard', true);
-  }, []);
+    if (!canRunRequests) return;
+    void loadInventoryData(true, 'dashboard', true);
+  }, [canRunRequests]);
 
   useEffect(() => {
     const normalizedHash = location.hash.replace(/^#/, '').trim().toLowerCase();
@@ -422,10 +426,11 @@ export default function InventoryManagement() {
   }, [location.hash]);
 
   useEffect(() => {
+    if (!canRunRequests) return;
     if (!loadedTabs[activeTab]) {
-      loadInventoryData(false, activeTab, true);
+      void loadInventoryData(false, activeTab, true);
     }
-  }, [activeTab]);
+  }, [activeTab, canRunRequests, loadedTabs]);
 
   const getApiErrorMessage = (error: any, fallback: string) =>
     error?.response?.data?.detail ||
@@ -470,6 +475,9 @@ export default function InventoryManagement() {
   };
 
   const loadInventoryData = async (initial = false, targetTab: TabKey = activeTab, force = false) => {
+    if (!canRunRequests) {
+      return;
+    }
     try {
       initial ? setLoading(true) : setRefreshing(true);
       const requests: Array<{ key: string; request: Promise<any> }> = [];

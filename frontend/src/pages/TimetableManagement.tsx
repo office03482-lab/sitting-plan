@@ -10,6 +10,7 @@ import {
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
+import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 import type {
   Batch,
@@ -118,6 +119,8 @@ const sortTimetableEntries = (items: TimetableView[]) =>
   });
 
 const TimetableManagement: React.FC = () => {
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const user = useAuthStore((state) => state.user);
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const canManageTimetable = !isTeacherSelfView;
@@ -210,13 +213,15 @@ const TimetableManagement: React.FC = () => {
   }, [entries, isTeacherSelfView, teachers, user?.email, user?.full_name]);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!canRunRequests) return;
+    void loadData();
+  }, [canRunRequests]);
 
   useEffect(() => {
+    if (!canRunRequests) return;
     if (!referenceDate) return;
-    refreshEntries();
-  }, [referenceDate]);
+    void refreshEntries();
+  }, [canRunRequests, referenceDate]);
 
   useEffect(() => {
     if (!isTeacherSelfView) return;
@@ -227,6 +232,9 @@ const TimetableManagement: React.FC = () => {
   }, [isTeacherSelfView, visibleTeachers]);
 
   const refreshEntries = async (skipReferenceDate?: boolean) => {
+    if (!canRunRequests) {
+      return [];
+    }
     const response = await apiService.listTimetableEntries({
       reference_date: skipReferenceDate ? undefined : (referenceDate || undefined),
     });
@@ -236,6 +244,9 @@ const TimetableManagement: React.FC = () => {
   };
 
   const refreshEntriesWithDates = async () => {
+    if (!canRunRequests) {
+      return [];
+    }
     const response = await apiService.listTimetableEntries({});
     const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
     setEntries(nextEntries);
@@ -252,6 +263,9 @@ const TimetableManagement: React.FC = () => {
   };
 
   const loadReferenceData = async () => {
+    if (!canRunRequests) {
+      return;
+    }
     if (isTeacherSelfView) {
       try {
         const teachersResponse = await apiService.listTeachers();
@@ -313,6 +327,9 @@ const TimetableManagement: React.FC = () => {
   };
 
   const loadData = async () => {
+    if (!canRunRequests) {
+      return;
+    }
     try {
       setLoading(true);
       setAlert(null);

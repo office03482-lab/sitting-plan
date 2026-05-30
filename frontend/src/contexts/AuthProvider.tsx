@@ -36,6 +36,7 @@ type AuthContextValue = {
   initialized: boolean;
   authReady: boolean;
   sessionReady: boolean;
+  schoolContextReady: boolean;
   authStatus: AuthStatus;
   user: User | null;
   session: Session | null;
@@ -196,6 +197,14 @@ function getDefaultRouteForUser(user?: User | null) {
   if (user.permissions?.includes('timetable') || user.permissions?.includes('timetable.view')) return '/timetable';
   if (user.permissions?.includes('edupay')) return '/edupay';
   return '/';
+}
+
+function hasResolvedSchoolContext(user?: User | null): boolean {
+  return Boolean(
+    user?.role &&
+    String(user?.school_id || '').trim() &&
+    String(user?.membership_id || '').trim(),
+  );
 }
 
 async function fetchRolePermissions(roleId: string) {
@@ -406,7 +415,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         (
           !storeUserRef.current ||
           storeUserRef.current.id !== nextSession.user.id ||
-          lastProfileBootstrapUserIdRef.current !== nextSession.user.id
+          lastProfileBootstrapUserIdRef.current !== nextSession.user.id ||
+          !hasResolvedSchoolContext(storeUserRef.current)
         );
 
       if (
@@ -421,7 +431,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (options?.silentTokenRefresh && storeUserRef.current && storeUserRef.current.id === nextSession.user.id) {
+      if (
+        options?.silentTokenRefresh &&
+        storeUserRef.current &&
+        storeUserRef.current.id === nextSession.user.id &&
+        hasResolvedSchoolContext(storeUserRef.current)
+      ) {
         failedSessionFingerprintRef.current = null;
         useAuthStore.getState().hydrate({
           token: nextSession.access_token,
@@ -438,7 +453,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (currentFingerprint && nextFingerprint && currentFingerprint === nextFingerprint && !shouldBootstrapProfile) {
+      if (
+        currentFingerprint &&
+        nextFingerprint &&
+        currentFingerprint === nextFingerprint &&
+        !shouldBootstrapProfile &&
+        hasResolvedSchoolContext(storeUserRef.current)
+      ) {
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED', authErrorRef.current);
         console.debug('[auth-sync]', 'syncSession.noop_same_fingerprint', {
           origin,
@@ -447,7 +468,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!shouldBootstrapProfile) {
+      if (!shouldBootstrapProfile && hasResolvedSchoolContext(storeUserRef.current)) {
         setSession(nextSession);
         setAuthError(null);
         failedSessionFingerprintRef.current = null;
@@ -596,11 +617,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [hydrate, logoutStore, setAuthLifecycle]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({
+    () => {
+      const schoolContextReady = hasResolvedSchoolContext(storeUser);
+
+      return ({
       loading,
       initialized,
-      authReady: authStatus === 'AUTHENTICATED' && !!storeUser && !!session,
+      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session,
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
+      schoolContextReady,
       authStatus,
       user: storeUser,
       session,
@@ -675,7 +700,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           );
         return roleOk && permissionOk;
       },
-    }),
+    });
+    },
     [authError, authStatus, initialized, loading, logoutStore, session, storeUser],
   );
 

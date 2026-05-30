@@ -26,8 +26,8 @@ const getPlanTypeLabel = (type: SeatingPlan['plan_type']) => {
 };
 
 const Reports: React.FC = () => {
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [seatingPlans, setSeatingPlans] = useState<SeatingPlan[]>([]);
