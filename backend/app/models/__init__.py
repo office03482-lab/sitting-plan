@@ -257,7 +257,7 @@ class Hostel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    school = relationship("School")
+    school = relationship("School", overlaps="hostels")
     rooms = relationship("HostelRoom", back_populates="hostel", cascade="all, delete-orphan")
     requests = relationship("StudentHostelRequest", back_populates="hostel")
 
@@ -568,8 +568,6 @@ class TimetableEntry(Base):
         return f"<TimetableEntry(id={self.id}, teacher={self.teacher_id}, day={self.day_of_week}, class={self.class_name})>"
 
 
-# Add relationships to School model
-School.teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
 School.timetable_entries = relationship("TimetableEntry", back_populates="school", cascade="all, delete-orphan")
 
 
@@ -706,7 +704,7 @@ class BatchTable(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    school = relationship("School")
+    school = relationship("School", overlaps="batches")
     students = relationship("Student", back_populates="batch_record")
 
 

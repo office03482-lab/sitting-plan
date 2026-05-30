@@ -4,7 +4,7 @@ Pydantic validation schemas
 import re
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -78,8 +78,7 @@ class UserResponse(UserBase):
     is_active: bool
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserRolePowerBase(BaseModel):
@@ -114,8 +113,7 @@ class UserRolePowerResponse(UserRolePowerBase):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Batch Schemas ====================
@@ -150,8 +148,7 @@ class BatchResponse(BatchBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BatchWithStudentCount(BatchResponse):
@@ -240,8 +237,7 @@ class StudentResponse(StudentBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentImportResponse(BaseModel):
@@ -410,7 +406,7 @@ class RoomBase(BaseModel):
     glare_mitigation: bool = False
     is_accessible: bool = False
 
-    @validator('door_location', pre=True, always=True)
+    @field_validator('door_location', mode='before')
     def validate_door_location(cls, value):
         return normalize_door_location(value, default=DoorLocation.left.value)
 
@@ -435,7 +431,7 @@ class RoomUpdate(BaseModel):
     is_accessible: Optional[bool] = None
     glare_mitigation: Optional[bool] = None
 
-    @validator('door_location', pre=True, always=True)
+    @field_validator('door_location', mode='before')
     def validate_door_location(cls, value):
         return normalize_door_location(value)
 
@@ -456,8 +452,7 @@ class RoomResponse(BaseModel):
     glare_mitigation: bool
     is_accessible: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== Seating Plan Schemas ====================
@@ -526,8 +521,7 @@ class SeatingPlanResponse(BaseModel):
     validation_errors: Optional[List[str]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SeatingPlanEntry(BaseModel):
@@ -678,8 +672,7 @@ class ConflictCheckResponse(BaseModel):
     conflicting_entries: Optional[List[TimetableEntryResponse]] = None
     message: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlansComparisonResponse(BaseModel):
@@ -766,8 +759,7 @@ class InvigilatorResponse(InvigilatorBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RoomInvigilatorBase(BaseModel):
@@ -797,8 +789,7 @@ class RoomInvigilatorResponse(RoomInvigilatorBase):
     invigilator: Optional[InvigilatorResponse] = None
     room: Optional[RoomResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InvigilatorWithRoomsResponse(InvigilatorResponse):
@@ -835,8 +826,7 @@ class SupplierResponse(SupplierBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InventorySubjectBase(BaseModel):
@@ -859,8 +849,7 @@ class InventorySubjectResponse(InventorySubjectBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InventorySetBase(BaseModel):
@@ -1115,8 +1104,7 @@ class EduPayParentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EduPayStudentCreate(BaseModel):

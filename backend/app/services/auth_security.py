@@ -184,7 +184,6 @@ def record_auth_event(
         detail=detail,
     )
     db.add(event)
-    db.flush()
 
 
 def _normalize_scope_value(value: str) -> str:
@@ -217,7 +216,6 @@ def _get_or_create_throttle(db: Session, *, action: str, scope_key: str, now: da
         last_attempt_at=now,
     )
     db.add(throttle)
-    db.flush()
     return throttle
 
 
@@ -329,7 +327,6 @@ def issue_auth_tokens(
     request: Request | None = None,
     previous_refresh_record: Token | None = None,
 ) -> AuthTokenBundle:
-    db.flush()
     capabilities = _get_schema_capabilities(db)
     claims = _token_claims_for_user(user)
     refresh_family = previous_refresh_record.token_family if previous_refresh_record else uuid.uuid4().hex
@@ -374,7 +371,6 @@ def issue_auth_tokens(
             previous_refresh_record.replaced_by_jti = refresh_record.token_jti
 
     user.last_login = now
-    db.flush()
 
     return AuthTokenBundle(
         access_token=access_token,
@@ -425,7 +421,6 @@ def issue_email_otp(
         token_data["user_agent"] = get_user_agent(request)
     token = Token(**token_data)
     db.add(token)
-    db.flush()
     return otp_code
 
 
@@ -455,7 +450,6 @@ def consume_otp(db: Session, *, email: str, otp_code: str) -> Token:
     if token.token != hash_otp_value(otp_code):
         if _has_token_column(capabilities, "failure_count"):
             token.failure_count += 1
-        db.flush()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired OTP",
@@ -465,7 +459,6 @@ def consume_otp(db: Session, *, email: str, otp_code: str) -> Token:
     token.used_at = now
     if _has_token_column(capabilities, "last_used_at"):
         token.last_used_at = now
-    db.flush()
     return token
 
 

@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -215,12 +215,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
-    class Config:
-        env_file = (
-            str(BASE_DIR / ".env.local"),
-            str(BASE_DIR / ".env"),
-        )
-        case_sensitive = False
+    model_config = ConfigDict(env_file=(str(BASE_DIR / ".env.local"), str(BASE_DIR / ".env")), case_sensitive=False)
 
 
 @lru_cache()
