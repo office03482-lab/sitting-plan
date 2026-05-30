@@ -3,6 +3,7 @@ Student management routes
 """
 from datetime import datetime, timezone
 import logging
+from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode, resolve_school_id_from_actor
 from fastapi.responses import Response
@@ -44,6 +45,14 @@ import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def is_uuid_school_id(value: Any) -> bool:
+    try:
+        UUID(str(value or "").strip())
+        return True
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def ensure_students_legacy_routes_available(school_id: str) -> None:
@@ -730,7 +739,7 @@ async def get_students_count(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
-    if not is_legacy_sqlite_mode():
+    if not is_legacy_sqlite_mode() or is_uuid_school_id(school_id):
         total = get_supabase_students_count(school_id)
         logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {total}")
         return total

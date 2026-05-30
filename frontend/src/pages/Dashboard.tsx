@@ -102,14 +102,17 @@ function formatPercent(value: number) {
   return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
 }
 
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
 const getTraceRowCount = (value: unknown) => {
   if (Array.isArray(value)) return value.length;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (value && typeof value === 'object') return Object.keys(value as Record<string, unknown>).length;
   return 0;
 };
-
-const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function MetricTile({
   title,
@@ -252,6 +255,7 @@ export default function Dashboard() {
   const authIdentityFingerprintRef = useRef('');
   const integratedPanelEnabled = false;
   const canRunDashboardRequests = authReady && sessionReady && !!session;
+  const activeSchoolId = String(user?.school_id || user?.default_school_id || '').trim();
 
   const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[dashboard-attendance-loader]', source, {
@@ -342,7 +346,7 @@ export default function Dashboard() {
       return;
     }
 
-    const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}`;
+    const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}:${activeSchoolId}`;
     const now = Date.now();
     if (!force && dashboardLoadFingerprintRef.current === requestFingerprint && now - lastDashboardLoadAtRef.current < 60_000) {
       debugDashboardLoader('loadStatistics.skipped.cooldown', { requestFingerprint });
@@ -358,28 +362,27 @@ export default function Dashboard() {
         debugDashboardLoader('loadStatistics.start', { requestFingerprint, force });
         setLoadError(null);
         const today = new Date().toISOString().slice(0, 10);
+        const attendanceOverviewRequest = activeSchoolId
+          ? apiService.getAttendanceOverview(activeSchoolId)
+          : apiService.getAttendanceOverview();
+        const timetableCountRequest = activeSchoolId
+          ? apiService.getTimetableEntriesCount(activeSchoolId)
+          : apiService.getTimetableEntriesCount();
         const [
           studentCountRes,
           teacherCountRes,
           roomsSummaryRes,
-          timetableCountRes,
-          attendanceOverviewRes,
         ] = await Promise.allSettled([
           apiService.getStudentsCount(),
           apiService.getTeachersCount(),
           apiService.getRoomsSummary(),
-          apiService.getTimetableEntriesCount(),
-          apiService.getAttendanceOverview(1),
         ]);
-
-        const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
         const studentCount = studentCountRes.status === 'fulfilled' ? Number(studentCountRes.value.data || 0) : 0;
         const teacherCount = teacherCountRes.status === 'fulfilled' ? Number(teacherCountRes.value.data || 0) : 0;
         const roomsSummary =
           roomsSummaryRes.status === 'fulfilled'
             ? roomsSummaryRes.value.data
             : { count: 0, totalCapacity: 0 };
-        const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
         if (studentCountRes.status === 'fulfilled') {
           console.log('[Dashboard][StudentsCount]', 'API_ROWS', getTraceRowCount(studentCountRes.value.data), studentCountRes.value.data);
         }
@@ -389,14 +392,6 @@ export default function Dashboard() {
         if (roomsSummaryRes.status === 'fulfilled') {
           console.log('[Dashboard][RoomsSummary]', 'API_ROWS', getTraceRowCount(roomsSummaryRes.value.data), roomsSummaryRes.value.data);
         }
-        if (timetableCountRes.status === 'fulfilled') {
-          console.log('[Dashboard][TimetableCount]', 'API_ROWS', getTraceRowCount(timetableCountRes.value.data), timetableCountRes.value.data);
-        }
-        if (attendanceOverviewRes.status === 'fulfilled') {
-          console.log('[Dashboard][AttendanceOverview]', 'API_ROWS', getTraceRowCount(attendanceOverviewRes.value.data), attendanceOverviewRes.value.data);
-        }
-        const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
-        const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
         const roomUtilization =
           roomsSummary.count > 0
             ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
@@ -405,7 +400,7 @@ export default function Dashboard() {
           students: studentCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(studentCountRes.reason),
           teachers: teacherCountRes.status === 'rejected' && (isMigrationGuardError(teacherCountRes.reason) || isTemporarilyUnavailableDataError(teacherCountRes.reason)),
           rooms: roomsSummaryRes.status === 'rejected' && (isMigrationGuardError(roomsSummaryRes.reason) || isTemporarilyUnavailableDataError(roomsSummaryRes.reason)),
-          timetable: timetableCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(timetableCountRes.reason),
+          timetable: false,
           inventory: false,
         };
 
@@ -416,10 +411,10 @@ export default function Dashboard() {
           totalStudents: studentCount,
           totalTeachers: teacherCount,
           totalRooms: Number(roomsSummary.count || 0),
-          totalTimetableEntries: timetableCount,
+          totalTimetableEntries: 0,
           roomUtilization,
           inventoryStock: 0,
-          recentActivity: notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
+          recentActivity: [],
         });
         setAttendanceToday({
           studentPresent: 0,
@@ -430,16 +425,14 @@ export default function Dashboard() {
           staffLate: 0,
           staffHalfDay: 0,
           staffAbsent: 0,
-          notifications,
-          holidays,
+          notifications: [],
+          holidays: [],
         });
 
         if (
           studentCountRes.status === 'rejected' &&
           teacherCountRes.status === 'rejected' &&
-          roomsSummaryRes.status === 'rejected' &&
-          timetableCountRes.status === 'rejected' &&
-          attendanceOverviewRes.status === 'rejected'
+          roomsSummaryRes.status === 'rejected'
         ) {
           throw new Error('Primary dashboard requests failed');
         }
@@ -447,11 +440,43 @@ export default function Dashboard() {
         lastDashboardLoadAtRef.current = Date.now();
         dashboardLoadFingerprintRef.current = requestFingerprint;
 
-        await wait(150);
-        const [staffAttendanceRes] = await Promise.allSettled([
-          apiService.getStaffAttendanceDashboard({ school_id: 1, date_from: today, date_to: today }),
+        const [timetableCountRes, attendanceOverviewRes] = await Promise.allSettled([
+          timetableCountRequest,
+          attendanceOverviewRequest,
         ]);
-        await wait(150);
+        if (!dashboardMountedRef.current) return;
+
+        const attendanceOverview = attendanceOverviewRes.status === 'fulfilled' ? attendanceOverviewRes.value.data : null;
+        const timetableCount = timetableCountRes.status === 'fulfilled' ? Number(timetableCountRes.value.data || 0) : 0;
+        if (timetableCountRes.status === 'fulfilled') {
+          console.log('[Dashboard][TimetableCount]', 'API_ROWS', getTraceRowCount(timetableCountRes.value.data), timetableCountRes.value.data);
+        }
+        if (attendanceOverviewRes.status === 'fulfilled') {
+          console.log('[Dashboard][AttendanceOverview]', 'API_ROWS', getTraceRowCount(attendanceOverviewRes.value.data), attendanceOverviewRes.value.data);
+        }
+        const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
+        const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
+        setDashboardAvailability((current) => ({
+          ...current,
+          timetable: timetableCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(timetableCountRes.reason),
+        }));
+        setStats((current) => ({
+          ...current,
+          totalTimetableEntries: timetableCount,
+          recentActivity: notifications.slice(0, 2).map((item: any) => item?.title || item?.message).filter(Boolean),
+        }));
+        setAttendanceToday((current) => ({
+          ...current,
+          notifications,
+          holidays,
+        }));
+
+        const staffAttendanceRequest = activeSchoolId
+          ? apiService.getStaffAttendanceDashboard({ school_id: activeSchoolId, date_from: today, date_to: today })
+          : apiService.getStaffAttendanceDashboard({ date_from: today, date_to: today });
+        const [staffAttendanceRes] = await Promise.allSettled([
+          staffAttendanceRequest,
+        ]);
         const [inventoryRes, eduPayDashboardRes] = await Promise.allSettled([
           canViewInventory ? apiService.getInventoryDashboard() : Promise.resolve({ data: null }),
           canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
@@ -645,6 +670,19 @@ export default function Dashboard() {
 
   const todaysCollection = eduPaySummary.todayCollection;
   const pendingFees = eduPaySummary.pendingAmount;
+  const feeDueProgress = clampPercent(
+    incomeAmount > 0 ? (pendingFees / incomeAmount) * 100 : 0
+  );
+  const feeSnapshotBars = [
+    { label: 'Students', value: Number(eduPayDashboardData?.total_students || 0), color: 'bg-red-500' },
+    { label: 'Structures', value: Number(eduPayDashboardData?.active_fee_structures || 0), color: 'bg-teal-500' },
+    { label: 'Upcoming', value: Number(eduPayDashboardData?.upcoming_dues || 0), color: 'bg-amber-500' },
+    { label: 'Reminders', value: Number(eduPayDashboardData?.reminders_queued || 0), color: 'bg-violet-600' },
+  ];
+  const feeSnapshotMaxValue = Math.max(
+    ...feeSnapshotBars.map((item) => item.value),
+    1,
+  );
   const trendValues = Array.isArray(eduPayDashboardData?.collection_trend) ? eduPayDashboardData.collection_trend : [];
   const trendMax = Math.max(...trendValues.map((item: any) => Number(item?.amount || 0)), 1);
 
@@ -965,20 +1003,21 @@ export default function Dashboard() {
 
           <SectionCard title="Fee Snapshot" action="Live">
             <div className="grid grid-cols-4 items-end gap-2 pt-1">
-              {[
-                { label: 'Students', value: Number(eduPayDashboardData?.total_students || 0), color: 'bg-red-500' },
-                { label: 'Structures', value: Number(eduPayDashboardData?.active_fee_structures || 0), color: 'bg-teal-500' },
-                { label: 'Upcoming', value: Number(eduPayDashboardData?.upcoming_dues || 0), color: 'bg-amber-500' },
-                { label: 'Reminders', value: Number(eduPayDashboardData?.reminders_queued || 0), color: 'bg-violet-600' },
-              ].map((item, index) => (
+              {feeSnapshotBars.map((item, index) => {
+                const height = 20 + (clampPercent((item.value / feeSnapshotMaxValue) * 100) * 0.44);
+                return (
                 <div key={`${item.label}-${index}`} className="text-center">
                   <div className="mx-auto flex h-16 items-end justify-center">
-                    <div className={`w-full max-w-[42px] rounded-t-lg ${item.color}`} style={{ height: `${24 + item.value * 10}px` }} />
+                    <div
+                      className={`w-full max-w-[42px] rounded-t-lg ${item.color}`}
+                      style={{ height: `${height}px` }}
+                    />
                   </div>
                   <p className="mt-1 text-[11px] font-semibold text-slate-900">{item.value}</p>
                   <p className="text-[9px] uppercase tracking-[0.08em] text-slate-500">{item.label}</p>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </SectionCard>
         </section>
@@ -1013,7 +1052,10 @@ export default function Dashboard() {
                   <span>{formatCompactCurrency(pendingFees)}</span>
                 </div>
                 <div className="mt-2 h-3 overflow-hidden rounded-full bg-rose-100">
-                  <div className="h-full rounded-full bg-rose-500" style={{ width: `${incomeAmount ? (pendingFees / incomeAmount) * 100 : 0}%` }} />
+                  <div
+                    className="h-full rounded-full bg-rose-500"
+                    style={{ width: `${feeDueProgress}%` }}
+                  />
                 </div>
               </div>
               <button

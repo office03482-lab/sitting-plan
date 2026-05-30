@@ -444,22 +444,6 @@ export default function StudentManagement() {
   }, [canRunRequests]);
 
   useEffect(() => {
-    const refreshBatchDependencies = () => {
-      if (document.visibilityState === 'visible') {
-        void loadBatches();
-      }
-    };
-
-    window.addEventListener('focus', refreshBatchDependencies);
-    document.addEventListener('visibilitychange', refreshBatchDependencies);
-
-    return () => {
-      window.removeEventListener('focus', refreshBatchDependencies);
-      document.removeEventListener('visibilitychange', refreshBatchDependencies);
-    };
-  }, []);
-
-  useEffect(() => {
     const state = location.state as
       | {
           directoryEditStudent?: Student;

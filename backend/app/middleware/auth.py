@@ -4,6 +4,7 @@ Middleware and shared auth helpers.
 JWT-only authentication with local-user and Supabase principal support.
 """
 import logging
+import time
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -17,6 +18,8 @@ from app.services.supabase_admin import get_supabase_admin_client
 from app.utils.auth import decode_token
 
 logger = logging.getLogger(__name__)
+_SUPABASE_PRINCIPAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SUPABASE_PRINCIPAL_CACHE_TTL_SECONDS = 180
 
 
 async def verify_token(request: Request) -> dict:
@@ -75,6 +78,16 @@ def extract_token_payload(authorization: Optional[str]) -> Optional[dict]:
     return payload
 
 
+def _get_request_token_payload(request: Request, authorization: Optional[str]) -> Optional[dict]:
+    cached_payload = getattr(request.state, "decoded_auth_payload", None)
+    if cached_payload is not None:
+        return cached_payload
+
+    payload = extract_token_payload(authorization)
+    request.state.decoded_auth_payload = payload
+    return payload
+
+
 def _normalize_role_key(role_key: str | None) -> str:
     return str(role_key or "").strip().lower()
 
@@ -106,6 +119,22 @@ def _normalize_school_id(value: Any) -> str:
 def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
     profile_id = str(payload.get("sub") or "").strip()
     email = str(payload.get("email") or "").strip().lower()
+    token_school_id = _normalize_school_id(
+        payload.get("school_id")
+        or payload.get("school_uuid")
+        or payload.get("active_school_id")
+        or payload.get("current_school_id")
+    )
+    cache_key = f"{profile_id}|{email}|{token_school_id}"
+    cached = _SUPABASE_PRINCIPAL_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached:
+        expires_at, principal = cached
+        if now < expires_at:
+            logger.info("auth.supabase_principal.cache_hit", extra={"profile_id": profile_id, "email": email})
+            return dict(principal)
+        _SUPABASE_PRINCIPAL_CACHE.pop(cache_key, None)
+
     if not profile_id and not email:
         return None
 
@@ -162,12 +191,6 @@ def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any
         logger.info("auth.supabase_membership_not_found", extra={"profile_id": resolved_profile_id})
         return None
 
-    token_school_id = _normalize_school_id(
-        payload.get("school_id")
-        or payload.get("school_uuid")
-        or payload.get("active_school_id")
-        or payload.get("current_school_id")
-    )
     default_school_id = _normalize_school_id(profile.get("default_school_id"))
 
     def first_role(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -211,7 +234,7 @@ def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any
                 permissions.append(str(permission_key).strip().lower())
 
     role_key = _normalize_role_key(role.get("role_key"))
-    return {
+    principal = {
         "profile_id": resolved_profile_id,
         "membership_id": str(active_membership.get("id") or "").strip(),
         "school_id": _normalize_school_id(active_membership.get("school_id")),
@@ -228,6 +251,8 @@ def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any
         "permissions": permissions,
         "auth_source": "supabase",
     }
+    _SUPABASE_PRINCIPAL_CACHE[cache_key] = (now + _SUPABASE_PRINCIPAL_CACHE_TTL_SECONDS, dict(principal))
+    return principal
 
 
 def _build_synthetic_user_from_supabase(principal: dict[str, Any]) -> User:
@@ -347,13 +372,12 @@ def _resolve_request_principal(
 
 def build_actor_context(
     authorization: Optional[str],
+    payload: Optional[dict] = None,
 ) -> Dict[str, str]:
     """
     Build actor context from JWT only.
     No header fallback.
     """
-    payload = extract_token_payload(authorization)
-
     if not payload:
         return {
             "role": "",
@@ -483,7 +507,10 @@ def get_authenticated_user(
     token = parts[1]
     logger.info("auth.token_extracted", extra={"preview": token[:30] + "..."})
 
-    payload = decode_token(token)
+    payload = getattr(request.state, "decoded_auth_payload", None)
+    if payload is None:
+        payload = decode_token(token)
+        request.state.decoded_auth_payload = payload
     if not payload:
         logger.warning("auth.decode_failed", extra={"path": str(request.url.path)})
         raise HTTPException(
@@ -554,7 +581,8 @@ def get_authenticated_actor_context(
     resolved_auth = _resolve_authorization_header(request, authorization)
     logger.info("auth.actor_context_resolved", extra={"present": bool(resolved_auth)})
 
-    actor = build_actor_context(resolved_auth)
+    payload = _get_request_token_payload(request, resolved_auth)
+    actor = build_actor_context(resolved_auth, payload)
     if not actor.get("auth_source"):
         logger.warning(
             "auth.actor_context_missing",
@@ -564,8 +592,6 @@ def get_authenticated_actor_context(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",
         )
-
-    payload = extract_token_payload(resolved_auth)
     if payload:
         try:
             principal = _resolve_request_principal(request, payload, db)

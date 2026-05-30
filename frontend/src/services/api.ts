@@ -9,6 +9,12 @@ export function isRequestCanceled(error: unknown): boolean {
   return axios.isCancel(error);
 }
 
+export function isRequestTimeoutError(error: unknown): boolean {
+  const requestError = error as { code?: string; message?: string } | null;
+  const message = String(requestError?.message || '').toLowerCase();
+  return requestError?.code === 'ECONNABORTED' || message.includes('timeout');
+}
+
 const MIGRATION_GUARD_DETAIL_FRAGMENT = 'temporarily unavailable during supabase migration';
 
 export function isMigrationGuardError(error: any): boolean {
@@ -42,6 +48,9 @@ export function getMigrationUnavailableMessage(subject = 'This module'): string 
 export function getRequestErrorMessage(error: any, fallback: string): string {
   if (isRequestCanceled(error)) {
     return '';
+  }
+  if (isRequestTimeoutError(error)) {
+    return 'Server response aane me zyada time lag raha hai. Thodi der baad retry karo.';
   }
   if (isMigrationGuardError(error)) {
     return getMigrationUnavailableMessage('This module');
@@ -117,6 +126,7 @@ class ApiService {
   constructor() {
     this.api = axios.create({
       baseURL: runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || "/api",
+      timeout: 45000,
     });
 
     this.api.interceptors.request.use((config) => {
@@ -1123,7 +1133,7 @@ class ApiService {
   }
 
   async downloadInventoryMaterialTemplate() {
-    return this.api.get('/inventory/materials/template', { responseType: 'blob' });
+    return this.api.get('/inventory/materials/template/download', { responseType: 'blob' });
   }
 
   async importInventoryMaterials(formData: FormData) {
@@ -1131,7 +1141,7 @@ class ApiService {
   }
 
   async getMaterialHistory(materialId: string | number) {
-    return this.api.get(`/inventory/materials/${materialId}/history`);
+    return this.api.get(`/inventory/history/material/${materialId}`);
   }
 
   async getInventoryReport(params?: Record<string, unknown>) {

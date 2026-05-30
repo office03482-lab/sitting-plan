@@ -472,8 +472,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      setAuthStatus('INITIALIZING');
-      setLoading(true);
+      const shouldShowBlockingAuthLoad =
+        !initializedRef.current ||
+        !storeUserRef.current ||
+        storeUserRef.current.id !== nextSession.user.id;
+      if (shouldShowBlockingAuthLoad) {
+        setAuthStatus('INITIALIZING');
+        setLoading(true);
+      }
       activeSyncFingerprintRef.current = nextFingerprint;
 
       try {
