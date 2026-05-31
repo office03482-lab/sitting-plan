@@ -951,6 +951,10 @@ class ApiService {
     return this.api.post('/students/transfer', data, { params: { school_id: schoolId } });
   }
 
+  async getDashboardMetrics(schoolId: string | number = 1) {
+    return this.api.get('/dashboard/metrics', { params: { school_id: schoolId } });
+  }
+
   async getStudentsCount(schoolId: string | number = 1) {
     return this.api.get('/students/count', { params: { school_id: schoolId } });
   }
