@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from datetime import date, datetime
 import calendar
 import json
@@ -2123,20 +2124,34 @@ def get_overview(school_id: str) -> dict[str, Any]:
         return cached_payload
 
     started_at = time.monotonic()
-    batch_summary = get_student_batch_summary(school_id)
-    subjects = list_subjects(school_id)
-    notifications = [_serialize_notification(row) for row in _fetch_notifications(school_id)]
-    holidays = [_serialize_holiday(row) for row in _fetch_holidays(school_id)]
-    settings_payload = _fetch_settings(school_id)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        f_batch_summary = pool.submit(get_student_batch_summary, school_id)
+        f_subjects = pool.submit(list_subjects, school_id)
+        f_notifications = pool.submit(_fetch_notifications, school_id)
+        f_holidays = pool.submit(_fetch_holidays, school_id)
+        f_settings = pool.submit(_fetch_settings, school_id)
+        f_student_count = pool.submit(get_students_count, school_id)
+        f_staff_count = pool.submit(get_staff_count, school_id)
+        f_departments = pool.submit(_fetch_department_options, school_id)
+
+        batch_summary = f_batch_summary.result()
+        subjects = f_subjects.result()
+        notifications_raw = f_notifications.result()
+        holidays_raw = f_holidays.result()
+        settings_payload = f_settings.result()
+        student_count = f_student_count.result()
+        staff_count = f_staff_count.result()
+        department_options = f_departments.result()
+
     payload = {
-        "student_count": get_students_count(school_id),
-        "staff_count": get_staff_count(school_id),
+        "student_count": student_count,
+        "staff_count": staff_count,
         "class_options": sorted({item["class_name"] for item in batch_summary if item.get("class_name")}),
         "section_options": sorted({item["section"] for item in batch_summary if item.get("section")}),
         "subject_options": subjects,
-        "department_options": _fetch_department_options(school_id),
-        "notifications": notifications,
-        "holidays": holidays,
+        "department_options": department_options,
+        "notifications": [_serialize_notification(row) for row in notifications_raw],
+        "holidays": [_serialize_holiday(row) for row in holidays_raw],
         "settings": settings_payload,
     }
     _set_ttl_cache_entry(ATTENDANCE_OVERVIEW_CACHE, school_id, payload, ATTENDANCE_OVERVIEW_CACHE_TTL_SECONDS)

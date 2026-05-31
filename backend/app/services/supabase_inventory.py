@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 from datetime import date, datetime
 from typing import Any, Optional
@@ -1436,20 +1437,30 @@ def get_dashboard(school_id: str) -> dict:
     supabase = _client()
     s = _INVENTORY_SCHEMA
 
-    materials = list((supabase.schema(s).table("material_items").select("*").eq("school_id", school_id).execute()).data or [])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        def fetch_materials():
+            return list((supabase.schema(s).table("material_items").select("*").eq("school_id", school_id).execute()).data or [])
 
-    total_in = 0
-    rows = supabase.schema(s).table("stock_in_entries").select("quantity_received").eq("school_id", school_id).execute()
-    for r in list(rows.data or []):
-        total_in += int(r.get("quantity_received") or 0)
+        def fetch_stock_in_sum():
+            rows = supabase.schema(s).table("stock_in_entries").select("quantity_received").eq("school_id", school_id).execute()
+            return sum(int(r.get("quantity_received") or 0) for r in list(rows.data or []))
 
-    total_out = 0
-    rows = supabase.schema(s).table("stock_out_entries").select("quantity_issued").eq("school_id", school_id).execute()
-    for r in list(rows.data or []):
-        total_out += int(r.get("quantity_issued") or 0)
-    rows = supabase.schema(s).table("student_issue_entries").select("quantity_issued").eq("school_id", school_id).execute()
-    for r in list(rows.data or []):
-        total_out += int(r.get("quantity_issued") or 0)
+        def fetch_stock_out_sum():
+            rows = supabase.schema(s).table("stock_out_entries").select("quantity_issued").eq("school_id", school_id).execute()
+            return sum(int(r.get("quantity_issued") or 0) for r in list(rows.data or []))
+
+        def fetch_student_issue_sum():
+            rows = supabase.schema(s).table("student_issue_entries").select("quantity_issued").eq("school_id", school_id).execute()
+            return sum(int(r.get("quantity_issued") or 0) for r in list(rows.data or []))
+
+        f_materials = pool.submit(fetch_materials)
+        f_stock_in = pool.submit(fetch_stock_in_sum)
+        f_stock_out = pool.submit(fetch_stock_out_sum)
+        f_student_issue = pool.submit(fetch_student_issue_sum)
+
+        materials = f_materials.result()
+        total_in = f_stock_in.result()
+        total_out = f_stock_out.result() + f_student_issue.result()
 
     low_stock_items = [
         m for m in materials
