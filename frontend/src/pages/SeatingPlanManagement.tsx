@@ -2,11 +2,9 @@ import { useState, useEffect } from 'react';
 import { Upload, Download, CheckCircle, XCircle, Eye, Users, MapPin, AlertTriangle, Trash2 } from 'lucide-react';
 import {
   apiService,
-  isMigrationGuardError,
   isTemporarilyUnavailableDataError,
   logIfUnexpectedRequestError,
 } from '@services/api';
-import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import { UnavailableStatCard } from '@components/UnavailableStatCard';
 import type { Batch, RoomLayout, SeatingPlan } from '@types';
 
@@ -87,7 +85,7 @@ export default function SeatingPlanManagement() {
         logIfUnexpectedRequestError('Failed to load batches summary:', batchesRes.reason);
         setSummaryUnavailable((current) => ({
           ...current,
-          batches: isMigrationGuardError(batchesRes.reason) || isTemporarilyUnavailableDataError(batchesRes.reason),
+          batches: isTemporarilyUnavailableDataError(batchesRes.reason),
         }));
       }
     } catch (error) {
@@ -337,14 +335,6 @@ export default function SeatingPlanManagement() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Seating Plan Management</h1>
           <p className="text-gray-600">Upload and manage student seating arrangements from Excel</p>
         </div>
-
-        {summaryUnavailable.students || summaryUnavailable.batches ? (
-          <div className="mb-6">
-            <MigrationUnavailableNotice
-              message="Student and batch summary data is temporarily unavailable during the ongoing Supabase migration. Existing seating plans can still be reviewed."
-            />
-          </div>
-        ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           {summaryUnavailable.students ? (

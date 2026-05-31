@@ -3,14 +3,11 @@ import { BarChart3, FileSpreadsheet, FileText, Users } from 'lucide-react';
 
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
 import { UnavailableStatCard } from '../components/UnavailableStatCard';
 import { useAuth } from '@/contexts/AuthProvider';
 import {
   apiService,
-  getMigrationUnavailableMessage,
   getRequestErrorMessage as getSharedRequestErrorMessage,
-  isMigrationGuardError,
   isTemporarilyUnavailableDataError,
   logIfUnexpectedRequestError,
 } from '../services/api';
@@ -85,7 +82,7 @@ const Reports: React.FC = () => {
         logIfUnexpectedRequestError('Error loading teachers count:', teachersCountRes.reason);
         setAvailability((current) => ({
           ...current,
-          teachers: isMigrationGuardError(teachersCountRes.reason) || isTemporarilyUnavailableDataError(teachersCountRes.reason),
+          teachers: isTemporarilyUnavailableDataError(teachersCountRes.reason),
         }));
         failedSections.push('teachers');
       }
@@ -97,7 +94,7 @@ const Reports: React.FC = () => {
         logIfUnexpectedRequestError('Error loading students count:', studentsCountRes.reason);
         setAvailability((current) => ({
           ...current,
-          students: isMigrationGuardError(studentsCountRes.reason) || isTemporarilyUnavailableDataError(studentsCountRes.reason),
+          students: isTemporarilyUnavailableDataError(studentsCountRes.reason),
         }));
         failedSections.push('students');
       }
@@ -132,7 +129,7 @@ const Reports: React.FC = () => {
   const ensureTeachersLoaded = async () => {
     if (teachers.length > 0) return teachers;
     if (availability.teachers) {
-      throw new Error(getMigrationUnavailableMessage('Teachers report data'));
+      throw new Error('Teachers report data is temporarily unavailable.');
     }
     const response = await apiService.listTeachers();
     console.log('[Reports][Teachers]', 'API_ROWS', response.data?.length, response.data);
@@ -143,7 +140,7 @@ const Reports: React.FC = () => {
   const ensureStudentsLoaded = async () => {
     if (students.length > 0) return students;
     if (availability.students) {
-      throw new Error(getMigrationUnavailableMessage('Students report data'));
+      throw new Error('Students report data is temporarily unavailable.');
     }
     const response = await apiService.listStudents();
     console.log('[Reports][Students]', 'API_ROWS', response.data?.length, response.data);
@@ -320,12 +317,6 @@ ${studentRows
       </div>
 
       {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />}
-
-      {availability.teachers || availability.students ? (
-        <div className="mb-6">
-          <MigrationUnavailableNotice message="Teacher or student report data is temporarily unavailable during the ongoing Supabase migration. Seating plan exports remain available." />
-        </div>
-      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {availability.teachers ? (

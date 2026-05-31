@@ -3,11 +3,8 @@ import { Plus, Trash2, Edit2, Save, X } from 'lucide-react';
 import { useAppStore } from '@store/app';
 import {
   apiService,
-  getMigrationUnavailableMessage,
-  isMigrationGuardError,
   logIfUnexpectedRequestError,
 } from '@services/api';
-import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Room } from '@types';
 
@@ -57,7 +54,6 @@ export default function RoomConfiguration() {
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { rooms, setRooms } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [migrationUnavailable, setMigrationUnavailable] = useState(false);
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<FormData>({
@@ -86,10 +82,8 @@ export default function RoomConfiguration() {
       const response = await apiService.listRooms();
       console.log('[RoomConfiguration]', 'API_ROWS', response.data?.length, response.data);
       setRooms(response.data);
-      setMigrationUnavailable(false);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);
-      setMigrationUnavailable(isMigrationGuardError(error));
     } finally {
       setLoading(false);
     }
@@ -225,7 +219,6 @@ export default function RoomConfiguration() {
           <div className="flex space-x-2">
             <button
               onClick={handleDeleteAllRooms}
-              disabled={migrationUnavailable}
               className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition"
             >
               <Trash2 className="w-4 h-4" />
@@ -234,7 +227,6 @@ export default function RoomConfiguration() {
             {!showForm && (
               <button
                 onClick={() => setShowForm(true)}
-                disabled={migrationUnavailable}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
               >
                 <Plus className="w-4 h-4" />
@@ -244,14 +236,8 @@ export default function RoomConfiguration() {
           </div>
         </div>
 
-        {migrationUnavailable ? (
-          <div className="mb-8">
-            <MigrationUnavailableNotice message={getMigrationUnavailableMessage('Room configuration')} />
-          </div>
-        ) : null}
-
         {/* Form Section */}
-        {showForm && !migrationUnavailable && (
+        {showForm && (
           <div className="bg-white rounded-lg shadow p-6 mb-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-gray-800">
@@ -479,7 +465,7 @@ export default function RoomConfiguration() {
             <div className="col-span-3 text-center text-gray-600 py-8">Loading rooms...</div>
           ) : displayedRooms.length === 0 ? (
             <div className="col-span-3 text-center text-gray-600 py-8">
-              {migrationUnavailable ? 'Room data temporarily unavailable.' : 'No rooms configured yet. Create the first one!'}
+              No rooms configured yet. Create the first one!
             </div>
           ) : (
             displayedRooms.map((room) => (

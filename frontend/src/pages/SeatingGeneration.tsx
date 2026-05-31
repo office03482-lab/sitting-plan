@@ -3,12 +3,9 @@ import { Zap, Download, PlusCircle, Trash2, AlertTriangle, ArrowUp, ArrowDown, P
 import { useAppStore } from '@store/app';
 import {
   apiService,
-  getMigrationUnavailableMessage,
   getRequestErrorMessage,
-  isMigrationGuardError,
   logIfUnexpectedRequestError,
 } from '@services/api';
-import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import type { SeatingPlan, Exam, Batch, Student, Room, RoomLayout } from '@types';
 
 const toDateTimeLocalValue = (date: Date) => {
@@ -289,15 +286,15 @@ export default function SeatingGeneration() {
       const requiredFailures = dataSources.filter((item, index) => item.required && results[index].status === 'rejected');
       const optionalFailures = dataSources.filter((item, index) => !item.required && results[index].status === 'rejected');
       const nextUnavailable = {
-        rooms: resultMap.rooms?.status === 'rejected' && isMigrationGuardError(resultMap.rooms.reason),
-        batches: resultMap.batches?.status === 'rejected' && isMigrationGuardError(resultMap.batches.reason),
-        students: resultMap.students?.status === 'rejected' && isMigrationGuardError(resultMap.students.reason),
+        rooms: false,
+        batches: false,
+        students: false,
       };
       setGenerationUnavailable(nextUnavailable);
 
       const unexpectedFailures = [...requiredFailures, ...optionalFailures].filter((item) => {
         const result = resultMap[item.key];
-        return result?.status === 'rejected' && !isMigrationGuardError(result.reason);
+        return result?.status === 'rejected';
       });
 
       if (unexpectedFailures.length > 0) {
@@ -318,18 +315,7 @@ export default function SeatingGeneration() {
           failedResult?.status === 'rejected'
             ? getRequestErrorMessage(failedResult.reason, '')
             : '';
-        const unavailableKeys = Object.entries(nextUnavailable)
-          .filter(([, unavailable]) => unavailable)
-          .map(([key]) => key);
-        setMessage(
-          unavailableKeys.length > 0
-            ? getMigrationUnavailableMessage(
-                unavailableKeys.length === 1
-                  ? unavailableKeys[0].charAt(0).toUpperCase() + unavailableKeys[0].slice(1)
-                  : 'Some seating dependencies'
-              )
-            : detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`
-        );
+        setMessage(detail || `Failed to load ${requiredFailures.map((item) => item.key).join(', ')}.`);
       } else if (optionalFailures.length > 0) {
         setMessage('');
       } else {
@@ -337,10 +323,6 @@ export default function SeatingGeneration() {
       }
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load data:', error);
-      setGenerationUnavailable((current) => ({
-        ...current,
-        rooms: current.rooms || isMigrationGuardError(error),
-      }));
       setMessage(getRequestErrorMessage(error, 'Failed to load seating generation data'));
     } finally {
       setLoading(false);
@@ -400,9 +382,7 @@ export default function SeatingGeneration() {
     setLoadingBatchStudents(true);
     try {
       const studentData: { [batch: string]: any[] } = {};
-      let studentsGuarded = false;
       
-      // Fetch students for each selected batch
       for (const batchName of batchNames) {
         try {
           const response = await apiService.listStudents(1, 0, 10000, batchName);
@@ -410,18 +390,10 @@ export default function SeatingGeneration() {
         } catch (error) {
           console.warn(`Failed to load students for batch ${batchName}:`, error);
           studentData[batchName] = [];
-          studentsGuarded = studentsGuarded || isMigrationGuardError(error);
         }
       }
       
       setStudentsByBatch(studentData);
-      setGenerationUnavailable((current) => ({
-        ...current,
-        students: studentsGuarded || current.students,
-      }));
-      if (studentsGuarded) {
-        setMessage(getMigrationUnavailableMessage('Student roster data'));
-      }
     } catch (error) {
       console.error('Error loading batch students:', error);
     } finally {
@@ -430,11 +402,6 @@ export default function SeatingGeneration() {
   };
 
   const handleGeneratePlans = async () => {
-    if (generationUnavailable.rooms || generationUnavailable.batches || generationUnavailable.students) {
-      setMessage(getMigrationUnavailableMessage('Seating generation'));
-      return;
-    }
-
     if (!selectedExam) {
       setMessage('Please select an exam');
       return;
@@ -746,14 +713,6 @@ export default function SeatingGeneration() {
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-800 mb-8">Generate Seating Plans</h1>
-
-        {generationUnavailable.rooms || generationUnavailable.batches || generationUnavailable.students ? (
-          <div className="mb-6">
-            <MigrationUnavailableNotice
-              message="Room, batch, or student selection is temporarily unavailable during the ongoing Supabase migration. Existing exams and generated seating plans can still be reviewed."
-            />
-          </div>
-        ) : null}
 
         {/* Configuration Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">

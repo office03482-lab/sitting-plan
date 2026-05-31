@@ -2,14 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Edit, Trash2, Clock, Users, Filter, Download, Building2, Layers3 } from 'lucide-react';
 import {
   apiService,
-  getMigrationUnavailableMessage,
   getRequestErrorMessage as getSharedRequestErrorMessage,
-  isMigrationGuardError,
   isTemporarilyUnavailableDataError,
 } from '../services/api';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { MigrationUnavailableNotice } from '../components/MigrationUnavailableNotice';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 import type {
@@ -272,15 +269,8 @@ const TimetableManagement: React.FC = () => {
         setTeachers(ensureArray<Teacher>(teachersResponse.data));
         setReferenceUnavailable({ teachers: false, rooms: false, batches: false, students: false });
       } catch (error) {
-        const guarded = isMigrationGuardError(error);
         setTeachers([]);
-        setReferenceUnavailable({ teachers: guarded, rooms: false, batches: false, students: false });
-        if (guarded) {
-          setAlert({
-            type: 'error',
-            message: getMigrationUnavailableMessage('Teacher reference data'),
-          });
-        }
+        setReferenceUnavailable({ teachers: false, rooms: false, batches: false, students: false });
       }
       setRooms([]);
       setStudents([]);
@@ -299,11 +289,11 @@ const TimetableManagement: React.FC = () => {
     setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
     setStudents([]);
     const nextUnavailable = {
-      teachers: teachersResponse.status === 'rejected' && isMigrationGuardError(teachersResponse.reason),
-      rooms: roomsResponse.status === 'rejected' && isMigrationGuardError(roomsResponse.reason),
+      teachers: false,
+      rooms: false,
       batches:
-        (batchResponse.status === 'rejected' && (isMigrationGuardError(batchResponse.reason) || isTemporarilyUnavailableDataError(batchResponse.reason)))
-        || (classResponse.status === 'rejected' && (isMigrationGuardError(classResponse.reason) || isTemporarilyUnavailableDataError(classResponse.reason))),
+        (batchResponse.status === 'rejected' && isTemporarilyUnavailableDataError(batchResponse.reason))
+        || (classResponse.status === 'rejected' && isTemporarilyUnavailableDataError(classResponse.reason)),
       students: false,
     };
     const managedOptions = [
@@ -319,10 +309,9 @@ const TimetableManagement: React.FC = () => {
         setStudents(ensureArray<Student>(response.data));
         setReferenceUnavailable((current) => ({ ...current, students: false }));
       })
-      .catch((error) => {
+      .catch(() => {
         setStudents([]);
-        const guarded = isMigrationGuardError(error);
-        setReferenceUnavailable((current) => ({ ...current, students: guarded }));
+        setReferenceUnavailable((current) => ({ ...current, students: false }));
       });
   };
 
@@ -802,14 +791,6 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           onClose={() => setAlert(null)}
         />
       )}
-
-      {hasUnavailableReferences ? (
-        <div className="mb-6">
-          <MigrationUnavailableNotice
-            message="Teacher, room, batch, or student reference data is temporarily unavailable during the ongoing Supabase migration. Existing timetable entries can still be viewed and exported."
-          />
-        </div>
-      ) : null}
 
       {/* View Controls */}
       <div className="mb-6 bg-white rounded-lg shadow p-4">

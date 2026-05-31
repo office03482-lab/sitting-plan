@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } from 'lucide-react';
-import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
-import { apiService, getMigrationUnavailableMessage, getRequestErrorMessage, isMigrationGuardError } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
@@ -66,7 +65,6 @@ export default function InvigilatorManagement() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [assignments, setAssignments] = useState<RoomInvigilator[]>([]);
   const [loading, setLoading] = useState(true);
-  const [migrationUnavailable, setMigrationUnavailable] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
   const [showAssignmentForm, setShowAssignmentForm] = useState(false);
@@ -110,14 +108,10 @@ export default function InvigilatorManagement() {
       const roomsData = roomRes.status === 'fulfilled' ? toArray<Room>(roomRes.value.data) : [];
       const assignmentsData = assignRes.status === 'fulfilled' ? toArray<RoomInvigilator>(assignRes.value.data) : [];
       const teachingData = teachingRes.status === 'fulfilled' ? toArray<Teacher>(teachingRes.value.data) : [];
-      const guarded =
-        (invRes.status === 'rejected' && isMigrationGuardError(invRes.reason)) ||
-        (assignRes.status === 'rejected' && isMigrationGuardError(assignRes.reason));
 
       setInvigilators(invigilatorsData);
       setRooms(roomsData);
       setTeachingStaff(teachingData);
-      setMigrationUnavailable(guarded);
 
       if (assignmentsData.length > 0) {
         setAssignments(assignmentsData);
@@ -150,12 +144,8 @@ export default function InvigilatorManagement() {
       } else {
         setAssignments([]);
       }
-      if (guarded) {
-        showMessage(getMigrationUnavailableMessage('Invigilator management'), 'error');
-      }
     } catch (error) {
       console.error('Error loading data:', error);
-      setMigrationUnavailable(isMigrationGuardError(error));
       showMessage(getRequestErrorMessage(error, 'Failed to load data'), 'error');
     } finally {
       setLoading(false);
@@ -500,12 +490,6 @@ export default function InvigilatorManagement() {
             <span>{message}</span>
           </div>
         )}
-
-        {migrationUnavailable ? (
-          <div className="mb-6">
-            <MigrationUnavailableNotice message={getMigrationUnavailableMessage('Invigilator management')} />
-          </div>
-        ) : null}
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           <div className="lg:col-span-2">

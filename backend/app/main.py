@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
-from app.services.supabase_context import should_use_supabase_native_services
+
 from app.services.timetable_schema_checks import verify_timetable_schema
 
 # Configure logging
@@ -150,7 +150,7 @@ async def unhandled_exception_handler(request, exc):
 
 # Import routes after app creation
 from app.attendance.native.router import router as attendance_native_router
-from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, attendance as legacy_attendance_router, hostels
+from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -239,16 +239,10 @@ app.include_router(
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("admin_office.hostels"))],
 )
 
-if should_use_supabase_native_services():
-    app.include_router(
-        attendance_native_router,
-        dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
-    )
-else:
-    app.include_router(
-        legacy_attendance_router.router,
-        dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
-    )
+app.include_router(
+    attendance_native_router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("attendance"))],
+)
 
 
 if __name__ == "__main__":

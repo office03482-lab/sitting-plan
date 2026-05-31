@@ -24,11 +24,9 @@ import {
 import {
   apiService,
   getMissingSchoolContextMessage,
-  isMigrationGuardError,
   isMissingSchoolContextError,
   isTemporarilyUnavailableDataError,
 } from '@services/api';
-import { MigrationUnavailableNotice } from '@components/MigrationUnavailableNotice';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
 
@@ -401,8 +399,8 @@ export default function Dashboard() {
             : 0;
         const nextAvailability = {
           students: studentCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(studentCountRes.reason),
-          teachers: teacherCountRes.status === 'rejected' && (isMigrationGuardError(teacherCountRes.reason) || isTemporarilyUnavailableDataError(teacherCountRes.reason)),
-          rooms: roomsSummaryRes.status === 'rejected' && (isMigrationGuardError(roomsSummaryRes.reason) || isTemporarilyUnavailableDataError(roomsSummaryRes.reason)),
+          teachers: teacherCountRes.status === 'rejected' && isTemporarilyUnavailableDataError(teacherCountRes.reason),
+          rooms: roomsSummaryRes.status === 'rejected' && isTemporarilyUnavailableDataError(roomsSummaryRes.reason),
           timetable: false,
           inventory: false,
         };
@@ -519,9 +517,9 @@ export default function Dashboard() {
         }));
         setDashboardAvailability((current) => ({
           ...current,
-          inventory:
+            inventory:
             inventoryRes.status === 'rejected'
-            && (isMigrationGuardError(inventoryRes.reason) || isTemporarilyUnavailableDataError(inventoryRes.reason)),
+            && isTemporarilyUnavailableDataError(inventoryRes.reason),
         }));
         setEduPaySummary({
           totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
@@ -714,12 +712,6 @@ export default function Dashboard() {
     .split(/\s+/)
     .filter((part) => part && part.toLowerCase() !== 'main')
     .join(' ') || 'User';
-  const showPartialAvailability =
-    dashboardAvailability.students
-    || dashboardAvailability.teachers
-    || dashboardAvailability.rooms
-    || dashboardAvailability.timetable
-    || dashboardAvailability.inventory;
   const studentsUnavailable = dashboardAvailability.students;
   const teachersUnavailable = dashboardAvailability.teachers;
   const roomsUnavailable = dashboardAvailability.rooms;
@@ -853,15 +845,6 @@ export default function Dashboard() {
           </section>
         ) : null}
 
-        {showPartialAvailability ? (
-          <section className="mt-3">
-            <MigrationUnavailableNotice
-              compact
-              message="Some admin-office data is temporarily unavailable during the ongoing Supabase migration. Attendance, fee, and other native dashboard sections remain available."
-            />
-          </section>
-        ) : null}
-
         <section className="mt-3 grid gap-3 xl:grid-cols-4">
           {adminOfficeMetricsUnavailable ? (
             <section className="rounded-[1.2rem] border border-amber-200 bg-amber-50 p-3 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.35)] xl:col-span-2">
@@ -870,7 +853,7 @@ export default function Dashboard() {
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-700">Admin Office</p>
                   <h3 className="mt-1 text-lg font-bold text-slate-900">Admin-office metrics are temporarily unavailable</h3>
                   <p className="mt-1.5 max-w-2xl text-xs text-slate-700 md:text-sm">
-                    Attendance, fee, and other native dashboard sections remain available while staffing and room metrics are migrated to Supabase.
+                    Attendance, fee, and other native dashboard sections remain available.
                   </p>
                 </div>
                 <div className="rounded-xl bg-white/80 p-2 text-amber-700">

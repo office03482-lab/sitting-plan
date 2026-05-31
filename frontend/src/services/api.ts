@@ -15,16 +15,7 @@ export function isRequestTimeoutError(error: unknown): boolean {
   return requestError?.code === 'ECONNABORTED' || message.includes('timeout');
 }
 
-const MIGRATION_GUARD_DETAIL_FRAGMENT = 'temporarily unavailable during supabase migration';
 const MISSING_SCHOOL_CONTEXT_DETAIL_FRAGMENT = 'valid uuid school_id missing from context';
-
-export function isMigrationGuardError(error: any): boolean {
-  const status = Number(error?.response?.status || error?.status || 0);
-  const detail = String(error?.response?.data?.detail || error?.message || '')
-    .trim()
-    .toLowerCase();
-  return status === 503 && detail.includes(MIGRATION_GUARD_DETAIL_FRAGMENT);
-}
 
 export function isMissingSchoolContextError(error: any): boolean {
   const status = Number(error?.response?.status || error?.status || 0);
@@ -35,10 +26,13 @@ export function isMissingSchoolContextError(error: any): boolean {
 }
 
 export function isTemporarilyUnavailableDataError(error: any): boolean {
-  if (isMigrationGuardError(error)) {
-    return true;
-  }
+  return (
+    isMissingSchoolContextError(error) ||
+    [422, 500].includes(Number(error?.response?.status || error?.status || 0))
+  );
+}
 
+export function isInvalidCountDataError(error: any): boolean {
   const status = Number(error?.response?.status || error?.status || 0);
   const detail = String(error?.response?.data?.detail || error?.message || '')
     .trim()
@@ -48,10 +42,6 @@ export function isTemporarilyUnavailableDataError(error: any): boolean {
     (status === 422 && detail.includes('input should be a valid integer') && detail.includes('count')) ||
     (status === 500 && detail.includes('invalid input syntax for type uuid') && detail.includes('"count"'))
   );
-}
-
-export function getMigrationUnavailableMessage(subject = 'This module'): string {
-  return `${subject} is temporarily unavailable during the ongoing Supabase migration.`;
 }
 
 export function getMissingSchoolContextMessage(subject = 'This module'): string {
@@ -64,9 +54,6 @@ export function getRequestErrorMessage(error: any, fallback: string): string {
   }
   if (isRequestTimeoutError(error)) {
     return 'Server response aane me zyada time lag raha hai. Thodi der baad retry karo.';
-  }
-  if (isMigrationGuardError(error)) {
-    return getMigrationUnavailableMessage('This module');
   }
   if (isMissingSchoolContextError(error)) {
     return getMissingSchoolContextMessage('This module');
@@ -83,7 +70,7 @@ export function logIfUnexpectedRequestError(
   error: any,
   level: 'error' | 'warn' = 'error'
 ): void {
-  if (isRequestCanceled(error) || isMigrationGuardError(error) || isMissingSchoolContextError(error)) {
+  if (isRequestCanceled(error) || isMissingSchoolContextError(error)) {
     return;
   }
 

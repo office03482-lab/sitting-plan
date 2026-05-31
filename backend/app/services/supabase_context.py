@@ -3,35 +3,44 @@
 School ID resolution uses JWT claims ONLY.
 No fallback to Supabase profiles/memberships tables.
 No explicit school_id query parameter fallback.
+Supabase-native only — no SQLite legacy mode.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, Query, Depends, Request
 
-from app.config import settings
 from app.middleware.auth import get_authenticated_actor_context
 
 logger = logging.getLogger(__name__)
 
-LEGACY_SCHOOL_FALLBACK = "1"
 _PLACEHOLDER_SCHOOL_IDS = {"", "1", "none", "null", "undefined"}
-_MIGRATION_UNAVAILABLE_STATUS_CODE = 503
-_MIGRATION_UNAVAILABLE_DETAIL = "This module is temporarily unavailable during Supabase migration."
-
-
-def should_use_supabase_native_services() -> bool:
-    configured_flag = settings.use_supabase_native_services
-    if configured_flag is not None:
-        return bool(configured_flag)
-    return bool(settings.supabase_url and settings.supabase_service_role_key)
 
 
 def is_legacy_sqlite_mode() -> bool:
-    return not should_use_supabase_native_services()
+    return False
+
+
+def ensure_legacy_sqlite_route_available(
+    module_name: str,
+    school_id: Any = None,
+    *,
+    reason: str | None = None,
+) -> None:
+    pass
+
+
+def build_legacy_sqlite_route_blocker(
+    module_name: str,
+    *,
+    reason: str | None = None,
+) -> Any:
+    def dependency() -> None:
+        pass
+    return dependency
 
 
 def _normalize_school_id_candidate(value: Any) -> str:
@@ -53,36 +62,6 @@ def _is_placeholder_school_id(value: Any) -> bool:
     return _normalize_school_id_candidate(value).lower() in _PLACEHOLDER_SCHOOL_IDS
 
 
-def _raise_migration_block(module_name: str, reason: str | None, school_id: Any) -> None:
-    normalized_school_id = _normalize_school_id_candidate(school_id)
-    logger.warning(
-        "storage.migration_route_blocked",
-        extra={
-            "guarded_module": module_name,
-            "school_id": normalized_school_id,
-            "native_mode": should_use_supabase_native_services(),
-            "reason": reason or "",
-        },
-    )
-    raise HTTPException(
-        status_code=_MIGRATION_UNAVAILABLE_STATUS_CODE,
-        detail=_MIGRATION_UNAVAILABLE_DETAIL,
-    )
-
-
-def ensure_legacy_sqlite_route_available(
-    module_name: str,
-    school_id: Any = None,
-    *,
-    reason: str | None = None,
-) -> None:
-    if not should_use_supabase_native_services():
-        return
-    if school_id is not None and not _is_valid_uuid(school_id):
-        return
-    _raise_migration_block(module_name, reason, school_id)
-
-
 def _resolve_school_id_from_actor_claims(actor: dict[str, Any]) -> str:
     for key in ("school_id", "school_uuid", "active_school_id", "current_school_id"):
         candidate = _normalize_school_id_candidate(actor.get(key))
@@ -96,11 +75,6 @@ def resolve_school_id_from_actor(
     explicit_school_id: Any = Query(None, alias="school_id"),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
 ) -> str:
-    """
-    Resolve school_id from JWT actor claims ONLY.
-    Falls back to explicit query param for legacy SQLite mode.
-    No lookup to Supabase profiles/memberships.
-    """
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
         return actor_school_id
@@ -108,9 +82,6 @@ def resolve_school_id_from_actor(
     candidate = _normalize_school_id_candidate(explicit_school_id)
     if candidate and not _is_placeholder_school_id(candidate):
         return candidate
-
-    if is_legacy_sqlite_mode():
-        return LEGACY_SCHOOL_FALLBACK
 
     logger.warning(
         "auth.school_context_denied",
@@ -133,7 +104,6 @@ def resolve_school_id_from_exam_context(
     explicit_school_id: Any = Query(None, alias="school_id"),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
 ) -> str:
-    """Resolve school_id from JWT actor claims only."""
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
         return actor_school_id
@@ -141,9 +111,6 @@ def resolve_school_id_from_exam_context(
     candidate = _normalize_school_id_candidate(explicit_school_id)
     if candidate and not _is_placeholder_school_id(candidate):
         return candidate
-
-    if is_legacy_sqlite_mode():
-        return LEGACY_SCHOOL_FALLBACK
 
     logger.warning(
         "auth.exam_school_context_denied",
@@ -166,7 +133,6 @@ def resolve_school_id_from_seating_plan_context(
     explicit_school_id: Any = Query(None, alias="school_id"),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
 ) -> str:
-    """Resolve school_id from JWT actor claims only."""
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
         return actor_school_id
@@ -174,9 +140,6 @@ def resolve_school_id_from_seating_plan_context(
     candidate = _normalize_school_id_candidate(explicit_school_id)
     if candidate and not _is_placeholder_school_id(candidate):
         return candidate
-
-    if is_legacy_sqlite_mode():
-        return LEGACY_SCHOOL_FALLBACK
 
     logger.warning(
         "auth.seating_plan_school_context_denied",
@@ -194,20 +157,6 @@ def resolve_school_id_from_seating_plan_context(
 
 
 def ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:
-    """Verify school exists. Uses local DB in SQLite mode."""
-    from app.database import SessionLocal
-    from app.models import School
-
-    if is_legacy_sqlite_mode():
-        db = SessionLocal()
-        try:
-            school = db.query(School).filter(School.id == int(school_id)).first()
-            if not school:
-                raise HTTPException(status_code=404, detail="School not found")
-            return {"id": school.id, "name": school.name}
-        finally:
-            db.close()
-
     from app.services.supabase_admin import get_supabase_admin_client
     supabase = get_supabase_admin_client()
     response = (
@@ -222,16 +171,3 @@ def ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:
     if rows:
         return rows[0]
     raise HTTPException(status_code=404, detail="School not found")
-
-
-def build_legacy_sqlite_route_blocker(
-    module_name: str,
-    *,
-    reason: str | None = None,
-) -> Callable[[], None]:
-    def dependency(
-        school_id: str = Depends(resolve_school_id_from_actor),
-    ) -> None:
-        ensure_legacy_sqlite_route_available(module_name, school_id, reason=reason)
-
-    return dependency
