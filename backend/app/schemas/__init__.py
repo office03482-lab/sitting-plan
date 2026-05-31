@@ -821,8 +821,8 @@ class SupplierUpdate(BaseModel):
 
 
 class SupplierResponse(SupplierBase):
-    id: int
-    school_id: int
+    id: str
+    school_id: str
     created_at: datetime
     updated_at: datetime
 
@@ -844,8 +844,8 @@ class InventorySubjectUpdate(BaseModel):
 
 
 class InventorySubjectResponse(InventorySubjectBase):
-    id: int
-    school_id: int
+    id: str
+    school_id: str
     created_at: datetime
     updated_at: datetime
 
@@ -853,7 +853,7 @@ class InventorySubjectResponse(InventorySubjectBase):
 
 
 class InventorySetBase(BaseModel):
-    subject_id: int
+    subject_id: str
     name: str
     is_active: bool = True
 
@@ -863,21 +863,21 @@ class InventorySetCreate(InventorySetBase):
 
 
 class InventorySetUpdate(BaseModel):
-    subject_id: Optional[int] = None
+    subject_id: Optional[str] = None
     name: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class InventorySetResponse(InventorySetBase):
-    id: int
+    id: str
     subject_name: str
-    school_id: int
+    school_id: str
     created_at: datetime
     updated_at: datetime
 
 
 class InventoryVolumeBase(BaseModel):
-    set_id: int
+    set_id: str
     name: str
     volume_number: int
     is_active: bool = True
@@ -888,29 +888,29 @@ class InventoryVolumeCreate(InventoryVolumeBase):
 
 
 class InventoryVolumeUpdate(BaseModel):
-    set_id: Optional[int] = None
+    set_id: Optional[str] = None
     name: Optional[str] = None
     volume_number: Optional[int] = None
     is_active: Optional[bool] = None
 
 
 class InventoryVolumeResponse(InventoryVolumeBase):
-    id: int
+    id: str
     set_name: str
-    subject_id: int
+    subject_id: str
     subject_name: str
-    school_id: int
+    school_id: str
     created_at: datetime
     updated_at: datetime
 
 
 class MaterialBase(BaseModel):
     name: str
-    subject_id: Optional[int] = None
+    subject_id: Optional[str] = None
     subject: Optional[str] = None
-    set_id: Optional[int] = None
+    set_id: Optional[str] = None
     set_name: Optional[str] = None
-    volume_id: Optional[int] = None
+    volume_id: Optional[str] = None
     volume_name: Optional[str] = None
     volume_number: Optional[int] = None
     set_part_name: Optional[str] = None
@@ -928,11 +928,11 @@ class MaterialCreate(MaterialBase):
 
 class MaterialUpdate(BaseModel):
     name: Optional[str] = None
-    subject_id: Optional[int] = None
+    subject_id: Optional[str] = None
     subject: Optional[str] = None
-    set_id: Optional[int] = None
+    set_id: Optional[str] = None
     set_name: Optional[str] = None
-    volume_id: Optional[int] = None
+    volume_id: Optional[str] = None
     volume_name: Optional[str] = None
     volume_number: Optional[int] = None
     set_part_name: Optional[str] = None
@@ -945,8 +945,8 @@ class MaterialUpdate(BaseModel):
 
 
 class MaterialResponse(MaterialBase):
-    id: int
-    school_id: int
+    id: str
+    school_id: str
     current_stock: int = 0
     total_distributed: int = 0
     created_at: datetime
@@ -963,8 +963,8 @@ class InventoryMaterialImportResponse(BaseModel):
 
 class StockInCreate(BaseModel):
     date: datetime
-    supplier_id: int
-    material_id: int
+    supplier_id: str
+    material_id: str
     quantity_received: int
     entry_type: str = "purchase"
     added_by: Optional[str] = None
@@ -972,68 +972,68 @@ class StockInCreate(BaseModel):
 
 
 class StockInResponse(BaseModel):
-    id: int
+    id: str
     date: datetime
-    supplier_id: int
+    supplier_id: str
     supplier_name: str
-    material_id: int
+    material_id: str
     material_name: str
     quantity_received: int
     entry_type: str
     added_by: str
     notes: Optional[str] = None
-    school_id: int
+    school_id: str
     created_at: datetime
 
 
 class StockOutCreate(BaseModel):
     date: datetime
-    batch_id: Optional[int] = None
+    batch_id: Optional[str] = None
     batch_name: Optional[str] = None
-    batch_ids: List[int] = Field(default_factory=list)
-    material_id: int
+    batch_ids: List[str] = Field(default_factory=list)
+    material_id: str
     quantity_issued: int
     issued_by: Optional[str] = None
     remarks: Optional[str] = None
 
 
 class StockOutResponse(BaseModel):
-    id: int
+    id: str
     date: datetime
-    batch_id: Optional[int] = None
+    batch_id: Optional[str] = None
     batch_name: str
-    material_id: int
+    material_id: str
     material_name: str
     quantity_issued: int
     issued_by: str
     remarks: Optional[str] = None
-    school_id: int
+    school_id: str
     created_at: datetime
 
 
 class StudentIssueCreate(BaseModel):
     date: datetime
-    batch_id: Optional[int] = None
-    student_ids: List[int] = Field(default_factory=list)
-    material_id: int
+    batch_id: Optional[str] = None
+    student_ids: List[str] = Field(default_factory=list)
+    material_id: str
     quantity_issued: int
     issued_by: Optional[str] = None
     remarks: Optional[str] = None
 
 
 class StudentIssueResponse(BaseModel):
-    id: int
+    id: str
     date: datetime
-    batch_id: Optional[int] = None
+    batch_id: Optional[str] = None
     batch_name: Optional[str] = None
-    student_id: int
+    student_id: str
     student_name: str
-    material_id: int
+    material_id: str
     material_name: str
     quantity_issued: int
     issued_by: str
     remarks: Optional[str] = None
-    school_id: int
+    school_id: str
     created_at: datetime
 
 
