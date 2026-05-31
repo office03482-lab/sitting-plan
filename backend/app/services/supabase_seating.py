@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Iterable
 
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.seating_engine import SeatingAlgorithmEngine
 
 
 def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
@@ -205,4 +207,264 @@ def delete_all_seating_plans(school_id: str) -> dict[str, Any]:
     return {
         "message": f"All {len(rows)} seating plans deleted successfully",
         "deleted_count": len(rows),
+    }
+
+
+def _compute_desk_positions(num_benches: int) -> dict[int, tuple[int, int]]:
+    return {
+        idx: (idx // 3, idx % 3)
+        for idx in range(num_benches)
+    }
+
+
+def generate_seating_plans(
+    school_id: str,
+    exam_id: str,
+    room_ids: list[str],
+    plan_type: str,
+    batches: list[str] | None = None,
+    batch_conflict_groups: list[list[str]] | None = None,
+    algorithm_version: str = "2.1",
+) -> dict[str, Any]:
+    from app.services import supabase_exams, supabase_students, supabase_rooms
+
+    supabase = get_supabase_admin_client()
+
+    # Verify exam exists
+    exam = supabase_exams.get_exam(school_id, exam_id)
+
+    # Load students
+    all_students = supabase_students.list_students(school_id, is_active=True)
+    if batches:
+        batch_set = set(batches)
+        students_data = [
+            {
+                "id": s.get("id"),
+                "name": s.get("full_name") or s.get("name") or "",
+                "roll_number": s.get("roll_number") or "",
+                "batch": s.get("batch") or s.get("class_name") or "Unassigned",
+                "email": s.get("email") or "",
+            }
+            for s in all_students
+            if str(s.get("batch") or s.get("class_name") or "").strip() in batch_set
+        ]
+    else:
+        students_data = [
+            {
+                "id": s.get("id"),
+                "name": s.get("full_name") or s.get("name") or "",
+                "roll_number": s.get("roll_number") or "",
+                "batch": s.get("batch") or s.get("class_name") or "Unassigned",
+                "email": s.get("email") or "",
+            }
+            for s in all_students
+        ]
+
+    if not students_data:
+        raise HTTPException(status_code=400, detail="No students found")
+
+    # Build batch distribution
+    batch_distribution: dict[str, int] = {}
+    for item in students_data:
+        batch_name = item.get("batch") or "Unassigned"
+        batch_distribution[batch_name] = batch_distribution.get(batch_name, 0) + 1
+
+    batch_label = ", ".join(batches) if batches else ", ".join(batch_distribution.keys())
+
+    # Normalize plan type
+    requested_plan_type = (plan_type or "").strip().lower()
+    if requested_plan_type not in {"strict", "compact", "all_in_one"}:
+        requested_plan_type = "all_in_one"
+    requested_plan_types = [requested_plan_type]
+
+    # Allocate students to rooms
+    def _interleave_students_by_batch(students: list[dict]) -> list[dict]:
+        by_batch: dict[str, list[dict]] = {}
+        for s in students:
+            bn = str(s.get("batch") or "").strip() or "Unassigned"
+            by_batch.setdefault(bn, []).append(s)
+        ordered = sorted(by_batch.keys(), key=lambda b: len(by_batch[b]), reverse=True)
+        result = []
+        forward = True
+        while any(by_batch.values()):
+            bp = ordered if forward else list(reversed(ordered))
+            for b in bp:
+                if by_batch[b]:
+                    result.append(by_batch[b].pop(0))
+            forward = not forward
+        return result
+
+    def _select_room_candidates(pending: list[dict], capacity: int) -> list[dict]:
+        if capacity <= 0 or not pending:
+            return []
+        grouped: dict[str, list[dict]] = {}
+        for s in _interleave_students_by_batch(pending):
+            bn = str(s.get("batch") or "").strip() or "Unassigned"
+            grouped.setdefault(bn, []).append(s)
+        limit = min(len(pending), capacity + min(max(capacity // 4, 6), 18))
+        selected = []
+        counts: dict[str, int] = {}
+        forward = True
+        while len(selected) < limit and any(grouped.values()):
+            ob = sorted(grouped.keys(), key=lambda b: (counts.get(b, 0), -len(grouped[b]), b))
+            bp = ob if forward else list(reversed(ob))
+            for b in bp:
+                if grouped[b] and len(selected) < limit:
+                    selected.append(grouped[b].pop(0))
+                    counts[b] = counts.get(b, 0) + 1
+            forward = not forward
+        return selected
+
+    # Build room contexts
+    room_contexts: list[dict] = []
+    for room_id in room_ids:
+        room = supabase_rooms.get_room(school_id, room_id)
+        num_benches = int(room.get("num_benches") or 0)
+        if num_benches == 0:
+            continue
+        desk_positions = _compute_desk_positions(num_benches)
+        room_contexts.append({
+            "room_id": room_id,
+            "room": room,
+            "num_desks": num_benches,
+            "seat_capacity": num_benches * 2,
+            "desk_positions": desk_positions,
+            "sequence": len(room_contexts),
+        })
+
+    # Allocate students to rooms
+    pending_students = list(students_data)
+    room_student_pools: dict[str, list[dict]] = {}
+    for context in room_contexts:
+        candidates = _select_room_candidates(pending_students, context["seat_capacity"])
+        room_student_pools[context["room_id"]] = list(candidates)
+        assigned_ids = {s["id"] for s in candidates}
+        pending_students = [s for s in pending_students if s["id"] not in assigned_ids]
+
+    engine = SeatingAlgorithmEngine()
+    plans = []
+
+    for context in room_contexts:
+        room_id = context["room_id"]
+        room = context["room"]
+        num_desks = context["num_desks"]
+        desk_positions = context["desk_positions"]
+        room_students = list(room_student_pools.get(room_id, []))
+
+        generated = {"room_id": room_id, "plan_ids": []}
+
+        if not room_students:
+            plans.append(generated)
+            continue
+
+        plan_type_name_map = {
+            "all_in_one": "All-in-One Plan",
+            "strict": "Plan A (Strict)",
+            "compact": "Plan B (Compact)",
+        }
+
+        for pt in requested_plan_types:
+            if pt == "all_in_one":
+                result = engine.generate_all_in_one_plan(
+                    room_students, num_desks,
+                    desk_positions=desk_positions,
+                    batch_conflict_groups=batch_conflict_groups,
+                )
+            elif pt == "strict":
+                result = engine.generate_strict_plan(
+                    room_students, num_desks,
+                    desk_positions=desk_positions,
+                    batch_conflict_groups=batch_conflict_groups,
+                )
+            else:
+                result = engine.generate_compact_plan(
+                    room_students, num_desks,
+                    desk_positions=desk_positions,
+                    batch_conflict_groups=batch_conflict_groups,
+                )
+
+            assigned_set = {
+                sid
+                for assigned_list in result.get("assignment", {}).values()
+                for student in assigned_list
+                for sid in [student.get("id")]
+            }
+            assigned_students = [s for s in room_students if s["id"] in assigned_set]
+            plan_batch_dist: dict[str, int] = {}
+            for item in assigned_students:
+                bn = item.get("batch") or "Unassigned"
+                plan_batch_dist[bn] = plan_batch_dist.get(bn, 0) + 1
+
+            layout_desks = [
+                {
+                    "desk_id": desk_id,
+                    "row": pos[0],
+                    "col": pos[1],
+                    "students": [
+                        {"student_id": s.get("id"), "student_name": s.get("name"), "roll_number": s.get("roll_number"), "batch": s.get("batch")}
+                        for s in student_group
+                    ],
+                }
+                for desk_id, pos in desk_positions.items()
+                for student_group in [result.get("assignment", {}).get(str(desk_id), [])]
+            ]
+
+            plan_row = {
+                "school_id": school_id,
+                "exam_id": exam_id,
+                "room_id": room_id,
+                "plan_name": f"{room.get('name')} - Batches: {batch_label} - {plan_type_name_map.get(pt, pt)}",
+                "plan_type": pt,
+                "status": "draft",
+                "students_assigned": len(assigned_students),
+                "batch_distribution": plan_batch_dist,
+                "is_valid": result.get("validity", True),
+                "validation_errors": result.get("errors", []),
+                "algorithm_version": algorithm_version,
+                "plan_metadata": {
+                    "layout": {
+                        "desks": layout_desks,
+                        "occupied": len(assigned_students),
+                    },
+                    "exam_name": exam.get("name"),
+                    "room_name": room.get("name"),
+                    "ui_plan_type": pt,
+                },
+            }
+
+            insert_resp = (
+                supabase
+                .schema("exam")
+                .table("seating_plans")
+                .insert(plan_row)
+                .select("id")
+                .execute()
+            )
+            inserted = list(insert_resp.data or [])
+            if inserted:
+                generated["plan_ids"].append(inserted[0].get("id"))
+
+        plans.append(generated)
+
+    all_plan_ids = [pid for g in plans for pid in g.get("plan_ids", [])]
+    unique_unassigned = {
+        sid
+        for g in plans
+        for s in room_student_pools.get(str(g.get("room_id")), [])
+        for sid in [s.get("id")] if sid
+    } if plans else set()
+
+    return {
+        "message": f"Generated {len(all_plan_ids)} seating plan(s)",
+        "generated_plan_type": requested_plan_type,
+        "plan_ids": all_plan_ids,
+        "selected_student_count": len(students_data),
+        "unassigned_count": len(unique_unassigned),
+        "plans": [
+            {
+                "room_id": g.get("room_id"),
+                "plan_ids": g.get("plan_ids", []),
+            }
+            for g in plans
+        ],
     }

@@ -204,3 +204,69 @@ def get_students_count(school_id: str) -> int:
         .execute()
     )
     return response.count or 0
+
+
+def find_student_by_roll_number(school_id: str, roll_number: str) -> dict[str, Any] | None:
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("roll_number", roll_number)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        return None
+    return _serialize_student(rows[0])
+
+
+def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    roll_number = _normalize(payload.get("roll_number") or payload.get("roll_no"))
+    if not roll_number:
+        raise HTTPException(status_code=400, detail="Roll number is required")
+
+    name = _normalize(payload.get("name") or payload.get("candidate_name"))
+    if not name:
+        raise HTTPException(status_code=400, detail="Student name is required")
+
+    batch_name = _normalize(payload.get("batch"))
+    batch_id = _resolve_batch_id(school_id, batch_name) if batch_name else None
+    class_name = _normalize_class_name(batch_name, batch_name)
+
+    row = {
+        "school_id": school_id,
+        "roll_number": roll_number,
+        "full_name": name,
+        "name": name,
+        "batch_id": batch_id,
+        "batch": batch_name,
+        "class_name": class_name or batch_name if batch_name else None,
+        "is_active": bool(payload.get("is_active", True)),
+    }
+    if "email" in payload and payload["email"]:
+        row["email"] = _normalize(payload["email"])
+    if "phone" in payload and payload["phone"]:
+        row["phone"] = _normalize(payload["phone"])
+
+    existing = find_student_by_roll_number(school_id, roll_number)
+    if existing:
+        response = (
+            get_supabase_admin_client()
+            .table("students")
+            .update(row)
+            .eq("school_id", school_id)
+            .eq("id", existing["id"])
+            .execute()
+        )
+        rows = list(response.data or [])
+        if rows:
+            return _serialize_student(rows[0])
+        return get_student(school_id, existing["id"])
+
+    response = get_supabase_admin_client().table("students").insert(row).execute()
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to create student")
+    return _serialize_student(rows[0])

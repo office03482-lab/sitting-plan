@@ -1881,6 +1881,69 @@ def _fetch_settings(school_id: str) -> dict[str, Any]:
     }
 
 
+def create_holiday(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("holidays")
+    holiday_date = payload.get("holiday_date")
+    if isinstance(holiday_date, str):
+        holiday_date = _iso_datetime(holiday_date)
+
+    row = {
+        "school_id": school_id,
+        "title": _normalize(payload.get("title")) or "Holiday",
+        "holiday_date": holiday_date,
+        "description": _normalize(payload.get("description")) or None,
+        "is_active": True,
+    }
+    response = supabase.insert(row).execute()
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to create holiday")
+    return _serialize_holiday(rows[0])
+
+
+def delete_holiday(school_id: str, holiday_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("holidays")
+    response = (
+        supabase.update({"is_active": False})
+        .eq("id", holiday_id)
+        .eq("school_id", school_id)
+        .execute()
+    )
+    if not list(response.data or []):
+        raise HTTPException(status_code=404, detail="Holiday not found")
+    return {"message": "Holiday deleted successfully"}
+
+
+def delete_all_holidays(school_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("holidays")
+    existing = supabase.select("id").eq("school_id", school_id).eq("is_active", True).execute()
+    rows = list(existing.data or [])
+    if rows:
+        supabase.update({"is_active": False}).eq("school_id", school_id).eq("is_active", True).execute()
+    return {"message": f"{len(rows)} holiday(s) deleted successfully", "deleted_count": len(rows)}
+
+
+def create_notification(school_id: str, message: str, notification_type: str, *, user_name: str | None = None, user_role: str | None = None) -> dict[str, Any]:
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("notifications")
+        .insert({
+            "school_id": school_id,
+            "message": message,
+            "notification_type": notification_type,
+            "metadata": {"user_name": user_name, "user_role": user_role},
+            "is_read": False,
+            "is_active": True,
+        })
+        .execute()
+    )
+    rows = list(response.data or [])
+    if rows:
+        return _serialize_notification(rows[0])
+    raise HTTPException(status_code=500, detail="Failed to create notification")
+
+
 def get_attendance_settings(school_id: str) -> dict[str, Any]:
     return _fetch_settings(school_id)
 

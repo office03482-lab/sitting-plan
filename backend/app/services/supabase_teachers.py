@@ -1,4 +1,4 @@
-"""Supabase-native teacher (staff_members) repository for read operations."""
+"""Supabase-native teacher (staff_members) repository."""
 
 from __future__ import annotations
 
@@ -109,3 +109,95 @@ def count_teachers(school_id: str) -> int:
         .execute()
     )
     return response.count or 0
+
+
+def create_teacher(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    name = _normalize(payload.get("name"))
+    if not name:
+        raise HTTPException(status_code=400, detail="Teacher name is required")
+
+    subject = _normalize(payload.get("subject"))
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject is required")
+
+    existing = _base_query(extra_select="id").eq("school_id", school_id).ilike("full_name", name).execute()
+    for row in list(existing.data or []):
+        row_subject = (_get_metadata(row) or {}).get("subject") or _normalize(row.get("department"))
+        if _normalize(row.get("full_name")).lower() == name.lower() and row_subject.lower() == subject.lower():
+            raise HTTPException(status_code=400, detail="Teacher with this name and subject already exists")
+
+    email = _normalize(payload.get("email")) or None
+    phone = _normalize(payload.get("phone")) or None
+    row = {
+        "school_id": school_id,
+        "staff_type": "teaching",
+        "full_name": name,
+        "email": email,
+        "phone": phone,
+        "department": subject,
+        "metadata": {"subject": subject},
+        "is_active": bool(payload.get("is_active", True)),
+    }
+    response = get_supabase_admin_client().table("staff_members").insert(row).execute()
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to create teacher")
+    return _serialize_teacher(rows[0])
+
+
+def update_teacher(school_id: str, teacher_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    current = get_teacher(school_id, teacher_id)
+
+    update_payload: dict[str, Any] = {}
+    metadata = _get_metadata(current)
+
+    if "name" in payload:
+        name = _normalize(payload["name"])
+        if name:
+            update_payload["full_name"] = name
+    if "email" in payload:
+        update_payload["email"] = _normalize(payload["email"]) or None
+    if "phone" in payload:
+        update_payload["phone"] = _normalize(payload["phone"]) or None
+    if "subject" in payload:
+        subject = _normalize(payload["subject"])
+        if subject:
+            metadata["subject"] = subject
+            update_payload["department"] = subject
+    if "is_active" in payload:
+        update_payload["is_active"] = bool(payload["is_active"])
+
+    if metadata:
+        update_payload["metadata"] = metadata
+
+    if not update_payload:
+        return current
+
+    response = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .update(update_payload)
+        .eq("school_id", school_id)
+        .eq("id", teacher_id)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if rows:
+        return _serialize_teacher(rows[0])
+    return get_teacher(school_id, teacher_id)
+
+
+def delete_teacher(school_id: str, teacher_id: str) -> dict[str, Any]:
+    get_teacher(school_id, teacher_id)
+    response = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .update({"is_active": False})
+        .eq("school_id", school_id)
+        .eq("id", teacher_id)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    return {"message": "Teacher deleted successfully"}
