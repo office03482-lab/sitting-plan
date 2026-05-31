@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import func
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -289,17 +290,20 @@ def _resolve_request_principal(
     user = None
 
     try:
-        user_id = int(str(user_id_raw))
-        logger.info("auth.lookup.by_integer_id", extra={"user_id": user_id})
-        user = db.query(User).filter(User.id == user_id).first()
-    except (TypeError, ValueError):
-        logger.info("auth.lookup.sub_is_not_integer", extra={"sub": str(user_id_raw or "")})
+        try:
+            user_id = int(str(user_id_raw))
+            logger.info("auth.lookup.by_integer_id", extra={"user_id": user_id})
+            user = db.query(User).filter(User.id == user_id).first()
+        except (TypeError, ValueError):
+            logger.info("auth.lookup.sub_is_not_integer", extra={"sub": str(user_id_raw or "")})
 
-    if not user:
-        token_email = str(payload.get("email") or "").strip().lower()
-        if token_email:
-            logger.info("auth.lookup.by_email", extra={"email": token_email})
-            user = db.query(User).filter(func.lower(User.email) == token_email).first()
+        if not user:
+            token_email = str(payload.get("email") or "").strip().lower()
+            if token_email:
+                logger.info("auth.lookup.by_email", extra={"email": token_email})
+                user = db.query(User).filter(func.lower(User.email) == token_email).first()
+    except ProgrammingError:
+        logger.warning("auth.lookup.users_table_missing", exc_info=True)
 
     auth_source = "local"
     role_key = ""
