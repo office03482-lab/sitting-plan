@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -372,6 +372,9 @@ def list_assignments(
     ]
 
 
+list_fee_assignments = list_assignments
+
+
 def list_payments(school_id: str) -> list[dict[str, Any]]:
     payments = _fetch_payments(school_id)
     students = _fetch_students(school_id)
@@ -565,3 +568,286 @@ def create_payment(school_id: str, payment_data: dict[str, Any], actor: dict[str
 
     students = _fetch_students(school_id)
     return serialize_payment_row(dict(created.data), student_names=_student_name_lookup(students))
+
+
+def _installment_count(plan: str) -> int:
+    p = plan.strip().lower() if plan else "monthly"
+    if p == "yearly":
+        return 1
+    if p == "quarterly":
+        return 4
+    return 4
+
+
+def _installment_gap_days(plan: str) -> int:
+    p = plan.strip().lower() if plan else "monthly"
+    if p == "yearly":
+        return 365
+    if p == "quarterly":
+        return 90
+    return 30
+
+
+def _create_assignments_for_student(
+    school_id: str,
+    student_id: str,
+    fee_structure_id: str,
+    *,
+    total_amount: float,
+    discount_amount: float,
+    installment_plan: str,
+    start_date: datetime | None = None,
+) -> None:
+    count = _installment_count(installment_plan)
+    gap = _installment_gap_days(installment_plan)
+    base_date = start_date or datetime.utcnow()
+    per_installment = round(max(total_amount - discount_amount, 0.0) / count, 2)
+    per_discount = round(discount_amount / count, 2) if discount_amount else 0.0
+
+    existing = (
+        get_supabase_admin_client()
+        .schema("finance")
+        .table("fee_assignments")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("student_id", student_id)
+        .eq("fee_structure_id", fee_structure_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return
+
+    for index in range(count):
+        due = base_date + timedelta(days=gap * index)
+        assignment_payload = {
+            "school_id": school_id,
+            "student_id": student_id,
+            "fee_structure_id": fee_structure_id,
+            "installment_label": f"Installment {index + 1}",
+            "due_date": due.isoformat(),
+            "amount_due": per_installment,
+            "amount_paid": 0.0,
+            "discount_amount": per_discount,
+            "late_fee_applied": 0.0,
+            "status": "pending",
+        }
+        due_date_only = _parse_date(due.isoformat())
+        if due_date_only and due_date_only < datetime.utcnow().date():
+            assignment_payload["status"] = "overdue"
+        (
+            get_supabase_admin_client()
+            .schema("finance")
+            .table("fee_assignments")
+            .insert(assignment_payload)
+            .execute()
+        )
+
+
+def create_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    admission_no = str(payload.get("admission_no") or "").strip()
+    if not admission_no:
+        raise HTTPException(status_code=400, detail="Admission number is required")
+
+    existing = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("admission_no", admission_no)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(status_code=400, detail="Admission number already exists")
+
+    guardian_phone = str(payload.get("parent_mobile") or "").strip()
+    guardian_name = str(payload.get("parent_name") or payload.get("guardian_name") or "").strip()
+    father_name = str(payload.get("father_name") or "").strip() or guardian_name
+
+    student_payload = {
+        "school_id": school_id,
+        "admission_no": admission_no,
+        "full_name": str(payload.get("full_name") or "").strip(),
+        "class_name": str(payload.get("class_name") or "").strip(),
+        "email": str(payload.get("email") or "").strip() or None,
+        "phone": str(payload.get("phone") or "").strip() or None,
+        "guardian_name": guardian_name or None,
+        "guardian_phone": guardian_phone or None,
+        "father_name": father_name or None,
+        "is_active": True,
+    }
+    batch_name = str(payload.get("batch_name") or "").strip()
+    if batch_name and batch_name.lower() != "none":
+        student_payload["batch_name"] = batch_name
+
+    created = (
+        get_supabase_admin_client()
+        .table("students")
+        .insert(student_payload)
+        .select("*")
+        .single()
+        .execute()
+    )
+    if not created.data:
+        raise HTTPException(status_code=500, detail="Student save returned no row")
+
+    student = dict(created.data)
+    student_id = str(student["id"])
+
+    fee_structures = _fetch_fee_structures(school_id)
+    class_name = str(payload.get("class_name") or "").strip()
+    matched = [
+        fs for fs in fee_structures
+        if fs.get("is_active", True)
+        and (not fs.get("class_name") or str(fs.get("class_name") or "").strip() == class_name)
+    ]
+    for fs in matched:
+        _create_assignments_for_student(
+            school_id,
+            student_id,
+            str(fs["id"]),
+            total_amount=_to_float(fs.get("total_amount")),
+            discount_amount=_to_float(fs.get("discount_amount")),
+            installment_plan=str(fs.get("installment_plan") or "monthly"),
+        )
+
+    all_assignments = _fetch_assignments(school_id, student_id=student_id)
+    batch_lookup = _fetch_batches([str(student.get("batch_id"))] if student.get("batch_id") else [])
+    return serialize_student_row(student, batch_lookup=batch_lookup, student_assignments=all_assignments)
+
+
+def create_fee_structure(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    insert_payload = {
+        "school_id": school_id,
+        "name": str(payload.get("name") or "").strip(),
+        "fee_type": str(payload.get("fee_type") or "").strip(),
+        "class_name": str(payload.get("class_name") or "").strip() or None,
+        "installment_plan": str(payload.get("installment_plan") or "monthly").strip().lower(),
+        "total_amount": _to_float(payload.get("total_amount")),
+        "discount_amount": _to_float(payload.get("discount_amount")),
+        "late_fee_rule": str(payload.get("late_fee_rule") or "").strip() or None,
+        "description": payload.get("description"),
+        "is_active": bool(payload.get("is_active", True)),
+    }
+
+    created = (
+        get_supabase_admin_client()
+        .schema("finance")
+        .table("fee_structures")
+        .insert(insert_payload)
+        .select("*")
+        .single()
+        .execute()
+    )
+    if not created.data:
+        raise HTTPException(status_code=500, detail="Fee structure save returned no row")
+
+    fee_structure = dict(created.data)
+    fee_structure_id = str(fee_structure["id"])
+    class_name_filter = fee_structure.get("class_name")
+
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+    )
+    if class_name_filter:
+        response = response.eq("class_name", class_name_filter)
+    students_data = list((response.execute()).data or [])
+
+    for student_row in students_data:
+        _create_assignments_for_student(
+            school_id,
+            str(student_row["id"]),
+            fee_structure_id,
+            total_amount=_to_float(fee_structure.get("total_amount")),
+            discount_amount=_to_float(fee_structure.get("discount_amount")),
+            installment_plan=str(fee_structure.get("installment_plan") or "monthly"),
+        )
+
+    assignments = _fetch_assignments(school_id)
+    assigned_count = len({str(a.get("student_id")) for a in assignments if str(a.get("fee_structure_id")) == fee_structure_id})
+    return serialize_fee_structure_row(fee_structure, assigned_students=assigned_count)
+
+
+def get_parent_portal(school_id: str, parent_id: str) -> dict[str, Any]:
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+    )
+    if _looks_like_uuid(parent_id):
+        response = response.eq("id", parent_id)
+    else:
+        response = response.eq("guardian_phone", parent_id)
+    students_data = list((response.execute()).data or [])
+    if not students_data:
+        raise HTTPException(status_code=404, detail="Parent not found")
+
+    student_ids = [str(s["id"]) for s in students_data]
+    first = students_data[0]
+    parent_info = {
+        "id": first.get("id"),
+        "full_name": str(first.get("guardian_name") or first.get("father_name") or "").strip() or "Parent",
+        "mobile_number": str(first.get("guardian_phone") or first.get("phone") or "").strip(),
+        "email": first.get("email"),
+        "relation": "parent",
+        "school_id": school_id,
+        "is_active": True,
+        "created_at": _iso(first.get("created_at")),
+        "updated_at": _iso(first.get("updated_at")),
+    }
+
+    children: list[dict[str, Any]] = []
+    all_assignments: list[dict[str, Any]] = []
+    all_payments: list[dict[str, Any]] = []
+
+    for student in students_data:
+        sid = str(student["id"])
+        s_assignments = _fetch_assignments(school_id, student_id=sid)
+        all_assignments.extend(s_assignments)
+
+        s_payments_resp = (
+            get_supabase_admin_client()
+            .schema("finance")
+            .table("payments")
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("student_id", sid)
+            .order("payment_date", desc=True)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        s_payments = list(s_payments_resp.data or [])
+        all_payments.extend(s_payments)
+
+        open_assignments = sorted(
+            [a for a in s_assignments if _calculate_assignment_status(a) != "paid"],
+            key=lambda a: (_parse_date(a.get("due_date")) or date.max),
+        )
+        due_amount = sum(_to_float(_outstanding_amount(a)) for a in s_assignments)
+        next_due = _iso(open_assignments[0].get("due_date")) if open_assignments else None
+        status_value = _calculate_assignment_status(open_assignments[0]) if open_assignments else "paid"
+
+        children.append({
+            "student_id": sid,
+            "student_name": str(student.get("full_name") or ""),
+            "class_name": str(student.get("class_name") or ""),
+            "due_amount": round(due_amount, 2),
+            "next_due_date": next_due,
+            "status": status_value,
+        })
+
+    student_names = {str(s["id"]): str(s.get("full_name") or "") for s in students_data}
+    payment_history = [serialize_payment_row(p, student_names=student_names) for p in all_payments]
+
+    return {
+        "parent": parent_info,
+        "children": children,
+        "payment_history": payment_history,
+    }
