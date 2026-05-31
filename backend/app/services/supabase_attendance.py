@@ -3603,3 +3603,209 @@ def get_staff_dashboard(
         },
     )
     return payload
+
+
+def list_notifications(
+    school_id: str,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("notifications")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return [_serialize_notification(row) for row in list(response.data or [])]
+
+
+def delete_notification(school_id: str, notification_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("notifications")
+    response = (
+        supabase.update({"is_active": False})
+        .eq("id", notification_id)
+        .eq("school_id", school_id)
+        .execute()
+    )
+    if not list(response.data or []):
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Notification deleted successfully"}
+
+
+def delete_all_notifications(school_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("notifications")
+    existing = supabase.select("id").eq("school_id", school_id).eq("is_active", True).execute()
+    rows = list(existing.data or [])
+    if rows:
+        supabase.update({"is_active": False}).eq("school_id", school_id).eq("is_active", True).execute()
+    return {"message": f"{len(rows)} notification(s) deleted successfully", "deleted_count": len(rows)}
+
+
+def delete_staff_record(school_id: str, record_id: str) -> dict[str, Any]:
+    normalized_record_id = _normalize(record_id)
+    if not normalized_record_id:
+        raise ValueError("Staff attendance record id is required")
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("staff_attendance")
+        .delete()
+        .eq("school_id", school_id)
+        .eq("id", normalized_record_id)
+        .execute()
+    )
+    deleted_rows = list(response.data or [])
+    if not deleted_rows:
+        raise ValueError("Staff attendance record not found")
+    return {"message": "Staff attendance record deleted successfully"}
+
+
+def delete_all_staff_records(
+    school_id: str,
+    *,
+    department: str | None = None,
+    staff_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    filtered_staff = list_staff(
+        school_id,
+        skip=0,
+        limit=MAX_STAFF_LOOKUP,
+        search=staff_name,
+        department=department,
+    )
+    staff_ids = _sanitize_lookup_ids([row.get("id") for row in filtered_staff])
+    if not staff_ids:
+        return {"message": "0 staff attendance record(s) deleted successfully", "deleted_count": 0}
+
+    candidate_rows: list[dict[str, Any]] = []
+    for chunk in _chunk_values(staff_ids, STAFF_LOOKUP_CHUNK_SIZE):
+        query = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("staff_attendance")
+            .select("id")
+            .eq("school_id", school_id)
+            .in_("staff_member_id", chunk)
+        )
+        if date_from:
+            query = query.gte("attendance_date", date_from[:10])
+        if date_to:
+            query = query.lte("attendance_date", date_to[:10])
+        candidate_rows.extend(list(query.execute().data or []))
+
+    record_ids = _sanitize_lookup_ids([row.get("id") for row in candidate_rows])
+    if not record_ids:
+        return {"message": "0 staff attendance record(s) deleted successfully", "deleted_count": 0}
+
+    deleted_count = 0
+    for chunk in _chunk_values(record_ids, ATTENDANCE_LOOKUP_CHUNK_SIZE):
+        deleted_response = (
+            get_supabase_admin_client()
+            .schema("attendance")
+            .table("staff_attendance")
+            .delete()
+            .eq("school_id", school_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        deleted_count += len(list(deleted_response.data or []))
+
+    return {"message": f"{deleted_count} staff attendance record(s) deleted successfully", "deleted_count": deleted_count}
+
+
+def save_leave_request(
+    school_id: str,
+    *,
+    staff_member_id: str,
+    leave_type: str,
+    from_date: str,
+    to_date: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("leave_requests")
+        .insert({
+            "school_id": school_id,
+            "staff_member_id": staff_member_id,
+            "leave_type": leave_type,
+            "from_date": from_date[:10],
+            "to_date": to_date[:10],
+            "reason": _normalize(reason) or None,
+            "status": "pending",
+            "is_active": True,
+        })
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="Failed to create leave request")
+    staff_name = _fetch_staff_member_name(school_id, staff_member_id)
+    return _serialize_leave(rows[0], staff_names_by_id={staff_member_id: staff_name})
+
+
+def approve_leave_request(
+    school_id: str,
+    leave_id: str,
+    *,
+    status: str,
+    approved_by: str | None = None,
+) -> dict[str, Any]:
+    response = (
+        get_supabase_admin_client()
+        .schema("attendance")
+        .table("leave_requests")
+        .update({
+            "status": _normalize(status) or "approved",
+            "approver_profile_id": _normalize(approved_by) or None,
+        })
+        .eq("id", leave_id)
+        .eq("school_id", school_id)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+    staff_member_id = _normalize(rows[0].get("staff_member_id"))
+    staff_name = _fetch_staff_member_name(school_id, staff_member_id) if staff_member_id else ""
+    return _serialize_leave(rows[0], staff_names_by_id={staff_member_id: staff_name} if staff_member_id else {})
+
+
+def delete_leave_request(school_id: str, leave_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("leave_requests")
+    response = (
+        supabase.update({"is_active": False})
+        .eq("id", leave_id)
+        .eq("school_id", school_id)
+        .execute()
+    )
+    if not list(response.data or []):
+        raise HTTPException(status_code=404, detail="Leave request not found")
+    return {"message": "Leave deleted successfully"}
+
+
+def delete_all_leave_requests(
+    school_id: str,
+    *,
+    status_filter: str | None = None,
+) -> dict[str, Any]:
+    supabase = get_supabase_admin_client().schema("attendance").table("leave_requests")
+    query = supabase.select("id").eq("school_id", school_id).eq("is_active", True)
+    if status_filter:
+        query = query.eq("status", status_filter)
+    existing = query.execute()
+    rows = list(existing.data or [])
+    if rows:
+        del_query = supabase.update({"is_active": False}).eq("school_id", school_id).eq("is_active", True)
+        if status_filter:
+            del_query = del_query.eq("status", status_filter)
+        del_query.execute()
+    return {"message": f"{len(rows)} leave request(s) deleted successfully", "deleted_count": len(rows)}
