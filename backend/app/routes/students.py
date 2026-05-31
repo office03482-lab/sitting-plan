@@ -14,11 +14,6 @@ from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
 from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest
 from app.schemas import (
-    HostelCreate,
-    HostelResponse,
-    HostelRoomCreate,
-    HostelRoomResponse,
-    HostelUpdate,
     StudentBatchTransferRequest,
     StudentBatchTransferResponse,
     StudentCreate,
@@ -205,38 +200,6 @@ def delete_school_batches(db: Session, school_id: int) -> int:
     return len(batches)
 
 
-def serialize_hostel_room(room: HostelRoom) -> HostelRoomResponse:
-    return HostelRoomResponse(
-        id=room.id,
-        hostel_id=room.hostel_id,
-        room_number=room.room_number,
-        total_beds=room.total_beds,
-        occupied_beds=room.occupied_beds,
-        available_beds=max(int(room.total_beds or 0) - int(room.occupied_beds or 0), 0),
-        is_active=room.is_active,
-    )
-
-
-def serialize_hostel(hostel: Hostel) -> HostelResponse:
-    active_rooms = [room for room in hostel.rooms if room.is_active]
-    total_capacity = sum(int(room.total_beds or 0) for room in active_rooms)
-    occupied_beds = sum(int(room.occupied_beds or 0) for room in active_rooms)
-    return HostelResponse(
-        id=hostel.id,
-        name=hostel.name,
-        hostel_head=hostel.hostel_head,
-        warden_name=hostel.warden_name,
-        gender_category=hostel.gender_category,
-        address=hostel.address,
-        is_active=hostel.is_active,
-        total_capacity=total_capacity,
-        occupied_beds=occupied_beds,
-        available_beds=max(total_capacity - occupied_beds, 0),
-        total_rooms=len(active_rooms),
-        rooms=[serialize_hostel_room(room) for room in active_rooms],
-    )
-
-
 def serialize_student(student: Student) -> StudentResponse:
     safe_class_name = normalize_student_class_name(student.class_name, student.batch)
     return StudentResponse(
@@ -253,16 +216,6 @@ def serialize_student(student: Student) -> StudentResponse:
         special_needs=student.special_needs,
         requires_near_exit=bool(student.requires_near_exit),
         requires_extra_time=bool(student.requires_extra_time),
-        boarding_type=student.boarding_type,
-        hostel_required=bool(student.hostel_required),
-        preferred_hostel_id=student.preferred_hostel_id,
-        hostel_request_status=student.hostel_request_status,
-        assigned_hostel_id=student.assigned_hostel_id,
-        assigned_hostel_name=student.assigned_hostel.name if student.assigned_hostel else None,
-        assigned_room_id=student.assigned_room_id,
-        assigned_room_number=student.assigned_room.room_number if student.assigned_room else None,
-        assigned_bed_label=student.assigned_bed_label,
-        hostel_notes=student.hostel_notes,
         reference_name=student.reference_name,
         reference_number=student.reference_number,
         reference_remark=student.reference_remark,
@@ -748,175 +701,6 @@ async def get_students_count(
     total = db.query(Student).filter(Student.school_id == school_id).count()
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {total}")
     return total
-
-@router.get("/hostels", response_model=List[HostelResponse])
-async def list_hostels(
-    school_id: str = Depends(resolve_school_id_from_actor),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-):
-    ensure_students_legacy_routes_available(school_id)
-    try:
-        hostels = (
-            db.query(Hostel)
-            .options(selectinload(Hostel.rooms))
-            .filter(Hostel.school_id == school_id)
-            .order_by(Hostel.name.asc())
-            .all()
-        )
-        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(hostels)}")
-        return [serialize_hostel(hostel) for hostel in hostels]
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load hostels: {exc}") from exc
-
-
-@router.post("/hostels", response_model=HostelResponse)
-async def create_hostel(
-    payload: HostelCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-):
-    ensure_students_legacy_routes_available(school_id)
-    try:
-        hostel = Hostel(
-            school_id=school_id,
-            name=payload.name.strip(),
-            hostel_head=payload.hostel_head,
-            warden_name=payload.warden_name,
-            gender_category=payload.gender_category,
-            address=payload.address,
-            is_active=payload.is_active,
-        )
-        db.add(hostel)
-        db.flush()
-
-        generated_room_count = max(int(payload.total_rooms or 0), 0)
-        if generated_room_count:
-            for room_index in range(1, generated_room_count + 1):
-                db.add(
-                    HostelRoom(
-                        hostel_id=hostel.id,
-                        room_number=f"Room {room_index}",
-                        total_beds=2,
-                        occupied_beds=0,
-                        is_active=True,
-                    )
-                )
-        else:
-            for room in payload.rooms:
-                db.add(
-                    HostelRoom(
-                        hostel_id=hostel.id,
-                        room_number=room.room_number.strip(),
-                        total_beds=2,
-                        occupied_beds=0,
-                        is_active=True,
-                    )
-                )
-
-        db.commit()
-        db.refresh(hostel)
-        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
-        return serialize_hostel(hostel)
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create hostel: {exc}") from exc
-
-
-@router.put("/hostels/{hostel_id}", response_model=HostelResponse)
-async def update_hostel(
-    hostel_id: int,
-    payload: HostelUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-):
-    ensure_students_legacy_routes_available(school_id)
-    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
-    if not hostel:
-        raise HTTPException(status_code=404, detail="Hostel not found")
-
-    for key, value in payload.dict(exclude_unset=True).items():
-        setattr(hostel, key, value)
-
-    db.commit()
-    db.refresh(hostel)
-    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
-    return serialize_hostel(hostel)
-
-
-@router.delete("/hostels/{hostel_id}")
-async def delete_hostel(
-    hostel_id: int,
-    school_id: str = Depends(resolve_school_id_from_actor),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-):
-    ensure_students_legacy_routes_available(school_id)
-    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
-    if not hostel:
-        raise HTTPException(status_code=404, detail="Hostel not found")
-
-    try:
-        related_students = db.query(Student).filter(
-            Student.school_id == school_id,
-            or_(
-                Student.preferred_hostel_id == hostel_id,
-                Student.assigned_hostel_id == hostel_id,
-            ),
-        ).all()
-
-        for student in related_students:
-            if student.preferred_hostel_id == hostel_id:
-                student.preferred_hostel_id = None
-            if student.assigned_hostel_id == hostel_id:
-                student.assigned_hostel_id = None
-                student.assigned_room_id = None
-                student.assigned_bed_label = None
-            if student.hostel_request_status in {"pending", "approved"}:
-                student.hostel_request_status = "not_requested"
-
-        db.query(StudentHostelRequest).filter(
-            StudentHostelRequest.school_id == school_id,
-            StudentHostelRequest.hostel_id == hostel_id,
-        ).delete(synchronize_session=False)
-
-        db.delete(hostel)
-        db.commit()
-        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
-        return {"message": "Hostel deleted successfully"}
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete hostel: {exc}") from exc
-
-
-@router.post("/hostels/{hostel_id}/rooms", response_model=HostelRoomResponse)
-async def add_hostel_room(
-    hostel_id: int,
-    payload: HostelRoomCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
-    actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
-):
-    ensure_students_legacy_routes_available(school_id)
-    hostel = db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.school_id == school_id).first()
-    if not hostel:
-        raise HTTPException(status_code=404, detail="Hostel not found")
-
-    room = HostelRoom(
-        hostel_id=hostel_id,
-        room_number=payload.room_number.strip(),
-        total_beds=2,
-        occupied_beds=0,
-        is_active=True,
-    )
-    db.add(room)
-    db.commit()
-    db.refresh(room)
-    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
-    return serialize_hostel_room(room)
-
 
 @router.get("/hostel-requests", response_model=List[StudentHostelRequestResponse])
 async def list_hostel_requests(
