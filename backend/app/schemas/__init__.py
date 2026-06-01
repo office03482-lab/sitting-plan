@@ -754,7 +754,7 @@ class InvigilatorUpdate(BaseModel):
 
 class InvigilatorResponse(InvigilatorBase):
     id: int
-    school_id: int
+    school_id: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -763,7 +763,7 @@ class InvigilatorResponse(InvigilatorBase):
 
 
 class RoomInvigilatorBase(BaseModel):
-    room_id: int
+    room_id: str
     invigilator_id: int
     exam_id: Optional[int] = None
     notes: Optional[str] = None
@@ -782,7 +782,7 @@ class RoomInvigilatorUpdate(BaseModel):
 
 class RoomInvigilatorResponse(RoomInvigilatorBase):
     id: int
-    school_id: int
+    school_id: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
