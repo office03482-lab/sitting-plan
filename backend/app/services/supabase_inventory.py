@@ -1286,7 +1286,7 @@ def delete_stock_out(school_id: str, entry_id: str) -> dict:
 def _serialize_student_issue(entry: dict, material_name: str = "") -> dict:
     return {
         "id": entry.get("id"),
-        "date": entry.get("entry_date") or entry.get("date"),
+        "date": entry.get("issue_date") or entry.get("date") or entry.get("created_at"),
         "batch_id": entry.get("batch_id"),
         "batch_name": entry.get("batch_name") or "",
         "student_id": entry.get("student_id"),
@@ -1294,10 +1294,10 @@ def _serialize_student_issue(entry: dict, material_name: str = "") -> dict:
         "material_id": entry.get("material_item_id") or entry.get("material_id"),
         "material_name": material_name,
         "quantity_issued": int(entry.get("quantity_issued") or 0),
-        "issued_by": entry.get("issued_by") or "",
+        "issued_by": entry.get("issued_by") or entry.get("issued_by_profile_id") or "",
         "remarks": entry.get("remarks") or None,
         "school_id": entry.get("school_id"),
-        "created_at": entry.get("created_at") or entry.get("entry_date"),
+        "created_at": entry.get("created_at") or entry.get("issue_date"),
     }
 
 
@@ -1311,7 +1311,7 @@ def list_student_issues(school_id: str, batch_id: Optional[str] = None, student_
         query = query.eq("student_id", student_id)
     if material_id:
         query = query.eq("material_item_id", material_id)
-    resp = query.order("entry_date", desc=True).order("id", desc=True).execute()
+    resp = query.order("issue_date", desc=True).order("id", desc=True).execute()
     rows = list(resp.data or [])
 
     material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
@@ -1397,9 +1397,9 @@ def create_student_issue(school_id: str, payload: dict) -> dict:
             "student_name": student.get("full_name") or student.get("name") or "",
             "batch_id": selected_batch.get("id") if selected_batch else student.get("batch_id"),
             "batch_name": batch_name,
-            "entry_date": entry_date,
+            "issue_date": entry_date,
             "quantity_issued": quantity,
-            "issued_by": str(payload.get("issued_by") or "system").strip(),
+            "issued_by_profile_id": str(payload.get("issued_by") or "system").strip(),
             "remarks": (payload.get("remarks") or "").strip() or None,
         }
         created = _insert_and_return("student_issue_entries", row)
