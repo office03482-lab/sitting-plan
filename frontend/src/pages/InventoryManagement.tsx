@@ -283,6 +283,7 @@ export default function InventoryManagement() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const user = useAuthStore((state) => state.user);
+  const currentSchoolId = user?.school_id;
   const canManageInventory = user?.role === 'admin' || user?.role === 'store_manager';
 
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
@@ -492,45 +493,45 @@ export default function InventoryManagement() {
       addRequest('dashboard', apiService.getInventoryDashboard());
 
       if (targetTab === 'dashboard') {
-        addRequest('stockIn', apiService.listStockIn({ school_id: 1 }));
-        addRequest('stockOut', apiService.listStockOut({ school_id: 1 }));
-        addRequest('studentIssues', apiService.listStudentIssues({ school_id: 1 }));
+        addRequest('stockIn', apiService.listStockIn({ school_id: currentSchoolId }));
+        addRequest('stockOut', apiService.listStockOut({ school_id: currentSchoolId }));
+        addRequest('studentIssues', apiService.listStudentIssues({ school_id: currentSchoolId }));
       }
 
       if (targetTab === 'materials') {
-        addRequest('materials', apiService.listMaterials({ school_id: 1 }));
-        addRequest('subjects', apiService.listInventorySubjects({ school_id: 1 }));
-        addRequest('sets', apiService.listInventorySets({ school_id: 1 }));
-        addRequest('volumes', apiService.listInventoryVolumes({ school_id: 1 }));
-        addRequest('catalog', apiService.getInventoryCatalog({ school_id: 1, include_inactive: true }));
-        addRequest('batches', apiService.listBatches(1));
-        addRequest('students', apiService.listStudents(1, 0, 10000));
+        addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
+        addRequest('subjects', apiService.listInventorySubjects({ school_id: currentSchoolId }));
+        addRequest('sets', apiService.listInventorySets({ school_id: currentSchoolId }));
+        addRequest('volumes', apiService.listInventoryVolumes({ school_id: currentSchoolId }));
+        addRequest('catalog', apiService.getInventoryCatalog({ school_id: currentSchoolId, include_inactive: true }));
+        addRequest('batches', apiService.listBatches(currentSchoolId));
+        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
       }
 
       if (targetTab === 'suppliers') {
-        addRequest('suppliers', apiService.listSuppliers({ school_id: 1 }));
-        addRequest('stockIn', apiService.listStockIn({ school_id: 1 }));
+        addRequest('suppliers', apiService.listSuppliers({ school_id: currentSchoolId }));
+        addRequest('stockIn', apiService.listStockIn({ school_id: currentSchoolId }));
       }
 
       if (targetTab === 'stock-in') {
-        addRequest('materials', apiService.listMaterials({ school_id: 1 }));
-        addRequest('suppliers', apiService.listSuppliers({ school_id: 1 }));
-        addRequest('stockIn', apiService.listStockIn({ school_id: 1 }));
+        addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
+        addRequest('suppliers', apiService.listSuppliers({ school_id: currentSchoolId }));
+        addRequest('stockIn', apiService.listStockIn({ school_id: currentSchoolId }));
       }
 
       if (targetTab === 'stock-out') {
-        addRequest('materials', apiService.listMaterials({ school_id: 1 }));
-        addRequest('stockOut', apiService.listStockOut({ school_id: 1 }));
-        addRequest('studentIssues', apiService.listStudentIssues({ school_id: 1 }));
-        addRequest('batches', apiService.listBatches(1));
-        addRequest('students', apiService.listStudents(1, 0, 10000));
+        addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
+        addRequest('stockOut', apiService.listStockOut({ school_id: currentSchoolId }));
+        addRequest('studentIssues', apiService.listStudentIssues({ school_id: currentSchoolId }));
+        addRequest('batches', apiService.listBatches(currentSchoolId));
+        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
       }
 
       if (targetTab === 'reports') {
-        addRequest('materials', apiService.listMaterials({ school_id: 1 }));
-        addRequest('suppliers', apiService.listSuppliers({ school_id: 1 }));
-        addRequest('batches', apiService.listBatches(1));
-        addRequest('students', apiService.listStudents(1, 0, 10000));
+        addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
+        addRequest('suppliers', apiService.listSuppliers({ school_id: currentSchoolId }));
+        addRequest('batches', apiService.listBatches(currentSchoolId));
+        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
       }
 
       const results = await Promise.allSettled(requests.map((entry) => entry.request));
@@ -609,18 +610,18 @@ export default function InventoryManagement() {
     const results = await Promise.allSettled([
       apiService.getInventoryDashboard(),
       apiService.listMaterials({
-        school_id: 1,
+        school_id: currentSchoolId,
         search: materialSearch || undefined,
         subject: materialSubjectFilter || undefined,
         batch_name: materialBatchFilter || undefined,
       }),
-      apiService.listStockIn({ school_id: 1 }),
-      apiService.listStockOut({ school_id: 1 }),
-      apiService.listStudentIssues({ school_id: 1 }),
-      apiService.listInventorySubjects({ school_id: 1 }),
-      apiService.listInventorySets({ school_id: 1 }),
-      apiService.listInventoryVolumes({ school_id: 1 }),
-      apiService.getInventoryCatalog({ school_id: 1, include_inactive: true }),
+      apiService.listStockIn({ school_id: currentSchoolId }),
+      apiService.listStockOut({ school_id: currentSchoolId }),
+      apiService.listStudentIssues({ school_id: currentSchoolId }),
+      apiService.listInventorySubjects({ school_id: currentSchoolId }),
+      apiService.listInventorySets({ school_id: currentSchoolId }),
+      apiService.listInventoryVolumes({ school_id: currentSchoolId }),
+      apiService.getInventoryCatalog({ school_id: currentSchoolId, include_inactive: true }),
     ]);
 
     const [dashboardRes, materialsRes, stockInRes, stockOutRes, studentIssuesRes, subjectsRes, setsRes, volumesRes, catalogRes] = results;
@@ -713,7 +714,7 @@ export default function InventoryManagement() {
         batchMap.set(batchName, {
           id: -index - 1,
           name: batchName,
-          school_id: 1,
+          school_id: currentSchoolId,
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1284,7 +1285,7 @@ export default function InventoryManagement() {
         setAlert({ type: 'success', message: 'Supplier added successfully' });
       }
       resetSupplierForm();
-      const response = await apiService.listSuppliers({ school_id: 1 });
+      const response = await apiService.listSuppliers({ school_id: currentSchoolId });
       setSuppliers(response.data);
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to save supplier') });
@@ -1297,7 +1298,7 @@ export default function InventoryManagement() {
       await apiService.deleteSupplier(supplierId);
       if (editingSupplierId === supplierId) resetSupplierForm();
       setAlert({ type: 'success', message: 'Supplier deleted successfully' });
-      const response = await apiService.listSuppliers({ school_id: 1 });
+      const response = await apiService.listSuppliers({ school_id: currentSchoolId });
       setSuppliers(response.data);
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to delete supplier') });
@@ -1454,7 +1455,7 @@ export default function InventoryManagement() {
     try {
       const response = await apiService.getInventoryReport({
         report_type: reportFilters.report_type,
-        school_id: 1,
+        school_id: currentSchoolId,
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
         supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,
@@ -1473,7 +1474,7 @@ export default function InventoryManagement() {
       const response = await apiService.exportInventoryReport({
         report_type: reportFilters.report_type,
         export_format: exportFormat,
-        school_id: 1,
+        school_id: currentSchoolId,
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
         supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,

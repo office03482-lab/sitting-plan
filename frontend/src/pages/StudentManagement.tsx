@@ -519,7 +519,6 @@ export default function StudentManagement() {
     setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
-      console.log('[StudentManagement]', 'API_ROWS', response.data?.length, response.data);
       setStudents(response.data);
       const sessions = response.data
         .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
@@ -556,11 +555,11 @@ export default function StudentManagement() {
   const handleDownloadTemplate = async () => {
     try {
       const response = await apiService.downloadStudentTemplate();
-      const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
-      if (!contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
-        throw new Error('Live template response is not a valid Excel file yet.');
+      const blob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+      if (!blob.size) {
+        throw new Error('Template response is empty.');
       }
-      const url = window.URL.createObjectURL(response.data);
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'student_data_template.xlsx';
@@ -768,11 +767,10 @@ export default function StudentManagement() {
         processed: totalStudents,
         successCount: totalStudents,
         failureCount: 0,
-        percent: 85,
+        percent: 100,
         unit: 'students',
-        detail: 'Delete successful. UI state ko latest database snapshot ke saath sync kar rahe hain.',
+        detail: 'Delete successful. Local table immediately clear kar diya gaya hai.',
       });
-      await loadStudents();
       bumpStudentRefreshToken();
       setDeleteAllConfirm(false);
       setMessage('All students deleted successfully');
@@ -1102,8 +1100,9 @@ export default function StudentManagement() {
     if (!confirm('Are you sure you want to delete this student?')) return;
     try {
       await apiService.deleteStudent(id);
+      setStudents(students.filter((student) => String(student.id) !== String(id)));
+      setSelectedStudentIds((current) => current.filter((studentId) => String(studentId) !== String(id)));
       setMessage('Student deleted successfully');
-      await loadStudents();
       bumpStudentRefreshToken();
     } catch (error: any) {
       console.error('Failed to delete student:', error);
@@ -1376,16 +1375,6 @@ export default function StudentManagement() {
     return matchesSearch && matchesBatch;
   });
   const displayedStudents = filteredStudents;
-
-  useEffect(() => {
-    console.log('[StudentManagement]', 'SET_STATE_ROWS', students.length);
-  }, [students]);
-
-  useEffect(() => {
-    console.log('[StudentManagement]', 'FILTERED_ROWS', filteredStudents.length);
-  }, [filteredStudents]);
-
-  console.log('[StudentManagement]', 'RENDER_ROWS', displayedStudents.length);
 
   const existingBatches = Array.from(new Set(students.map((s) => s.batch)));
   const allBatchNames = sortBatchNames(

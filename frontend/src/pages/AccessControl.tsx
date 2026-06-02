@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Pencil } from 'lucide-react';
 import { apiService } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
 import type { RolePowerUser } from '@types';
 
 type UserRole = 'admin' | 'store_manager' | 'teacher' | 'viewer';
@@ -262,6 +263,8 @@ function PermissionEditor({
 }
 
 export default function AccessControl() {
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [users, setUsers] = useState<RolePowerUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [createForm, setCreateForm] = useState<UserFormState>(initialForm);
@@ -278,22 +281,38 @@ export default function AccessControl() {
   });
   const [passwordCache, setPasswordCache] = useState<Record<string, string>>(() => loadPasswordCache());
 
+  const syncPasswordCache = (fetchedUsers: RolePowerUser[]) => {
+    const nextCache = { ...passwordCache };
+    fetchedUsers.forEach((item) => {
+      const key = (item.username || '').toLowerCase();
+      if (!key) return;
+      if (item.password && item.password.trim()) {
+        nextCache[key] = item.password;
+      }
+    });
+    setPasswordCache(nextCache);
+    savePasswordCache(nextCache);
+  };
+
+  const upsertUser = (user: RolePowerUser) => {
+    setUsers((current) => {
+      const nextUsers = [
+        normalizeRolePowerUser(user),
+        ...current.filter((item) => item.id !== user.id),
+      ];
+      syncPasswordCache(nextUsers);
+      return nextUsers;
+    });
+  };
+
   const loadUsers = async () => {
+    if (!canRunRequests) return;
     setLoading(true);
     try {
       const response = await apiService.listRoleUsers();
       const fetchedUsers = toArray<any>(response?.data).map(normalizeRolePowerUser);
       setUsers(fetchedUsers);
-      const nextCache = { ...passwordCache };
-      fetchedUsers.forEach((item) => {
-        const key = (item.username || '').toLowerCase();
-        if (!key) return;
-        if (item.password && item.password.trim()) {
-          nextCache[key] = item.password;
-        }
-      });
-      setPasswordCache(nextCache);
-      savePasswordCache(nextCache);
+      syncPasswordCache(fetchedUsers);
       setError(null);
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to load users'));
@@ -303,18 +322,20 @@ export default function AccessControl() {
   };
 
   useEffect(() => {
-    loadUsers();
-  }, []);
+    if (!canRunRequests) return;
+    void loadUsers();
+  }, [canRunRequests]);
 
   const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
-      await apiService.createRoleUser(createForm);
+      const response = await apiService.createRoleUser(createForm);
+      upsertUser(response.data);
       const next = { ...passwordCache, [createForm.username.toLowerCase()]: createForm.password };
       setPasswordCache(next);
       savePasswordCache(next);
       setCreateForm(initialForm);
-      await loadUsers();
+      setError(null);
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to create user'));
     }
@@ -340,7 +361,7 @@ export default function AccessControl() {
   const handleSaveEdit = async (event: FormEvent<HTMLFormElement>, user: RolePowerUser) => {
     event.preventDefault();
     try {
-      await apiService.updateRoleUser(user.id, {
+      const response = await apiService.updateRoleUser(user.id, {
         full_name: editForm.full_name,
         role: editForm.role,
         user_type: editForm.user_type,
@@ -354,8 +375,9 @@ export default function AccessControl() {
         savePasswordCache(next);
       }
 
+      upsertUser(response.data);
       cancelEdit();
-      await loadUsers();
+      setError(null);
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to update user'));
     }
@@ -363,8 +385,9 @@ export default function AccessControl() {
 
   const handleToggleStatus = async (user: RolePowerUser) => {
     try {
-      await apiService.updateRoleUser(user.id, { is_active: !user.is_active });
-      await loadUsers();
+      const response = await apiService.updateRoleUser(user.id, { is_active: !user.is_active });
+      upsertUser(response.data);
+      setError(null);
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to update user'));
     }
@@ -374,7 +397,8 @@ export default function AccessControl() {
     if (!window.confirm(`Delete user "${user.username}"?`)) return;
     try {
       await apiService.deleteRoleUser(user.id);
-      await loadUsers();
+      setUsers((current) => current.filter((item) => item.id !== user.id));
+      setError(null);
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to delete user'));
     }

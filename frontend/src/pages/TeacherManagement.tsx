@@ -41,7 +41,6 @@ const TeacherManagement: React.FC = () => {
     try {
       setLoading(true);
       const response = await apiService.listTeachers();
-      console.log('[TeacherManagement]', 'API_ROWS', response.data?.length, response.data);
       setTeachers(response.data);
     } catch (error) {
       logIfUnexpectedRequestError('Error loading teachers:', error);
@@ -88,16 +87,6 @@ const TeacherManagement: React.FC = () => {
   );
   const displayedTeachers = filteredTeachers;
 
-  useEffect(() => {
-    console.log('[TeacherManagement]', 'SET_STATE_ROWS', teachers.length);
-  }, [teachers]);
-
-  useEffect(() => {
-    console.log('[TeacherManagement]', 'FILTERED_ROWS', filteredTeachers.length);
-  }, [filteredTeachers]);
-
-  console.log('[TeacherManagement]', 'RENDER_ROWS', displayedTeachers.length);
-
   const resetForm = () => {
     setFormData({
       name: '',
@@ -119,14 +108,15 @@ const TeacherManagement: React.FC = () => {
 
     try {
       if (editingTeacher) {
-        await apiService.updateTeacher(editingTeacher.id, formData);
+        const response = await apiService.updateTeacher(editingTeacher.id, formData);
+        setTeachers((current) => current.map((teacher) => (String(teacher.id) === String(editingTeacher.id) ? response.data : teacher)));
         setAlert({ type: 'success', message: 'Teacher updated successfully' });
       } else {
-        await apiService.createTeacher(formData);
+        const response = await apiService.createTeacher(formData);
+        setTeachers((current) => [response.data, ...current]);
         setAlert({ type: 'success', message: 'Teacher created successfully' });
       }
       resetForm();
-      loadTeachers();
     } catch (error) {
       console.error('Error saving teacher:', error);
       setAlert({ type: 'error', message: 'Failed to save teacher' });
@@ -149,8 +139,8 @@ const TeacherManagement: React.FC = () => {
 
     try {
       await apiService.deleteTeacher(teacherId);
+      setTeachers((current) => current.filter((teacher) => String(teacher.id) !== String(teacherId)));
       setAlert({ type: 'success', message: 'Teacher deleted successfully' });
-      loadTeachers();
     } catch (error) {
       console.error('Error deleting teacher:', error);
       setAlert({ type: 'error', message: 'Failed to delete teacher' });

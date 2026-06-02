@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, Pencil, Search, Trash2, Upload, UserPlus2, Users, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthProvider';
 import {
   apiService,
   getRequestErrorMessage,
@@ -177,6 +178,7 @@ const mapInvigilatorToDirectoryRecord = (invigilator: any): StaffDirectoryRecord
 export default function StaffDirectory() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const [records, setRecords] = useState<StaffDirectoryRecord[]>([]);
   const [search, setSearch] = useState('');
   const [staffType, setStaffType] = useState<'all' | 'teaching' | 'non_teaching'>('all');
@@ -188,6 +190,7 @@ export default function StaffDirectory() {
   const [viewingRecord, setViewingRecord] = useState<StaffDirectoryRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'row'>('card');
+  const canLoadStaffDirectory = authReady && sessionReady && schoolContextReady && !!session;
 
   const loadRecords = async () => {
     try {
@@ -244,8 +247,9 @@ export default function StaffDirectory() {
   };
 
   useEffect(() => {
+    if (!canLoadStaffDirectory) return;
     void loadRecords();
-  }, []);
+  }, [canLoadStaffDirectory]);
 
   useEffect(() => {
     const state = location.state as { staffType?: 'all' | 'teaching' | 'non_teaching' } | undefined;

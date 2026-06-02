@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Zap, Download, PlusCircle, Trash2, AlertTriangle, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Zap, Download, PlusCircle, Trash2, AlertTriangle, Pencil } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthProvider';
 import { useAppStore } from '@store/app';
+import { useAuthStore } from '@store/auth';
 import {
   apiService,
   getRequestErrorMessage,
@@ -15,6 +17,31 @@ const toDateTimeLocalValue = (date: Date) => {
 
 const toArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const normalizeBatchLabelPart = (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim();
+const prettifyBatchName = (value: string) => normalizeBatchLabelPart(value).replace(/\s*\|\s*/g, ' | ');
+
+const buildBatchDisplay = (batch: Batch) => {
+  const category = normalizeBatchLabelPart(batch.category).toLowerCase();
+  const name = prettifyBatchName(batch.name || `Batch ${batch.id}`);
+  const className = normalizeBatchLabelPart(batch.class_name);
+  const section = normalizeBatchLabelPart(batch.section);
+  const stream = normalizeBatchLabelPart(batch.stream);
+  const syllabus = normalizeBatchLabelPart(batch.syllabus);
+
+  const metaParts = [
+    className && className !== name ? className : '',
+    section ? `Section ${section}` : '',
+    stream,
+    syllabus,
+    category === 'class' ? 'Class Group' : '',
+  ].filter(Boolean);
+
+  return {
+    primary: name,
+    secondary: metaParts.join(' • '),
+    compact: [name, metaParts.join(' • ')].filter(Boolean).join(' — '),
+  };
+};
 
 const extractBatchesFromPlanName = (planName: string) => {
   const labeledMatch = planName.match(/Batches:\s*(.+?)\s*-\s*Plan\s+[AB]\b/i);
@@ -94,10 +121,15 @@ const buildRoomBatchSummaryFromPlan = (plan: SeatingPlan): RoomBatchSummary | nu
 
 export default function SeatingGeneration() {
   const defaultExamDate = new Date().toISOString().slice(0, 10);
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const currentSchoolId = useAuthStore((state) => state.user?.school_id);
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { rooms, setRooms, setSeatingPlans } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [selectedExam, setSelectedExam] = useState<string | number | null>(null);
   const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
+  const [selectedClassFilter, setSelectedClassFilter] = useState('');
+  const [selectedBatchOption, setSelectedBatchOption] = useState('');
   const [selectedRooms, setSelectedRooms] = useState<Array<string | number>>([]);
   const [planType] = useState<'all_in_one'>('all_in_one');
   const [generatedDate, setGeneratedDate] = useState(toDateTimeLocalValue(new Date()));
@@ -116,8 +148,7 @@ export default function SeatingGeneration() {
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
   const [deletingExam, setDeletingExam] = useState(false);
-  const [studentsByBatch, setStudentsByBatch] = useState<{ [batch: string]: any[] }>({});
-  const [loadingBatchStudents, setLoadingBatchStudents] = useState(false);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [roomBatchSummaries, setRoomBatchSummaries] = useState<Record<number, RoomBatchSummary>>({});
   const [loadingRoomBatchSummaries, setLoadingRoomBatchSummaries] = useState(false);
   const [expandedSummaryPlanId, setExpandedSummaryPlanId] = useState<string | number | null>(null);
@@ -128,6 +159,15 @@ export default function SeatingGeneration() {
   });
 
   const selectedExamDetails = exams.find((exam) => exam.id === selectedExam);
+  const getBatchDisplayByName = (batchName: string) => {
+    const matchedBatch = batches.find((item) => item.name === batchName);
+    if (!matchedBatch) {
+      const fallbackName = prettifyBatchName(batchName);
+      return { primary: fallbackName, secondary: '', compact: fallbackName };
+    }
+    return buildBatchDisplay(matchedBatch);
+  };
+
   const getPlanBatches = (plan: SeatingPlan) => {
     if (plan.batches && plan.batches.length > 0) {
       return plan.batches.join(', ');
@@ -151,22 +191,60 @@ export default function SeatingGeneration() {
     return 'Compact';
   };
 
-  useEffect(() => {
-    loadInitialData();
-  }, []);
+  const classOptions = useMemo(() => {
+    const values = new Set<string>();
+    batches.forEach((batch) => {
+      const category = normalizeBatchLabelPart(batch.category).toLowerCase();
+      const className = normalizeBatchLabelPart(batch.class_name);
+      if (className) {
+        values.add(className);
+      } else if (category === 'class') {
+        values.add(prettifyBatchName(batch.name));
+      }
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [batches]);
+
+  const selectableBatches = useMemo(() => {
+    return batches
+      .filter((batch) => normalizeBatchLabelPart(batch.category).toLowerCase() !== 'class')
+      .filter((batch) => {
+        if (!selectedClassFilter) return true;
+        const className = normalizeBatchLabelPart(batch.class_name);
+        return className
+          ? className === selectedClassFilter
+          : prettifyBatchName(batch.name).includes(selectedClassFilter);
+      })
+      .sort((a, b) => prettifyBatchName(a.name).localeCompare(prettifyBatchName(b.name)));
+  }, [batches, selectedClassFilter]);
+
+  const studentsGroupedByBatch = useMemo(() => {
+    const grouped: Record<string, Student[]> = {};
+    allStudents.forEach((student) => {
+      const batchName = String(student.batch || '').trim();
+      if (!batchName) return;
+      if (!grouped[batchName]) {
+        grouped[batchName] = [];
+      }
+      grouped[batchName].push(student);
+    });
+    return grouped;
+  }, [allStudents]);
+
+  const totalSelectedStudents = useMemo(
+    () => selectedBatches.reduce((sum, batchName) => sum + (studentsGroupedByBatch[batchName]?.length || 0), 0),
+    [selectedBatches, studentsGroupedByBatch]
+  );
 
   useEffect(() => {
+    if (!canRunRequests || !currentSchoolId) return;
+    void loadInitialData();
+  }, [canRunRequests, currentSchoolId]);
+
+  useEffect(() => {
+    if (!canRunRequests) return;
     void loadPlansForExam(selectedExam ?? undefined);
-  }, [selectedExam]);
-
-  // Load students for selected batches
-  useEffect(() => {
-    if (selectedBatches.length > 0) {
-      loadStudentsForBatches(selectedBatches);
-    } else {
-      setStudentsByBatch({});
-    }
-  }, [selectedBatches]);
+  }, [canRunRequests, selectedExam]);
 
   useEffect(() => {
     if (generatedPlans.length === 0) {
@@ -244,13 +322,15 @@ export default function SeatingGeneration() {
   };
 
   const loadInitialData = async () => {
+    if (!currentSchoolId) return;
+
     setLoading(true);
     try {
       const dataSources = [
         { key: 'rooms', required: true, request: apiService.listRooms() },
         { key: 'exams', required: true, request: apiService.listExams() },
-        { key: 'batches', required: true, request: apiService.listBatches(1) },
-        { key: 'students', required: true, request: apiService.listStudents(1, 0, 10000) },
+        { key: 'batches', required: true, request: apiService.listBatches(currentSchoolId) },
+        { key: 'students', required: true, request: apiService.listStudents(currentSchoolId, 0, 10000) },
       ] as const;
 
       const results = await Promise.allSettled(dataSources.map((item) => item.request));
@@ -270,7 +350,7 @@ export default function SeatingGeneration() {
           batchByName.set(student.batch, {
             id: -batchByName.size - 1,
             name: student.batch,
-            school_id: 1,
+            school_id: currentSchoolId,
             is_active: true,
             created_at: '',
             updated_at: '',
@@ -282,13 +362,14 @@ export default function SeatingGeneration() {
       setRooms(roomsData);
       setExams(examsData);
       setBatches(Array.from(batchByName.values()));
+      setAllStudents(studentsData);
 
       const requiredFailures = dataSources.filter((item, index) => item.required && results[index].status === 'rejected');
       const optionalFailures = dataSources.filter((item, index) => !item.required && results[index].status === 'rejected');
       const nextUnavailable = {
-        rooms: false,
-        batches: false,
-        students: false,
+        rooms: resultMap.rooms?.status === 'rejected',
+        batches: resultMap.batches?.status === 'rejected',
+        students: resultMap.students?.status === 'rejected',
       };
       setGenerationUnavailable(nextUnavailable);
 
@@ -297,16 +378,12 @@ export default function SeatingGeneration() {
         return result?.status === 'rejected';
       });
 
-      if (unexpectedFailures.length > 0) {
-        console.error('Some data failed to load. Results:', {
-          dataSources: dataSources.map((item, index) => ({
-            key: item.key,
-            required: item.required,
-            status: results[index].status,
-          })),
-          results,
-        });
-      }
+      unexpectedFailures.forEach((item) => {
+        const result = resultMap[item.key];
+        if (result?.status === 'rejected') {
+          logIfUnexpectedRequestError(`[SeatingGeneration] Failed to load ${item.key}`, result.reason, 'warn');
+        }
+      });
 
       if (requiredFailures.length > 0) {
         const failedSource = requiredFailures[0];
@@ -358,47 +435,27 @@ export default function SeatingGeneration() {
     );
   };
 
-  const moveSelectedRoom = (roomId: string | number, direction: 'up' | 'down') => {
-    setSelectedRooms((prev) => {
-      const currentIndex = prev.indexOf(roomId);
-      if (currentIndex === -1) return prev;
-
-      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
-
-      const nextRooms = [...prev];
-      [nextRooms[currentIndex], nextRooms[nextIndex]] = [nextRooms[nextIndex], nextRooms[currentIndex]];
-      return nextRooms;
-    });
-  };
-
-  const handleBatchToggle = (batchName: string) => {
-    setSelectedBatches((prev) =>
-      prev.includes(batchName) ? prev.filter((name) => name !== batchName) : [...prev, batchName]
-    );
-  };
-
-  const loadStudentsForBatches = async (batchNames: string[]) => {
-    setLoadingBatchStudents(true);
-    try {
-      const studentData: { [batch: string]: any[] } = {};
-      
-      for (const batchName of batchNames) {
-        try {
-          const response = await apiService.listStudents(1, 0, 10000, batchName);
-          studentData[batchName] = response.data || [];
-        } catch (error) {
-          console.warn(`Failed to load students for batch ${batchName}:`, error);
-          studentData[batchName] = [];
-        }
-      }
-      
-      setStudentsByBatch(studentData);
-    } catch (error) {
-      console.error('Error loading batch students:', error);
-    } finally {
-      setLoadingBatchStudents(false);
+  const handleAddSelectedBatch = () => {
+    if (selectedBatchOption) {
+      setSelectedBatches((prev) => (prev.includes(selectedBatchOption) ? prev : [...prev, selectedBatchOption]));
+      setSelectedBatchOption('');
+      return;
     }
+
+    if (!selectedClassFilter) return;
+    const classBatchNames = selectableBatches.map((batch) => batch.name).filter(Boolean);
+    if (classBatchNames.length === 0) return;
+
+    setSelectedBatches((prev) => {
+      const merged = new Set(prev);
+      classBatchNames.forEach((batchName) => merged.add(batchName));
+      return Array.from(merged);
+    });
+    setSelectedBatchOption('');
+  };
+
+  const handleRemoveSelectedBatch = (batchName: string) => {
+    setSelectedBatches((prev) => prev.filter((name) => name !== batchName));
   };
 
   const handleGeneratePlans = async () => {
@@ -718,7 +775,8 @@ export default function SeatingGeneration() {
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <h2 className="text-xl font-semibold text-gray-800 mb-6">Plan Configuration</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+          <div className="space-y-6 mb-6">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.8fr)]">
             {/* Exam Selection */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -814,101 +872,6 @@ export default function SeatingGeneration() {
                 </div>
               )}
             </div>
-
-            {/* Batch Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">
-                Select Batches <span className="text-red-600">*</span>
-              </label>
-              {batches.length === 0 ? (
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-                  {generationUnavailable.batches
-                    ? 'Batch data is temporarily unavailable during the ongoing Supabase migration.'
-                    : 'No batches available. Please create batches in Batch Management.'}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-y-auto border border-gray-300 rounded-lg p-3">
-                  {batches.map((batch) => (
-                    <label
-                      key={batch.id || batch.name}
-                      className="flex items-center gap-3 cursor-pointer hover:bg-blue-50 p-2 rounded"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedBatches.includes(batch.name)}
-                        onChange={() => handleBatchToggle(batch.name)}
-                        disabled={generationUnavailable.batches || generationUnavailable.students}
-                        className="w-4 h-4"
-                      />
-                      <span className="text-gray-700 font-medium">
-                        {batch.name}
-                        {batch.is_active === false ? ' (Inactive)' : ''}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {selectedBatches.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-xs text-green-600 mb-2">
-                    Selected {selectedBatches.length} batch(es): {selectedBatches.join(', ')}
-                  </p>
-                  {loadingBatchStudents ? (
-                    <p className="text-xs text-gray-500 italic">Loading students for selected batches...</p>
-                  ) : (
-                    <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-2">
-                      <p className="text-xs font-semibold text-blue-900 mb-2">Batch Summary:</p>
-                      <div className="space-y-1">
-                        {selectedBatches.map((batch) => {
-                          const studentCount = generationUnavailable.students ? null : (studentsByBatch[batch]?.length || 0);
-                          return (
-                            <div key={batch} className="text-xs text-blue-800 flex justify-between">
-                              <span>{batch}:</span>
-                              <span className="font-semibold">
-                                {studentCount == null ? 'Data temporarily unavailable' : `${studentCount} students`}
-                              </span>
-                            </div>
-                          );
-                        })}
-                        <div className="border-t border-blue-200 pt-1 mt-1 font-semibold text-blue-900 flex justify-between">
-                          <span>Total:</span>
-                          <span>
-                            {generationUnavailable.students
-                              ? 'Data temporarily unavailable'
-                              : `${Object.values(studentsByBatch).reduce((sum, students) => sum + (students?.length || 0), 0)} students`}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Plan Type Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">
-                Plan Type
-              </label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    value="all_in_one"
-                    checked={planType === 'all_in_one'}
-                    readOnly
-                    className="w-4 h-4"
-                  />
-                  <span className="text-gray-700">
-                    <strong>All-in-One</strong> - Strict anti-cheat + compact practical seating
-                  </span>
-                </label>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Combined mode uses anti-cheat spacing, mixed batch shuffle, and better room utilization together.
-              </p>
-            </div>
-
             {/* Generated Date */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-3">
@@ -933,83 +896,237 @@ export default function SeatingGeneration() {
             </div>
           </div>
 
-          {/* Same Test/Syllabus Batch Groups */}
-          <div className="mb-6 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
-            <label className="block text-sm font-semibold text-yellow-900 mb-2">
-              Same Test/Syllabus Batch Groups <span className="font-normal text-yellow-700">(Optional)</span>
-            </label>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
-              <select
-                value={selectedConflictBatch}
-                onChange={(e) => setSelectedConflictBatch(e.target.value)}
-                className="rounded-lg border border-yellow-300 bg-white px-3 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-yellow-500"
-              >
-                <option value="">Select batch</option>
-                {batches.map((batch) => {
-                  const batchName = batch.name || `Batch ${batch.id}`;
-                  return (
-                    <option key={batch.id || batchName} value={batchName}>
-                      {batchName}
-                    </option>
-                  );
-                })}
-              </select>
-              <button
-                type="button"
-                onClick={handleAddBatchToConflictGroup}
-                className="rounded-lg bg-yellow-600 px-4 py-2 text-sm font-medium text-white hover:bg-yellow-700"
-              >
-                Add to Group
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveConflictGroup}
-                className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
-              >
-                Save Group
-              </button>
+            {/* Batch Selection */}
+            <div className={`grid gap-4 ${selectedBatches.length > 0 ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]' : ''}`}>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Select Batches <span className="text-red-600">*</span>
+                </label>
+                {batches.length === 0 ? (
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+                    {generationUnavailable.batches
+                      ? 'Batch data is temporarily unavailable during the ongoing Supabase migration.'
+                      : 'No batches available. Please create batches in Batch Management.'}
+                  </div>
+                ) : (
+                  <div className="space-y-4 rounded-2xl border border-gray-300 bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.15fr)]">
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-gray-600">
+                          Class
+                        </label>
+                        <select
+                          value={selectedClassFilter}
+                          onChange={(e) => {
+                            setSelectedClassFilter(e.target.value);
+                            setSelectedBatchOption('');
+                          }}
+                          className="w-full rounded-xl border border-gray-300 px-4 py-3.5 text-base font-medium text-gray-800 focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">All Classes</option>
+                          {classOptions.map((className) => (
+                            <option key={className} value={className}>
+                              {className}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-gray-600">
+                          Batch
+                        </label>
+                        <div className="flex flex-col gap-3 sm:flex-row">
+                          <select
+                            value={selectedBatchOption}
+                            onChange={(e) => setSelectedBatchOption(e.target.value)}
+                            className="w-full rounded-xl border border-gray-300 px-4 py-3.5 text-base font-medium text-gray-800 focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Select Batch</option>
+                            {selectableBatches.map((batch) => {
+                              const display = buildBatchDisplay(batch);
+                              return (
+                                <option key={batch.id || batch.name} value={batch.name}>
+                                  {display.compact}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={handleAddSelectedBatch}
+                            disabled={(!selectedBatchOption && !selectedClassFilter) || generationUnavailable.batches || generationUnavailable.students}
+                            className="min-w-[10.5rem] rounded-xl bg-blue-600 px-5 py-3.5 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                          >
+                            {selectedBatchOption ? 'Add Batch' : selectedClassFilter ? 'Add Class' : 'Add'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-500">
+                      Batch choose karke single batch add karo, ya sirf class choose karke us class ke saare visible batches ek saath add karo.
+                    </p>
+                    {selectableBatches.length === 0 ? (
+                      <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                        {selectedClassFilter ? 'Is class ke liye koi batch available nahi hai.' : 'Koi batch available nahi hai.'}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+              {selectedBatches.length > 0 ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Batch Summary
+                  </label>
+                  <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
+                    <p className="mb-3 text-sm font-semibold text-blue-900">
+                      {selectedBatches.length} selected batch(es)
+                    </p>
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {selectedBatches.map((batch) => {
+                        const studentCount = generationUnavailable.students ? null : (studentsGroupedByBatch[batch]?.length || 0);
+                        const display = getBatchDisplayByName(batch);
+                        return (
+                          <div key={batch} className="flex items-start justify-between gap-3 rounded-xl bg-white/80 px-4 py-3 text-sm text-blue-900">
+                            <div className="min-w-0">
+                              <div className="font-semibold">{display.primary}</div>
+                              {display.secondary ? <div className="mt-1 text-xs text-blue-700">{display.secondary}</div> : null}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-3">
+                              <span className="font-semibold">
+                                {studentCount == null ? 'Data temporarily unavailable' : `${studentCount} students`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSelectedBatch(batch)}
+                                className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-900 ring-1 ring-blue-200 hover:bg-blue-100"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex justify-between border-t border-blue-200 pt-3 text-sm font-semibold text-blue-900">
+                      <span>Total:</span>
+                      <span>
+                        {generationUnavailable.students
+                          ? 'Data temporarily unavailable'
+                          : `${totalSelectedStudents} students`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
+          </div>
 
-            {currentConflictGroup.length > 0 && (
-              <div className="mt-3">
-                <p className="mb-2 text-xs font-semibold text-yellow-900">Current group:</p>
-                <div className="flex flex-wrap gap-2">
-                  {currentConflictGroup.map((batchName) => (
-                    <button
-                      key={batchName}
-                      type="button"
-                      onClick={() => handleRemoveBatchFromCurrentGroup(batchName)}
-                      className="rounded-full bg-white px-3 py-1 text-xs font-medium text-yellow-900 ring-1 ring-yellow-300 hover:bg-yellow-100"
-                    >
-                      {batchName} x
-                    </button>
+          {/* Same Test/Syllabus Batch Groups */}
+          <div className="mb-6 grid gap-4 lg:grid-cols-[1.45fr_0.75fr]">
+            <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+              <label className="block text-sm font-semibold text-yellow-900 mb-2">
+                Same Test/Syllabus Batch Groups <span className="font-normal text-yellow-700">(Optional)</span>
+              </label>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
+                <select
+                  value={selectedConflictBatch}
+                  onChange={(e) => setSelectedConflictBatch(e.target.value)}
+                  className="rounded-lg border border-yellow-300 bg-white px-3 py-2 text-sm text-gray-800 focus:ring-2 focus:ring-yellow-500"
+                >
+                  <option value="">Select batch</option>
+                  {selectableBatches.map((batch) => {
+                    const batchName = batch.name || `Batch ${batch.id}`;
+                    const display = buildBatchDisplay(batch);
+                    return (
+                      <option key={batch.id || batchName} value={batchName}>
+                        {display.compact}
+                      </option>
+                    );
+                  })}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddBatchToConflictGroup}
+                  className="rounded-lg bg-yellow-600 px-4 py-2 text-sm font-medium text-white hover:bg-yellow-700"
+                >
+                  Add to Group
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveConflictGroup}
+                  className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-900"
+                >
+                  Save Group
+                </button>
+              </div>
+
+              {currentConflictGroup.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs font-semibold text-yellow-900">Current group:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {currentConflictGroup.map((batchName) => (
+                      <button
+                        key={batchName}
+                        type="button"
+                        onClick={() => handleRemoveBatchFromCurrentGroup(batchName)}
+                        className="rounded-full bg-white px-3 py-1 text-xs font-medium text-yellow-900 ring-1 ring-yellow-300 hover:bg-yellow-100"
+                      >
+                        {getBatchDisplayByName(batchName).primary} x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {batchConflictGroups.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs font-semibold text-yellow-900">Saved groups:</p>
+                  {batchConflictGroups.map((group, index) => (
+                    <div key={`${group.join('-')}-${index}`} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 ring-1 ring-yellow-200">
+                      <span className="text-sm text-gray-800">
+                        {group.map((batchName) => getBatchDisplayByName(batchName).primary).join(', ')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveConflictGroup(index)}
+                        className="text-xs font-semibold text-red-600 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
 
-            {batchConflictGroups.length > 0 && (
-              <div className="mt-4 space-y-2">
-                <p className="text-xs font-semibold text-yellow-900">Saved groups:</p>
-                {batchConflictGroups.map((group, index) => (
-                  <div key={`${group.join('-')}-${index}`} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 ring-1 ring-yellow-200">
-                    <span className="text-sm text-gray-800">{group.join(', ')}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveConflictGroup(index)}
-                      className="text-xs font-semibold text-red-600 hover:text-red-700"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+              <p className="mt-2 text-xs text-yellow-800">
+                Dropdown se same test/syllabus wale batches ko ek group mein save karo. Un batches ke students same bench, front/back, left/right benches par saath nahi baithenge.
+              </p>
+            </div>
 
-            <p className="mt-2 text-xs text-yellow-800">
-              Dropdown se same test/syllabus wale batches ko ek group mein save karo. Un batches ke students same bench, front/back, left/right benches par saath nahi baithenge.
-            </p>
+            <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Plan Type
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    value="all_in_one"
+                    checked={planType === 'all_in_one'}
+                    readOnly
+                    className="w-4 h-4"
+                  />
+                  <span className="text-gray-700">
+                    <strong>All-in-One</strong> - Strict anti-cheat + compact practical seating
+                  </span>
+                </label>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                Combined mode uses anti-cheat spacing, mixed batch shuffle, and better room utilization together.
+              </p>
+            </div>
           </div>
 
           {/* Room Selection */}
@@ -1055,46 +1172,6 @@ export default function SeatingGeneration() {
               </div>
             )}
 
-            {selectedRooms.length > 0 && (
-              <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
-                <p className="mb-3 text-sm font-semibold text-blue-900">Room Sequence</p>
-                <div className="space-y-2">
-                  {selectedRooms.map((roomId, index) => {
-                    const room = rooms.find((item) => item.id === roomId);
-                    return (
-                      <div key={roomId} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 ring-1 ring-blue-100">
-                        <span className="text-sm font-medium text-gray-800">
-                          {index + 1}. {room?.name || `Room ${roomId}`}
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => moveSelectedRoom(roomId, 'up')}
-                            disabled={index === 0}
-                            className="rounded bg-gray-100 p-2 text-gray-700 hover:bg-gray-200 disabled:opacity-40"
-                            title="Move up"
-                          >
-                            <ArrowUp className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveSelectedRoom(roomId, 'down')}
-                            disabled={index === selectedRooms.length - 1}
-                            className="rounded bg-gray-100 p-2 text-gray-700 hover:bg-gray-200 disabled:opacity-40"
-                            title="Move down"
-                          >
-                            <ArrowDown className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="mt-3 text-xs text-blue-800">
-                  Students pehle sequence #1 room mein assign honge, phir #2, phir next rooms.
-                </p>
-              </div>
-            )}
           </div>
 
           {/* Generate Button */}

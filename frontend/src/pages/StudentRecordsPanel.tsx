@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
+import { useAuthStore } from '@store/auth';
 import type { Batch, AttendanceStudent, StudentAttendanceRecord } from '@types';
 import {
   sectionClass,
@@ -50,6 +52,10 @@ export default function StudentRecordsPanel({
   onAlert,
   onRefresh,
 }: StudentRecordsPanelProps) {
+  const user = useAuthStore((state) => state.user);
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const currentSchoolId = user?.school_id;
   const [records, setRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filters, setFilters] = useState({
@@ -117,6 +123,9 @@ export default function StudentRecordsPanel({
     isRequestCanceled(error) ? '' : error?.response?.data?.detail || error?.message || fallback;
 
   const loadRecords = async (options?: { force?: boolean }) => {
+    if (!canRunAttendanceRequests) {
+      return;
+    }
     const recordBatchName = (filters.record_batch_name || '').trim();
     const resolvedRecordClassName = (recordBatchName ? '' : filters.record_class_name || '').trim();
     const requestKey = `class:${resolvedRecordClassName}|section:|batch:${recordBatchName}|name:${filters.recordStudentName}|dates:${filters.date_from}|${filters.date_to}|limit:${attendanceStudentRecordPageSize}`;
@@ -138,7 +147,7 @@ export default function StudentRecordsPanel({
     const loadPromise = (async () => {
       try {
         const response = await apiService.listStudentAttendanceRecords({
-          school_id: 1,
+          school_id: currentSchoolId,
           class_name: resolvedRecordClassName || undefined,
           section: undefined,
           batch_name: recordBatchName || undefined,
@@ -184,7 +193,7 @@ export default function StudentRecordsPanel({
     try {
       const selectedRecordBatchName = String(filters.record_batch_name || '').trim();
       await apiService.deleteAllStudentAttendanceRecords({
-        school_id: 1,
+        school_id: currentSchoolId,
         class_name: recordBatchParts.className || undefined,
         section: selectedRecordBatchName ? recordBatchParts.section || undefined : undefined,
         student_name: filters.recordStudentName || undefined,
@@ -235,6 +244,7 @@ export default function StudentRecordsPanel({
     }
     void loadRecords();
   }, [
+    canRunAttendanceRequests,
     isVisible,
     filters.record_class_name,
     filters.record_batch_name,
@@ -247,6 +257,7 @@ export default function StudentRecordsPanel({
     recordsCacheRef.current.clear();
     recordsRequestKeyRef.current = '';
     if (!isVisible) return;
+    if (!canRunAttendanceRequests) return;
     const hasRecordFilters = Boolean(
       String(filters.record_class_name || '').trim()
       || String(filters.record_batch_name || '').trim()
@@ -256,7 +267,7 @@ export default function StudentRecordsPanel({
     );
     if (!hasRecordFilters) return;
     void loadRecords({ force: true });
-  }, [refreshToken]);
+  }, [canRunAttendanceRequests, isVisible, refreshToken]);
 
   return (
     <div className={`${sectionClass} min-w-0`}>

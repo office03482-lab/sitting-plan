@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_metrics import get_edupay_dashboard_summary_rpc
 
 
 def _iso(value: Any) -> Any:
@@ -383,6 +384,25 @@ def list_payments(school_id: str) -> list[dict[str, Any]]:
 
 
 def get_dashboard(school_id: str) -> dict[str, Any]:
+    try:
+        payload = get_edupay_dashboard_summary_rpc(school_id)
+        if payload:
+            return {
+                "total_collected": round(_to_float(payload.get("total_collected")), 2),
+                "pending_amount": round(_to_float(payload.get("pending_amount")), 2),
+                "overdue_amount": round(_to_float(payload.get("overdue_amount")), 2),
+                "upcoming_dues": int(payload.get("upcoming_dues") or 0),
+                "total_students": int(payload.get("total_students") or 0),
+                "active_fee_structures": int(payload.get("active_fee_structures") or 0),
+                "reminders_queued": int(payload.get("reminders_queued") or 0),
+                "collection_trend": list(payload.get("collection_trend") or []),
+                "payment_method_split": list(payload.get("payment_method_split") or []),
+                "reminders": list(payload.get("reminders") or []),
+                "recent_payments": list(payload.get("recent_payments") or []),
+            }
+    except Exception:
+        pass
+
     now = datetime.utcnow()
     fee_structures = _fetch_fee_structures(school_id)
     assignments = _fetch_assignments(school_id)

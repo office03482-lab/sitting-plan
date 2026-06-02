@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import time
 from datetime import date, datetime
 from typing import Any, Optional
 from uuid import uuid4
@@ -11,8 +12,11 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_metrics import get_inventory_dashboard_summary_rpc
 
 _INVENTORY_SCHEMA = "inventory"
+_INVENTORY_DASHBOARD_CACHE_TTL_SECONDS = 30
+_inventory_dashboard_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _client():
@@ -1434,6 +1438,29 @@ def delete_student_issue(school_id: str, entry_id: str) -> dict:
 
 
 def get_dashboard(school_id: str) -> dict:
+    cached = _inventory_dashboard_cache.get(school_id)
+    now = time.monotonic()
+    if cached and cached[0] > now:
+        return cached[1]
+
+    try:
+        payload = get_inventory_dashboard_summary_rpc(school_id)
+        if payload:
+            low_stock_rows = payload.get("low_stock_items")
+            low_stock_items = [_serialize_material(item) for item in list(low_stock_rows or [])]
+            result = {
+                "total_materials_registered": int(payload.get("total_materials_registered") or 0),
+                "total_books_in_inventory": int(payload.get("total_books_in_inventory") or 0),
+                "total_books_distributed": int(payload.get("total_books_distributed") or 0),
+                "current_stock_available": int(payload.get("current_stock_available") or 0),
+                "low_stock_alert_count": int(payload.get("low_stock_alert_count") or 0),
+                "low_stock_items": low_stock_items,
+            }
+            _inventory_dashboard_cache[school_id] = (now + _INVENTORY_DASHBOARD_CACHE_TTL_SECONDS, result)
+            return result
+    except Exception:
+        pass
+
     supabase = _client()
     s = _INVENTORY_SCHEMA
 
@@ -1467,7 +1494,7 @@ def get_dashboard(school_id: str) -> dict:
         if bool(m.get("is_active", True)) and int(m.get("current_stock") or 0) <= int(m.get("low_stock_threshold") or 10)
     ]
 
-    return {
+    result = {
         "total_materials_registered": len(materials),
         "total_books_in_inventory": int(total_in),
         "total_books_distributed": int(total_out),
@@ -1475,6 +1502,8 @@ def get_dashboard(school_id: str) -> dict:
         "low_stock_alert_count": len(low_stock_items),
         "low_stock_items": [_serialize_material(m) for m in low_stock_items],
     }
+    _inventory_dashboard_cache[school_id] = (time.monotonic() + _INVENTORY_DASHBOARD_CACHE_TTL_SECONDS, result)
+    return result
 
 
 # ==================== Material History ====================

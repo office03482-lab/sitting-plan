@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_metrics import get_school_core_counts_cached
 
 
 def _normalize(value: Any) -> str:
@@ -72,6 +73,17 @@ def get_room(school_id: str, room_id: str) -> dict[str, Any]:
 
 
 def get_rooms_summary(school_id: str) -> dict[str, Any]:
+    try:
+        payload = get_school_core_counts_cached(school_id)
+        rpc_value = payload.get("rooms_summary")
+        if isinstance(rpc_value, dict):
+            return {
+                "count": int(rpc_value.get("count") or 0),
+                "totalCapacity": int(rpc_value.get("totalCapacity") or 0),
+            }
+    except Exception:
+        pass
+
     response = (
         get_supabase_admin_client()
         .table("rooms")

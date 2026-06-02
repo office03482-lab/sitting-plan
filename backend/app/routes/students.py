@@ -16,6 +16,7 @@ from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockO
 from app.schemas import (
     StudentBatchTransferRequest,
     StudentBatchTransferResponse,
+    StudentBulkDeleteRequest,
     StudentCreate,
     StudentHostelRequestCreate,
     StudentHostelRequestDecision,
@@ -35,6 +36,7 @@ from app.services.supabase_attendance import get_students_count as get_supabase_
 from app.services.supabase_students import (
     delete_all_students as delete_all_students_supabase,
     delete_student as delete_student_supabase,
+    delete_students as delete_students_supabase,
     get_student as get_student_supabase,
     list_students as list_students_supabase,
 )
@@ -93,13 +95,73 @@ def normalize_student_class_name(class_name: str | None, batch_name: str | None 
     if not normalized_class:
         return None
 
-    if looks_like_academic_batch_name(normalized_class):
-        return None
-
-    if batch_name and normalized_class.lower() == (batch_name or "").strip().lower():
-        return None
-
     return normalized_class
+
+
+def build_student_import_metadata(student_data: dict[str, Any], batch_name: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "managed_batch": batch_name,
+        "legacy_batch_label": batch_name,
+        "source": "student_bulk_upload",
+    }
+
+    metadata_field_map = {
+        "sr_no": "sr_no",
+        "program": "program",
+        "course": "course",
+        "local_name": "local_name",
+        "age_as_of_today": "age_as_of_today",
+        "admission_date": "admission_date",
+        "fee_schedule": "fee_schedule",
+        "tc_number": "tc_number",
+        "previous_school": "previous_school",
+        "previous_exam": "previous_exam",
+        "previous_board": "previous_board",
+        "previous_percentage": "previous_percentage",
+        "previous_total_marks": "previous_total_marks",
+        "previous_average": "previous_average",
+        "father_mobile": "father_mobile",
+        "father_occupation": "father_occupation",
+        "mother_mobile": "mother_mobile",
+        "mother_occupation": "mother_occupation",
+        "category": "category",
+        "sub_category": "sub_category",
+        "sibling_name": "sibling_name",
+        "sibling_school": "sibling_school",
+        "guardian_relation": "guardian_relation",
+        "guardian_address": "guardian_address",
+        "emergency_name": "emergency_name",
+        "emergency_mobile": "emergency_mobile",
+        "priority_contact": "priority_contact",
+        "address1": "address_line_1",
+        "address2": "address_line_2",
+        "city": "city",
+        "state": "state",
+        "country": "country",
+        "pincode": "pincode",
+        "region": "region",
+        "reference_name": "reference_name",
+        "reference_number": "reference_number",
+        "reference_remark": "reference_remark",
+        "admission_type": "admission_type",
+        "availing_mess_facility": "availing_mess_facility",
+        "preferred_hostel": "preferred_hostel",
+        "hostel_request_note": "hostel_request_note",
+        "pickup_enabled": "pickup_enabled",
+        "drop_enabled": "drop_enabled",
+        "transport_month": "transport_month",
+        "transport_route": "transport_route",
+        "transport_stop": "transport_stop",
+        "room_no": "legacy_room_no",
+        "source_roll_no": "source_roll_no",
+    }
+
+    for source_key, metadata_key in metadata_field_map.items():
+        value = student_data.get(source_key)
+        if value not in (None, "", []):
+            metadata[metadata_key] = value
+
+    return metadata
 
 
 def release_student_seats(db: Session, student_ids: List[int]) -> int:
@@ -524,9 +586,18 @@ async def import_students(
 
             batch_name = str(student_data.get("batch") or "").strip()
             matched_batch = batch_by_name.get(batch_name.lower())
-            class_name, section = split_batch_to_class_section(batch_name)
+            class_name = str(student_data.get("class_name") or "").strip()
+            section = str(student_data.get("section") or "").strip()
+            if not class_name and batch_name:
+                class_name, section = split_batch_to_class_section(batch_name)
             if is_class_only_upload_name(batch_name) and class_name:
                 matched_batch = None
+
+            normalized_class_name = class_name or None
+            normalized_section = section or None
+            metadata = build_student_import_metadata(student_data, batch_name)
+            guardian_name = (student_data.get("guardian_name") or "").strip() or (student_data.get("father_name") or "").strip() or None
+            guardian_phone = (student_data.get("guardian_mobile") or "").strip() or (student_data.get("father_mobile") or "").strip() or None
 
             pending_students.append(
                 {
@@ -536,21 +607,20 @@ async def import_students(
                     "roll_number": roll_number,
                     "full_name": str(student_data["candidate_name"]).strip(),
                     "father_name": (student_data.get("father_name") or "").strip() or None,
+                    "mother_name": (student_data.get("mother_name") or "").strip() or None,
                     "email": (student_data.get("email") or "").strip() or None,
                     "phone": (student_data.get("phone") or "").strip() or None,
-                    "guardian_name": (student_data.get("father_name") or "").strip() or None,
-                    "class_name": class_name,
-                    "section": section,
+                    "guardian_name": guardian_name,
+                    "guardian_phone": guardian_phone,
+                    "class_name": normalized_class_name,
+                    "section": normalized_section,
                     "academic_session": (student_data.get("academic_session") or "").strip() or None,
+                    "date_of_birth": (student_data.get("dob") or "").strip() or None,
+                    "gender": (student_data.get("gender") or "").strip() or None,
                     "special_needs": (student_data.get("special_needs") or "").strip() or None,
-                    "hostel_required": False,
-                    "metadata": {
-                        "managed_batch": batch_name,
-                        "source": "student_bulk_upload",
-                        "legacy_room_no": (student_data.get("room_no") or "").strip() or None,
-                        "course": (student_data.get("course") or "").strip() or None,
-                        "program": (student_data.get("program") or "").strip() or None,
-                    },
+                    "boarding_type": (student_data.get("boarding_type") or "").strip() or None,
+                    "hostel_required": bool(student_data.get("hostel_required", False)),
+                    "metadata": metadata,
                     "is_active": True,
                 }
             )
@@ -1067,6 +1137,27 @@ async def get_student(
     
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_student(student)
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_students(
+    payload: StudentBulkDeleteRequest,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    summary = delete_students_supabase(school_id, payload.student_ids)
+    logger.info(
+        "Action completed - User ID: %s, School ID: %s, Bulk deleted %s/%s students, Remaining matched: %s",
+        actor.get("user_id"),
+        school_id,
+        summary["deleted"],
+        summary["matched"],
+        summary["remaining"],
+    )
+    return {
+        "message": f"Deleted {summary['deleted']} of {summary['matched']} selected students",
+        **summary,
+    }
 
 
 @router.put("/{student_id}", response_model=StudentResponse)

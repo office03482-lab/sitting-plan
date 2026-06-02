@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from app.attendance.contracts import sanitize_response_payload
 from app.config import settings
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_metrics import get_attendance_overview_rpc, get_school_core_counts_cached
 
 logger = logging.getLogger(__name__)
 
@@ -1693,10 +1694,24 @@ def _count_active_rows(
 
 
 def get_students_count(school_id: str) -> int:
+    try:
+        payload = get_school_core_counts_cached(school_id)
+        rpc_value = payload.get("students_count")
+        if rpc_value is not None:
+            return int(rpc_value)
+    except Exception:
+        pass
     return _count_active_rows("students", school_id)
 
 
 def get_staff_count(school_id: str) -> int:
+    try:
+        payload = get_school_core_counts_cached(school_id)
+        rpc_value = payload.get("staff_count")
+        if rpc_value is not None:
+            return int(rpc_value)
+    except Exception:
+        pass
     return _count_active_rows("staff_members", school_id)
 
 
@@ -2124,6 +2139,38 @@ def get_overview(school_id: str) -> dict[str, Any]:
         return cached_payload
 
     started_at = time.monotonic()
+    try:
+        rpc_payload = get_attendance_overview_rpc(school_id)
+        if rpc_payload:
+            payload = {
+                "student_count": int(rpc_payload.get("student_count") or 0),
+                "staff_count": int(rpc_payload.get("staff_count") or 0),
+                "class_options": sorted(str(item).strip() for item in list(rpc_payload.get("class_options") or []) if str(item).strip()),
+                "section_options": sorted(str(item).strip() for item in list(rpc_payload.get("section_options") or []) if str(item).strip()),
+                "subject_options": sanitize_response_payload(
+                    list(rpc_payload.get("subject_options") or []),
+                    log_label="attendance.subjects.rpc",
+                ),
+                "department_options": sorted(str(item).strip() for item in list(rpc_payload.get("department_options") or []) if str(item).strip()),
+                "notifications": [_serialize_notification(row) for row in list(rpc_payload.get("notifications") or [])],
+                "holidays": [_serialize_holiday(row) for row in list(rpc_payload.get("holidays") or [])],
+                "settings": dict(rpc_payload.get("settings") or {}),
+            }
+            _set_ttl_cache_entry(ATTENDANCE_OVERVIEW_CACHE, school_id, payload, ATTENDANCE_OVERVIEW_CACHE_TTL_SECONDS)
+            logger.info(
+                "attendance.overview.rpc_complete",
+                extra={
+                    "school_id": school_id,
+                    "duration_ms": round((time.monotonic() - started_at) * 1000),
+                    "student_count": payload["student_count"],
+                    "staff_count": payload["staff_count"],
+                    "subject_count": len(payload["subject_options"]),
+                },
+            )
+            return payload
+    except Exception:
+        logger.exception("attendance.overview.rpc_failed", extra={"school_id": school_id})
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         f_batch_summary = pool.submit(get_student_batch_summary, school_id)
         f_subjects = pool.submit(list_subjects, school_id)

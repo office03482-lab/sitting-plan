@@ -11,7 +11,7 @@ interface AppStore {
   setStudents: (students: Student[]) => void;
   addStudent: (student: Student) => void;
   updateStudent: (student: Student) => void;
-  removeStudent: (studentId: number) => void;
+  removeStudent: (studentId: string | number) => void;
   studentRefreshToken: number;
   bumpStudentRefreshToken: () => void;
 
@@ -20,7 +20,7 @@ interface AppStore {
   setRooms: (rooms: Room[]) => void;
   addRoom: (room: Room) => void;
   updateRoom: (room: Room) => void;
-  removeRoom: (roomId: number) => void;
+  removeRoom: (roomId: string | number) => void;
 
   // Seating plans
   seatingPlans: SeatingPlan[];
@@ -45,10 +45,10 @@ export const useAppStore = create<AppStore>((set) => ({
     students: [...state.students, student] 
   })),
   updateStudent: (student) => set((state) => ({
-    students: state.students.map((s) => s.id === student.id ? student : s),
+    students: state.students.map((s) => (String(s.id) === String(student.id) ? student : s)),
   })),
   removeStudent: (studentId) => set((state) => ({
-    students: state.students.filter((s) => s.id !== studentId),
+    students: state.students.filter((s) => String(s.id) !== String(studentId)),
   })),
   studentRefreshToken: 0,
   bumpStudentRefreshToken: () => set((state) => ({
@@ -61,10 +61,10 @@ export const useAppStore = create<AppStore>((set) => ({
     rooms: [...state.rooms, room] 
   })),
   updateRoom: (room) => set((state) => ({
-    rooms: state.rooms.map((r) => r.id === room.id ? room : r),
+    rooms: state.rooms.map((r) => (String(r.id) === String(room.id) ? room : r)),
   })),
   removeRoom: (roomId) => set((state) => ({
-    rooms: state.rooms.filter((r) => r.id !== roomId),
+    rooms: state.rooms.filter((r) => String(r.id) !== String(roomId)),
   })),
 
   seatingPlans: [],

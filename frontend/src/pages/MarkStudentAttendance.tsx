@@ -59,8 +59,9 @@ export default function MarkStudentAttendance({
   onAttendanceSaved,
 }: MarkStudentAttendanceProps) {
   const user = useAuthStore((state) => state.user);
-  const { authReady, sessionReady, session } = useAuth();
-  const canRunAttendanceRequests = authReady && sessionReady && !!session;
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const currentSchoolId = user?.school_id;
 
   const [filters, setFilters] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -250,7 +251,7 @@ export default function MarkStudentAttendance({
         section: selectedTimetableParts.section,
         subject_id: effectiveSubjectId || undefined,
         search: filters.search || undefined,
-        school_id: 1,
+        school_id: currentSchoolId,
       });
       const payload = response.data;
       if (!payload || typeof payload !== 'object') {
@@ -285,7 +286,7 @@ export default function MarkStudentAttendance({
       const response = await apiService.getTeacherAttendanceContext({
         target_date: filters.date,
         current_time: getCurrentTimeHHMM(),
-        school_id: 1,
+        school_id: currentSchoolId,
       });
       const context = response.data || null;
       setTeacherAttendanceContext(context);
@@ -312,7 +313,7 @@ export default function MarkStudentAttendance({
         batch_name: filters.attendance_scope === 'batch' ? filters.batch_name : undefined,
         target_date: filters.date,
         current_time: getCurrentTimeHHMM(),
-        school_id: 1,
+        school_id: currentSchoolId,
       });
       const contexts = toArray<TeacherAttendanceContext>(response.data);
       setBatchAttendanceOptions(contexts);

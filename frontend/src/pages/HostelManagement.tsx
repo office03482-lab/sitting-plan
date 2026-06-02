@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Hostel, HostelRoom, StudentHostelRequest } from '@types';
 import { apiService } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
 
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200';
@@ -114,12 +115,13 @@ const normalizeRequest = (request: any): StudentHostelRequest => ({
 });
 
 export default function HostelManagement() {
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [hostels, setHostels] = useState<Hostel[]>([]);
   const [requests, setRequests] = useState<StudentHostelRequest[]>([]);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [loadingAllocated, setLoadingAllocated] = useState(false);
   const [editingHostelId, setEditingHostelId] = useState<string | number | null>(null);
   const [deletingHostelId, setDeletingHostelId] = useState<string | number | null>(null);
   const [approvingRequestId, setApprovingRequestId] = useState<string | number | null>(null);
@@ -127,54 +129,81 @@ export default function HostelManagement() {
   const [hostelForm, setHostelForm] = useState<HostelFormState>(initialHostelForm);
   const [roomForms, setRoomForms] = useState<Record<string, string>>({});
 
-  const loadAll = async () => {
-    setLoading(true);
-    const [hostelsRes, requestsRes] = await Promise.allSettled([
-      apiService.listHostels(),
+  const upsertHostel = (nextHostel: Hostel) => {
+    setHostels((current) => {
+      const remaining = current.filter((item) => String(item.id) !== String(nextHostel.id));
+      return [...remaining, nextHostel].sort((left, right) => left.name.localeCompare(right.name));
+    });
+  };
+
+  const upsertRequest = (nextRequest: StudentHostelRequest) => {
+    setRequests((current) => {
+      const remaining = current.filter((item) => String(item.id) !== String(nextRequest.id));
+      return [nextRequest, ...remaining].sort((left, right) => String(right.requested_at || '').localeCompare(String(left.requested_at || '')));
+    });
+  };
+
+  const loadHostels = async () => {
+    const response = await apiService.listHostels();
+    setHostels(toArray(response.data).map(normalizeHostel));
+  };
+
+  const loadRequests = async () => {
+    const [pendingRes, approvedRes] = await Promise.allSettled([
       apiService.listStudentHostelRequests(1, 'pending'),
+      apiService.listStudentHostelRequests(1, 'approved'),
+    ]);
+
+    const nextRequests: StudentHostelRequest[] = [];
+    const errors: string[] = [];
+
+    if (pendingRes.status === 'fulfilled') {
+      nextRequests.push(...toArray(pendingRes.value.data).map(normalizeRequest));
+    } else {
+      errors.push(readApiError(pendingRes.reason, 'Failed to load pending hostel requests'));
+    }
+
+    if (approvedRes.status === 'fulfilled') {
+      nextRequests.push(...toArray(approvedRes.value.data).map(normalizeRequest));
+    } else {
+      errors.push(readApiError(approvedRes.reason, 'Failed to load approved hostel allocations'));
+    }
+
+    setRequests(nextRequests);
+    return errors;
+  };
+
+  const loadAll = async () => {
+    if (!canRunRequests) return;
+    setLoading(true);
+    const [hostelsRes, requestsErrors] = await Promise.allSettled([
+      loadHostels(),
+      loadRequests(),
     ]);
 
     const errors: string[] = [];
 
     if (hostelsRes.status === 'fulfilled') {
-      setHostels(toArray(hostelsRes.value.data).map(normalizeHostel));
     } else {
       setHostels([]);
       errors.push(readApiError(hostelsRes.reason, 'Failed to load hostels'));
     }
 
-    if (requestsRes.status === 'fulfilled') {
-      setRequests(toArray(requestsRes.value.data).map(normalizeRequest));
+    if (requestsErrors.status === 'fulfilled') {
+      errors.push(...requestsErrors.value);
     } else {
       setRequests([]);
-      errors.push(readApiError(requestsRes.reason, 'Failed to load hostel requests'));
+      errors.push(readApiError(requestsErrors.reason, 'Failed to load hostel requests'));
     }
 
     setMessage(errors[0] || '');
     setLoading(false);
-
-    void loadApprovedAllocations();
-  };
-
-  const loadApprovedAllocations = async () => {
-    setLoadingAllocated(true);
-    try {
-      const response = await apiService.listStudentHostelRequests(1, 'approved');
-      const approved = toArray(response.data).map(normalizeRequest);
-      setRequests((current) => {
-        const pending = current.filter((request) => request.status !== 'approved');
-        return [...pending, ...approved];
-      });
-    } catch (error: any) {
-      console.error('Failed to load approved hostel allocations:', error);
-    } finally {
-      setLoadingAllocated(false);
-    }
   };
 
   useEffect(() => {
+    if (!canRunRequests) return;
     void loadAll();
-  }, []);
+  }, [canRunRequests]);
 
   const pendingRequests = requests.filter((request) => request.status === 'pending');
   const allocatedStudents = requests.filter((request) => request.status === 'approved');
@@ -216,19 +245,20 @@ export default function HostelManagement() {
       };
 
       if (isEditing && editingHostelId) {
-        await apiService.updateHostel(editingHostelId, payload);
+        const response = await apiService.updateHostel(editingHostelId, payload);
+        upsertHostel(normalizeHostel(response.data));
         setMessage('Hostel updated successfully');
       } else {
-        await apiService.createHostel({
+        const response = await apiService.createHostel({
           ...payload,
           total_rooms: Number(hostelForm.total_rooms) || 0,
         });
+        upsertHostel(normalizeHostel(response.data));
         setMessage('Hostel created successfully');
       }
 
       setHostelForm(initialHostelForm);
       setEditingHostelId(null);
-      await loadAll();
     } catch (error: any) {
       setMessage(readApiError(error, isEditing ? 'Failed to update hostel' : 'Failed to create hostel'));
     } finally {
@@ -263,12 +293,13 @@ export default function HostelManagement() {
     setDeletingHostelId(hostel.id);
     try {
       const response = await apiService.deleteHostel(hostel.id);
+      setHostels((current) => current.filter((item) => String(item.id) !== String(hostel.id)));
+      setRequests((current) => current.filter((item) => String(item.hostel_id) !== String(hostel.id)));
       if (editingHostelId === hostel.id) {
         setEditingHostelId(null);
         setHostelForm(initialHostelForm);
       }
       setMessage(response.data.message || 'Hostel deleted successfully');
-      await loadAll();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to delete hostel'));
     } finally {
@@ -290,7 +321,7 @@ export default function HostelManagement() {
       });
       setRoomForms((current) => ({ ...current, [hostelId]: '' }));
       setMessage('Hostel room added successfully');
-      await loadAll();
+      await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to add hostel room'));
     }
@@ -302,13 +333,14 @@ export default function HostelManagement() {
     const selectedRoomId = Number(selection.roomId || roomId || 0) || roomId;
     setApprovingRequestId(request.id);
     try {
-      await apiService.approveStudentHostelRequest(request.id, {
+      const response = await apiService.approveStudentHostelRequest(request.id, {
         hostel_id: selectedHostelId,
         room_id: selectedRoomId,
         reviewed_by: 'Hostel Head',
       });
+      upsertRequest(normalizeRequest(response.data));
       setMessage(`Hostel approved for ${request.student_name}`);
-      await loadAll();
+      await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to approve hostel request'));
     } finally {
@@ -326,13 +358,14 @@ export default function HostelManagement() {
 
     setApprovingRequestId(request.id);
     try {
-      await apiService.moveStudentHostelAllocation(request.id, {
+      const response = await apiService.moveStudentHostelAllocation(request.id, {
         hostel_id: selectedHostelId,
         room_id: selection.roomId ? Number(selection.roomId) : undefined,
         reviewed_by: 'Hostel Head',
       });
+      upsertRequest(normalizeRequest(response.data));
       setMessage(`Hostel moved for ${request.student_name}`);
-      await loadAll();
+      await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to move hostel allocation'));
     } finally {
@@ -343,11 +376,12 @@ export default function HostelManagement() {
   const handleRejectRequest = async (requestId: string | number) => {
     setApprovingRequestId(requestId);
     try {
-      await apiService.rejectStudentHostelRequest(requestId, {
+      const response = await apiService.rejectStudentHostelRequest(requestId, {
         reviewed_by: 'Hostel Head',
       });
+      upsertRequest(normalizeRequest(response.data));
       setMessage('Hostel request rejected');
-      await loadAll();
+      await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to reject hostel request'));
     } finally {
@@ -599,8 +633,7 @@ export default function HostelManagement() {
                 </div>
               );
             })}
-            {loadingAllocated ? <p className="text-sm text-slate-500">Loading allocated students...</p> : null}
-            {!loadingAllocated && allocatedStudents.length === 0 ? <p className="text-sm text-slate-500">No approved hostel allocations yet.</p> : null}
+            {allocatedStudents.length === 0 ? <p className="text-sm text-slate-500">No approved hostel allocations yet.</p> : null}
           </div>
         </section>
       </div>

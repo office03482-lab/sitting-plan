@@ -198,6 +198,7 @@ class ApiService {
   ) {
     return this.api.post('/students/import', formData, {
       params: { school_id: schoolId },
+      timeout: 180000,
       onUploadProgress,
     });
   }
@@ -224,6 +225,12 @@ class ApiService {
 
   async deleteStudent(studentId: string | number) {
     return this.api.delete(`/students/${studentId}`);
+  }
+
+  async deleteSelectedStudents(studentIds: Array<string | number>) {
+    return this.api.post('/students/bulk-delete', {
+      student_ids: studentIds.map((studentId) => String(studentId)),
+    });
   }
 
   async deleteAllStudents(isAdmin: boolean = false, schoolId: string | number = 1) {
@@ -904,23 +911,23 @@ class ApiService {
   }
 
   async listHostels(schoolId: string | number = 1) {
-    return this.api.get('/students/hostels', { params: { school_id: schoolId } });
+    return this.api.get('/hostels', { params: { school_id: schoolId } });
   }
 
   async createHostel(data: Record<string, unknown>, schoolId: string | number = 1) {
-    return this.api.post('/students/hostels', data, { params: { school_id: schoolId } });
+    return this.api.post('/hostels', data, { params: { school_id: schoolId } });
   }
 
   async updateHostel(hostelId: string | number, data: Record<string, unknown>, schoolId: string | number = 1) {
-    return this.api.put(`/students/hostels/${hostelId}`, data, { params: { school_id: schoolId } });
+    return this.api.put(`/hostels/${hostelId}`, data, { params: { school_id: schoolId } });
   }
 
   async deleteHostel(hostelId: string | number, schoolId: string | number = 1) {
-    return this.api.delete(`/students/hostels/${hostelId}`, { params: { school_id: schoolId } });
+    return this.api.delete(`/hostels/${hostelId}`, { params: { school_id: schoolId } });
   }
 
   async addHostelRoom(hostelId: string | number, data: Record<string, unknown>, schoolId: string | number = 1) {
-    return this.api.post(`/students/hostels/${hostelId}/rooms`, data, { params: { school_id: schoolId } });
+    return this.api.post(`/hostels/${hostelId}/rooms`, data, { params: { school_id: schoolId } });
   }
 
   async listStudentHostelRequests(schoolId: string | number = 1, status?: string) {
@@ -944,7 +951,23 @@ class ApiService {
   }
 
   async downloadStudentTemplate() {
-    return this.api.get('/students/template/download', { responseType: 'blob' });
+    return this.api.get('/students/template/download', {
+      responseType: 'blob',
+      timeout: 60000,
+    });
+  }
+
+  async downloadStaffTemplate() {
+    return this.api.get('/staff/template/download', {
+      responseType: 'blob',
+      timeout: 60000,
+    });
+  }
+
+  async importStaffWorkbook(formData: FormData) {
+    return this.api.post('/staff/import', formData, {
+      timeout: 180000,
+    });
   }
 
   async transferStudentsToBatch(data: Record<string, unknown>, schoolId: string | number = 1) {

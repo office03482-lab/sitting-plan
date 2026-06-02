@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from app.middleware.auth import get_authenticated_actor_context
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import resolve_school_id_from_actor
+from app.services.supabase_metrics import get_dashboard_metrics_rpc
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ router = APIRouter()
 # Cache: school_id -> {payload, expires_at}
 _dashboard_cache: dict[str, dict] = {}
 _DASHBOARD_CACHE_TTL = 30  # seconds
+_dashboard_rpc_missing_until = 0.0
 
 
 def _perf_log(label: str, school_id: str, duration_ms: float, **extra):
@@ -24,11 +26,18 @@ def _perf_log(label: str, school_id: str, duration_ms: float, **extra):
     )
 
 
+def _is_missing_dashboard_rpc_error(exc: Exception) -> bool:
+    error_text = str(exc or "")
+    error_code = getattr(exc, "code", None)
+    return error_code == "PGRST202" or "PGRST202" in error_text or "get_dashboard_metrics" in error_text
+
+
 @router.get("/dashboard/metrics")
 def get_dashboard_metrics(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    global _dashboard_rpc_missing_until
     started_at = time.monotonic()
 
     # Check cache
@@ -37,28 +46,35 @@ def get_dashboard_metrics(
         _perf_log("cache_hit", school_id, (time.monotonic() - started_at) * 1000)
         return cached["payload"]
 
+    def cache_payload(payload: dict) -> dict:
+        _dashboard_cache[school_id] = {
+            "payload": payload,
+            "expires_at": time.monotonic() + _DASHBOARD_CACHE_TTL,
+        }
+        return payload
+
+    should_try_rpc = time.monotonic() >= _dashboard_rpc_missing_until
+
+    if not should_try_rpc:
+        _perf_log("rpc_skipped_missing", school_id, (time.monotonic() - started_at) * 1000)
+        return cache_payload(_fallback_dashboard(school_id, started_at))
+
+    rpc_started_at = time.monotonic()
     try:
-        response = (
-            get_supabase_admin_client()
-            .rpc("get_dashboard_metrics", {"p_school_id": school_id})
-            .execute()
-        )
-        rpc_duration = (time.monotonic() - started_at) * 1000
-        data = response.data if response else None
-        if data is None:
-            data = {}
-        payload = data
+        payload = get_dashboard_metrics_rpc(school_id)
+        rpc_duration = (time.monotonic() - rpc_started_at) * 1000
     except Exception as exc:
-        rpc_exc = exc
-        rpc_duration = (time.monotonic() - started_at) * 1000
+        rpc_duration = (time.monotonic() - rpc_started_at) * 1000
+        if _is_missing_dashboard_rpc_error(exc):
+            _dashboard_rpc_missing_until = time.monotonic() + 300
         _perf_log("rpc_error", school_id, rpc_duration, error=str(exc)[:200])
-        return _fallback_dashboard(school_id, started_at)
+        return cache_payload(_fallback_dashboard(school_id, started_at))
+
+    if not payload:
+        return cache_payload(_fallback_dashboard(school_id, started_at))
 
     # Cache the payload
-    _dashboard_cache[school_id] = {
-        "payload": payload,
-        "expires_at": time.monotonic() + _DASHBOARD_CACHE_TTL,
-    }
+    cache_payload(payload)
 
     total_ms = (time.monotonic() - started_at) * 1000
     _perf_log("ok", school_id, total_ms, rpc_ms=round(rpc_duration, 1))

@@ -1,11 +1,14 @@
 """
 Excel import/export utilities
 """
-from typing import List, Dict, Tuple
-import openpyxl
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from __future__ import annotations
+
+from datetime import date, datetime
 from io import BytesIO
-from datetime import datetime
+from typing import Dict, List, Tuple
+
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
 def default_academic_session() -> str:
@@ -15,99 +18,290 @@ def default_academic_session() -> str:
     return f"Apr {start_year} - Mar {end_year}"
 
 
+def _normalize_header(value: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]", "", value.strip().lower())
+
+
+def _clean_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _parse_excel_date(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return raw
+
+
+def _parse_bool(value: object) -> bool:
+    normalized = _clean_text(value).lower()
+    if not normalized:
+        return False
+    return normalized in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "required",
+        "hostel",
+        "boarding",
+        "residential",
+        "boarder",
+    }
+
+
+def _first_non_empty(*values: object) -> str:
+    for value in values:
+        normalized = _clean_text(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+STUDENT_TEMPLATE_HEADERS = [
+    "SR. NO",
+    "ADMISSION ID",
+    "ACADEMIC SESSION",
+    "PROGRAM",
+    "COURSE",
+    "MANAGED BATCH",
+    "CLASS",
+    "SECTION",
+    "ROLL NO",
+    "FIRST NAME",
+    "MIDDLE NAME",
+    "LAST NAME",
+    "LOCAL NAME",
+    "DATE OF BIRTH",
+    "AGE AS OF TODAY",
+    "EMAIL",
+    "GENDER",
+    "PHONE",
+    "ADMISSION DATE",
+    "FEE SCHEDULE",
+    "TC NUMBER",
+    "PREVIOUS SCHOOL",
+    "PREVIOUS EXAM",
+    "PREVIOUS BOARD",
+    "PREVIOUS PERCENTAGE",
+    "PREVIOUS TOTAL MARKS",
+    "PREVIOUS AVERAGE",
+    "FATHER NAME",
+    "FATHER MOBILE",
+    "FATHER OCCUPATION",
+    "MOTHER NAME",
+    "MOTHER MOBILE",
+    "MOTHER OCCUPATION",
+    "CATEGORY",
+    "SUB CATEGORY",
+    "SIBLING NAME",
+    "SIBLING SCHOOL",
+    "GUARDIAN NAME",
+    "GUARDIAN RELATION",
+    "GUARDIAN MOBILE",
+    "GUARDIAN ADDRESS",
+    "EMERGENCY NAME",
+    "EMERGENCY MOBILE",
+    "PRIORITY CONTACT",
+    "ADDRESS LINE 1",
+    "ADDRESS LINE 2",
+    "CITY",
+    "STATE",
+    "COUNTRY",
+    "PINCODE",
+    "REGION",
+    "REFERENCE NAME",
+    "REFERENCE NUMBER",
+    "REFERENCE REMARK",
+    "ADMISSION TYPE",
+    "BOARDING TYPE",
+    "SPECIAL NEEDS",
+    "AVAILING MESS FACILITY",
+    "HOSTEL REQUIRED",
+    "PREFERRED HOSTEL",
+    "HOSTEL REQUEST NOTE",
+    "PICKUP ENABLED",
+    "DROP ENABLED",
+    "TRANSPORT MONTH",
+    "TRANSPORT ROUTE",
+    "TRANSPORT STOP",
+    "ROOM NO",
+]
+
+
+STUDENT_HEADER_ALIASES = {
+    "SR. NO": ["srno", "slno", "sno", "serialno", "serial number", "sl.no."],
+    "ADMISSION ID": [
+        "admissionid",
+        "admission id",
+        "admission no",
+        "admission number",
+        "admission",
+        "* admission id",
+    ],
+    "ACADEMIC SESSION": [
+        "academicsession",
+        "academic session",
+        "session",
+        "academic year",
+        "year session",
+        "academicyear",
+    ],
+    "PROGRAM": ["program", "stream", "school group"],
+    "COURSE": ["course", "exam course", "program course", "entrance exam name"],
+    "MANAGED BATCH": ["managedbatch", "managed batch", "batch", "admitted class"],
+    "CLASS": ["class", "* class", "class name", "grade", "standard"],
+    "SECTION": ["section", "* section", "division"],
+    "ROLL NO": [
+        "rollno",
+        "roll number",
+        "rollnumber",
+        "roll",
+        "registration number",
+        "registration no",
+    ],
+    "FIRST NAME": ["firstname", "first name", "* first name", "student first name"],
+    "MIDDLE NAME": ["middlename", "middle name"],
+    "LAST NAME": ["lastname", "last name", "student last name"],
+    "LOCAL NAME": ["localname", "first name local", "last name local"],
+    "DATE OF BIRTH": ["dateofbirth", "date of birth", "dob"],
+    "AGE AS OF TODAY": ["ageasoftoday", "age as of today", "age as on", "age"],
+    "EMAIL": ["email", "email id", "student email", "mail"],
+    "GENDER": ["gender", "sex"],
+    "PHONE": ["phone", "student phone number", "student mobile", "mobile", "phone number"],
+    "ADMISSION DATE": [
+        "admissiondate",
+        "date of admission",
+        "dateofadmissionddmmyyyy",
+        "dateofadmission",
+    ],
+    "FEE SCHEDULE": ["feeschedule", "fee schedule", "fee schedule name"],
+    "TC NUMBER": ["tcnumber", "tc number"],
+    "PREVIOUS SCHOOL": ["previousschool", "previous school"],
+    "PREVIOUS EXAM": ["previousexam", "previous exam", "previous exam passed"],
+    "PREVIOUS BOARD": ["previousboard", "previous board", "board"],
+    "PREVIOUS PERCENTAGE": ["previouspercentage", "previous percentage", "pcm %"],
+    "PREVIOUS TOTAL MARKS": ["previoustotalmarks", "previous total marks", "total marks", "pcm marks"],
+    "PREVIOUS AVERAGE": ["previousaverage", "previous average", "average"],
+    "FATHER NAME": ["fathername", "father name"],
+    "FATHER MOBILE": ["fathermobile", "father mobile", "* father mobile number", "father mobile number"],
+    "FATHER OCCUPATION": ["fatheroccupation", "father occupation"],
+    "MOTHER NAME": ["mothername", "mother name"],
+    "MOTHER MOBILE": ["mothermobile", "mother mobile", "mother mobile number"],
+    "MOTHER OCCUPATION": ["motheroccupation", "mother occupation"],
+    "CATEGORY": ["category", "category (general / obc / sc / st)", "caste"],
+    "SUB CATEGORY": ["subcategory", "sub category", "sub caste"],
+    "SIBLING NAME": ["siblingname", "sibling 1 name", "sibling name"],
+    "SIBLING SCHOOL": ["siblingschool", "sibling school", "sibling 1 school/working"],
+    "GUARDIAN NAME": ["guardianname", "guardian name"],
+    "GUARDIAN RELATION": ["guardianrelation", "guardian relationship"],
+    "GUARDIAN MOBILE": ["guardianmobile", "guardian mobile number", "guardian mobile"],
+    "GUARDIAN ADDRESS": ["guardianaddress", "guardian address"],
+    "EMERGENCY NAME": ["emergencyname", "emergency name"],
+    "EMERGENCY MOBILE": ["emergencymobile", "emergency number", "emergency mobile"],
+    "PRIORITY CONTACT": [
+        "prioritycontact",
+        "priority to contact for school matters",
+        "priority contact",
+    ],
+    "ADDRESS LINE 1": ["addressline1", "address 1", "address1", "house number", "location"],
+    "ADDRESS LINE 2": ["addressline2", "address 2", "address2"],
+    "CITY": ["city", "city / country"],
+    "STATE": ["state"],
+    "COUNTRY": ["country", "nationality"],
+    "PINCODE": ["pincode", "pin code", "zip"],
+    "REGION": ["region"],
+    "REFERENCE NAME": ["referencename", "reference name"],
+    "REFERENCE NUMBER": ["referencenumber", "reference number"],
+    "REFERENCE REMARK": ["referenceremark", "reference remark"],
+    "ADMISSION TYPE": ["admissiontype", "admission type"],
+    "BOARDING TYPE": ["boardingtype", "boarding type"],
+    "SPECIAL NEEDS": [
+        "specialneeds",
+        "special needs",
+        "allergymedicalconditiondescription",
+        "special education needs description",
+        "does the student have any special educational needs ?",
+        "does the student have any physical health limitation ?",
+        "does the student have any illnesses or medical history since birth ?",
+        "does the student have any other medical concerns or conditions ?",
+        "other information description",
+        "other relevant information ?",
+        "special needs description",
+        "remarks",
+    ],
+    "AVAILING MESS FACILITY": ["availingmessfacility", "availing mess facility"],
+    "HOSTEL REQUIRED": ["hostelrequired", "hostel required"],
+    "PREFERRED HOSTEL": ["preferredhostel", "preferred hostel"],
+    "HOSTEL REQUEST NOTE": ["hostelrequestnote", "hostel request note", "reason"],
+    "PICKUP ENABLED": ["pickupenabled", "pickup enabled"],
+    "DROP ENABLED": ["dropenabled", "drop enabled"],
+    "TRANSPORT MONTH": ["transportmonth", "transport month"],
+    "TRANSPORT ROUTE": ["transportroute", "transport route", "route name"],
+    "TRANSPORT STOP": ["transportstop", "transport stop", "stop name"],
+    "ROOM NO": ["roomno", "room number", "room no", "room"],
+}
+
+
 def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
     """
     Parse student data from Excel file.
 
-    Expected columns in row 1:
-    Flexible student-form style headers such as ADMISSION ID, COURSE, PROGRAM,
-    ACADEMIC SESSION, BATCH, ROLL NO, FIRST NAME, LAST NAME, CANDIDATE NAME, FATHER NAME,
-    EMAIL, PHONE, SPECIAL NEEDS, ROOM NO
-
-    Args:
-        file_content: Binary content of Excel file
-
-    Returns:
-        (valid_students, errors)
+    Supports both the app template headers and the existing school workbook headers.
     """
-    valid_students = []
-    errors = []
+    valid_students: List[Dict] = []
+    errors: List[Dict] = []
 
-    def normalize_header(value: str) -> str:
-        import re
-        normalized = re.sub(r'[^a-z0-9]', '', value.strip().lower())
-        return normalized
-
-    supported_headers = [
-        'SR. NO',
-        'ADMISSION ID',
-        'COURSE',
-        'PROGRAM',
-        'ACADEMIC SESSION',
-        'BATCH',
-        'ROLL NO',
-        'FIRST NAME',
-        'LAST NAME',
-        'CANDIDATE NAME',
-        'FATHER NAME',
-        'EMAIL',
-        'PHONE',
-        'SPECIAL NEEDS',
-        'ROOM NO',
-    ]
-
-    header_aliases = {
-        'SR. NO': ['srno', 'sno', 's.no', 'serialno', 'serial', 'serial number', 'sr'],
-        'ADMISSION ID': ['admissionid', 'admission id', 'admission no', 'admission number', 'admission'],
-        'COURSE': ['course', 'exam course', 'program course'],
-        'PROGRAM': ['program', 'stream', 'category', 'medical non medical'],
-        'ACADEMIC SESSION': ['academicsession', 'academic session', 'session', 'session name', 'academic year', 'year session'],
-        'BATCH': ['batch', 'class', 'standard', 'grade', 'year', 'managed batch', 'admission batch'],
-        'ROLL NO': ['rollno', 'rollnumber', 'roll number', 'roll', 'registration no', 'registration number', 'roll #', 'rollno.'],
-        'FIRST NAME': ['firstname', 'first name', 'student first name', 'candidate first name'],
-        'LAST NAME': ['lastname', 'last name', 'last name optional', 'student last name', 'candidate last name'],
-        'CANDIDATE NAME': ['candidatename', 'studentname', 'student name', 'name', 'candidate', 'full name'],
-        'FATHER NAME': ['fathername', 'father name', 'father', 'parentname', 'parent name', 'guardianname', 'guardian name', 'guardian'],
-        'EMAIL': ['email', 'email id', 'mail', 'student email'],
-        'PHONE': ['phone', 'mobile', 'contact', 'phone number', 'student phone', 'student mobile'],
-        'SPECIAL NEEDS': ['specialneeds', 'special needs', 'other info', 'remarks'],
-        'ROOM NO': ['roomno', 'room number', 'room', 'classroom', 'room #', 'class room', 'roomno.'],
-    }
-
-    alias_to_header = {}
-    for canonical, aliases in header_aliases.items():
-        alias_to_header[normalize_header(canonical)] = canonical
+    alias_to_header: dict[str, str] = {}
+    for canonical, aliases in STUDENT_HEADER_ALIASES.items():
+        alias_to_header[_normalize_header(canonical)] = canonical
         for alias in aliases:
-            alias_to_header[normalize_header(alias)] = canonical
+            alias_to_header[_normalize_header(alias)] = canonical
 
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_content))
         worksheet = workbook.active
 
-        # Check if we have at least one row
         if worksheet.max_row < 2:
-            errors.append({
-                'row': 0,
-                'error': 'Excel file appears to be empty.'
-            })
+            errors.append({"row": 0, "error": "Excel file appears to be empty."})
             return valid_students, errors
 
-        # Read header row 1 only
         actual_headers = []
-        for col_idx in range(1, max(worksheet.max_column, len(supported_headers)) + 1):
+        for col_idx in range(1, worksheet.max_column + 1):
             cell_value = worksheet.cell(row=1, column=col_idx).value
-            actual_headers.append(str(cell_value).strip() if cell_value is not None else '')
+            actual_headers.append(str(cell_value).strip() if cell_value is not None else "")
 
-        # Normalize actual headers for comparison
-        normalized_headers = [normalize_header(value) for value in actual_headers]
+        header_map: dict[str, int] = {}
+        for col_idx, actual_header in enumerate(actual_headers, start=1):
+            normalized_actual = _normalize_header(actual_header)
+            if not normalized_actual:
+                continue
 
-        # Map actual headers to expected canonical headers
-        header_map = {}
-        for col_idx, normalized_actual in enumerate(normalized_headers, start=1):
-            matched_header = None
-            if normalized_actual in alias_to_header:
-                matched_header = alias_to_header[normalized_actual]
-            else:
+            matched_header = alias_to_header.get(normalized_actual)
+            if not matched_header:
                 for alias_norm, canonical in alias_to_header.items():
                     if alias_norm in normalized_actual or normalized_actual in alias_norm:
                         matched_header = canonical
@@ -116,25 +310,23 @@ def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
             if matched_header and matched_header not in header_map:
                 header_map[matched_header] = col_idx
 
-        missing_headers = [header for header in ['ROLL NO', 'BATCH'] if header not in header_map]
+        missing_headers = [header for header in ["ADMISSION ID", "FIRST NAME", "CLASS"] if header not in header_map]
         if missing_headers:
-            errors.append({
-                'row': 1,
-                'error': f'Missing column(s): {", ".join(missing_headers)}. Found headers: {actual_headers}. Required headers: ROLL NO, BATCH, and either CANDIDATE NAME or FIRST NAME. ACADEMIC SESSION optional hai; blank hua to default fill hoga.'
-            })
+            errors.append(
+                {
+                    "row": 1,
+                    "error": (
+                        f"Missing column(s): {', '.join(missing_headers)}. "
+                        f"Found headers: {actual_headers}. Required minimum headers: "
+                        "ADMISSION ID, FIRST NAME, CLASS. ROLL NO blank ho to Admission ID se auto-fill ho jayega."
+                    ),
+                }
+            )
             return valid_students, errors
 
-        if 'CANDIDATE NAME' not in header_map and 'FIRST NAME' not in header_map:
-            errors.append({
-                'row': 1,
-                'error': f'Missing student name column. Found headers: {actual_headers}. Use either CANDIDATE NAME or FIRST NAME. LAST NAME optional hai.'
-            })
-            return valid_students, errors
-
-        # Track roll numbers to check for duplicates
+        admission_numbers_seen = set()
         roll_numbers_seen = set()
 
-        # Parse data rows
         for row_idx in range(2, worksheet.max_row + 1):
             try:
                 row_values = {
@@ -142,107 +334,164 @@ def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
                     for header, col_idx in header_map.items()
                 }
 
-                roll_no = row_values['ROLL NO']
-                batch = row_values['BATCH']
-                sr_no = row_values.get('SR. NO')
-                admission_id = row_values.get('ADMISSION ID')
-                course = row_values.get('COURSE')
-                program = row_values.get('PROGRAM')
-                academic_session = row_values.get('ACADEMIC SESSION')
-                first_name = row_values.get('FIRST NAME')
-                last_name = row_values.get('LAST NAME')
-                candidate_name = row_values.get('CANDIDATE NAME')
-                father_name = row_values.get('FATHER NAME')
-                email = row_values.get('EMAIL')
-                phone = row_values.get('PHONE')
-                special_needs = row_values.get('SPECIAL NEEDS')
-                room_no = row_values.get('ROOM NO')
+                admission_id = _clean_text(row_values.get("ADMISSION ID"))
+                first_name = _clean_text(row_values.get("FIRST NAME"))
+                middle_name = _clean_text(row_values.get("MIDDLE NAME"))
+                last_name = _clean_text(row_values.get("LAST NAME"))
+                class_name = _clean_text(row_values.get("CLASS"))
+                section = _clean_text(row_values.get("SECTION"))
 
-                full_name = str(candidate_name).strip() if candidate_name else ' '.join(
-                    [str(first_name).strip() if first_name else '', str(last_name).strip() if last_name else '']
-                ).strip()
+                if not any([admission_id, first_name, last_name, class_name, section]):
+                    continue
 
-                if not roll_no and not full_name and not batch and not academic_session:
-                    # Skip non-data rows such as worksheet instructions or blanks.
-                    instruction_text = False
-                    if sr_no is not None and isinstance(sr_no, str) and not sr_no.strip().isdigit():
-                        instruction_text = True
-                    if instruction_text and not father_name and not room_no:
+                if not admission_id or not first_name or not class_name:
+                    errors.append(
+                        {
+                            "row": row_idx,
+                            "error": "Missing required data in row. Required columns: ADMISSION ID, FIRST NAME, CLASS.",
+                        }
+                    )
+                    continue
+
+                normalized_admission = admission_id.lower()
+                if normalized_admission in admission_numbers_seen:
+                    errors.append(
+                        {
+                            "row": row_idx,
+                            "admission_id": admission_id,
+                            "error": f"Duplicate ADMISSION ID: {admission_id}.",
+                        }
+                    )
+                    continue
+
+                candidate_name = " ".join(part for part in [first_name, middle_name, last_name] if part).strip()
+                if not candidate_name:
+                    errors.append(
+                        {
+                            "row": row_idx,
+                            "admission_id": admission_id,
+                            "error": "Student name could not be derived from FIRST NAME / MIDDLE NAME / LAST NAME.",
+                        }
+                    )
+                    continue
+
+                managed_batch = _first_non_empty(
+                    row_values.get("MANAGED BATCH"),
+                    f"{class_name} | {section}" if section else class_name,
+                )
+                source_roll_no = _clean_text(row_values.get("ROLL NO"))
+                roll_no = _first_non_empty(source_roll_no, admission_id)
+                normalized_roll = roll_no.lower()
+                if normalized_roll in roll_numbers_seen:
+                    fallback_roll = admission_id.lower()
+                    if fallback_roll and fallback_roll not in roll_numbers_seen:
+                        roll_no = admission_id
+                        normalized_roll = fallback_roll
+                    else:
+                        errors.append(
+                            {
+                                "row": row_idx,
+                                "roll_no": roll_no,
+                                "error": f"Duplicate ROLL NO after normalization: {roll_no}.",
+                            }
+                        )
                         continue
-                    if sr_no is None and father_name is None and room_no is None:
-                        continue
 
-                if not roll_no or not full_name or not batch:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'Missing required data in row. Required columns: ROLL NO, BATCH, and student name.'
-                    })
-                    continue
-
-                academic_session_str = str(academic_session).strip() if academic_session else default_academic_session()
-                if not academic_session_str:
-                    academic_session_str = default_academic_session()
-
-                roll_no_str = str(roll_no).strip()
-                if not roll_no_str:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'ROLL NO cannot be empty.'
-                    })
-                    continue
-
-                if roll_no_str in roll_numbers_seen:
-                    errors.append({
-                        'row': row_idx,
-                        'error': f'Duplicate ROLL NO: {roll_no_str}.'
-                    })
-                    continue
-
-                roll_numbers_seen.add(roll_no_str)
-
-                batch_str = str(batch).strip()
-                if not batch_str:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'BATCH cannot be empty.'
-                    })
-                    continue
+                boarding_type = _clean_text(row_values.get("BOARDING TYPE"))
+                hostel_required = _parse_bool(row_values.get("HOSTEL REQUIRED"))
+                if not hostel_required and boarding_type:
+                    lowered_boarding = boarding_type.lower()
+                    hostel_required = any(keyword in lowered_boarding for keyword in ["hostel", "residential", "boarder"])
 
                 student = {
-                    'sr_no': sr_no,
-                    'admission_id': str(admission_id).strip() if admission_id else '',
-                    'course': str(course).strip() if course else '',
-                    'program': str(program).strip() if program else '',
-                    'academic_session': academic_session_str,
-                    'roll_no': roll_no_str,
-                    'candidate_name': full_name,
-                    'father_name': str(father_name).strip() if father_name else '',
-                    'batch': batch_str,
-                    'email': str(email).strip() if email else '',
-                    'phone': str(phone).strip() if phone else '',
-                    'special_needs': str(special_needs).strip() if special_needs else '',
-                    'room_no': str(room_no).strip() if room_no else '',
+                    "sr_no": _clean_text(row_values.get("SR. NO")),
+                    "admission_id": admission_id,
+                    "academic_session": _first_non_empty(
+                        row_values.get("ACADEMIC SESSION"),
+                        default_academic_session(),
+                    ),
+                    "program": _clean_text(row_values.get("PROGRAM")),
+                    "course": _clean_text(row_values.get("COURSE")),
+                    "batch": managed_batch,
+                    "managed_batch": managed_batch,
+                    "class_name": class_name,
+                    "section": section,
+                    "roll_no": roll_no,
+                    "source_roll_no": source_roll_no,
+                    "first_name": first_name,
+                    "middle_name": middle_name,
+                    "last_name": last_name,
+                    "candidate_name": candidate_name,
+                    "local_name": _clean_text(row_values.get("LOCAL NAME")),
+                    "dob": _parse_excel_date(row_values.get("DATE OF BIRTH")),
+                    "age_as_of_today": _clean_text(row_values.get("AGE AS OF TODAY")),
+                    "email": _clean_text(row_values.get("EMAIL")),
+                    "gender": _clean_text(row_values.get("GENDER")),
+                    "phone": _clean_text(row_values.get("PHONE")),
+                    "admission_date": _parse_excel_date(row_values.get("ADMISSION DATE")),
+                    "fee_schedule": _clean_text(row_values.get("FEE SCHEDULE")),
+                    "tc_number": _clean_text(row_values.get("TC NUMBER")),
+                    "previous_school": _clean_text(row_values.get("PREVIOUS SCHOOL")),
+                    "previous_exam": _clean_text(row_values.get("PREVIOUS EXAM")),
+                    "previous_board": _clean_text(row_values.get("PREVIOUS BOARD")),
+                    "previous_percentage": _clean_text(row_values.get("PREVIOUS PERCENTAGE")),
+                    "previous_total_marks": _clean_text(row_values.get("PREVIOUS TOTAL MARKS")),
+                    "previous_average": _clean_text(row_values.get("PREVIOUS AVERAGE")),
+                    "father_name": _clean_text(row_values.get("FATHER NAME")),
+                    "father_mobile": _clean_text(row_values.get("FATHER MOBILE")),
+                    "father_occupation": _clean_text(row_values.get("FATHER OCCUPATION")),
+                    "mother_name": _clean_text(row_values.get("MOTHER NAME")),
+                    "mother_mobile": _clean_text(row_values.get("MOTHER MOBILE")),
+                    "mother_occupation": _clean_text(row_values.get("MOTHER OCCUPATION")),
+                    "category": _clean_text(row_values.get("CATEGORY")),
+                    "sub_category": _clean_text(row_values.get("SUB CATEGORY")),
+                    "sibling_name": _clean_text(row_values.get("SIBLING NAME")),
+                    "sibling_school": _clean_text(row_values.get("SIBLING SCHOOL")),
+                    "guardian_name": _first_non_empty(row_values.get("GUARDIAN NAME"), row_values.get("FATHER NAME")),
+                    "guardian_relation": _clean_text(row_values.get("GUARDIAN RELATION")),
+                    "guardian_mobile": _first_non_empty(row_values.get("GUARDIAN MOBILE"), row_values.get("FATHER MOBILE")),
+                    "guardian_address": _clean_text(row_values.get("GUARDIAN ADDRESS")),
+                    "emergency_name": _clean_text(row_values.get("EMERGENCY NAME")),
+                    "emergency_mobile": _clean_text(row_values.get("EMERGENCY MOBILE")),
+                    "priority_contact": _clean_text(row_values.get("PRIORITY CONTACT")),
+                    "address1": _clean_text(row_values.get("ADDRESS LINE 1")),
+                    "address2": _clean_text(row_values.get("ADDRESS LINE 2")),
+                    "city": _clean_text(row_values.get("CITY")),
+                    "state": _clean_text(row_values.get("STATE")),
+                    "country": _first_non_empty(row_values.get("COUNTRY"), "India"),
+                    "pincode": _clean_text(row_values.get("PINCODE")),
+                    "region": _clean_text(row_values.get("REGION")),
+                    "reference_name": _clean_text(row_values.get("REFERENCE NAME")),
+                    "reference_number": _clean_text(row_values.get("REFERENCE NUMBER")),
+                    "reference_remark": _clean_text(row_values.get("REFERENCE REMARK")),
+                    "admission_type": _clean_text(row_values.get("ADMISSION TYPE")),
+                    "boarding_type": boarding_type,
+                    "special_needs": _clean_text(row_values.get("SPECIAL NEEDS")),
+                    "availing_mess_facility": _clean_text(row_values.get("AVAILING MESS FACILITY")),
+                    "hostel_required": hostel_required,
+                    "preferred_hostel": _clean_text(row_values.get("PREFERRED HOSTEL")),
+                    "hostel_request_note": _clean_text(row_values.get("HOSTEL REQUEST NOTE")),
+                    "pickup_enabled": _parse_bool(row_values.get("PICKUP ENABLED")),
+                    "drop_enabled": _parse_bool(row_values.get("DROP ENABLED")),
+                    "transport_month": _clean_text(row_values.get("TRANSPORT MONTH")),
+                    "transport_route": _clean_text(row_values.get("TRANSPORT ROUTE")),
+                    "transport_stop": _clean_text(row_values.get("TRANSPORT STOP")),
+                    "room_no": _clean_text(row_values.get("ROOM NO")),
                 }
 
                 valid_students.append(student)
-            except Exception as e:
-                errors.append({
-                    'row': row_idx,
-                    'error': f'Error parsing row: {str(e)}'
-                })
-    except Exception as e:
+                admission_numbers_seen.add(normalized_admission)
+                roll_numbers_seen.add(normalized_roll)
+            except Exception as exc:
+                errors.append({"row": row_idx, "error": f"Error parsing row: {str(exc)}"})
+    except Exception as exc:
         import zipfile
         from openpyxl.utils.exceptions import InvalidFileException
-        if isinstance(e, (zipfile.BadZipFile, InvalidFileException)):
-            errors.append({
-                'row': 0,
-                'error': 'Invalid Excel format. The uploaded file is not a valid .xlsx file.'
-            })
+
+        if isinstance(exc, (zipfile.BadZipFile, InvalidFileException)):
+            errors.append({"row": 0, "error": "Invalid Excel format. The uploaded file is not a valid .xlsx file."})
         else:
-            errors.append({
-                'row': 0,
-                'error': f'Error reading Excel file: {str(e)}'
-            })
+            errors.append({"row": 0, "error": f"Error reading Excel file: {str(exc)}"})
 
     return valid_students, errors
 
@@ -250,9 +499,6 @@ def parse_student_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
 def create_student_excel_template() -> BytesIO:
     """
     Create downloadable Excel template for student data upload.
-
-    Returns:
-        BytesIO object with Excel template
     """
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
@@ -262,65 +508,183 @@ def create_student_excel_template() -> BytesIO:
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF")
 
-    headers = [
-        'SR. NO',
-        'ADMISSION ID',
-        'COURSE',
-        'PROGRAM',
-        'ACADEMIC SESSION',
-        'BATCH',
-        'ROLL NO',
-        'FIRST NAME',
-        'LAST NAME (OPTIONAL)',
-        'FATHER NAME',
-        'EMAIL',
-        'PHONE',
-        'SPECIAL NEEDS',
-        'ROOM NO',
-    ]
-
-    for col_idx, header in enumerate(headers, 1):
+    for col_idx, header in enumerate(STUDENT_TEMPLATE_HEADERS, 1):
         cell = worksheet.cell(row=1, column=col_idx)
         cell.value = header
         cell.fill = header_fill
         cell.font = header_font
-        cell.alignment = Alignment(horizontal='center')
+        cell.alignment = Alignment(horizontal="center", vertical="center")
 
     worksheet.freeze_panes = "A2"
 
     sample_rows = [
-        [1, 'ADM-101', 'NEET', 'Medical', 'Apr 2026 - Mar 2027', 'Dropper Medical Alpha', '101', 'Rahul', 'Sharma', 'Rakesh Sharma', 'rahul@example.com', '9876543210', '', 'Room 1'],
-        [2, 'ADM-102', 'JEE-MAIN', 'Non Medical', 'Apr 2026 - Mar 2027', 'Dropper Non Medical Prime', '102', 'Priya', 'Patel', 'Rajesh Patel', 'priya@example.com', '9988776655', '', 'Room 1'],
-        [3, 'ADM-103', 'ADVANCE', 'Non Medical', 'Apr 2026 - Mar 2027', '11th Non Medical Advance', '103', 'Amit', 'Kumar', 'Suresh Kumar', 'amit@example.com', '9123456780', 'Near exit seat', 'Room 2'],
-        [4, 'ADM-104', 'S.S.B', 'Medical', 'Apr 2026 - Mar 2027', '12th Medical SSB', '104', 'Sneha', 'Singh', 'Vikram Singh', 'sneha@example.com', '9012345678', '', 'Room 2'],
+        [
+            1,
+            "ADM-1001",
+            default_academic_session(),
+            "Medical",
+            "NEET",
+            "Foundation 7th | A",
+            "Foundation 7th",
+            "A",
+            "ADM-1001",
+            "Aarav",
+            "",
+            "Sharma",
+            "",
+            "2013-05-14",
+            "13 years",
+            "aarav@example.com",
+            "Male",
+            "9876543210",
+            "2026-04-05",
+            "Fees Structure",
+            "",
+            "Previous School Name",
+            "Annual Exam",
+            "CBSE",
+            "87",
+            "435",
+            "87",
+            "Rakesh Sharma",
+            "9876500001",
+            "Engineer",
+            "Sunita Sharma",
+            "9876500002",
+            "Teacher",
+            "General",
+            "",
+            "",
+            "",
+            "Rakesh Sharma",
+            "Father",
+            "9876500001",
+            "Mall Road, Shimla",
+            "Rakesh Sharma",
+            "9876500001",
+            "father",
+            "House 21",
+            "Near Ridge",
+            "Shimla",
+            "Himachal Pradesh",
+            "India",
+            "171001",
+            "North",
+            "Reference Person",
+            "9800000000",
+            "Known family referral",
+            "new",
+            "Day boarding",
+            "",
+            "no",
+            False,
+            "",
+            "",
+            False,
+            False,
+            "",
+            "",
+            "",
+            "",
+        ],
+        [
+            2,
+            "ADM-1002",
+            default_academic_session(),
+            "Non Medical",
+            "JEE Main",
+            "Foundation 8th | B",
+            "Foundation 8th",
+            "B",
+            "1042",
+            "Priya",
+            "",
+            "Verma",
+            "",
+            "2012-08-09",
+            "13 years",
+            "priya@example.com",
+            "Female",
+            "9988776655",
+            "2026-04-08",
+            "Fees Structure",
+            "TC-44",
+            "DAV Public School",
+            "Final Exam",
+            "ICSE",
+            "91",
+            "455",
+            "91",
+            "Sanjay Verma",
+            "9988776600",
+            "Business",
+            "Neha Verma",
+            "9988776611",
+            "Homemaker",
+            "OBC",
+            "",
+            "",
+            "",
+            "Sanjay Verma",
+            "Father",
+            "9988776600",
+            "Summer Hill",
+            "Sanjay Verma",
+            "9988776600",
+            "father",
+            "Lane 2",
+            "",
+            "Shimla",
+            "Himachal Pradesh",
+            "India",
+            "171002",
+            "North",
+            "",
+            "",
+            "",
+            "old",
+            "Day boarding",
+            "Needs front row seating",
+            "no",
+            False,
+            "",
+            "",
+            False,
+            False,
+            "",
+            "",
+            "",
+            "",
+        ],
     ]
 
     for row_idx, row_data in enumerate(sample_rows, 2):
         for col_idx, value in enumerate(row_data, 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
             cell.value = value
-            cell.alignment = Alignment(horizontal='center')
+            cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    instructions_sheet['A1'] = "Student Bulk Upload Instructions"
-    instructions_sheet['A1'].font = Font(bold=True, size=14)
+    instructions_sheet["A1"] = "Student Bulk Upload Instructions"
+    instructions_sheet["A1"].font = Font(bold=True, size=14)
     instructions = [
         "Use only the 'Student Upload' sheet for data entry.",
         "Do not change the column headers in row 1.",
-        "Data entry starts from row 2.",
-        "Required fields: ROLL NO, BATCH, and student name.",
-        "You can provide name using FIRST NAME, or FIRST NAME + LAST NAME.",
-        "ACADEMIC SESSION blank hoga to default session auto-fill ho jayega.",
-        "BATCH new ho to import ke time auto-create ho jayega.",
+        "Required minimum fields: ADMISSION ID, FIRST NAME, CLASS.",
+        "ROLL NO blank hoga to system Admission ID ko temporary roll number ki tarah use karega.",
+        "CLASS + SECTION se managed batch auto-derive ho sakta hai, lekin MANAGED BATCH dena best hai.",
+        "Template student form ke fields ke hisaab se aligned hai.",
+        "Direct student columns ke alawa extra fields metadata me safely preserve kiye jayenge.",
+        "DATE OF BIRTH aur ADMISSION DATE ko yyyy-mm-dd ya dd/mm/yyyy format me bhar sakte ho.",
+        "HOSTEL REQUIRED, PICKUP ENABLED, DROP ENABLED me Yes/No ya True/False use karo.",
         "File ko .xlsx format me hi upload karo.",
-        "ROLL NO aur ADMISSION ID duplicates skip ho sakte hain.",
         "",
-        "Recommended header order:",
-        ", ".join(headers),
+        "Header order:",
+        ", ".join(STUDENT_TEMPLATE_HEADERS),
     ]
     for row_idx, instruction in enumerate(instructions, 3):
         instructions_sheet.cell(row=row_idx, column=1).value = instruction
 
-    instructions_sheet.column_dimensions['A'].width = 120
+    instructions_sheet.column_dimensions["A"].width = 140
 
     for col in worksheet.columns:
         max_length = 0
@@ -330,12 +694,11 @@ def create_student_excel_template() -> BytesIO:
                 max_length = max(max_length, len(str(cell.value)))
             except Exception:
                 pass
-        worksheet.column_dimensions[column].width = min(max_length + 2, 40)
+        worksheet.column_dimensions[column].width = min(max_length + 2, 28)
 
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
-
     return output
 
 
@@ -399,7 +762,6 @@ def parse_inventory_material_excel(file_content: bytes) -> Tuple[List[Dict], Lis
             if canonical and canonical not in header_map:
                 header_map[canonical] = col_idx
 
-        # Support image-style templates where "Description" is the material title itself.
         if 'MATERIAL NAME' not in header_map and 'DESCRIPTION' in header_map:
             header_map['MATERIAL NAME'] = header_map['DESCRIPTION']
 
@@ -577,18 +939,6 @@ def create_inventory_material_template() -> BytesIO:
 
 
 def parse_seating_plan_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict]]:
-    """
-    Parse seating plan data from Excel file.
-
-    Expected columns (flexible match):
-    SR. NO, ROLL NO, CANDIDATE NAME, FATHER NAME, BATCH, ROOM NO
-
-    Args:
-        file_content: Binary content of Excel file
-
-    Returns:
-        (valid_seating_entries, errors)
-    """
     valid_entries = []
     errors = []
 
@@ -649,13 +999,10 @@ def parse_seating_plan_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict
         worksheet = workbook.active
 
         if worksheet.max_row < 2:
-            errors.append({
-                'row': 0,
-                'error': 'Excel file appears to be empty.'
-            })
+            errors.append({'row': 0, 'error': 'Excel file appears to be empty.'})
             return valid_entries, errors
 
-        header_row, header_map, actual_headers = find_header_row()
+        header_row, header_map, _actual_headers = find_header_row()
         if not header_map:
             errors.append({
                 'row': 1,
@@ -663,7 +1010,6 @@ def parse_seating_plan_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict
             })
             return valid_entries, errors
 
-        # Ensure optional headers can still be accessed safely
         for optional_header in optional_headers:
             if optional_header not in header_map:
                 header_map[optional_header] = None
@@ -686,98 +1032,61 @@ def parse_seating_plan_excel(file_content: bytes) -> Tuple[List[Dict], List[Dict
                 room_no = get_cell_value('ROOM NO')
 
                 if not roll_no or not candidate_name or not batch or not room_no:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'Missing required data (ROLL NO, CANDIDATE NAME, BATCH, ROOM NO).'
-                    })
+                    errors.append({'row': row_idx, 'error': 'Missing required data (ROLL NO, CANDIDATE NAME, BATCH, ROOM NO).'})
                     continue
 
                 roll_no_str = str(roll_no).strip()
                 if not roll_no_str:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'ROLL NO cannot be empty.'
-                    })
+                    errors.append({'row': row_idx, 'error': 'ROLL NO cannot be empty.'})
                     continue
 
                 if roll_no_str in roll_numbers_seen:
-                    errors.append({
-                        'row': row_idx,
-                        'error': f'Duplicate ROLL NO: {roll_no_str}.'
-                    })
+                    errors.append({'row': row_idx, 'error': f'Duplicate ROLL NO: {roll_no_str}.'})
                     continue
 
                 roll_numbers_seen.add(roll_no_str)
 
                 batch_str = str(batch).strip()
                 if not batch_str:
-                    errors.append({
-                        'row': row_idx,
-                        'error': 'BATCH cannot be empty.'
-                    })
+                    errors.append({'row': row_idx, 'error': 'BATCH cannot be empty.'})
                     continue
 
-                entry = {
+                valid_entries.append({
                     'sr_no': sr_no,
                     'roll_no': roll_no_str,
                     'candidate_name': str(candidate_name).strip(),
                     'father_name': str(father_name).strip() if father_name else '',
                     'batch': batch_str,
                     'room_no': str(room_no).strip(),
-                }
-
-                valid_entries.append(entry)
-
-            except Exception as e:
-                errors.append({
-                    'row': row_idx,
-                    'error': f'Error parsing row: {str(e)}'
                 })
-
+            except Exception as e:
+                errors.append({'row': row_idx, 'error': f'Error parsing row: {str(e)}'})
     except Exception as e:
         import zipfile
         from openpyxl.utils.exceptions import InvalidFileException
         if isinstance(e, (zipfile.BadZipFile, InvalidFileException)):
-            errors.append({
-                'row': 0,
-                'error': 'Invalid Excel format. The uploaded file is not a valid .xlsx file.'
-            })
+            errors.append({'row': 0, 'error': 'Invalid Excel format. The uploaded file is not a valid .xlsx file.'})
         else:
-            errors.append({
-                'row': 0,
-                'error': f'Error reading Excel file: {str(e)}'
-            })
+            errors.append({'row': 0, 'error': f'Error reading Excel file: {str(e)}'})
 
     return valid_entries, errors
 
 
 def create_seating_plan_template() -> BytesIO:
-    """
-    Create downloadable Excel template for seating plan upload.
-
-    Returns:
-        BytesIO object with Excel template
-    """
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "Seating Plan Template"
 
-    # Header styling
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF")
-    required_font = Font(color="FF0000")
 
-    # Instructions
     worksheet['A1'] = "ASPIRE IIT & MEDICAL - Seating Plan Upload Template"
     worksheet['A1'].font = Font(bold=True, size=14)
-
     worksheet['A2'] = "IMPORTANT: Do not modify column headers. Fill data starting from row 3."
     worksheet['A2'].font = Font(bold=True, color="FF6600")
-
     worksheet['A3'] = "Required fields are marked with *"
     worksheet['A3'].font = Font(italic=True)
 
-    # Column headers (row 5)
     headers = ['SR. NO*', 'ROLL NO*', 'CANDIDATE NAME*', 'FATHER NAME', 'BATCH*', 'ROOM NO*']
     for col_idx, header in enumerate(headers, 1):
         cell = worksheet.cell(row=5, column=col_idx)
@@ -786,38 +1095,21 @@ def create_seating_plan_template() -> BytesIO:
         cell.font = header_font
         cell.alignment = Alignment(horizontal='center')
 
-    # Sample data (row 6)
-    sample_data = [
-        1,
-        '101',
-        'Rahul Sharma',
-        'Rakesh Sharma',
-        '12th Medical',
-        'Room 1'
-    ]
-    for col_idx, value in enumerate(sample_data, 1):
-        cell = worksheet.cell(row=6, column=col_idx)
-        cell.value = value
-        cell.alignment = Alignment(horizontal='center')
-
-    # Additional sample rows
     sample_rows = [
+        [1, '101', 'Rahul Sharma', 'Rakesh Sharma', '12th Medical', 'Room 1'],
         [2, '102', 'Priya Patel', 'Rajesh Patel', '12th IIT', 'Room 1'],
         [3, '103', 'Amit Kumar', 'Suresh Kumar', '12th Medical', 'Room 2'],
         [4, '104', 'Sneha Singh', 'Vikram Singh', 'Dropper 1', 'Room 2'],
     ]
-
-    for row_idx, row_data in enumerate(sample_rows, 7):
+    for row_idx, row_data in enumerate(sample_rows, 6):
         for col_idx, value in enumerate(row_data, 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
             cell.value = value
             cell.alignment = Alignment(horizontal='center')
 
-    # Instructions box (starting row 10)
     instructions_start_row = 10
     worksheet.cell(row=instructions_start_row, column=1).value = "INSTRUCTIONS:"
     worksheet.cell(row=instructions_start_row, column=1).font = Font(bold=True)
-
     instructions = [
         "1. SR. NO: Sequential number (1, 2, 3, ...)",
         "2. ROLL NO: Unique student roll number (required)",
@@ -832,41 +1124,26 @@ def create_seating_plan_template() -> BytesIO:
         "• Save file as .xlsx format only",
         "• New batch names from Excel will be auto-added to the system",
     ]
-
     for idx, instruction in enumerate(instructions):
         worksheet.cell(row=instructions_start_row + 1 + idx, column=1).value = instruction
 
-    # Auto-fit columns
     for col in worksheet.columns:
         max_length = 0
         column = col[0].column_letter
         for cell in col:
             try:
                 max_length = max(max_length, len(str(cell.value)))
-            except:
+            except Exception:
                 pass
-        adjusted_width = min(max_length + 2, 50)
-        worksheet.column_dimensions[column].width = adjusted_width
+        worksheet.column_dimensions[column].width = min(max_length + 2, 50)
 
-    # Save to BytesIO
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
-
     return output
 
 
 def create_seating_export_excel(plan_data: Dict, room_data: Dict) -> BytesIO:
-    """
-    Create Excel export for seating plan.
-    
-    Args:
-        plan_data: Seating plan information
-        room_data: Room configuration
-    
-    Returns:
-        BytesIO object with Excel file
-    """
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "Seating Plan"
@@ -883,20 +1160,10 @@ def create_seating_export_excel(plan_data: Dict, room_data: Dict) -> BytesIO:
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
-
     return output
 
 
 def create_multi_room_seating_export_excel(room_plans: List[Dict]) -> BytesIO:
-    """
-    Create one workbook that contains a summary sheet and one sheet per room.
-
-    Args:
-        room_plans: List of {"plan_data": ..., "room_data": ...} dictionaries
-
-    Returns:
-        BytesIO object with Excel file
-    """
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "All Rooms Seating"
@@ -1028,14 +1295,7 @@ def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_overr
             for cell in row:
                 cell.border = thin_border
 
-    widths = {
-        "A": 10,
-        "B": 26,
-        "C": 30,
-        "D": 26,
-        "E": 30,
-        "F": 14,
-    }
+    widths = {"A": 10, "B": 26, "C": 30, "D": 26, "E": 30, "F": 14}
     for column, width in widths.items():
         worksheet.column_dimensions[column].width = width
 
@@ -1114,13 +1374,6 @@ def _build_room_summary_sheet(worksheet, room_plans: List[Dict], title_override:
             for cell in row:
                 cell.border = thin_border
 
-    widths = {
-        "A": 10,
-        "B": 32,
-        "C": 16,
-        "D": 12,
-        "E": 18,
-    }
+    widths = {"A": 10, "B": 32, "C": 16, "D": 12, "E": 18}
     for column, width in widths.items():
         worksheet.column_dimensions[column].width = width
-

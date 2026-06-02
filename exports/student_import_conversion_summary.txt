@@ -1,0 +1,6 @@
+Source file: c:\Users\GIRISH\Downloads\Active_student_list_31_05_2026.xlsx
+Template file: c:\Users\GIRISH\Desktop\SITTING PLAN\exports\student_data_template_form_aligned.xlsx
+Converted file: c:\Users\GIRISH\Desktop\SITTING PLAN\exports\Active_student_list_31_05_2026_import_ready.xlsx
+Total rows parsed: 1243
+Rows with Admission ID used as roll number fallback: 337
+Parse errors: 0

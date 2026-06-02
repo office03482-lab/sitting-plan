@@ -248,6 +248,15 @@ class StudentImportResponse(BaseModel):
     message: str
 
 
+class StaffImportResponse(BaseModel):
+    """Response from staff import"""
+    imported_count: int
+    updated_count: int
+    skipped_count: int
+    errors: List[Dict[str, Any]]
+    message: str
+
+
 class StudentBatchTransferRequest(BaseModel):
     """Transfer selected or whole-batch students to another batch"""
     target_batch: str
@@ -262,6 +271,11 @@ class StudentBatchTransferResponse(BaseModel):
     source_batch: Optional[str] = None
     target_batch: str
     message: str
+
+
+class StudentBulkDeleteRequest(BaseModel):
+    """Delete a selected set of students."""
+    student_ids: List[str] = Field(default_factory=list)
 
 
 class HostelRoomCreate(BaseModel):
@@ -551,6 +565,13 @@ class TeacherBase(BaseModel):
     subject: str = Field(..., min_length=1, max_length=255)
     email: Optional[str] = None
     phone: Optional[str] = None
+    employee_code: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date | str] = None
+    shift_timing: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    photoDataUrl: Optional[str] = None
 
 
 class TeacherCreate(TeacherBase):
@@ -564,6 +585,13 @@ class TeacherUpdate(BaseModel):
     subject: Optional[str] = Field(None, min_length=1, max_length=255)
     email: Optional[str] = None
     phone: Optional[str] = None
+    employee_code: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date | str] = None
+    shift_timing: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    photoDataUrl: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -571,6 +599,13 @@ class TeacherResponse(TeacherBase):
     """Teacher response schema"""
     id: int | str
     school_id: int | str
+    employee_code: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date | str] = None
+    shift_timing: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    photoDataUrl: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -736,6 +771,10 @@ class InvigilatorBase(BaseModel):
     phone: Optional[str] = None
     department: Optional[str] = None
     designation: Optional[str] = None
+    joining_date: Optional[date | str] = None
+    shift_timing: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    photoDataUrl: Optional[str] = None
 
 
 class InvigilatorCreate(InvigilatorBase):
@@ -749,12 +788,16 @@ class InvigilatorUpdate(BaseModel):
     phone: Optional[str] = None
     department: Optional[str] = None
     designation: Optional[str] = None
+    joining_date: Optional[date | str] = None
+    shift_timing: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    photoDataUrl: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class InvigilatorResponse(InvigilatorBase):
-    id: int
-    school_id: str
+    id: int | str
+    school_id: str | int
     is_active: bool
     created_at: datetime
     updated_at: datetime

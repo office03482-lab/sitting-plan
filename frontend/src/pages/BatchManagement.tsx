@@ -220,6 +220,42 @@ const normalizeStudent = (student: any): Student => ({
   is_active: Boolean(student?.is_active ?? student?.isActive ?? true),
 });
 
+const sameNormalizedName = (left: string, right: string) =>
+  left.trim().toLowerCase() === right.trim().toLowerCase();
+
+const studentMatchesClassRecord = (student: Student, className: string) => {
+  const normalizedClassName = String(className || '').trim();
+  if (!normalizedClassName) return false;
+
+  const studentClassName = String(student.class_name || '').trim();
+  if (studentClassName && sameNormalizedName(studentClassName, normalizedClassName)) {
+    return true;
+  }
+
+  const studentBatchName = String(student.batch || '').trim();
+  return Boolean(studentBatchName) && sameNormalizedName(studentBatchName, normalizedClassName);
+};
+
+const countStudentsForBatchRecords = (students: Student[], batchRecords: Batch[]) => {
+  const batchNames = new Set(
+    batchRecords
+      .map((item) => String(item.name || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!batchNames.size) return 0;
+
+  return students.filter((student) => batchNames.has(String(student.batch || '').trim().toLowerCase())).length;
+};
+
+const countStudentsForClassRecords = (students: Student[], classRecords: Batch[]) => {
+  const classNames = classRecords
+    .map((item) => String(item.name || '').trim())
+    .filter(Boolean);
+  if (!classNames.length) return 0;
+
+  return students.filter((student) => classNames.some((className) => studentMatchesClassRecord(student, className))).length;
+};
+
 const BatchManagement: React.FC = () => {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [categoryTotals, setCategoryTotals] = useState({
@@ -255,6 +291,11 @@ const BatchManagement: React.FC = () => {
   const streamManuallyChangedRef = useRef(false);
 
   const schoolId = 1; // TODO: Get from auth context
+  const isClassView = selectedCategory === 'class';
+  const primaryTotal = isClassView ? categoryTotals.class : categoryTotals.batch;
+  const primaryStudentTotal = isClassView ? categoryTotals.classStudents : categoryTotals.batchStudents;
+  const secondaryTotal = isClassView ? categoryTotals.batch : categoryTotals.class;
+  const secondaryLabel = isClassView ? 'Batches' : 'Classes';
 
   useEffect(() => {
     loadBatches();
@@ -275,8 +316,14 @@ const BatchManagement: React.FC = () => {
             .map(normalizeStudent)
             .filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];
-      const batchStudents = students.filter((student) => student.batch.trim()).length;
-      const classStudents = students.filter((student) => (student.class_name || '').trim()).length;
+      const batchRecords = selectedCategory === 'batch' ? selectedItems : otherItems;
+      const classRecords = selectedCategory === 'class' ? selectedItems : otherItems;
+      const matchedBatchStudents = countStudentsForBatchRecords(students, batchRecords);
+      const matchedClassStudents = countStudentsForClassRecords(students, classRecords);
+      const batchStudentsFromApi = batchRecords.reduce((sum, item) => sum + Number(item.student_count || 0), 0);
+      const classStudentsFromApi = classRecords.reduce((sum, item) => sum + Number(item.student_count || 0), 0);
+      const batchStudents = Math.max(matchedBatchStudents, batchStudentsFromApi);
+      const classStudents = Math.max(matchedClassStudents, classStudentsFromApi);
 
       setBatches(selectedItems);
       setCategoryTotals(
@@ -469,7 +516,7 @@ const BatchManagement: React.FC = () => {
             .map(normalizeStudent)
             .filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [])
-        .filter((student) => selectedCategory !== 'class' || student.class_name === batch.name);
+        .filter((student) => selectedCategory !== 'class' || studentMatchesClassRecord(student, batch.name));
       setBatchStudents(students);
     } catch (err: any) {
       setBatchStudents([]);
@@ -657,17 +704,21 @@ const BatchManagement: React.FC = () => {
               </div>
               <div className="flex flex-wrap gap-3 xl:justify-end">
                 <div className="min-w-[210px] rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Total Batches</p>
+                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                    {isClassView ? 'Total Classes' : 'Total Batches'}
+                  </p>
                   <div className="mt-1 flex items-baseline justify-between gap-3">
-                    <p className="text-2xl font-bold text-white">{categoryTotals.batch}</p>
-                    <p className="text-xs text-slate-400">{categoryTotals.batchStudents} students</p>
+                    <p className="text-2xl font-bold text-white">{primaryTotal}</p>
+                    <p className="text-xs text-slate-400">{primaryStudentTotal} students</p>
                   </div>
                 </div>
                 <div className="min-w-[210px] rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Total Classes</p>
+                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                    Available In {isClassView ? 'Batch Management' : 'Class Management'}
+                  </p>
                   <div className="mt-1 flex items-baseline justify-between gap-3">
-                    <p className="text-2xl font-bold text-white">{categoryTotals.class}</p>
-                    <p className="text-xs text-slate-400">{categoryTotals.classStudents} students</p>
+                    <p className="text-2xl font-bold text-white">{secondaryTotal}</p>
+                    <p className="text-xs text-slate-400">{secondaryLabel}</p>
                   </div>
                 </div>
               </div>

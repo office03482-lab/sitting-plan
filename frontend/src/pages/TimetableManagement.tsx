@@ -119,6 +119,7 @@ const TimetableManagement: React.FC = () => {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const user = useAuthStore((state) => state.user);
+  const currentSchoolId = user?.school_id;
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const canManageTimetable = !isTeacherSelfView;
   const [entries, setEntries] = useState<TimetableView[]>([]);
@@ -199,7 +200,7 @@ const TimetableManagement: React.FC = () => {
           subject: String(entry.subject || 'Assigned Subject'),
           email: user?.email,
           phone: '',
-          school_id: 1,
+          school_id: currentSchoolId,
           is_active: true,
         } as Teacher);
       });

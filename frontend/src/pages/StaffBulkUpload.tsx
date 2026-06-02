@@ -2,103 +2,15 @@ import { useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, FileSpreadsheet, UploadCloud } from 'lucide-react';
-import { apiService } from '@services/api';
+import { apiService, getRequestErrorMessage } from '@services/api';
 
-type UploadRow = {
-  staff_type: 'teaching' | 'non_teaching';
-  staff_category: string;
-  first_name: string;
-  middle_name?: string;
-  last_name?: string;
-  employee_id?: string;
-  subject?: string;
-  department?: string;
-  designation?: string;
-  primary_mobile?: string;
-  email?: string;
-  joining_date?: string;
-  shift_timing?: string;
-  is_active?: string;
-};
-
-const templateHeaders = [
-  'staff_type',
-  'staff_category',
-  'first_name',
-  'middle_name',
-  'last_name',
-  'employee_id',
-  'subject',
-  'department',
-  'designation',
-  'primary_mobile',
-  'email',
-  'joining_date',
-  'shift_timing',
-  'is_active',
-];
-
-const templateRows = [
-  ['teaching', 'Teacher', 'Aman', '', 'Sharma', 'T-101', 'Math', '', 'Teacher', '9876543210', 'aman@example.com', '2026-04-01', '8 AM - 3 PM', 'true'],
-  ['non_teaching', 'Driver', 'Rakesh', '', 'Kumar', 'NT-201', '', 'Transport', 'Driver', '9876500000', 'rakesh@example.com', '2026-04-03', '7 AM - 4 PM', 'true'],
-];
-
-const parseCsvLine = (line: string) => {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const next = line[index + 1];
-
-    if (char === '"') {
-      if (inQuotes && next === '"') {
-        current += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-
-  result.push(current.trim());
-  return result.map((item) => item.replace(/^"|"$/g, '').trim());
-};
-
-const toCsv = (rows: string[][]) =>
-  rows
-    .map((row) =>
-      row
-        .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
-        .join(',')
-    )
-    .join('\n');
-
-const normalizeKey = (value?: string) => (value || '').trim().toLowerCase();
-const hasMeaningfulValue = (value?: string) => Boolean((value || '').trim());
-const getErrorDetail = (error: any) => {
-  const detail = error?.response?.data?.detail;
-  if (typeof detail === 'string' && detail.trim()) return detail;
-  if (Array.isArray(detail) && detail.length) {
-    return detail
-      .map((item) => {
-        if (typeof item === 'string') return item;
-        if (item && typeof item === 'object') {
-          const loc = Array.isArray(item.loc) ? item.loc.join('.') : '';
-          const msg = item.msg || item.message || 'Invalid value';
-          return loc ? `${loc}: ${msg}` : msg;
-        }
-        return String(item);
-      })
-      .join(', ');
-  }
-  return error?.message || 'save failed';
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  window.URL.revokeObjectURL(url);
 };
 
 export default function StaffBulkUpload() {
@@ -107,27 +19,32 @@ export default function StaffBulkUpload() {
   const [summary, setSummary] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const instructions = useMemo(
     () => [
-      'Template ko Excel mein open karo, rows fill karo, aur CSV format mein save karo.',
-      '`staff_type` mein sirf `teaching` ya `non_teaching` use karo.',
-      '`first_name` required hai. `last_name` optional hai, single-name staff bhi chalega.',
-      'Teaching row ke liye `subject` required hai.',
-      'Non-teaching row ke liye `employee_id` aur `staff_category` dena best rahega.',
+      'Template Add Staff form ke hisaab se aligned hai.',
+      'File ko `.xlsx` format me hi upload karo.',
+      '`STAFF TYPE` me `teaching` ya `non_teaching` use karo.',
+      '`FIRST NAME` aur `EMPLOYEE ID` required hain.',
+      'Teaching row ke liye `SUBJECT` ya `DEPARTMENT` dena zaroori hai.',
+      'Source sheet ke extra columns upload ke waqt notes/metadata me preserve ho jayenge.',
     ],
     []
   );
 
-  const downloadTemplate = () => {
-    const csv = toCsv([templateHeaders, ...templateRows]);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'staff_bulk_upload_template.csv';
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+  const downloadTemplate = async () => {
+    try {
+      setDownloading(true);
+      setSummary('');
+      setErrors([]);
+      const response = await apiService.downloadStaffTemplate();
+      downloadBlob(response.data, 'staff_data_template.xlsx');
+    } catch (error: any) {
+      setErrors([getRequestErrorMessage(error, 'Staff template download failed.')]);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -135,9 +52,9 @@ export default function StaffBulkUpload() {
     event.target.value = '';
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith('.csv')) {
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
       setSummary('');
-      setErrors(['Abhi bulk upload ke liye Excel-exported CSV file supported hai. File ko Excel se CSV mein save karke upload karo.']);
+      setErrors(['Please select a valid Excel file (.xlsx).']);
       return;
     }
 
@@ -147,157 +64,25 @@ export default function StaffBulkUpload() {
 
     try {
       setUploading(true);
-      const [teachersRes, invigilatorsRes] = await Promise.all([
-        apiService.listTeachers(1, 0, 1000),
-        apiService.listInvigilators(1, undefined, 0, 1000),
-      ]);
-
-      const existingTeacherKeys = new Set(
-        teachersRes.data.map((item) => `${normalizeKey(item.name)}::${normalizeKey(item.subject)}`)
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiService.importStaffWorkbook(formData);
+      const data = response.data || {};
+      setSummary(
+        data.message
+        || `Imported ${data.imported_count || 0} staff, updated ${data.updated_count || 0}, skipped ${data.skipped_count || 0}.`
       );
-      const existingInvigilatorIds = new Set(
-        invigilatorsRes.data.map((item) => normalizeKey(item.staff_id))
+      setErrors(
+        Array.isArray(data.errors)
+          ? data.errors.map((item: any) => {
+              if (typeof item === 'string') return item;
+              const employeeId = item?.employee_id ? `Employee ID ${item.employee_id}: ` : '';
+              return `${employeeId}${item?.error || 'Unknown row error'}`;
+            })
+          : []
       );
-      const pendingTeacherKeys = new Set<string>();
-      const pendingInvigilatorIds = new Set<string>();
-
-      const content = await file.text();
-      const lines = content.split(/\r?\n/).filter((item) => item.trim());
-      if (lines.length < 2) {
-        setErrors(['CSV file mein kam se kam 1 data row honi chahiye.']);
-        return;
-      }
-
-      const headers = parseCsvLine(lines[0]).map((item) => item.toLowerCase().replace(/^\ufeff/, ''));
-      const headerMap = new Map(headers.map((item, index) => [item, index]));
-
-      const missingHeaders = templateHeaders.filter((header) => !headerMap.has(header));
-      if (missingHeaders.length) {
-        setErrors([`Missing columns: ${missingHeaders.join(', ')}`]);
-        return;
-      }
-
-      let imported = 0;
-      let skipped = 0;
-      const rowErrors: string[] = [];
-
-      for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
-        const cells = parseCsvLine(lines[lineIndex]);
-        const row = Object.fromEntries(
-          templateHeaders.map((header) => [header, cells[headerMap.get(header) ?? -1] || ''])
-        ) as UploadRow;
-
-        const rowHasData = [
-          row.staff_type,
-          row.staff_category,
-          row.first_name,
-          row.middle_name,
-          row.last_name,
-          row.employee_id,
-          row.subject,
-          row.department,
-          row.designation,
-          row.primary_mobile,
-          row.email,
-          row.joining_date,
-          row.shift_timing,
-          row.is_active,
-        ].some((value) => hasMeaningfulValue(value));
-
-        if (!rowHasData) {
-          continue;
-        }
-
-        const staffType = row.staff_type === 'teaching' ? 'teaching' : row.staff_type === 'non_teaching' ? 'non_teaching' : null;
-        if (!staffType) {
-          rowErrors.push(`Row ${lineIndex + 1}: invalid staff_type.`);
-          continue;
-        }
-        if (!row.first_name) {
-          rowErrors.push(`Row ${lineIndex + 1}: first_name required hai.`);
-          continue;
-        }
-        if (staffType === 'teaching' && !row.subject) {
-          rowErrors.push(`Row ${lineIndex + 1}: teaching row ke liye subject required hai.`);
-          continue;
-        }
-        if (staffType === 'non_teaching' && !row.employee_id) {
-          rowErrors.push(`Row ${lineIndex + 1}: non_teaching row ke liye employee_id required hai.`);
-          continue;
-        }
-
-        const fullName = [row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ').trim();
-        const isActive = String(row.is_active || 'true').toLowerCase() !== 'false';
-
-        try {
-          if (staffType === 'teaching') {
-            const teacherKey = `${normalizeKey(fullName)}::${normalizeKey(row.subject)}`;
-            if (existingTeacherKeys.has(teacherKey) || pendingTeacherKeys.has(teacherKey)) {
-              skipped += 1;
-              rowErrors.push(`Row ${lineIndex + 1}: teacher already exists, so row skipped.`);
-              continue;
-            }
-
-            await apiService.createTeacher({
-              name: fullName,
-              subject: row.subject,
-              email: row.email || undefined,
-              phone: row.primary_mobile || undefined,
-              designation: row.designation || row.staff_category || 'Teacher',
-              joining_date: row.joining_date || undefined,
-              shift_timing: row.shift_timing || undefined,
-              is_active: isActive,
-              metadata: {
-                category: row.staff_category || 'Teacher',
-                designation: row.designation || row.staff_category || 'Teacher',
-                joining_date: row.joining_date || undefined,
-                shift_timing: row.shift_timing || undefined,
-                directory_details: {
-                  primaryMobile: row.primary_mobile || undefined,
-                },
-              },
-            });
-            existingTeacherKeys.add(teacherKey);
-            pendingTeacherKeys.add(teacherKey);
-          } else {
-            const staffIdKey = normalizeKey(row.employee_id);
-            if (existingInvigilatorIds.has(staffIdKey) || pendingInvigilatorIds.has(staffIdKey)) {
-              skipped += 1;
-              rowErrors.push(`Row ${lineIndex + 1}: employee_id already exists, so row skipped.`);
-              continue;
-            }
-
-            await apiService.createInvigilator({
-              staff_id: row.employee_id,
-              name: fullName,
-              email: row.email || undefined,
-              phone: row.primary_mobile || undefined,
-              department: row.department || row.staff_category || 'General Staff',
-              designation: row.designation || row.staff_category || 'Non-Teaching Staff',
-              joining_date: row.joining_date || undefined,
-              shift_timing: row.shift_timing || undefined,
-              is_active: isActive,
-              metadata: {
-                category: row.staff_category || 'Non-Teaching Staff',
-                joining_date: row.joining_date || undefined,
-                shift_timing: row.shift_timing || undefined,
-                directory_details: {
-                  primaryMobile: row.primary_mobile || undefined,
-                },
-              },
-            });
-            existingInvigilatorIds.add(staffIdKey);
-            pendingInvigilatorIds.add(staffIdKey);
-          }
-
-          imported += 1;
-        } catch (error: any) {
-          rowErrors.push(`Row ${lineIndex + 1}: ${getErrorDetail(error)}`);
-        }
-      }
-
-      setSummary(`${imported} staff record(s) import ho gaye.${skipped ? ` ${skipped} duplicate row(s) skip hui.` : ''}`);
-      setErrors(rowErrors);
+    } catch (error: any) {
+      setErrors([getRequestErrorMessage(error, 'Staff import failed.')]);
     } finally {
       setUploading(false);
     }
@@ -310,16 +95,17 @@ export default function StaffBulkUpload() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h1 className="text-3xl font-bold text-slate-900">Staff Bulk Upload</h1>
-              <p className="mt-2 text-sm text-slate-500">Excel mein template fill karke CSV save karo, phir yahan upload karo.</p>
+              <p className="mt-2 text-sm text-slate-500">Form-aligned Excel template download karo, fill karo, aur direct `.xlsx` upload karo.</p>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={downloadTemplate}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                disabled={downloading}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Download className="h-4 w-4" />
-                Download Template
+                {downloading ? 'Downloading...' : 'Download Template'}
               </button>
               <button
                 type="button"
@@ -347,10 +133,10 @@ export default function StaffBulkUpload() {
                 <UploadCloud className="h-6 w-6 text-indigo-600" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900">{uploading ? 'Uploading...' : 'Excel-exported CSV choose karo'}</p>
-                <p className="mt-1 text-xs text-slate-500">{fileName || 'Supported format: .csv'}</p>
+                <p className="text-sm font-semibold text-slate-900">{uploading ? 'Uploading...' : 'Staff workbook choose karo'}</p>
+                <p className="mt-1 text-xs text-slate-500">{fileName || 'Supported format: .xlsx'}</p>
               </div>
-              <input type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
+              <input type="file" accept=".xlsx" className="hidden" onChange={handleFileSelected} />
               <span className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
                 Select File
               </span>

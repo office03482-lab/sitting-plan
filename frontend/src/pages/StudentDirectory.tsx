@@ -5,7 +5,6 @@ import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Batch, Student } from '@types';
-import { getSafeStudentClassName, looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
   readEduPayAdmissionRequests,
   readEduPayStudentProfiles,
@@ -18,8 +17,14 @@ const DEFAULT_SESSION_OPTIONS = ['Apr 2026 - Mar 2027', 'Apr 2027 - Mar 2028'];
 const BULK_DELETE_STATUS_AUTO_HIDE_MS = 4000;
 
 const safeText = (value: unknown) => (value == null ? '' : String(value).trim());
+const sameText = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
+const getDirectoryStudentClassName = (student: Pick<Student, 'class_name' | 'batch'>) => {
+  const className = safeText(student.class_name);
+  if (className) return className;
+  return '';
+};
 const getStudentClassLabel = (student: Pick<Student, 'class_name' | 'section' | 'batch'>) =>
-  [getSafeStudentClassName(student), safeText(student.section)].filter(Boolean).join(' | ');
+  [getDirectoryStudentClassName(student), safeText(student.section)].filter(Boolean).join(' | ');
 
 type StudentDetailsState = {
   student: Student;
@@ -44,10 +49,7 @@ const normalizeStudent = (student: any): Student => ({
   photoDataUrl: safeText(student?.photoDataUrl || student?.photo_data_url) || undefined,
   father_name: safeText(student?.father_name || student?.fatherName) || undefined,
   batch: safeText(student?.batch),
-  class_name: getSafeStudentClassName({
-    class_name: student?.class_name || student?.className,
-    batch: student?.batch,
-  }) || undefined,
+  class_name: safeText(student?.class_name || student?.className) || undefined,
   section: safeText(student?.section) || undefined,
   academic_session: safeText(student?.academic_session || student?.academicSession) || undefined,
   email: safeText(student?.email) || undefined,
@@ -72,7 +74,7 @@ export default function StudentDirectory() {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const { students, setStudents, removeStudent, studentRefreshToken, bumpStudentRefreshToken } = useAppStore();
+  const { students, setStudents, removeStudent, studentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
   const [search, setSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState('all');
@@ -106,7 +108,6 @@ export default function StudentDirectory() {
     setStudentsLoading(true);
     try {
       const response = await apiService.listStudents();
-      console.log('[StudentDirectory]', 'API_ROWS', response.data?.length, response.data);
       const nextStudents = Array.isArray(response.data)
         ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];
@@ -122,19 +123,8 @@ export default function StudentDirectory() {
 
   const loadClassBatches = async () => {
     try {
-      const [classResponse, batchResponse] = await Promise.all([
-        apiService.listBatches(1, undefined, 'class'),
-        apiService.listBatches(1, undefined, 'batch'),
-      ]);
-      const regularBatchNames = new Set(
-        (Array.isArray(batchResponse.data) ? batchResponse.data : []).map((batch) => safeText(batch.name).toLowerCase()),
-      );
-        const nextClassBatches = (Array.isArray(classResponse.data) ? classResponse.data : []).filter(
-          (batch) =>
-            !regularBatchNames.has(safeText(batch.name).toLowerCase()) &&
-            !looksLikeAcademicBatchName(batch.name),
-        );
-      setClassBatches(nextClassBatches);
+      const classResponse = await apiService.listBatches(1, undefined, 'class');
+      setClassBatches(Array.isArray(classResponse.data) ? classResponse.data : []);
     } catch {
       setClassBatches([]);
     }
@@ -196,9 +186,9 @@ export default function StudentDirectory() {
       const email = safeText(student.email).toLowerCase();
       const phone = safeText(student.phone).toLowerCase();
       const matchesBatch = batchFilter === 'all' || batchLabel === batchFilter;
-      const className = getSafeStudentClassName(student);
+      const className = getDirectoryStudentClassName(student);
       const classLabel = getStudentClassLabel(student);
-      const matchesClass = classFilter === 'all' || className === classFilter;
+      const matchesClass = classFilter === 'all' || sameText(className, classFilter);
       const studentSession = safeText(student.academic_session);
       const matchesSession = sessionFilter === 'all' || studentSession === sessionFilter;
       const matchesSearch =
@@ -212,19 +202,6 @@ export default function StudentDirectory() {
       return matchesBatch && matchesClass && matchesSession && matchesSearch;
     });
   }, [students, search, batchFilter, classFilter, sessionFilter]);
-  const displayedStudents = filteredStudents;
-
-  useEffect(() => {
-    console.log('[StudentDirectory]', 'SET_STATE_ROWS', students.length);
-  }, [students]);
-
-  useEffect(() => {
-    console.log('[StudentDirectory]', 'FILTERED_ROWS', filteredStudents.length);
-  }, [filteredStudents]);
-
-  console.log('[StudentDirectory]', 'RENDER_ROWS', displayedStudents.length);
-
-
   const openDetails = async (student: Student) => {
     const requests = readEduPayAdmissionRequests();
     const profiles = readEduPayStudentProfiles();
@@ -260,8 +237,7 @@ export default function StudentDirectory() {
     if (!window.confirm(`${student.name} ko delete karna hai?`)) return;
     try {
       await apiService.deleteStudent(student.id);
-      removeStudent(Number(student.id));
-      bumpStudentRefreshToken();
+      removeStudent(student.id);
       showMessage('Student deleted successfully.');
     } catch (error: any) {
       showMessage(error?.response?.data?.detail || 'Student delete failed.', 'error');
@@ -275,9 +251,8 @@ export default function StudentDirectory() {
     try {
       clearBulkDeleteTimer();
       setSaving(true);
-      let successCount = 0;
-      let failureCount = 0;
       const total = filteredStudents.length;
+      const targetStudentIds = filteredStudents.map((student) => student.id);
 
       setBulkDeleteProgress({
         status: 'running',
@@ -286,30 +261,17 @@ export default function StudentDirectory() {
         successCount: 0,
         failureCount: 0,
         phase: 'Deleting filtered students',
-        detail: 'Har student delete hote hi progress update hogi.',
+        detail: 'Selected students ko single bulk request mein delete kiya ja raha hai.',
       });
 
-      for (const [index, student] of filteredStudents.entries()) {
-        try {
-          await apiService.deleteStudent(student.id);
-          removeStudent(Number(student.id));
-          successCount += 1;
-        } catch {
-          failureCount += 1;
-        }
+      const response = await apiService.deleteSelectedStudents(targetStudentIds);
+      const deletedCount = Number(response.data?.deleted || 0);
+      const matchedCount = Number(response.data?.matched || 0);
+      const remainingCount = Number(response.data?.remaining || 0);
+      const successCount = deletedCount;
+      const failureCount = Math.max(total - deletedCount, remainingCount, matchedCount - deletedCount, 0);
 
-        setBulkDeleteProgress({
-          status: 'running',
-          total,
-          processed: index + 1,
-          successCount,
-          failureCount,
-          phase: 'Deleting filtered students',
-          detail: `${index + 1} / ${total} students process ho chuke hain.`,
-        });
-      }
-      await loadStudents();
-      bumpStudentRefreshToken();
+      setStudents(students.filter((student) => !targetStudentIds.some((id) => String(id) === String(student.id))));
       setBulkDeleteProgress({
         status: failureCount > 0 ? 'error' : 'success',
         total,
@@ -460,7 +422,13 @@ export default function StudentDirectory() {
               </label>
               <select
                 value={batchFilter}
-                onChange={(event) => setBatchFilter(event.target.value)}
+                onChange={(event) => {
+                  const nextBatch = event.target.value;
+                  setBatchFilter(nextBatch);
+                  if (nextBatch !== 'all') {
+                    setClassFilter('all');
+                  }
+                }}
                 className={inputClass}
               >
                 <option value="all">All Batches</option>
@@ -472,7 +440,13 @@ export default function StudentDirectory() {
               </select>
               <select
                 value={classFilter}
-                onChange={(event) => setClassFilter(event.target.value)}
+                onChange={(event) => {
+                  const nextClass = event.target.value;
+                  setClassFilter(nextClass);
+                  if (nextClass !== 'all') {
+                    setBatchFilter('all');
+                  }
+                }}
 
                 className={inputClass}
               >

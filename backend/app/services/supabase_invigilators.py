@@ -6,6 +6,7 @@ records, and `room_invigilators` for room assignments.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -16,6 +17,24 @@ from app.services.supabase_rooms import _serialize_room
 
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_date(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = _normalize(value)
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return text[:10] if len(text) >= 10 else text
 
 
 def _get_metadata(row: dict[str, Any]) -> dict[str, Any]:
@@ -35,12 +54,16 @@ def _serialize_invigilator(row: dict[str, Any]) -> dict[str, Any]:
     metadata = _get_metadata(row)
     return {
         "id": row.get("id"),
-        "staff_id": _normalize(row.get("staff_id")),
+        "staff_id": _normalize(row.get("employee_code")),
         "name": _normalize(row.get("full_name")),
         "email": _normalize(row.get("email")) or None,
         "phone": _normalize(row.get("phone")) or None,
         "department": _normalize(row.get("department")) or None,
-        "designation": _normalize(metadata.get("designation")) or None,
+        "designation": _normalize(row.get("designation")) or _normalize(metadata.get("designation")) or None,
+        "joining_date": _normalize_date(row.get("joining_date")),
+        "shift_timing": _normalize(metadata.get("shift_timing")) or None,
+        "metadata": metadata,
+        "photoDataUrl": metadata.get("photoDataUrl"),
         "school_id": row.get("school_id"),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
@@ -119,7 +142,7 @@ def get_invigilator(school_id: str, invigilator_id: str | int) -> dict[str, Any]
 
 
 def create_invigilator(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    staff_id = _normalize(payload.get("staff_id"))
+    staff_id = _normalize(payload.get("staff_id")) or _normalize(payload.get("employee_code"))
     if not staff_id:
         raise HTTPException(status_code=400, detail="Staff ID is required")
     name = _normalize(payload.get("name"))
@@ -129,7 +152,7 @@ def create_invigilator(school_id: str, payload: dict[str, Any]) -> dict[str, Any
     existing = (
         _base_query(extra_select="id")
         .eq("school_id", school_id)
-        .eq("staff_id", staff_id)
+        .eq("employee_code", staff_id)
         .limit(1)
         .execute()
     )
@@ -140,18 +163,27 @@ def create_invigilator(school_id: str, payload: dict[str, Any]) -> dict[str, Any
         )
 
     designation = _normalize(payload.get("designation")) or None
-    metadata = {}
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = dict(metadata)
     if designation:
         metadata["designation"] = designation
+    shift_timing = _normalize(payload.get("shift_timing")) or _normalize(metadata.get("shift_timing")) or None
+    if shift_timing:
+        metadata["shift_timing"] = shift_timing
+    photo_data_url = payload.get("photoDataUrl")
+    if photo_data_url:
+        metadata["photoDataUrl"] = photo_data_url
 
     row = {
         "school_id": school_id,
         "staff_type": "invigilator",
-        "staff_id": staff_id,
+        "employee_code": staff_id,
         "full_name": name,
         "email": _normalize(payload.get("email")) or None,
         "phone": _normalize(payload.get("phone")) or None,
         "department": _normalize(payload.get("department")) or None,
+        "designation": designation,
+        "joining_date": _normalize_date(payload.get("joining_date")),
         "metadata": metadata,
         "is_active": bool(payload.get("is_active", True)),
     }
@@ -177,7 +209,7 @@ def update_invigilator(
         existing = (
             _base_query(extra_select="id")
             .eq("school_id", school_id)
-            .eq("staff_id", next_staff_id)
+            .eq("employee_code", next_staff_id)
             .neq("id", invigilator_id)
             .limit(1)
             .execute()
@@ -187,7 +219,7 @@ def update_invigilator(
                 status_code=400,
                 detail=f"Invigilator with staff ID '{next_staff_id}' already exists",
             )
-        update_payload["staff_id"] = next_staff_id
+        update_payload["employee_code"] = next_staff_id
 
     if "name" in payload:
         name_val = _normalize(payload["name"])
@@ -201,15 +233,31 @@ def update_invigilator(
         update_payload["department"] = _normalize(payload["department"]) or None
     if "designation" in payload:
         desig = _normalize(payload["designation"]) or None
+        update_payload["designation"] = desig
         if desig:
             metadata["designation"] = desig
         elif "designation" in metadata:
             del metadata["designation"]
+    if "joining_date" in payload:
+        update_payload["joining_date"] = _normalize_date(payload["joining_date"])
+    if "shift_timing" in payload:
+        shift_timing = _normalize(payload["shift_timing"]) or None
+        if shift_timing:
+            metadata["shift_timing"] = shift_timing
+        else:
+            metadata.pop("shift_timing", None)
+    if "photoDataUrl" in payload:
+        photo_data_url = payload.get("photoDataUrl")
+        if photo_data_url:
+            metadata["photoDataUrl"] = photo_data_url
+        else:
+            metadata.pop("photoDataUrl", None)
+    if "metadata" in payload and isinstance(payload["metadata"], dict):
+        metadata = dict(payload["metadata"])
     if "is_active" in payload:
         update_payload["is_active"] = bool(payload["is_active"])
 
-    if metadata:
-        update_payload["metadata"] = metadata
+    update_payload["metadata"] = metadata
 
     if not update_payload:
         return current

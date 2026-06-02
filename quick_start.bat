@@ -9,6 +9,11 @@ set "BACKEND_URL=http://127.0.0.1:%BACKEND_PORT%"
 
 REM Try different Python commands
 echo Checking for Python...
+if exist "%CD%\.venv\Scripts\python.exe" (
+    set PYTHON_CMD=%CD%\.venv\Scripts\python.exe
+    goto :python_found
+)
+
 py --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_CMD=py

@@ -26,6 +26,12 @@ if exist "backend\venv\Scripts\python.exe" (
 )
 
 if not defined PYTHON_CMD (
+    if exist "%CD%\.venv\Scripts\python.exe" (
+        set "PYTHON_CMD=%CD%\.venv\Scripts\python.exe"
+    )
+)
+
+if not defined PYTHON_CMD (
     if exist "%LocalAppData%\Programs\Python\Python311\python.exe" (
         set "PYTHON_CMD=%LocalAppData%\Programs\Python\Python311\python.exe"
     )

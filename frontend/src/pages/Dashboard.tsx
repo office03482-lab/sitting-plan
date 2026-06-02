@@ -260,9 +260,6 @@ export default function Dashboard() {
       ...details,
     });
   };
-  const filteredDashboardData = stats.recentActivity;
-  const displayedDashboardData = filteredDashboardData;
-
   useEffect(() => {
     const nextFingerprint = `${user?.id || 'anon'}:${user?.school_id || ''}:${user?.role || ''}:${user?.role_key || ''}`;
     if (authIdentityFingerprintRef.current === nextFingerprint) {
@@ -614,16 +611,6 @@ export default function Dashboard() {
   );
   const trendValues = Array.isArray(eduPayDashboardData?.collection_trend) ? eduPayDashboardData.collection_trend : [];
   const trendMax = Math.max(...trendValues.map((item: any) => Number(item?.amount || 0)), 1);
-
-  useEffect(() => {
-    console.log('[Dashboard]', 'SET_STATE_ROWS', stats.recentActivity.length);
-  }, [stats]);
-
-  useEffect(() => {
-    console.log('[Dashboard]', 'FILTERED_ROWS', filteredDashboardData.length);
-  }, [filteredDashboardData]);
-
-  console.log('[Dashboard]', 'RENDER_ROWS', displayedDashboardData.length);
   const rawGreetingName =
     String(user?.full_name || '').trim() ||
     String(user?.username || '').trim() ||

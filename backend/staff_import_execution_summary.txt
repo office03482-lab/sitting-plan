@@ -1,0 +1,19 @@
+Input file: c:\Users\GIRISH\Downloads\Staff_list_31-05-2026.xlsx
+School ID: 2a427cb2-4194-43ba-9e4a-f2558c508162
+Parsed valid rows: 64
+Parse errors: 7
+Imported rows: 0
+Updated rows: 64
+Skipped rows: 0
+
+Parse errors:
+{'row': 63, 'employee_id': '6555888', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 64, 'employee_id': '56884', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 66, 'employee_id': '0001', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 67, 'employee_id': '0002', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 68, 'employee_id': '0003', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 69, 'employee_id': '0004', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+{'row': 70, 'employee_id': '0005', 'error': 'Teaching staff requires SUBJECT or DEPARTMENT.'}
+
+Runtime errors:
+None

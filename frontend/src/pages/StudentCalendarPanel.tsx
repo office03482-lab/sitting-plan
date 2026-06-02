@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
+import { useAuthStore } from '@store/auth';
 import {
   inputClass,
   studentCalendarShadeClass,
@@ -35,6 +37,10 @@ export default function StudentCalendarPanel({
   selection,
   onAlert,
 }: StudentCalendarPanelProps) {
+  const user = useAuthStore((state) => state.user);
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const currentSchoolId = user?.school_id;
   const [calendarDate, setCalendarDate] = useState(new Date().toISOString().slice(0, 10));
   const [calendarPayload, setCalendarPayload] = useState<any | null>(null);
   const [, setUsingMonthFallback] = useState(false);
@@ -57,6 +63,9 @@ export default function StudentCalendarPanel({
     isRequestCanceled(error) ? '' : error?.response?.data?.detail || error?.message || fallback;
 
   const loadCalendarRecords = async () => {
+    if (!canRunAttendanceRequests) {
+      return;
+    }
     const selectedDashboardBatchName = selection.batchLabel;
     const requestedClassName =
       selection.scope === 'batch'
@@ -89,7 +98,7 @@ export default function StudentCalendarPanel({
       try {
         const monthParam = (calendarDate || '').slice(0, 7);
         const response = await apiService.getStudentAttendanceCalendar({
-          school_id: 1,
+          school_id: currentSchoolId,
           month: monthParam,
           class_name: requestedClassName,
           batch_name: selection.scope === 'batch' ? selectedDashboardBatchName || undefined : undefined,
@@ -119,6 +128,7 @@ export default function StudentCalendarPanel({
 
   useEffect(() => {
     if (!isVisible) return;
+    if (!canRunAttendanceRequests) return;
     if (!selection.className) return;
     if (selection.scope === 'batch' && !selection.section) return;
 
@@ -129,6 +139,7 @@ export default function StudentCalendarPanel({
 
     void hydratePromise;
   }, [
+    canRunAttendanceRequests,
     isVisible,
     selection.className,
     selection.scope,
@@ -140,8 +151,9 @@ export default function StudentCalendarPanel({
     calendarCacheRef.current.clear();
     calendarRequestKeyRef.current = '';
     if (!isVisible) return;
+    if (!canRunAttendanceRequests) return;
     void loadCalendarRecords();
-  }, [refreshToken]);
+  }, [canRunAttendanceRequests, isVisible, refreshToken]);
 
   const monthLabel = formatCalendarMonthLabel(calendarDate);
   const monthInputValue = toMonthInputValue(calendarDate);

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
+import { useAuth } from '@/contexts/AuthProvider';
+import { useAuthStore } from '@store/auth';
 import type { AttendanceStudent, StudentAttendanceDashboardBucket, StudentAttendanceDashboardSummary } from '@types';
 import {
   sectionClass,
@@ -36,6 +38,10 @@ export default function StudentDashboardPanel({
   managedClassOptions,
   onAlert,
 }: StudentDashboardPanelProps) {
+  const user = useAuthStore((state) => state.user);
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const currentSchoolId = user?.school_id;
   const [filters, setFilters] = useState({
     dashboard_scope: 'batch' as 'batch' | 'class',
     dashboard_class_name: '',
@@ -127,6 +133,9 @@ export default function StudentDashboardPanel({
   );
 
   const loadDashboard = async (targetDate: string = filters.dashboard_date) => {
+    if (!canRunAttendanceRequests) {
+      return;
+    }
     const selectedDashboardBatchName = effectiveDashboardBatchLabel;
     const requestedClassName =
       effectiveDashboardScope === 'batch'
@@ -152,7 +161,7 @@ export default function StudentDashboardPanel({
     const loadPromise = (async () => {
       try {
         const response = await apiService.getStudentAttendanceDashboardSummary({
-          school_id: 1,
+          school_id: currentSchoolId,
           date: targetDate,
           class_name: requestedClassName,
           batch_name: effectiveDashboardScope === 'batch' ? selectedDashboardBatchName || undefined : undefined,
@@ -186,6 +195,7 @@ export default function StudentDashboardPanel({
 
   useEffect(() => {
     if (!isVisible) return;
+    if (!canRunAttendanceRequests) return;
     if (!effectiveDashboardClassName) return;
     if (effectiveDashboardScope === 'batch' && !effectiveDashboardSection) return;
 
@@ -197,6 +207,7 @@ export default function StudentDashboardPanel({
 
     void hydratePromise;
   }, [
+    canRunAttendanceRequests,
     isVisible,
     effectiveDashboardClassName,
     effectiveDashboardScope,
@@ -208,8 +219,9 @@ export default function StudentDashboardPanel({
     dashboardCacheRef.current.clear();
     dashboardRequestKeyRef.current = '';
     if (!isVisible) return;
+    if (!canRunAttendanceRequests) return;
     void loadDashboard(filters.dashboard_date);
-  }, [refreshToken]);
+  }, [canRunAttendanceRequests, isVisible, refreshToken]);
 
   return (
     <div className={`${sectionClass} min-w-0`}>

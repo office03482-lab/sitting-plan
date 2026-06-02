@@ -80,7 +80,6 @@ export default function RoomConfiguration() {
     setLoading(true);
     try {
       const response = await apiService.listRooms();
-      console.log('[RoomConfiguration]', 'API_ROWS', response.data?.length, response.data);
       setRooms(response.data);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);
@@ -113,16 +112,17 @@ export default function RoomConfiguration() {
 
   setLoading(true);
 
-  try {
-    const payload = { ...formData };
+    try {
+      const payload = { ...formData };
 
-    if (editingId) {
-      await apiService.updateRoom(editingId, payload);
-    } else {
-      await apiService.createRoom(payload);
-    }
+      if (editingId) {
+        const response = await apiService.updateRoom(editingId, payload);
+        setRooms(rooms.map((room) => (String(room.id) === String(editingId) ? response.data : room)));
+      } else {
+        const response = await apiService.createRoom(payload);
+        setRooms([...rooms, response.data]);
+      }
 
-    await loadRooms();
     resetForm();
     setShowForm(false);
   } catch (error) {
@@ -160,7 +160,7 @@ export default function RoomConfiguration() {
     if (confirm('Are you sure you want to delete all records? This action cannot be undone.')) {
       try {
         await apiService.deleteAllRooms(true);
-        await loadRooms();
+        setRooms([]);
       } catch (error) {
         console.error('Failed to delete all rooms:', error);
         alert('Failed to delete all rooms');
@@ -172,7 +172,7 @@ export default function RoomConfiguration() {
     if (confirm('Are you sure you want to delete this room?')) {
       try {
         await apiService.deleteRoom(roomId);
-        await loadRooms();
+        setRooms(rooms.filter((room) => String(room.id) !== String(roomId)));
       } catch (error) {
         console.error('Failed to delete room:', error);
         alert('Failed to delete room');
@@ -200,16 +200,6 @@ export default function RoomConfiguration() {
 
   const filteredRooms = rooms;
   const displayedRooms = filteredRooms;
-
-  useEffect(() => {
-    console.log('[RoomConfiguration]', 'SET_STATE_ROWS', rooms.length);
-  }, [rooms]);
-
-  useEffect(() => {
-    console.log('[RoomConfiguration]', 'FILTERED_ROWS', filteredRooms.length);
-  }, [filteredRooms]);
-
-  console.log('[RoomConfiguration]', 'RENDER_ROWS', displayedRooms.length);
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">

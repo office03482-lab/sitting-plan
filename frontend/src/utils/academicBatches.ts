@@ -27,9 +27,6 @@ export const looksLikeAcademicBatchName = (value: unknown) => {
 
 export const getSafeStudentClassName = (student: { class_name?: unknown; batch?: unknown }) => {
   const className = safeText(student.class_name);
-  const batchName = safeText(student.batch);
   if (!className) return '';
-  if (looksLikeAcademicBatchName(className)) return '';
-  if (batchName && className.toLowerCase() === batchName.toLowerCase()) return '';
   return className;
 };

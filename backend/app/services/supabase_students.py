@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_metrics import get_school_core_counts_cached
 
 
 def _normalize(value: Any) -> str:
@@ -22,10 +23,6 @@ def _looks_like_academic_batch_name(name: str | None) -> bool:
 def _normalize_class_name(class_name: str | None, batch_name: str | None = None) -> str | None:
     normalized = _normalize(class_name)
     if not normalized:
-        return None
-    if _looks_like_academic_batch_name(normalized):
-        return None
-    if batch_name and normalized.lower() == _normalize(batch_name).lower():
         return None
     return normalized
 
@@ -122,33 +119,62 @@ def list_students(
     school_id: str,
     *,
     batch: str | None = None,
+    is_active: bool | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     supabase = get_supabase_admin_client()
-    query = (
-        supabase
-        .table("students")
-        .select("*")
-        .eq("school_id", school_id)
-    )
+    chunk_size = 1000
 
-    if batch:
-        batch_id = _resolve_batch_id(school_id, batch)
-        if batch_id:
-            query = query.eq("batch_id", batch_id)
-        else:
+    def build_query():
+        query = (
+            supabase
+            .table("students")
+            .select("*")
+            .eq("school_id", school_id)
+        )
+        if is_active is not None:
+            query = query.eq("is_active", is_active)
+        if batch:
+            batch_id = _resolve_batch_id(school_id, batch)
+            if batch_id:
+                query = query.eq("batch_id", batch_id)
+            else:
+                return None
+        return query
+
+    remaining = max(int(limit or 0), 0)
+    offset = max(int(skip or 0), 0)
+    rows: list[dict[str, Any]] = []
+
+    if remaining == 0:
+        return []
+
+    while remaining > 0:
+        query = build_query()
+        if query is None:
             return []
 
-    response = (
-        query
-        .order("created_at", desc=True)
-        .order("id", desc=True)
-        .range(skip, skip + limit - 1)
-        .execute()
-    )
+        current_chunk = min(remaining, chunk_size)
+        response = (
+            query
+            .order("created_at", desc=True)
+            .order("id", desc=True)
+            .range(offset, offset + current_chunk - 1)
+            .execute()
+        )
 
-    rows = list(response.data or [])
+        chunk_rows = list(response.data or [])
+        if not chunk_rows:
+            break
+
+        rows.extend(chunk_rows)
+        if len(chunk_rows) < current_chunk:
+            break
+
+        offset += current_chunk
+        remaining -= current_chunk
+
     if not rows:
         return []
     batch_name_map = _get_batch_name_map(school_id)
@@ -194,6 +220,14 @@ def get_students_by_ids(school_id: str, student_ids: list[str]) -> list[dict[str
 
 
 def get_students_count(school_id: str) -> int:
+    try:
+        payload = get_school_core_counts_cached(school_id)
+        rpc_value = payload.get("students_count")
+        if rpc_value is not None:
+            return int(rpc_value)
+    except Exception:
+        pass
+
     response = (
         get_supabase_admin_client()
         .table("students")
@@ -283,6 +317,42 @@ def delete_student(school_id: str, student_id: str) -> None:
     )
     if not response.data:
         raise HTTPException(status_code=404, detail="Student not found")
+
+
+def delete_students(school_id: str, student_ids: list[str]) -> dict[str, int]:
+    normalized_ids = [str(student_id).strip() for student_id in student_ids if str(student_id).strip()]
+    unique_ids = sorted(set(normalized_ids))
+    if not unique_ids:
+        return {"matched": 0, "deleted": 0, "remaining": 0}
+
+    matched_response = (
+        get_supabase_admin_client()
+        .table("students")
+        .select("id", count="exact")
+        .eq("school_id", school_id)
+        .in_("id", unique_ids)
+        .execute()
+    )
+    matched_rows = list(matched_response.data or [])
+    matched_count = len(matched_rows)
+    if matched_count == 0:
+        return {"matched": 0, "deleted": 0, "remaining": 0}
+
+    delete_response = (
+        get_supabase_admin_client()
+        .table("students")
+        .delete()
+        .eq("school_id", school_id)
+        .in_("id", unique_ids)
+        .execute()
+    )
+    deleted_count = len(delete_response.data or [])
+    remaining_count = max(matched_count - deleted_count, 0)
+    return {
+        "matched": matched_count,
+        "deleted": deleted_count,
+        "remaining": remaining_count,
+    }
 
 
 def delete_all_students(school_id: str) -> int:

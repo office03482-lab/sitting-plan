@@ -71,6 +71,11 @@ def _normalize_batch_distribution(batch_distribution: Any) -> tuple[list[str], l
     return [], []
 
 
+def _is_plan_type_constraint_error(error: Exception) -> bool:
+    error_text = str(error or "").lower()
+    return "seating_plans_plan_type_check" in error_text or "violates check constraint" in error_text
+
+
 def serialize_seating_plan_row(
     row: dict[str, Any],
     *,
@@ -432,14 +437,31 @@ def generate_seating_plans(
                 },
             }
 
-            insert_resp = (
-                supabase
-                .schema("exam")
-                .table("seating_plans")
-                .insert(plan_row)
-                .select("id")
-                .execute()
-            )
+            try:
+                insert_resp = (
+                    supabase
+                    .schema("exam")
+                    .table("seating_plans")
+                    .insert(plan_row)
+                    .select("id")
+                    .execute()
+                )
+            except Exception as error:
+                if pt != "all_in_one" or not _is_plan_type_constraint_error(error):
+                    raise
+
+                compatibility_row = {
+                    **plan_row,
+                    "plan_type": "strict",
+                }
+                insert_resp = (
+                    supabase
+                    .schema("exam")
+                    .table("seating_plans")
+                    .insert(compatibility_row)
+                    .select("id")
+                    .execute()
+                )
             inserted = list(insert_resp.data or [])
             if inserted:
                 generated["plan_ids"].append(inserted[0].get("id"))

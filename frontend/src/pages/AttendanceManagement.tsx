@@ -193,7 +193,7 @@ function AttendanceManagementContent() {
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id || 1;
+  const currentSchoolId = user?.school_id;
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[attendance-loader]', source, {
@@ -344,8 +344,8 @@ function AttendanceManagementContent() {
         debugAttendanceLoader('loadStaffTab.start');
         setTabLoading(true);
         const [staffRes, approvedLeavesRes] = await Promise.all([
-          apiService.listAttendanceStaff({ school_id: 1, limit: 200 }),
-          apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' }).catch(() => ({ data: [] })),
+          apiService.listAttendanceStaff({ school_id: currentSchoolId, limit: 200 }),
+          apiService.listAttendanceLeaves({ school_id: currentSchoolId, status: 'approved' }).catch(() => ({ data: [] })),
         ]);
         setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
         setStaffApprovedLeaves(toArray<AttendanceLeave>(approvedLeavesRes.data));
@@ -377,7 +377,7 @@ function AttendanceManagementContent() {
       return;
     }
     try {
-      const response = await apiService.listAttendanceLeaves({ school_id: 1, status: 'approved' });
+      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId, status: 'approved' });
       setStaffApprovedLeaves(toArray<AttendanceLeave>(response.data));
     } catch {
       // Keep existing approved leave data if refresh fails.
@@ -404,8 +404,8 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadLeavesTab.start');
       setTabLoading(true);
       const [leavesRes, staffRes] = await Promise.all([
-        apiService.listAttendanceLeaves({ school_id: 1 }),
-        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: 1, limit: 200 }),
+        apiService.listAttendanceLeaves({ school_id: currentSchoolId }),
+        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: currentSchoolId, limit: 200 }),
       ]);
       setLeaves(toArray<AttendanceLeave>(leavesRes.data));
       setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
@@ -868,7 +868,7 @@ function AttendanceManagementContent() {
         date: staffFilters.date,
         department: staffFilters.department,
         search: staffFilters.search || undefined,
-        school_id: 1,
+        school_id: currentSchoolId,
       });
       const payload = response.data;
       if (!payload || typeof payload !== 'object') {
@@ -896,12 +896,12 @@ function AttendanceManagementContent() {
     try {
       debugAttendanceLoader('loadStaffRecords.start', { requestKey });
       const recordsRes = await apiService.listStaffAttendanceRecords({
-        school_id: 1,
         department: staffFilters.recordDepartment || undefined,
         staff_name: staffFilters.recordStaffName || undefined,
         date_from: staffFilters.recordDate || undefined,
         date_to: staffFilters.recordDate || undefined,
         limit: 200,
+        school_id: currentSchoolId,
       });
       if (staffRecordsRequestKeyRef.current !== requestKey) return;
       const nextRecords = toArray<StaffAttendanceRecord>(recordsRes.data);
@@ -911,7 +911,7 @@ function AttendanceManagementContent() {
         return;
       }
       const dashboardRes = await apiService.getStaffAttendanceDashboard({
-        school_id: 1,
+        school_id: currentSchoolId,
         department: staffFilters.dashboardDepartment || undefined,
         date_from: staffFilters.dashboardDate || undefined,
         date_to: staffFilters.dashboardDate || undefined,
@@ -938,7 +938,7 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStaffCalendarRecords.start');
       const monthRange = getMonthRange(staffFilters.date);
       const response = await apiService.listStaffAttendanceRecords({
-        school_id: 1,
+        school_id: currentSchoolId,
         department: staffFilters.department || undefined,
         date_from: monthRange.from || undefined,
         date_to: monthRange.to || undefined,
@@ -1017,7 +1017,7 @@ function AttendanceManagementContent() {
       });
       setLeaveForm(initialLeaveForm);
       setAlert({ type: 'success', message: 'Leave application submit ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: 1 });
+      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1033,7 +1033,7 @@ function AttendanceManagementContent() {
         approved_by: 'HR Admin',
       });
       setAlert({ type: 'success', message: `Leave ${nextStatus} ho gayi.` });
-      const response = await apiService.listAttendanceLeaves({ school_id: 1 });
+      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1080,7 +1080,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAttendanceLeave(leaveId);
       setAlert({ type: 'success', message: 'Leave request delete ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: 1 });
+      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1115,7 +1115,7 @@ function AttendanceManagementContent() {
     if (!window.confirm('Current filters ke hisaab se saare staff attendance records delete karne hain?')) return;
     try {
       await apiService.deleteAllStaffAttendanceRecords({
-        school_id: 1,
+        school_id: currentSchoolId,
         department: staffFilters.recordDepartment || undefined,
         staff_name: staffFilters.recordStaffName || undefined,
         date_from: staffFilters.recordDate || undefined,
@@ -1131,9 +1131,9 @@ function AttendanceManagementContent() {
   const handleDeleteAllLeaves = async () => {
     if (!window.confirm('Delete all leave requests?')) return;
     try {
-      await apiService.deleteAllAttendanceLeaves({ school_id: 1 });
+      await apiService.deleteAllAttendanceLeaves({ school_id: currentSchoolId });
       setAlert({ type: 'success', message: 'All leave requests delete ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: 1 });
+      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1146,7 +1146,7 @@ function AttendanceManagementContent() {
     try {
       const response = await apiService.getAttendanceReportData({
         report_type: reportFilters.report_type,
-        school_id: 1,
+        school_id: currentSchoolId,
         batch_names: reportFilters.batch_names || undefined,
         department: reportFilters.department || undefined,
         date_from: reportFilters.date_from || undefined,
@@ -1180,7 +1180,7 @@ function AttendanceManagementContent() {
       const response = await apiService.exportAttendanceReport({
         report_type: reportFilters.report_type,
         export_format: format,
-        school_id: 1,
+        school_id: currentSchoolId,
         batch_names: reportFilters.batch_names || undefined,
         department: reportFilters.department || undefined,
         date_from: reportFilters.date_from || undefined,

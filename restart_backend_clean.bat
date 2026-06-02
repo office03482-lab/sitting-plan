@@ -38,6 +38,12 @@ if exist "backend\venv\Scripts\python.exe" (
 )
 
 if not defined PYTHON_CMD (
+  if exist "%CD%\.venv\Scripts\python.exe" (
+    set "PYTHON_CMD=%CD%\.venv\Scripts\python.exe"
+  )
+)
+
+if not defined PYTHON_CMD (
   py --version >nul 2>&1
   if not errorlevel 1 set "PYTHON_CMD=py"
 )
@@ -107,4 +113,3 @@ if "%READY%"=="1" (
 )
 echo.
 pause
-
