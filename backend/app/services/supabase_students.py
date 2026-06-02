@@ -1,4 +1,4 @@
-"""Supabase-native student repository for read operations."""
+"""Supabase-native student repository for read and delete operations."""
 
 from __future__ import annotations
 
@@ -270,3 +270,27 @@ def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to create student")
     return _serialize_student(rows[0])
+
+
+def delete_student(school_id: str, student_id: str) -> None:
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .delete()
+        .eq("school_id", school_id)
+        .eq("id", student_id)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+
+def delete_all_students(school_id: str) -> int:
+    response = (
+        get_supabase_admin_client()
+        .table("students")
+        .delete()
+        .eq("school_id", school_id)
+        .execute()
+    )
+    return len(response.data or [])

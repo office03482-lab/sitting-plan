@@ -33,6 +33,8 @@ from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 from app.services.supabase_attendance import get_students_count as get_supabase_students_count
 from app.services.supabase_students import (
+    delete_all_students as delete_all_students_supabase,
+    delete_student as delete_student_supabase,
     get_student as get_student_supabase,
     list_students as list_students_supabase,
 )
@@ -1160,29 +1162,12 @@ async def delete_student(
     student_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
-    db: Session = Depends(get_db),
 ):
     """
-    Delete student
+    Delete student from Supabase
     """
-    ensure_students_legacy_routes_available(school_id)
-    try:
-        legacy_student_id = int(str(student_id).strip())
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=404, detail="Student not found")
-    student = db.query(Student).filter(Student.id == legacy_student_id, Student.school_id == school_id).first()
-    
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-
-    assigned_room_id = student.assigned_room_id
-    release_student_seats(db, [student.id])
-    db.delete(student)
-    db.commit()
-    sync_hostel_room_occupancy(db, assigned_room_id)
-    db.commit()
-    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
-    
+    delete_student_supabase(school_id, student_id)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Deleted student {student_id}")
     return {"message": "Student deleted"}
 
 
@@ -1190,43 +1175,13 @@ async def delete_student(
 async def delete_all_students(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
-    is_admin: bool = False,
-    db: Session = Depends(get_db),
 ):
     """
-    Delete all students for a school (Admin only).
+    Delete all students for a school from Supabase.
     """
-    ensure_students_legacy_routes_available(school_id)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can delete all students",
-        )
-
-    students = db.query(Student).filter(Student.school_id == school_id).all()
-    student_ids = [student.id for student in students]
-    released_seats = release_student_seats(db, student_ids)
-
-    deleted_count = 0
-    for student in students:
-        db.delete(student)
-        deleted_count += 1
-
-    deleted_batches = delete_school_batches(db, school_id)
-
-    # Generated seating plans become stale once all students are removed.
-    seating_plans = db.query(SeatingPlan).filter(SeatingPlan.school_id == school_id).all()
-    deleted_plans = len(seating_plans)
-    for plan in seating_plans:
-        db.delete(plan)
-
-    db.commit()
-    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {deleted_count}")
-
+    deleted_count = delete_all_students_supabase(school_id)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Deleted {deleted_count} students")
     return {
-        "message": f"All {deleted_count} students, {deleted_batches} batches, and {deleted_plans} seating plans deleted successfully",
+        "message": f"All {deleted_count} students deleted successfully",
         "deleted_count": deleted_count,
-        "released_seats": released_seats,
-        "deleted_batches": deleted_batches,
-        "deleted_plans": deleted_plans,
     }
