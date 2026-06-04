@@ -139,6 +139,69 @@ def _student_matches_selected_batches(
     return False
 
 
+def _fetch_students_for_selected_batches(
+    school_id: str,
+    selected_batches: list[str],
+) -> list[dict[str, Any]]:
+    from app.services import supabase_students
+
+    supabase = get_supabase_admin_client()
+    selected_batch_lookup = _fetch_batch_lookup(school_id, selected_batches)
+    students_by_id: dict[str, dict[str, Any]] = {}
+
+    def _store_student(student: dict[str, Any], *, fallback_batch_name: str | None = None) -> None:
+        student_id = str(student.get("id") or "").strip()
+        if not student_id:
+            return
+        normalized = {
+            "id": student.get("id"),
+            "name": student.get("full_name") or student.get("name") or "",
+            "roll_number": student.get("roll_number") or "",
+            "batch": student.get("batch") or fallback_batch_name or student.get("class_name") or "Unassigned",
+            "email": student.get("email") or "",
+        }
+        students_by_id[student_id] = normalized
+
+    for batch_name in selected_batches:
+        matched_students = supabase_students.list_students(
+            school_id,
+            batch=batch_name,
+            is_active=True,
+            limit=10000,
+        )
+        for student in matched_students:
+            _store_student(student, fallback_batch_name=batch_name)
+
+        matched_batch = selected_batch_lookup.get(_normalize_batch_key(batch_name)) or {}
+        matched_class_name = str(matched_batch.get("class_name") or "").strip()
+        matched_section = str(matched_batch.get("section") or "").strip()
+
+        if not matched_class_name:
+            matched_class_name, matched_section = split_batch_to_class_section(batch_name)
+            matched_class_name = str(matched_class_name or "").strip()
+            matched_section = str(matched_section or "").strip()
+
+        if not matched_class_name:
+            continue
+
+        query = (
+            supabase
+            .table("students")
+            .select("id, full_name, roll_number, class_name, section, batch_id, email")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .eq("class_name", matched_class_name)
+        )
+        if matched_section:
+            query = query.eq("section", matched_section)
+
+        response = query.execute()
+        for row in list(response.data or []):
+            _store_student(row, fallback_batch_name=batch_name)
+
+    return list(students_by_id.values())
+
+
 def serialize_seating_plan_row(
     row: dict[str, Any],
     *,
@@ -301,22 +364,10 @@ def generate_seating_plans(
     # Verify exam exists
     exam = supabase_exams.get_exam(school_id, exam_id)
 
-    # Load students
-    all_students = supabase_students.list_students(school_id, is_active=True, limit=100000)
     if batches:
-        selected_batch_lookup = _fetch_batch_lookup(school_id, batches)
-        students_data = [
-            {
-                "id": s.get("id"),
-                "name": s.get("full_name") or s.get("name") or "",
-                "roll_number": s.get("roll_number") or "",
-                "batch": s.get("batch") or s.get("class_name") or "Unassigned",
-                "email": s.get("email") or "",
-            }
-            for s in all_students
-            if _student_matches_selected_batches(s, batches, selected_batch_lookup)
-        ]
+        students_data = _fetch_students_for_selected_batches(school_id, batches)
     else:
+        all_students = supabase_students.list_students(school_id, is_active=True, limit=100000)
         students_data = [
             {
                 "id": s.get("id"),
