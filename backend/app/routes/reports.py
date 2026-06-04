@@ -88,7 +88,39 @@ def _get_supabase_plan_assignment(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return {}
     assignment = metadata.get("assignment")
-    return assignment if isinstance(assignment, dict) else {}
+    if isinstance(assignment, dict):
+        return assignment
+
+    layout = metadata.get("layout")
+    desks = layout.get("desks") if isinstance(layout, dict) else None
+    if not isinstance(desks, list):
+        return {}
+
+    derived_assignment: dict[str, list[dict[str, Any]]] = {}
+    for desk in desks:
+        if not isinstance(desk, dict):
+            continue
+        desk_id = str(desk.get("desk_id") or "").strip()
+        if not desk_id:
+            continue
+        students = desk.get("students")
+        if not isinstance(students, list):
+            derived_assignment[desk_id] = []
+            continue
+
+        derived_assignment[desk_id] = [
+            {
+                "id": student.get("student_id"),
+                "name": student.get("student_name") or "",
+                "roll_number": student.get("roll_number") or "",
+                "father_name": student.get("father_name") or "",
+                "batch": student.get("batch") or "",
+            }
+            for student in students
+            if isinstance(student, dict)
+        ]
+
+    return derived_assignment
 
 
 def _get_effective_supabase_plan_type(plan_row: dict[str, Any]) -> str:
