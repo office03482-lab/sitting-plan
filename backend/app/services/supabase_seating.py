@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.seating_engine import SeatingAlgorithmEngine
+from app.utils.academic_batches import split_batch_to_class_section
 
 
 def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
@@ -74,6 +75,68 @@ def _normalize_batch_distribution(batch_distribution: Any) -> tuple[list[str], l
 def _is_plan_type_constraint_error(error: Exception) -> bool:
     error_text = str(error or "").lower()
     return "seating_plans_plan_type_check" in error_text or "violates check constraint" in error_text
+
+
+def _normalize_batch_key(value: Any) -> str:
+    return " ".join(str(value or "").replace("|", " | ").split()).strip().lower()
+
+
+def _fetch_batch_lookup(school_id: str, selected_batches: Iterable[str]) -> dict[str, dict[str, Any]]:
+    normalized_names = [str(name or "").strip() for name in selected_batches if str(name or "").strip()]
+    if not normalized_names:
+        return {}
+
+    response = (
+        get_supabase_admin_client()
+        .table("batches")
+        .select("id, name, class_name, section, category")
+        .eq("school_id", school_id)
+        .in_("name", normalized_names)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return {_normalize_batch_key(row.get("name")): row for row in rows}
+
+
+def _student_matches_selected_batches(
+    student: dict[str, Any],
+    selected_batches: list[str],
+    selected_batch_lookup: dict[str, dict[str, Any]],
+) -> bool:
+    student_batch = str(student.get("batch") or "").strip()
+    student_class = str(student.get("class_name") or "").strip()
+    student_section = str(student.get("section") or "").strip()
+    student_batch_id = str(student.get("batch_id") or "").strip()
+    student_candidates = {
+        _normalize_batch_key(student_batch),
+        _normalize_batch_key(student_class),
+        _normalize_batch_key(f"{student_class} | {student_section}") if student_section else "",
+    }
+
+    for selected_batch in selected_batches:
+        normalized_selected = _normalize_batch_key(selected_batch)
+        if normalized_selected and normalized_selected in student_candidates:
+            return True
+
+        matched_batch = selected_batch_lookup.get(normalized_selected) or {}
+        matched_batch_id = str(matched_batch.get("id") or "").strip()
+        matched_class_name = str(matched_batch.get("class_name") or "").strip()
+        matched_section = str(matched_batch.get("section") or "").strip()
+
+        if matched_batch_id and student_batch_id and matched_batch_id == student_batch_id:
+            return True
+
+        if matched_class_name:
+            if _normalize_batch_key(matched_class_name) == _normalize_batch_key(student_class):
+                if not matched_section or _normalize_batch_key(matched_section) == _normalize_batch_key(student_section):
+                    return True
+
+        class_name, _section = split_batch_to_class_section(selected_batch)
+        normalized_class = _normalize_batch_key(class_name)
+        if normalized_class and normalized_class in student_candidates:
+            return True
+
+    return False
 
 
 def serialize_seating_plan_row(
@@ -239,9 +302,9 @@ def generate_seating_plans(
     exam = supabase_exams.get_exam(school_id, exam_id)
 
     # Load students
-    all_students = supabase_students.list_students(school_id, is_active=True)
+    all_students = supabase_students.list_students(school_id, is_active=True, limit=100000)
     if batches:
-        batch_set = set(batches)
+        selected_batch_lookup = _fetch_batch_lookup(school_id, batches)
         students_data = [
             {
                 "id": s.get("id"),
@@ -251,7 +314,7 @@ def generate_seating_plans(
                 "email": s.get("email") or "",
             }
             for s in all_students
-            if str(s.get("batch") or s.get("class_name") or "").strip() in batch_set
+            if _student_matches_selected_batches(s, batches, selected_batch_lookup)
         ]
     else:
         students_data = [
