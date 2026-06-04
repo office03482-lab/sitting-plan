@@ -100,7 +100,8 @@ def _get_supabase_plan_assignment(metadata: Any) -> dict[str, Any]:
     for desk in desks:
         if not isinstance(desk, dict):
             continue
-        desk_id = str(desk.get("desk_id") or "").strip()
+        raw_id = desk.get("desk_id")
+        desk_id = str(raw_id).strip() if raw_id is not None else ""
         if not desk_id:
             continue
         students = desk.get("students")
