@@ -47,6 +47,33 @@ def _fetch_room_lookup(room_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     return {str(item["id"]): item for item in list(response.data or [])}
 
 
+def _fetch_latest_plan_id(
+    *,
+    supabase: Any,
+    school_id: str,
+    exam_id: str,
+    room_id: str,
+    plan_name: str,
+) -> str | None:
+    response = (
+        supabase
+        .schema("exam")
+        .table("seating_plans")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("exam_id", exam_id)
+        .eq("room_id", room_id)
+        .eq("plan_name", plan_name)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        return None
+    return str(rows[0].get("id") or "").strip() or None
+
+
 def _normalize_batch_distribution(batch_distribution: Any) -> tuple[list[str], list[dict[str, Any]]]:
     if isinstance(batch_distribution, dict):
         batches = [str(item) for item in batch_distribution.keys()]
@@ -557,7 +584,6 @@ def generate_seating_plans(
                     .schema("exam")
                     .table("seating_plans")
                     .insert(plan_row)
-                    .select("id")
                     .execute()
                 )
             except Exception as error:
@@ -573,12 +599,20 @@ def generate_seating_plans(
                     .schema("exam")
                     .table("seating_plans")
                     .insert(compatibility_row)
-                    .select("id")
                     .execute()
                 )
             inserted = list(insert_resp.data or [])
-            if inserted:
-                generated["plan_ids"].append(inserted[0].get("id"))
+            inserted_id = str(inserted[0].get("id") or "").strip() if inserted else ""
+            if not inserted_id:
+                inserted_id = _fetch_latest_plan_id(
+                    supabase=supabase,
+                    school_id=school_id,
+                    exam_id=exam_id,
+                    room_id=room_id,
+                    plan_name=str(plan_row.get("plan_name") or ""),
+                ) or ""
+            if inserted_id:
+                generated["plan_ids"].append(inserted_id)
 
         plans.append(generated)
 
