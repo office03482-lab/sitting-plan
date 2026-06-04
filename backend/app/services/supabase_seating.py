@@ -469,19 +469,12 @@ def generate_seating_plans(
         plans.append(generated)
 
     all_plan_ids = [pid for g in plans for pid in g.get("plan_ids", [])]
-    unique_unassigned = {
-        sid
-        for g in plans
-        for s in room_student_pools.get(str(g.get("room_id")), [])
-        for sid in [s.get("id")] if sid
-    } if plans else set()
-
     return {
         "message": f"Generated {len(all_plan_ids)} seating plan(s)",
         "generated_plan_type": requested_plan_type,
         "plan_ids": all_plan_ids,
         "selected_student_count": len(students_data),
-        "unassigned_count": len(unique_unassigned),
+        "unassigned_count": len(pending_students),
         "plans": [
             {
                 "room_id": g.get("room_id"),

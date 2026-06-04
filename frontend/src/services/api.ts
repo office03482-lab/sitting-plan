@@ -290,9 +290,9 @@ class ApiService {
       exam_id: examId,
       room_ids: roomIds,
       plan_type: planType,
-      batch_names: batchNames,
+      batches: batchNames,
       class_name: className,
-      generated_at: generatedAt,
+      generated_date: generatedAt,
       batch_conflict_groups: batchConflictGroups,
     });
   }

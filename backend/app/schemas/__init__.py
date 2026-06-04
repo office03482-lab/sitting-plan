@@ -4,7 +4,7 @@ Pydantic validation schemas
 import re
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -507,12 +507,14 @@ class RoomLayout(BaseModel):
 
 class GenerateSeatingRequest(BaseModel):
     """Request to generate seating plans"""
+    model_config = ConfigDict(populate_by_name=True)
+
     exam_id: int | str
     room_ids: List[int | str]
     algorithm_version: str = "1.0"
-    batches: List[str] = Field(default_factory=list)
+    batches: List[str] = Field(default_factory=list, validation_alias=AliasChoices("batches", "batch_names"))
     plan_type: Optional[str] = None
-    generated_date: Optional[datetime] = None
+    generated_date: Optional[datetime] = Field(default=None, validation_alias=AliasChoices("generated_date", "generated_at"))
     invigilator_assignments: Dict[str, Optional[int]] = Field(default_factory=dict)
     batch_conflict_groups: List[List[str]] = Field(default_factory=list)
 
