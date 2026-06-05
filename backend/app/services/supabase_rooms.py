@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -14,9 +15,44 @@ def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _generate_room_code(name: str, school_id: str) -> str:
+    """Generate a room_code from a room name.
+
+    Replaces sequences of whitespace/hyphens with a single hyphen,
+    strips leading/trailing hyphens, then ensures uniqueness within
+    the school by appending a suffix if necessary.
+
+    Example: "BLOCK - C 506" -> "BLOCK-C-506"
+    """
+    base = re.sub(r"[\s\-]+", "-", name).strip("-")
+    if not base:
+        base = "room"
+
+    client = get_supabase_admin_client()
+    code = base
+    seen: set[str] = set()
+
+    existing = (
+        client.table("rooms")
+        .select("room_code")
+        .eq("school_id", school_id)
+        .execute()
+    )
+    if existing.data:
+        seen = {row.get("room_code", "").lower() for row in existing.data}
+
+    suffix = 2
+    while code.lower() in seen:
+        code = f"{base}-{suffix}"
+        suffix += 1
+
+    return code[:80]
+
+
 def _serialize_room(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
+        "room_code": _normalize(row.get("room_code")),
         "name": _normalize(row.get("name")),
         "length_feet": float(row.get("length_feet") or 0),
         "width_feet": float(row.get("width_feet") or 0),
@@ -133,8 +169,14 @@ def create_room(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     layout = _compute_desk_layout(num_benches)
     capacity = num_benches * 2
     door_location = str(payload.get("door_location") or "left").strip().lower()
+
+    room_code = _normalize(payload.get("room_code"))
+    if not room_code:
+        room_code = _generate_room_code(name, school_id)
+
     room_row = {
         "school_id": school_id,
+        "room_code": room_code,
         "name": name,
         "length_feet": float(payload.get("length_feet") or 0),
         "width_feet": float(payload.get("width_feet") or 0),
@@ -171,6 +213,10 @@ def update_room(school_id: str, room_id: str, payload: dict[str, Any]) -> dict[s
         if nb > 0:
             update_payload["num_benches"] = nb
             update_payload["capacity"] = nb * 2
+    if "room_code" in payload:
+        rc = _normalize(payload["room_code"])
+        if rc:
+            update_payload["room_code"] = rc
     if "door_location" in payload:
         update_payload["door_location"] = _normalize(payload["door_location"]) or "left"
     if "window_location" in payload:

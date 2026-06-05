@@ -213,6 +213,7 @@ export interface StudentDashboard {
 // ==================== Room ====================
 export interface Room {
   id: string | number;
+  room_code: string;
   name: string;
   length_feet: number;
   width_feet: number;

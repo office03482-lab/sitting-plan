@@ -419,6 +419,7 @@ class RoomBase(BaseModel):
     window_location: Optional[str] = None
     glare_mitigation: bool = False
     is_accessible: bool = False
+    room_code: Optional[str] = None
 
     @field_validator('door_location', mode='before')
     def validate_door_location(cls, value):
@@ -444,6 +445,7 @@ class RoomUpdate(BaseModel):
     window_location: Optional[str] = None
     is_accessible: Optional[bool] = None
     glare_mitigation: Optional[bool] = None
+    room_code: Optional[str] = None
 
     @field_validator('door_location', mode='before')
     def validate_door_location(cls, value):
@@ -452,6 +454,7 @@ class RoomUpdate(BaseModel):
 
 class RoomResponse(BaseModel):
     id: int | str
+    room_code: str
     name: str
     length_feet: float
     width_feet: float
@@ -465,6 +468,7 @@ class RoomResponse(BaseModel):
     window_location: str
     glare_mitigation: bool
     is_accessible: bool
+    is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
 
