@@ -15,6 +15,10 @@ def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _natural_sort_key(name: str) -> list[str | int]:
+    return [int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", name)]
+
+
 def _generate_room_code(name: str, school_id: str) -> str:
     """Generate a room_code from a room name.
 
@@ -84,12 +88,11 @@ def list_rooms(
         .select("*")
         .eq("school_id", school_id)
         .eq("is_active", True)
-        .order("name")
-        .range(skip, skip + limit - 1)
         .execute()
     )
     rows = list(response.data or [])
-    return [_serialize_room(row) for row in rows]
+    rows.sort(key=lambda r: _natural_sort_key(_normalize(r.get("name"))))
+    return [_serialize_room(row) for row in rows[skip:skip + limit]] if rows else []
 
 
 def get_room(school_id: str, room_id: str) -> dict[str, Any]:
