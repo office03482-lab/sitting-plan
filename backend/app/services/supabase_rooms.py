@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -10,13 +11,24 @@ from fastapi import HTTPException
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_metrics import get_school_core_counts_cached
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _natural_sort_key(name: str) -> list[str | int]:
-    return [int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", name)]
+def _parse_room_name(name: str) -> tuple[str, int]:
+    m = re.match(r"BLOCK[\s-]*([A-Za-z])[\s-]*(\d+)", name.strip(), re.IGNORECASE)
+    if m:
+        return m.group(1).upper(), int(m.group(2))
+    return name.strip().upper(), 0
+
+
+def _room_sort_key(name: str) -> tuple[str, int]:
+    block, number = _parse_room_name(name)
+    logger.debug("room_sort_key — name=%r block=%s number=%s key=(%s, %d)", name, block, number, block, number)
+    return block, number
 
 
 def _generate_room_code(name: str, school_id: str) -> str:
@@ -91,7 +103,11 @@ def list_rooms(
         .execute()
     )
     rows = list(response.data or [])
-    rows.sort(key=lambda r: _natural_sort_key(_normalize(r.get("name"))))
+    before = [_normalize(r.get("name")) for r in rows[:20]]
+    rows.sort(key=lambda r: _room_sort_key(_normalize(r.get("name"))))
+    after = [_serialize_room(r)["name"] for r in rows[:20]]
+    parsed = [_parse_room_name(_normalize(r.get("name"))) for r in rows[:20]]
+    logger.info("Room sort — before: %s | after: %s | parsed: %s | sorted_by=block_letter+room_number", before, after, parsed)
     return [_serialize_room(row) for row in rows[skip:skip + limit]] if rows else []
 
 
