@@ -55,8 +55,8 @@ def list_invigilators_endpoint(
 @router.get("/room-assignments", response_model=List[RoomInvigilatorResponse])
 def list_room_assignments_v2(
     school_id: str = Depends(resolve_school_id_from_actor),
-    room_id: Optional[int] = Query(None),
-    invigilator_id: Optional[int] = Query(None),
+    room_id: Optional[str] = Query(None),
+    invigilator_id: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(True),
     skip: int = 0,
     limit: int = 100,
@@ -74,8 +74,8 @@ def list_room_assignments_v2(
 @router.get("/assignments", response_model=List[RoomInvigilatorResponse])
 def list_room_assignments(
     school_id: str = Depends(resolve_school_id_from_actor),
-    room_id: Optional[int] = Query(None),
-    invigilator_id: Optional[int] = Query(None),
+    room_id: Optional[str] = Query(None),
+    invigilator_id: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(True),
     skip: int = 0,
     limit: int = 100,
@@ -92,7 +92,7 @@ def list_room_assignments(
 
 @router.get("/{invigilator_id}", response_model=InvigilatorWithRoomsResponse)
 def get_invigilator_endpoint(
-    invigilator_id: int,
+    invigilator_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
     return get_invigilator_with_rooms(school_id, invigilator_id)
@@ -100,7 +100,7 @@ def get_invigilator_endpoint(
 
 @router.put("/{invigilator_id}", response_model=InvigilatorResponse)
 def update_invigilator_endpoint(
-    invigilator_id: int,
+    invigilator_id: str,
     update_data: InvigilatorUpdate,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
@@ -109,7 +109,7 @@ def update_invigilator_endpoint(
 
 @router.delete("/{invigilator_id}")
 def delete_invigilator_endpoint(
-    invigilator_id: int,
+    invigilator_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
     return delete_invigilator(school_id, invigilator_id)
@@ -128,7 +128,7 @@ def assign_invigilator_to_room(
 
 @router.get("/room/{room_id}/invigilators", response_model=List[InvigilatorResponse])
 def get_room_invigilators_endpoint(
-    room_id: int,
+    room_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
     return get_room_invigilators(school_id, room_id)
@@ -136,7 +136,7 @@ def get_room_invigilators_endpoint(
 
 @router.put("/assignments/{assignment_id}", response_model=RoomInvigilatorResponse)
 def update_room_assignment_endpoint(
-    assignment_id: int,
+    assignment_id: str,
     update_data: RoomInvigilatorUpdate,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
@@ -152,7 +152,7 @@ def delete_all_room_assignments_endpoint(
 
 @router.delete("/assignments/{assignment_id}")
 def delete_room_assignment_endpoint(
-    assignment_id: int,
+    assignment_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
     return delete_room_assignment(school_id, assignment_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from threading import Event, Lock
 from typing import Any
 
 from app.services.supabase_admin import get_supabase_admin_client
@@ -11,6 +12,9 @@ _MISSING_RPC_TTL_SECONDS = 300
 _missing_rpc_until: dict[str, float] = {}
 _CORE_COUNTS_CACHE_TTL_SECONDS = 30
 _core_counts_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_CORE_COUNTS_IN_FLIGHT: dict[str, dict[str, Any]] = {}
+_CORE_COUNTS_IN_FLIGHT_LOCK = Lock()
+_EMPTY_RPC_IS_MISSING = {"get_school_core_counts"}
 
 
 def _normalize_rpc_payload(payload: Any) -> dict[str, Any]:
@@ -50,7 +54,10 @@ def _rpc_json(function_name: str, school_id: str) -> dict[str, Any]:
             return {}
         raise
 
-    return _normalize_rpc_payload(getattr(response, "data", None))
+    payload = _normalize_rpc_payload(getattr(response, "data", None))
+    if not payload and function_name in _EMPTY_RPC_IS_MISSING:
+        _missing_rpc_until[function_name] = time.monotonic() + _MISSING_RPC_TTL_SECONDS
+    return payload
 
 
 def get_school_core_counts_rpc(school_id: str) -> dict[str, Any]:
@@ -63,47 +70,80 @@ def get_school_core_counts_cached(school_id: str) -> dict[str, Any]:
     if cached and cached[0] > now:
         return cached[1]
 
-    payload = get_school_core_counts_rpc(school_id)
-    if not payload:
-        client = get_supabase_admin_client()
-        students_response = (
-            client.table("students")
-            .select("id", count="exact")
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
-        teachers_response = (
-            client.table("staff_members")
-            .select("id", count="exact")
-            .eq("school_id", school_id)
-            .eq("staff_type", "teaching")
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
-        rooms_rows = list(
-            (
-                client.table("rooms")
-                .select("id, capacity")
+    waiter = None
+    is_leader = False
+    with _CORE_COUNTS_IN_FLIGHT_LOCK:
+        cached = _core_counts_cache.get(school_id)
+        if cached and cached[0] > now:
+            return cached[1]
+        waiter = _CORE_COUNTS_IN_FLIGHT.get(school_id)
+        if waiter is None:
+            waiter = {"event": Event(), "payload": None, "error": None}
+            _CORE_COUNTS_IN_FLIGHT[school_id] = waiter
+            is_leader = True
+
+    if not is_leader:
+        waiter["event"].wait()
+        if waiter.get("error"):
+            raise waiter["error"]
+        payload = waiter.get("payload") or {}
+        return payload
+
+    try:
+        payload = get_school_core_counts_rpc(school_id)
+        if not payload:
+            client = get_supabase_admin_client()
+            students_response = (
+                client.table("students")
+                .select("id", count="exact")
                 .eq("school_id", school_id)
                 .eq("is_active", True)
+                .limit(0)
                 .execute()
-            ).data
-            or []
-        )
-        payload = {
-            "students_count": int(getattr(students_response, "count", 0) or 0),
-            "teachers_count": int(getattr(teachers_response, "count", 0) or 0),
-            "rooms_summary": {
-                "count": len(rooms_rows),
-                "totalCapacity": sum(int(row.get("capacity") or 0) for row in rooms_rows),
-            },
-        }
-
-    _core_counts_cache[school_id] = (now + _CORE_COUNTS_CACHE_TTL_SECONDS, payload)
-    return payload
+            )
+            teachers_response = (
+                client.table("staff_members")
+                .select("id", count="exact")
+                .eq("school_id", school_id)
+                .eq("staff_type", "teaching")
+                .eq("is_active", True)
+                .limit(0)
+                .execute()
+            )
+            rooms_rows = list(
+                (
+                    client.table("rooms")
+                    .select("id, capacity")
+                    .eq("school_id", school_id)
+                    .eq("is_active", True)
+                    .execute()
+                ).data
+                or []
+            )
+            payload = {
+                "students_count": int(getattr(students_response, "count", 0) or 0),
+                "teachers_count": int(getattr(teachers_response, "count", 0) or 0),
+                "rooms_summary": {
+                    "count": len(rooms_rows),
+                    "totalCapacity": sum(int(row.get("capacity") or 0) for row in rooms_rows),
+                },
+            }
+        _core_counts_cache[school_id] = (time.monotonic() + _CORE_COUNTS_CACHE_TTL_SECONDS, payload)
+        with _CORE_COUNTS_IN_FLIGHT_LOCK:
+            inflight = _CORE_COUNTS_IN_FLIGHT.get(school_id)
+            if inflight:
+                inflight["payload"] = payload
+                inflight["event"].set()
+                _CORE_COUNTS_IN_FLIGHT.pop(school_id, None)
+        return payload
+    except Exception as exc:
+        with _CORE_COUNTS_IN_FLIGHT_LOCK:
+            inflight = _CORE_COUNTS_IN_FLIGHT.get(school_id)
+            if inflight:
+                inflight["error"] = exc
+                inflight["event"].set()
+                _CORE_COUNTS_IN_FLIGHT.pop(school_id, None)
+        raise
 
 
 def get_attendance_overview_rpc(school_id: str) -> dict[str, Any]:

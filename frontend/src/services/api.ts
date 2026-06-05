@@ -327,6 +327,16 @@ class ApiService {
     });
   }
 
+  async updatePlanStatus(planId: string | number, status: string) {
+    return this.api.patch(`/seating/${planId}/status`, null, {
+      params: { status },
+    });
+  }
+
+  async auditPlan(planId: string | number) {
+    return this.api.get(`/seating/${planId}/audit`);
+  }
+
   async importSeatingPlan(formData: FormData, examId?: string | number) {
     return this.api.post('/seating/import', formData, {
       params: { exam_id: examId },
@@ -992,6 +1002,12 @@ class ApiService {
 
   async getRoomsSummary(schoolId: string | number = 1) {
     return this.api.get('/rooms/summary', { params: { school_id: schoolId } });
+  }
+
+  async getAdminOfficeSnapshot(schoolId: string | number = 1) {
+    return this.api.get('/admin-office/snapshot', {
+      params: { school_id: schoolId },
+    });
   }
 
   async getAttendanceSettings(schoolId: string | number = 1) {

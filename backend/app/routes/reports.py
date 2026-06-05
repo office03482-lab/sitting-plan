@@ -86,17 +86,23 @@ def _log_export_timing(
 
 def _get_supabase_plan_assignment(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
+        logger.warning("_get_supabase_plan_assignment: metadata not a dict, type=%s", type(metadata).__name__)
         return {}
     assignment = metadata.get("assignment")
     if isinstance(assignment, dict):
+        logger.warning("_get_supabase_plan_assignment: using top-level assignment key, keys=%s", list(assignment.keys()))
         return assignment
 
     layout = metadata.get("layout")
+    logger.warning("_get_supabase_plan_assignment: layout type=%s, keys=%s", type(layout).__name__, list((layout or {}).keys()))
     desks = layout.get("desks") if isinstance(layout, dict) else None
     if not isinstance(desks, list):
+        logger.warning("_get_supabase_plan_assignment: desks not a list, type=%s, count=%s", type(desks).__name__, len(desks) if isinstance(desks, (list, dict)) else "N/A")
         return {}
 
+    logger.warning("_get_supabase_plan_assignment: found %d desks", len(desks))
     derived_assignment: dict[str, list[dict[str, Any]]] = {}
+    total_students = 0
     for desk in desks:
         if not isinstance(desk, dict):
             continue
@@ -120,7 +126,9 @@ def _get_supabase_plan_assignment(metadata: Any) -> dict[str, Any]:
             for student in students
             if isinstance(student, dict)
         ]
+        total_students += len(derived_assignment[desk_id])
 
+    logger.warning("_get_supabase_plan_assignment: derived %d desks, %d students total", len(derived_assignment), total_students)
     return derived_assignment
 
 
@@ -198,10 +206,18 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
         metadata = row.get("plan_metadata") if isinstance(row.get("plan_metadata"), dict) else {}
         room = room_lookup.get(str(row.get("room_id"))) or {}
         exam = exam_lookup.get(str(row.get("exam_id"))) or {}
+        assignment = _get_supabase_plan_assignment(metadata)
+        s_count = sum(len(v) for v in assignment.values())
+        logger.warning(
+            "_build_supabase_room_plans: plan row %s room=%s metadata_type=%s desks_in_metadata=%s assignment_keys=%d students=%d",
+            row.get("id"), row.get("room_id"), type(row.get("plan_metadata")).__name__,
+            len(metadata.get("layout", {}).get("desks", [])) if isinstance(metadata.get("layout"), dict) else "N/A",
+            len(assignment), s_count,
+        )
         room_plans.append(
             {
                 "plan_data": {
-                    "assignment": _get_supabase_plan_assignment(metadata),
+                    "assignment": assignment,
                     "batches": _parse_supabase_batch_names(row.get("batch_distribution")),
                     "plan_type": metadata.get("ui_plan_type") or row.get("plan_type"),
                     "exam": {

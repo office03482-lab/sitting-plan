@@ -8,12 +8,14 @@ from typing import List
 from app.schemas import GenerateSeatingRequest, SeatingPlanResponse, SeatingPlanImportResponse
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_seating import (
+    audit_seating_plan,
     delete_all_seating_plans,
     delete_seating_plan,
     finalize_seating_plan,
     generate_seating_plans,
     get_seating_plan_layout,
     list_seating_plans,
+    update_plan_status,
 )
 from app.services import supabase_students
 from app.utils.excel import parse_seating_plan_excel, create_seating_plan_template
@@ -68,6 +70,26 @@ async def finalize_plan(
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
     return finalize_seating_plan(school_id, plan_id)
+
+
+@router.patch("/{plan_id}/status")
+async def update_plan_status_route(
+    plan_id: str,
+    status: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+):
+    allowed = {"draft", "reviewed", "finalized", "archived"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {', '.join(sorted(allowed))}")
+    return update_plan_status(school_id, plan_id, status)
+
+
+@router.get("/{plan_id}/audit")
+async def audit_plan_route(
+    plan_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+):
+    return audit_seating_plan(school_id, plan_id)
 
 
 @router.delete("/{plan_id}")

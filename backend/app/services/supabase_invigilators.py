@@ -85,7 +85,7 @@ def _serialize_room_assignment(row: dict[str, Any]) -> dict[str, Any]:
         "id": row.get("id"),
         "school_id": row.get("school_id"),
         "room_id": row.get("room_id"),
-        "invigilator_id": row.get("invigilator_id"),
+        "invigilator_id": row.get("staff_member_id") or row.get("invigilator_id"),
         "exam_id": row.get("exam_id"),
         "notes": row.get("notes"),
         "is_active": bool(row.get("is_active", True)),
@@ -104,6 +104,70 @@ def _enrich_assignments_with_relations(rows: list[dict[str, Any]]) -> list[dict[
             assignment["room"] = _serialize_room(row["room"])
         result.append(assignment)
     return result
+
+
+def _assignment_query():
+    return get_supabase_admin_client().schema("exam").table("invigilator_assignments")
+
+
+def _load_invigilator_map(school_id: str, invigilator_ids: list[str]) -> dict[str, dict[str, Any]]:
+    ids = [str(item).strip() for item in invigilator_ids if str(item).strip()]
+    if not ids:
+        return {}
+    response = (
+        _base_query()
+        .eq("school_id", school_id)
+        .in_("id", ids)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return {str(row.get("id")): row for row in rows}
+
+
+def _load_room_map(school_id: str, room_ids: list[str]) -> dict[str, dict[str, Any]]:
+    ids = [str(item).strip() for item in room_ids if str(item).strip()]
+    if not ids:
+        return {}
+    response = (
+        get_supabase_admin_client()
+        .table("rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .in_("id", ids)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return {str(row.get("id")): row for row in rows}
+
+
+def _hydrate_assignment_relations(
+    school_id: str,
+    rows: list[dict[str, Any]],
+    *,
+    room_map: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+
+    invigilator_map = _load_invigilator_map(
+        school_id,
+        [str(row.get("staff_member_id") or row.get("invigilator_id") or "") for row in rows],
+    )
+    effective_room_map = room_map or _load_room_map(school_id, [str(row.get("room_id") or "") for row in rows])
+
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        assignment = _serialize_room_assignment(row)
+        invigilator_id = str(row.get("staff_member_id") or row.get("invigilator_id") or "").strip()
+        room_id = str(row.get("room_id") or "").strip()
+        invigilator = invigilator_map.get(invigilator_id)
+        room = effective_room_map.get(room_id)
+        if invigilator:
+            assignment["invigilator"] = _serialize_invigilator(invigilator)
+        if room:
+            assignment["room"] = _serialize_room(room)
+        enriched.append(assignment)
+    return enriched
 
 
 def list_invigilators(
@@ -278,9 +342,9 @@ def update_invigilator(
 
 def delete_invigilator(school_id: str, invigilator_id: str | int) -> dict[str, Any]:
     get_invigilator(school_id, invigilator_id)
-    get_supabase_admin_client().table("room_invigilators").update(
+    _assignment_query().update(
         {"is_active": False}
-    ).eq("invigilator_id", invigilator_id).eq("school_id", school_id).execute()
+    ).eq("staff_member_id", invigilator_id).eq("school_id", school_id).execute()
     response = (
         get_supabase_admin_client()
         .table("staff_members")
@@ -303,17 +367,17 @@ def get_room_assignments(
     is_active: bool | None = True,
     skip: int = 0,
     limit: int = 100,
+    room_map: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     query = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
-        .select("*, invigilator:invigilator_id(*), room:room_id(*)")
+        _assignment_query()
+        .select("*")
         .eq("school_id", school_id)
     )
     if room_id is not None:
         query = query.eq("room_id", room_id)
     if invigilator_id is not None:
-        query = query.eq("invigilator_id", invigilator_id)
+        query = query.eq("staff_member_id", invigilator_id)
     if is_active is not None:
         query = query.eq("is_active", is_active)
 
@@ -324,7 +388,7 @@ def get_room_assignments(
         .execute()
     )
     rows = list(response.data or [])
-    return _enrich_assignments_with_relations(rows)
+    return _hydrate_assignment_relations(school_id, rows, room_map=room_map)
 
 
 def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -335,13 +399,7 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
         raise HTTPException(status_code=400, detail="room_id and invigilator_id are required")
 
     room_resp = (
-        get_supabase_admin_client()
-        .table("rooms")
-        .select("id")
-        .eq("id", room_id)
-        .eq("school_id", school_id)
-        .limit(1)
-        .execute()
+        get_supabase_admin_client().table("rooms").select("id").eq("id", room_id).eq("school_id", school_id).limit(1).execute()
     )
     if not list(room_resp.data or []):
         raise HTTPException(status_code=404, detail="Room not found")
@@ -349,8 +407,7 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
     get_invigilator(school_id, invigilator_id)
 
     existing_resp = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
+        _assignment_query()
         .select("*")
         .eq("room_id", room_id)
         .eq("school_id", school_id)
@@ -362,15 +419,14 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
     if existing_rows:
         existing = existing_rows[0]
         update_data: dict[str, Any] = {
-            "invigilator_id": invigilator_id,
+            "staff_member_id": invigilator_id,
         }
         if "exam_id" in payload:
             update_data["exam_id"] = payload["exam_id"]
         if "notes" in payload:
             update_data["notes"] = payload["notes"]
         response = (
-            get_supabase_admin_client()
-            .table("room_invigilators")
+            _assignment_query()
             .update(update_data)
             .eq("id", existing["id"])
             .execute()
@@ -383,12 +439,13 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
     row = {
         "school_id": school_id,
         "room_id": room_id,
-        "invigilator_id": invigilator_id,
+        "staff_member_id": invigilator_id,
         "exam_id": payload.get("exam_id"),
+        "assignment_role": "invigilator",
         "notes": payload.get("notes"),
         "is_active": True,
     }
-    response = get_supabase_admin_client().table("room_invigilators").insert(row).execute()
+    response = _assignment_query().insert(row).execute()
     rows = list(response.data or [])
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to create room assignment")
@@ -397,9 +454,8 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
 
 def get_room_invigilators(school_id: str, room_id: str | int) -> list[dict[str, Any]]:
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
-        .select("*, invigilator:invigilator_id(*)")
+        _assignment_query()
+        .select("*")
         .eq("room_id", room_id)
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -407,8 +463,12 @@ def get_room_invigilators(school_id: str, room_id: str | int) -> list[dict[str, 
     )
     rows = list(response.data or [])
     result = []
+    invigilator_map = _load_invigilator_map(
+        school_id,
+        [str(row.get("staff_member_id") or row.get("invigilator_id") or "") for row in rows],
+    )
     for row in rows:
-        invig_data = row.get("invigilator")
+        invig_data = invigilator_map.get(str(row.get("staff_member_id") or row.get("invigilator_id") or "").strip())
         if invig_data:
             result.append(_serialize_invigilator(invig_data))
     return result
@@ -418,8 +478,7 @@ def update_room_assignment(
     school_id: str, assignment_id: str | int, payload: dict[str, Any]
 ) -> dict[str, Any]:
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
+        _assignment_query()
         .select("*")
         .eq("id", assignment_id)
         .eq("school_id", school_id)
@@ -437,11 +496,10 @@ def update_room_assignment(
         new_invigilator_id = payload["invigilator_id"]
         get_invigilator(school_id, new_invigilator_id)
         dup_check = (
-            get_supabase_admin_client()
-            .table("room_invigilators")
+            _assignment_query()
             .select("id")
             .eq("room_id", current["room_id"])
-            .eq("invigilator_id", new_invigilator_id)
+            .eq("staff_member_id", new_invigilator_id)
             .neq("id", assignment_id)
             .eq("is_active", True)
             .limit(1)
@@ -452,7 +510,7 @@ def update_room_assignment(
                 status_code=400,
                 detail="New invigilator is already assigned to this room",
             )
-        update_payload["invigilator_id"] = new_invigilator_id
+        update_payload["staff_member_id"] = new_invigilator_id
 
     if "exam_id" in payload:
         update_payload["exam_id"] = payload["exam_id"]
@@ -465,8 +523,7 @@ def update_room_assignment(
         return _serialize_room_assignment(current)
 
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
+        _assignment_query()
         .update(update_payload)
         .eq("id", assignment_id)
         .execute()
@@ -479,8 +536,7 @@ def update_room_assignment(
 
 def delete_room_assignment(school_id: str, assignment_id: str | int) -> dict[str, Any]:
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
+        _assignment_query()
         .select("*")
         .eq("id", assignment_id)
         .eq("school_id", school_id)
@@ -491,7 +547,7 @@ def delete_room_assignment(school_id: str, assignment_id: str | int) -> dict[str
     if not rows:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    get_supabase_admin_client().table("room_invigilators").update(
+    _assignment_query().update(
         {"is_active": False}
     ).eq("id", assignment_id).execute()
     return {"message": "Invigilator assignment removed from room"}
@@ -499,8 +555,7 @@ def delete_room_assignment(school_id: str, assignment_id: str | int) -> dict[str
 
 def delete_all_room_assignments(school_id: str) -> dict[str, Any]:
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
+        _assignment_query()
         .select("id")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -511,7 +566,7 @@ def delete_all_room_assignments(school_id: str) -> dict[str, Any]:
     if not count:
         return {"message": "No active invigilator assignments found", "deleted_count": 0}
 
-    get_supabase_admin_client().table("room_invigilators").update(
+    _assignment_query().update(
         {"is_active": False}
     ).eq("school_id", school_id).eq("is_active", True).execute()
     return {
@@ -524,15 +579,14 @@ def get_invigilator_with_rooms(school_id: str, invigilator_id: str | int) -> dic
     invigilator = get_invigilator(school_id, invigilator_id)
 
     response = (
-        get_supabase_admin_client()
-        .table("room_invigilators")
-        .select("*, invigilator:invigilator_id(*), room:room_id(*)")
-        .eq("invigilator_id", invigilator_id)
+        _assignment_query()
+        .select("*")
+        .eq("staff_member_id", invigilator_id)
         .eq("school_id", school_id)
         .execute()
     )
     rows = list(response.data or [])
-    room_assignments = _enrich_assignments_with_relations(rows)
+    room_assignments = _hydrate_assignment_relations(school_id, rows)
 
     invigilator["room_assignments"] = room_assignments
     return invigilator

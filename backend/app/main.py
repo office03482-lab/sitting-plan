@@ -150,7 +150,7 @@ async def unhandled_exception_handler(request, exc):
 
 # Import routes after app creation
 from app.attendance.native.router import router as attendance_native_router
-from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff
+from app.routes import auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -255,6 +255,12 @@ app.include_router(
     prefix=f"{settings.api_prefix}",
     tags=["Dashboard"],
     dependencies=[Depends(get_authenticated_user)],
+)
+app.include_router(
+    admin_office.router,
+    prefix=f"{settings.api_prefix}/admin-office",
+    tags=["Admin Office"],
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("admin_office"))],
 )
 
 if __name__ == "__main__":

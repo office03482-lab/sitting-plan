@@ -284,8 +284,8 @@ class HostelRoomCreate(BaseModel):
 
 
 class HostelRoomResponse(BaseModel):
-    id: int
-    hostel_id: int
+    id: str
+    hostel_id: str
     room_number: str
     total_beds: int
     occupied_beds: int
@@ -314,7 +314,7 @@ class HostelUpdate(BaseModel):
 
 
 class HostelResponse(BaseModel):
-    id: int
+    id: str
     name: str
     hostel_head: Optional[str] = None
     warden_name: Optional[str] = None
@@ -813,8 +813,8 @@ class InvigilatorResponse(InvigilatorBase):
 
 class RoomInvigilatorBase(BaseModel):
     room_id: str
-    invigilator_id: int
-    exam_id: Optional[int] = None
+    invigilator_id: str
+    exam_id: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -823,14 +823,14 @@ class RoomInvigilatorCreate(RoomInvigilatorBase):
 
 
 class RoomInvigilatorUpdate(BaseModel):
-    invigilator_id: Optional[int] = None
-    exam_id: Optional[int] = None
+    invigilator_id: Optional[str] = None
+    exam_id: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class RoomInvigilatorResponse(RoomInvigilatorBase):
-    id: int
+    id: int | str
     school_id: str
     is_active: bool
     created_at: datetime

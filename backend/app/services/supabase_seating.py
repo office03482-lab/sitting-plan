@@ -183,6 +183,7 @@ def _fetch_students_for_selected_batches(
         normalized = {
             "id": student.get("id"),
             "name": student.get("full_name") or student.get("name") or "",
+            "father_name": student.get("father_name") or "",
             "roll_number": student.get("roll_number") or "",
             "batch": student.get("batch") or fallback_batch_name or student.get("class_name") or "Unassigned",
             "email": student.get("email") or "",
@@ -214,7 +215,7 @@ def _fetch_students_for_selected_batches(
         query = (
             supabase
             .table("students")
-            .select("id, full_name, roll_number, class_name, section, batch_id, email")
+            .select("id, full_name, father_name, roll_number, class_name, section, batch_id, email")
             .eq("school_id", school_id)
             .eq("is_active", True)
             .eq("class_name", matched_class_name)
@@ -259,6 +260,17 @@ def serialize_seating_plan_row(
 
 
 def list_seating_plans(school_id: str, *, exam_id: str | None = None, room_id: str | None = None) -> list[dict[str, Any]]:
+    return list_seating_plans_with_lookups(school_id, exam_id=exam_id, room_id=room_id)
+
+
+def list_seating_plans_with_lookups(
+    school_id: str,
+    *,
+    exam_id: str | None = None,
+    room_id: str | None = None,
+    exam_lookup: dict[str, dict[str, Any]] | None = None,
+    room_lookup: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     supabase = get_supabase_admin_client()
     query = (
         supabase
@@ -274,9 +286,12 @@ def list_seating_plans(school_id: str, *, exam_id: str | None = None, room_id: s
         query = query.eq("room_id", room_id)
     response = query.order("created_at", desc=True).execute()
     rows = list(response.data or [])
-    exam_lookup = _fetch_exam_lookup([row.get("exam_id") for row in rows])
-    room_lookup = _fetch_room_lookup([row.get("room_id") for row in rows])
-    return [serialize_seating_plan_row(row, exam_lookup=exam_lookup, room_lookup=room_lookup) for row in rows]
+    effective_exam_lookup = exam_lookup or _fetch_exam_lookup([row.get("exam_id") for row in rows])
+    effective_room_lookup = room_lookup or _fetch_room_lookup([row.get("room_id") for row in rows])
+    return [
+        serialize_seating_plan_row(row, exam_lookup=effective_exam_lookup, room_lookup=effective_room_lookup)
+        for row in rows
+    ]
 
 
 def get_seating_plan_layout(school_id: str, plan_id: str) -> dict[str, Any]:
@@ -316,12 +331,16 @@ def get_seating_plan_layout(school_id: str, plan_id: str) -> dict[str, Any]:
 
 
 def finalize_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
+    return update_plan_status(school_id, plan_id, "finalized")
+
+
+def update_plan_status(school_id: str, plan_id: str, status: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
     updated = (
         supabase
         .schema("exam")
         .table("seating_plans")
-        .update({"status": "finalized"})
+        .update({"status": status})
         .eq("id", plan_id)
         .eq("school_id", school_id)
         .select("id")
@@ -329,7 +348,68 @@ def finalize_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
     )
     if not list(updated.data or []):
         raise HTTPException(status_code=404, detail="Plan not found")
-    return {"message": "Plan finalized", "plan_id": plan_id}
+    return {"message": f"Plan status updated to {status}", "plan_id": plan_id, "status": status}
+
+
+def audit_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
+    supabase = get_supabase_admin_client()
+    result = (
+        supabase
+        .schema("exam")
+        .table("seating_plans")
+        .select("*")
+        .eq("id", plan_id)
+        .eq("school_id", school_id)
+        .single()
+        .execute()
+    )
+    row = result.data
+    if not row:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    metadata = row.get("plan_metadata") or {}
+    layout = metadata.get("layout") if isinstance(metadata, dict) else {}
+    desks = layout.get("desks") if isinstance(layout, dict) else []
+    batch_distribution = row.get("batch_distribution") or []
+    issues = []
+    stats = {}
+
+    total_students_in_desks = 0
+    batch_counts: dict[str, int] = {}
+    for desk in desks:
+        for student in (desk.get("students") or []):
+            total_students_in_desks += 1
+            batch = student.get("batch") or "Unknown"
+            batch_counts[batch] = batch_counts.get(batch, 0) + 1
+
+    stats["total_students_in_layout"] = total_students_in_desks
+    stats["students_assigned"] = int(row.get("students_assigned") or 0)
+    stats["total_desks"] = len(desks)
+    stats["occupied"] = int(layout.get("occupied") or 0)
+    stats["batch_distribution"] = batch_counts
+
+    if total_students_in_desks != stats["students_assigned"]:
+        issues.append(f"Layout student count ({total_students_in_desks}) differs from plan students_assigned ({stats['students_assigned']})")
+
+    if stats["occupied"] != total_students_in_desks:
+        issues.append(f"Layout occupied count ({stats['occupied']}) differs from actual students in desks ({total_students_in_desks})")
+
+    for desk in desks:
+        sid = desk.get("desk_id")
+        students = desk.get("students") or []
+        if sid is not None and len(students) > 2:
+            issues.append(f"Desk {sid} has {len(students)} students (max 2)")
+
+    return {
+        "plan_id": plan_id,
+        "status": row.get("status") or "draft",
+        "plan_type": metadata.get("ui_plan_type") or row.get("plan_type") or "strict",
+        "is_valid": row.get("is_valid", True),
+        "validation_errors": row.get("validation_errors") or [],
+        "stats": stats,
+        "issues": issues,
+        "healthy": len(issues) == 0,
+    }
 
 
 def delete_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
@@ -399,6 +479,7 @@ def generate_seating_plans(
             {
                 "id": s.get("id"),
                 "name": s.get("full_name") or s.get("name") or "",
+                "father_name": s.get("father_name") or "",
                 "roll_number": s.get("roll_number") or "",
                 "batch": s.get("batch") or s.get("class_name") or "Unassigned",
                 "email": s.get("email") or "",
@@ -546,13 +627,13 @@ def generate_seating_plans(
                     "desk_id": desk_id,
                     "row": pos[0],
                     "col": pos[1],
-                    "students": [
-                        {"student_id": s.get("id"), "student_name": s.get("name"), "roll_number": s.get("roll_number"), "batch": s.get("batch")}
-                        for s in student_group
-                    ],
+                        "students": [
+                            {"student_id": s.get("id"), "student_name": s.get("name"), "father_name": s.get("father_name") or "", "roll_number": s.get("roll_number"), "batch": s.get("batch")}
+                            for s in student_group
+                        ],
                 }
                 for desk_id, pos in desk_positions.items()
-                for student_group in [result.get("assignment", {}).get(str(desk_id), [])]
+                for student_group in [result.get("assignment", {}).get(desk_id, [])]
             ]
 
             plan_row = {

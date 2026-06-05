@@ -5,6 +5,7 @@ JWT-only authentication with local-user and Supabase principal support.
 """
 import logging
 import time
+from threading import Event, Lock
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -21,6 +22,8 @@ from app.utils.auth import decode_token
 logger = logging.getLogger(__name__)
 _SUPABASE_PRINCIPAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _SUPABASE_PRINCIPAL_CACHE_TTL_SECONDS = 180
+_SUPABASE_PRINCIPAL_IN_FLIGHT: dict[str, dict[str, Any]] = {}
+_SUPABASE_PRINCIPAL_IN_FLIGHT_LOCK = Lock()
 
 
 async def verify_token(request: Request) -> dict:
@@ -117,25 +120,18 @@ def _normalize_school_id(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    profile_id = str(payload.get("sub") or "").strip()
-    email = str(payload.get("email") or "").strip().lower()
-    token_school_id = _normalize_school_id(
-        payload.get("school_id")
-        or payload.get("school_uuid")
-        or payload.get("active_school_id")
-        or payload.get("current_school_id")
-    )
-    cache_key = f"{profile_id}|{email}|{token_school_id}"
-    cached = _SUPABASE_PRINCIPAL_CACHE.get(cache_key)
-    now = time.monotonic()
-    if cached:
-        expires_at, principal = cached
-        if now < expires_at:
-            logger.info("auth.supabase_principal.cache_hit", extra={"profile_id": profile_id, "email": email})
-            return dict(principal)
-        _SUPABASE_PRINCIPAL_CACHE.pop(cache_key, None)
+def _complete_supabase_principal_fetch(cache_key: str, *, principal: Optional[dict[str, Any]] = None, error: Optional[Exception] = None) -> None:
+    with _SUPABASE_PRINCIPAL_IN_FLIGHT_LOCK:
+        inflight = _SUPABASE_PRINCIPAL_IN_FLIGHT.get(cache_key)
+        if not inflight:
+            return
+        inflight["principal"] = dict(principal) if principal else None
+        inflight["error"] = error
+        inflight["event"].set()
+        _SUPABASE_PRINCIPAL_IN_FLIGHT.pop(cache_key, None)
 
+
+def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email: str, token_school_id: str) -> Optional[dict[str, Any]]:
     if not profile_id and not email:
         return None
 
@@ -235,7 +231,7 @@ def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any
                 permissions.append(str(permission_key).strip().lower())
 
     role_key = _normalize_role_key(role.get("role_key"))
-    principal = {
+    return {
         "profile_id": resolved_profile_id,
         "membership_id": str(active_membership.get("id") or "").strip(),
         "school_id": _normalize_school_id(active_membership.get("school_id")),
@@ -252,7 +248,57 @@ def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any
         "permissions": permissions,
         "auth_source": "supabase",
     }
-    _SUPABASE_PRINCIPAL_CACHE[cache_key] = (now + _SUPABASE_PRINCIPAL_CACHE_TTL_SECONDS, dict(principal))
+
+
+def _fetch_supabase_principal(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    profile_id = str(payload.get("sub") or "").strip()
+    email = str(payload.get("email") or "").strip().lower()
+    token_school_id = _normalize_school_id(
+        payload.get("school_id")
+        or payload.get("school_uuid")
+        or payload.get("active_school_id")
+        or payload.get("current_school_id")
+    )
+    cache_key = f"{profile_id}|{email}|{token_school_id}"
+    cached = _SUPABASE_PRINCIPAL_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached:
+        expires_at, principal = cached
+        if now < expires_at:
+            logger.info("auth.supabase_principal.cache_hit", extra={"profile_id": profile_id, "email": email})
+            return dict(principal)
+        _SUPABASE_PRINCIPAL_CACHE.pop(cache_key, None)
+
+    waiter = None
+    is_leader = False
+    with _SUPABASE_PRINCIPAL_IN_FLIGHT_LOCK:
+        waiter = _SUPABASE_PRINCIPAL_IN_FLIGHT.get(cache_key)
+        if waiter is None:
+            waiter = {"event": Event(), "principal": None, "error": None}
+            _SUPABASE_PRINCIPAL_IN_FLIGHT[cache_key] = waiter
+            is_leader = True
+
+    if not is_leader:
+        waiter["event"].wait()
+        if waiter.get("error"):
+            raise waiter["error"]
+        principal = waiter.get("principal")
+        return dict(principal) if principal else None
+
+    try:
+        principal = _load_supabase_principal(
+            payload,
+            profile_id=profile_id,
+            email=email,
+            token_school_id=token_school_id,
+        )
+    except Exception as exc:
+        _complete_supabase_principal_fetch(cache_key, error=exc)
+        raise
+
+    if principal:
+        _SUPABASE_PRINCIPAL_CACHE[cache_key] = (now + _SUPABASE_PRINCIPAL_CACHE_TTL_SECONDS, dict(principal))
+    _complete_supabase_principal_fetch(cache_key, principal=principal)
     return principal
 
 

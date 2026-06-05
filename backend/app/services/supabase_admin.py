@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Any, Dict, List
 
 from supabase import Client, create_client
@@ -33,6 +34,11 @@ def _read_env_file_value(key: str) -> str:
     return ""
 
 
+@lru_cache(maxsize=1)
+def _build_supabase_admin_client(url: str, service_role_key: str) -> Client:
+    return create_client(url, service_role_key)
+
+
 def get_supabase_admin_client() -> Client:
     url = (
         os.getenv("SUPABASE_URL")
@@ -54,7 +60,7 @@ def get_supabase_admin_client() -> Client:
     if not service_role_key:
         raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required for Supabase persistence.")
 
-    return create_client(url, service_role_key)
+    return _build_supabase_admin_client(url, service_role_key)
 
 
 def fetch_all(

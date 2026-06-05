@@ -3,12 +3,15 @@ Excel import/export utilities
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from io import BytesIO
 from typing import Dict, List, Tuple
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+logger = logging.getLogger(__name__)
 
 
 def default_academic_session() -> str:
@@ -1216,7 +1219,15 @@ def _ensure_room_students_cache(room_plans: List[Dict]) -> None:
         if "_normalized_students" in room_plan:
             continue
         plan_data = room_plan.get("plan_data") or {}
+        assignment = plan_data.get("assignment", {})
+        students_count = sum(len(v) for v in assignment.values()) if isinstance(assignment, dict) else 0
         room_plan["_normalized_students"] = _normalize_room_students(plan_data)
+        cached_count = len(room_plan["_normalized_students"])
+        room_name = (room_plan.get("room_data") or {}).get("name", "?")
+        logger.warning(
+            "_ensure_room_students_cache: room=%s assignment_keys=%d db_students=%d cached_students=%d",
+            room_name, len(assignment) if isinstance(assignment, dict) else 0, students_count, cached_count,
+        )
 
 
 def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_override: str = "") -> None:
@@ -1271,6 +1282,10 @@ def _build_roomwise_seating_sheet(worksheet, room_plans: List[Dict], title_overr
 
         current_row += 1
         room_students = room_plan.get("_normalized_students") or _normalize_room_students(plan_data)
+        logger.warning(
+            "_build_roomwise_seating_sheet: room=%s cached=%s student_rows=%d",
+            room_name, "_normalized_students" in room_plan, len(room_students),
+        )
         for row in room_students:
             values = [
                 row["sequence"],
