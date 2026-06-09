@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, Pencil, Search, Trash2, Upload, UserPlus2, Users, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useAuthStore } from '@store/auth';
 import {
   apiService,
   getRequestErrorMessage,
@@ -179,6 +180,9 @@ export default function StaffDirectory() {
   const navigate = useNavigate();
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const user = useAuthStore((state) => state.user);
+  const currentSchoolId = user?.school_id || 1;
+  const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const [records, setRecords] = useState<StaffDirectoryRecord[]>([]);
   const [search, setSearch] = useState('');
   const [staffType, setStaffType] = useState<'all' | 'teaching' | 'non_teaching'>('all');
@@ -487,20 +491,20 @@ export default function StaffDirectory() {
 
   const handleDeleteAll = async () => {
     if (!filtered.length) return;
-    if (!window.confirm('Current filtered staff records delete karne hain?')) return;
+    if (!window.confirm(`Current filtered staff records ${isPlatformSuperAdmin ? 'delete' : 'delete request'} karne hain?`)) return;
 
     try {
       setSaving(true);
-      for (const record of filtered) {
-        if (record.backendId) {
-          if (record.backendType === 'teaching') {
-            await apiService.deleteTeacher(record.backendId);
-          } else {
-            await apiService.deleteInvigilator(record.backendId);
-          }
-        }
+      const response = await apiService.deleteAllStaffDirectory({
+        school_id: currentSchoolId,
+        staff_type: staffType === 'all' ? undefined : staffType,
+        search: search || undefined,
+        category: category === 'all' ? undefined : category,
+      });
+      if (response.data?.mode === 'approval_required') {
+        showMessage(response.data?.message || 'Delete all staff request bhej di gayi hai.');
+        return;
       }
-
       await loadRecords();
       showMessage('Selected staff records deleted successfully.');
     } catch (error: any) {
@@ -618,7 +622,7 @@ export default function StaffDirectory() {
                 className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
-                Delete All
+                {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
               </button>
             </div>
           </div>

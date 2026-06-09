@@ -92,6 +92,7 @@ function AttendanceManagementContent() {
   const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, schoolContextReady, initialized: authInitialized, loading: authLoading, session } = useAuth();
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
+  const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const permissionList = user?.permissions || [];
   const hasExactPermission = (permission: string) => user?.role === 'admin' || permissionList.includes(permission);
   const initialHashTab = location.hash.replace('#', '').trim();
@@ -1007,6 +1008,14 @@ function AttendanceManagementContent() {
 
   const handleCreateLeave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!leaveForm.from_date || !leaveForm.to_date) {
+      setAlert({ type: 'error', message: 'Start date aur end date dono required hain.' });
+      return;
+    }
+    if (leaveForm.from_date > leaveForm.to_date) {
+      setAlert({ type: 'error', message: 'End date start date se pehle nahi ho sakti.' });
+      return;
+    }
     try {
       await apiService.createAttendanceLeave({
         staff_member_id: String(leaveForm.staff_member_id).trim(),
@@ -1090,9 +1099,13 @@ function AttendanceManagementContent() {
   };
 
   const handleDeleteAllNotifications = async () => {
-    if (!window.confirm('Delete all attendance notifications?')) return;
+    if (!window.confirm(`${isPlatformSuperAdmin ? 'Delete' : 'Request delete for'} all attendance notifications?`)) return;
     try {
-      await apiService.deleteAllAttendanceNotifications();
+      const response = await apiService.deleteAllAttendanceNotifications();
+      if (response.data?.mode === 'approval_required') {
+        setAlert({ type: 'success', message: response.data?.message || 'Delete all notifications request bhej di gayi hai.' });
+        return;
+      }
       setAlert({ type: 'success', message: 'All notifications delete ho gayi.' });
       await loadOverviewData({ force: true });
     } catch (error: any) {
@@ -1101,9 +1114,13 @@ function AttendanceManagementContent() {
   };
 
   const handleDeleteAllHolidays = async () => {
-    if (!window.confirm('Delete all holidays?')) return;
+    if (!window.confirm(`${isPlatformSuperAdmin ? 'Delete' : 'Request delete for'} all holidays?`)) return;
     try {
-      await apiService.deleteAllAttendanceHolidays();
+      const response = await apiService.deleteAllAttendanceHolidays();
+      if (response.data?.mode === 'approval_required') {
+        setAlert({ type: 'success', message: response.data?.message || 'Delete all holidays request bhej di gayi hai.' });
+        return;
+      }
       setAlert({ type: 'success', message: 'All holidays delete ho gayi.' });
       await loadOverviewData({ force: true });
     } catch (error: any) {
@@ -1112,15 +1129,19 @@ function AttendanceManagementContent() {
   };
 
   const handleDeleteAllStaffRecords = async () => {
-    if (!window.confirm('Current filters ke hisaab se saare staff attendance records delete karne hain?')) return;
+    if (!window.confirm(`Current filters ke hisaab se saare staff attendance records ${isPlatformSuperAdmin ? 'delete' : 'delete request'} karne hain?`)) return;
     try {
-      await apiService.deleteAllStaffAttendanceRecords({
+      const response = await apiService.deleteAllStaffAttendanceRecords({
         school_id: currentSchoolId,
         department: staffFilters.recordDepartment || undefined,
         staff_name: staffFilters.recordStaffName || undefined,
         date_from: staffFilters.recordDate || undefined,
         date_to: staffFilters.recordDate || undefined,
       });
+      if (response.data?.mode === 'approval_required') {
+        setAlert({ type: 'success', message: response.data?.message || 'Staff attendance bulk delete request bhej di gayi hai.' });
+        return;
+      }
       setAlert({ type: 'success', message: 'Filtered staff attendance records delete ho gaye.' });
       await refreshStaffTabViews({ includeOverview: true, forceOverview: true });
     } catch (error: any) {
@@ -1129,12 +1150,16 @@ function AttendanceManagementContent() {
   };
 
   const handleDeleteAllLeaves = async () => {
-    if (!window.confirm('Delete all leave requests?')) return;
+    if (!window.confirm(`${isPlatformSuperAdmin ? 'Delete' : 'Request delete for'} all leave requests?`)) return;
     try {
-      await apiService.deleteAllAttendanceLeaves({ school_id: currentSchoolId });
+      const response = await apiService.deleteAllAttendanceLeaves({ school_id: currentSchoolId });
+      if (response.data?.mode === 'approval_required') {
+        setAlert({ type: 'success', message: response.data?.message || 'Delete all leave requests request bhej di gayi hai.' });
+        return;
+      }
       setAlert({ type: 'success', message: 'All leave requests delete ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
-      setLeaves(toArray<AttendanceLeave>(response.data));
+      const leavesResponse = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
+      setLeaves(toArray<AttendanceLeave>(leavesResponse.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
     } catch (error: any) {
@@ -1281,7 +1306,7 @@ function AttendanceManagementContent() {
                 <div className="flex items-center justify-between gap-4">
                   <h2 className="text-2xl font-bold text-slate-900">Recent Notifications</h2>
                   <button type="button" onClick={handleDeleteAllNotifications} className={deleteAllButtonClass}>
-                    Delete All
+                    {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                   </button>
                 </div>
                 <div className="mt-6 space-y-3">
@@ -1308,7 +1333,7 @@ function AttendanceManagementContent() {
                 <div className="flex items-center justify-between gap-4">
                   <h2 className="text-2xl font-bold text-slate-900">Holiday Calendar</h2>
                   <button type="button" onClick={handleDeleteAllHolidays} className={deleteAllButtonClass}>
-                    Delete All
+                    {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                   </button>
                 </div>
                 <div className="mt-6 space-y-3">
@@ -1707,7 +1732,7 @@ function AttendanceManagementContent() {
                     <h2 className="text-2xl font-bold text-slate-900">{isTeacherSelfView ? 'My Attendance Records' : 'Staff Records'}</h2>
                     {!isTeacherSelfView ? (
                       <button type="button" onClick={handleDeleteAllStaffRecords} className={deleteAllButtonClass}>
-                        Delete All
+                        {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                       </button>
                     ) : null}
                   </div>
@@ -1755,7 +1780,7 @@ function AttendanceManagementContent() {
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <h3 className="text-lg font-semibold text-slate-900">Holiday Calendar</h3>
                       <button type="button" onClick={handleDeleteAllHolidays} className={deleteAllButtonClass}>
-                        Delete All
+                        {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                       </button>
                     </div>
                     <form onSubmit={handleCreateHoliday} className="grid gap-3 md:grid-cols-3">
@@ -1828,7 +1853,7 @@ function AttendanceManagementContent() {
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <input type="date" value={leaveForm.from_date} onChange={(e) => setLeaveForm({ ...leaveForm, from_date: e.target.value })} className={inputClass} />
-                  <input type="date" value={leaveForm.to_date} onChange={(e) => setLeaveForm({ ...leaveForm, to_date: e.target.value })} className={inputClass} />
+                  <input type="date" min={leaveForm.from_date || undefined} value={leaveForm.to_date} onChange={(e) => setLeaveForm({ ...leaveForm, to_date: e.target.value })} className={inputClass} />
                 </div>
                 <textarea value={leaveForm.reason} onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })} className={`${inputClass} min-h-28`} placeholder="Reason" />
                 <button className="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800">
@@ -1847,7 +1872,7 @@ function AttendanceManagementContent() {
                 </div>
                 {!isTeacherSelfView ? (
                   <button type="button" onClick={handleDeleteAllLeaves} className={deleteAllButtonClass}>
-                    Delete All
+                    {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                   </button>
                 ) : null}
               </div>

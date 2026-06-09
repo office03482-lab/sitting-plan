@@ -1939,7 +1939,32 @@ def delete_all_holidays(school_id: str) -> dict[str, Any]:
     return {"message": f"{len(rows)} holiday(s) deleted successfully", "deleted_count": len(rows)}
 
 
-def create_notification(school_id: str, message: str, notification_type: str, *, user_name: str | None = None, user_role: str | None = None) -> dict[str, Any]:
+def create_notification(
+    school_id: str,
+    message: str,
+    notification_type: str,
+    *,
+    user_name: str | None = None,
+    user_role: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_type = _normalize(notification_type)
+    type_aliases = {
+        "student_absent": "student_attendance",
+        "staff_absent": "staff_attendance",
+        "leave_applied": "leave",
+        "leave_approved": "leave",
+        "leave_rejected": "leave",
+        "settings": "system",
+        "holiday": "system",
+    }
+    final_type = type_aliases.get(normalized_type, normalized_type or "system")
+    metadata_payload = {
+        "user_name": user_name,
+        "user_role": user_role,
+    }
+    if isinstance(metadata, dict):
+        metadata_payload.update(metadata)
     response = (
         get_supabase_admin_client()
         .schema("attendance")
@@ -1947,8 +1972,8 @@ def create_notification(school_id: str, message: str, notification_type: str, *,
         .insert({
             "school_id": school_id,
             "message": message,
-            "notification_type": notification_type,
-            "metadata": {"user_name": user_name, "user_role": user_role},
+            "notification_type": final_type,
+            "metadata": metadata_payload,
             "is_read": False,
             "is_active": True,
         })

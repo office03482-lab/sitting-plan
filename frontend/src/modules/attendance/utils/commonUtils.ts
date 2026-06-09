@@ -1,6 +1,6 @@
 import type { Batch, AttendanceStudent } from '@types';
 
-export const attendanceStudentListPageSize = 10000;
+export const attendanceStudentListPageSize = 500;
 export const attendanceStudentRecordPageSize = 100;
 export const attendanceStudentDashboardPageSize = 200;
 export const attendanceUiDebounceMs = 350;
@@ -27,7 +27,10 @@ export const getUniqueDepartmentOptions = (values: Array<string | null | undefin
     }, new Map<string, string>()).values()
   ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
 
-export const buildAttendanceBatches = (students: AttendanceStudent[], schoolId: number = 1): Batch[] => {
+export const buildAttendanceBatches = (
+  students: AttendanceStudent[],
+  schoolId: string | number = 1,
+): Batch[] => {
   const grouped = new Map<string, number>();
   students.forEach((student) => {
     const className = String(student.class_name || '').trim();

@@ -4,7 +4,7 @@ Pydantic validation schemas
 import re
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -1450,6 +1450,12 @@ class AttendanceLeaveCreate(BaseModel):
             raise ValueError("Date must be a valid YYYY-MM-DD string")
         return date.fromisoformat(match.group(1))
 
+    @model_validator(mode="after")
+    def validate_leave_date_range(self):
+        if self.from_date > self.to_date:
+            raise ValueError("from_date cannot be later than to_date")
+        return self
+
 
 class AttendanceLeaveDecision(BaseModel):
     status: LeaveStatus
@@ -1650,3 +1656,37 @@ class AttendanceReportResponse(BaseModel):
     generated_at: datetime
     rows: List[AttendanceReportRow] = Field(default_factory=list)
     total_records: int
+
+
+class BulkActionRequestCreate(BaseModel):
+    module_name: str
+    action_type: str
+    reason: Optional[str] = None
+    payload_json: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BulkActionDecision(BaseModel):
+    reason: Optional[str] = None
+
+
+class BulkActionRequestResponse(BaseModel):
+    id: str
+    school_id: str
+    module_name: str
+    action_type: str
+    requested_by_profile_id: Optional[str] = None
+    requested_role: str
+    reason: Optional[str] = None
+    payload_json: Dict[str, Any] = Field(default_factory=dict)
+    status: str
+    approved_by_profile_id: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejected_by_profile_id: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    cancelled_by_profile_id: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    executed_by_profile_id: Optional[str] = None
+    executed_at: Optional[datetime] = None
+    execution_result: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None

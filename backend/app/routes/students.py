@@ -5,14 +5,15 @@ from datetime import datetime, timezone
 import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse
 from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode, resolve_school_id_from_actor
 from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from typing import Any, List
 from app.database import get_db
-from app.middleware.auth import get_authenticated_actor_context
-from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.models import BatchTable, Hostel, HostelRoom, Seat, SeatingPlan, StockOutEntry, Student, StudentHostelRequest, User
 from app.schemas import (
     StudentBatchTransferRequest,
     StudentBatchTransferResponse,
@@ -40,10 +41,23 @@ from app.services.supabase_students import (
     get_student as get_student_supabase,
     list_students as list_students_supabase,
 )
+from app.services.bulk_action_requests import create_bulk_action_request, is_platform_admin_user
 import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _bulk_action_response(request: dict[str, Any], *, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "mode": "approval_required",
+            "request_id": request.get("id"),
+            "status": request.get("status"),
+            "message": message,
+        },
+    )
 
 
 def is_uuid_school_id(value: Any) -> bool:
@@ -1266,13 +1280,28 @@ async def delete_student(
 async def delete_all_students(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(get_authenticated_user),
 ):
     """
     Delete all students for a school from Supabase.
     """
-    deleted_count = delete_all_students_supabase(school_id)
-    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Deleted {deleted_count} students")
-    return {
-        "message": f"All {deleted_count} students deleted successfully",
-        "deleted_count": deleted_count,
-    }
+    if is_platform_admin_user(user):
+        deleted_count = delete_all_students_supabase(school_id)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Deleted {deleted_count} students")
+        return {
+            "message": f"All {deleted_count} students deleted successfully",
+            "deleted_count": deleted_count,
+        }
+    profile_id = str(actor.get("profile_id") or "").strip()
+    if not profile_id:
+        raise HTTPException(status_code=400, detail="Authenticated profile is required")
+    request = create_bulk_action_request(
+        school_id=school_id,
+        module_name="students",
+        action_type="delete_all",
+        requested_by_profile_id=profile_id,
+        requested_role=str(actor.get("role") or "viewer"),
+        reason="Delete all students requires Super Admin approval.",
+        payload_json={"operation": "students.delete_all_students"},
+    )
+    return _bulk_action_response(request, message="Bulk action request created and sent for Super Admin approval.")

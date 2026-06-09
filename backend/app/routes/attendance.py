@@ -8,14 +8,14 @@ import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle
 
-from app.middleware.auth import get_authenticated_actor_context
-from app.models import UserRole
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, user_has_permission
+from app.models import User, UserRole
 from app.schemas import (
     AttendanceHolidayCreate,
     AttendanceHolidayResponse,
@@ -68,8 +68,10 @@ from app.services.supabase_attendance import (
     delete_staff_record as delete_supabase_staff_record,
     delete_all_staff_records as delete_all_supabase_staff_records,
     list_notifications,
+    list_batch_day_classes,
     get_batch_current_class as get_supabase_batch_current_class,
     get_student_marking as get_supabase_student_marking,
+    get_student_calendar as get_supabase_student_calendar,
     get_teacher_current_class as get_supabase_teacher_current_class,
     get_integrated_overview as get_supabase_integrated_overview,
     list_leaves as list_supabase_attendance_leaves,
@@ -85,6 +87,7 @@ from app.services.supabase_attendance import (
     list_students as list_supabase_attendance_students,
     list_subjects as list_supabase_attendance_subjects,
 )
+from app.services.bulk_action_requests import create_bulk_action_request, is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
 import logging
 
@@ -195,6 +198,8 @@ def day_end(value: date | datetime) -> datetime:
 
 WRITE_ROLES = {
     UserRole.ADMIN.value,
+    "platform_admin",
+    "school_admin",
     "super_admin",
     "admin_office",
     "teacher",
@@ -203,15 +208,70 @@ WRITE_ROLES = {
 }
 
 
+def has_write_access_role(actor_role: str | None) -> bool:
+    normalized_role = str(actor_role or "").strip().lower()
+    return normalized_role in WRITE_ROLES
+
+
 def require_write_access(
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ) -> Dict[str, str]:
-    if actor["role"] not in WRITE_ROLES:
+    if not has_write_access_role(actor.get("role")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Current role cannot modify attendance records",
-        )
+    )
     return actor
+
+
+def _bulk_action_response(request: dict[str, Any], *, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "mode": "approval_required",
+            "request_id": request.get("id"),
+            "status": request.get("status"),
+            "message": message,
+        },
+    )
+
+
+def _create_bulk_action_from_route(
+    *,
+    school_id: str,
+    actor: Dict[str, str],
+    module_name: str,
+    action_type: str,
+    reason: str,
+    payload_json: dict[str, Any],
+) -> JSONResponse:
+    profile_id = str(actor.get("profile_id") or "").strip()
+    if not profile_id:
+        raise HTTPException(status_code=400, detail="Authenticated profile is required")
+    request = create_bulk_action_request(
+        school_id=school_id,
+        module_name=module_name,
+        action_type=action_type,
+        requested_by_profile_id=profile_id,
+        requested_role=str(actor.get("role") or "viewer"),
+        reason=reason,
+        payload_json=payload_json,
+    )
+    return _bulk_action_response(request, message="Bulk action request created and sent for Super Admin approval.")
+
+
+def require_leave_create_access(
+    actor: Dict[str, str] = Depends(get_authenticated_actor_context),
+    user: User = Depends(get_authenticated_user),
+) -> Dict[str, str]:
+    if actor.get("role") == "super_admin" or user.role == UserRole.ADMIN:
+        return actor
+    if user_has_permission(user, "attendance.leaves"):
+        return actor
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Current role cannot create leave requests",
+    )
 
 
 def build_report_rows(
@@ -612,8 +672,18 @@ def delete_holiday_endpoint(
 def delete_all_holidays_endpoint(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
+    user: User = Depends(get_authenticated_user),
 ):
-    return delete_all_holidays(school_id)
+    if is_platform_admin_user(user):
+        return delete_all_holidays(school_id)
+    return _create_bulk_action_from_route(
+        school_id=school_id,
+        actor=actor,
+        module_name="attendance",
+        action_type="delete_all",
+        reason="Delete all attendance holidays requires Super Admin approval.",
+        payload_json={"operation": "attendance.delete_all_holidays"},
+    )
 
 
 @router.get("/teacher-current-class", response_model=TeacherAttendanceContextResponse)
@@ -655,6 +725,26 @@ def get_batch_current_class(
             current_time=current_time,
         )
     )
+
+
+@router.get("/batch-day-classes", response_model=List[TeacherAttendanceContextResponse])
+def get_batch_day_classes(
+    class_name: str = Query(...),
+    section: str = Query(...),
+    batch_name: Optional[str] = Query(default=None),
+    target_date: Optional[date] = Query(default=None),
+    current_time: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+):
+    payload = list_batch_day_classes(
+        school_id,
+        class_name=class_name,
+        section=section,
+        batch_name=batch_name,
+        target_date=target_date.isoformat() if target_date else None,
+        current_time=current_time,
+    )
+    return [TeacherAttendanceContextResponse(**item) for item in payload]
 
 
 @router.get("/student-marking", response_model=StudentAttendanceMarkingResponse)
@@ -772,6 +862,23 @@ def get_student_dashboard(
     )
 
 
+@router.get("/calendar")
+async def get_student_calendar(
+    month: Optional[str] = Query(default=None),
+    class_name: Optional[str] = Query(default=None),
+    batch_name: Optional[str] = Query(default=None),
+    scope: Optional[str] = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+):
+    return await get_supabase_student_calendar(
+        school_id,
+        month=month,
+        class_name=class_name,
+        batch_name=batch_name,
+        scope=scope,
+    )
+
+
 @router.delete("/student-records/{record_id}")
 def delete_student_record_endpoint(
     record_id: str,
@@ -793,14 +900,31 @@ def delete_all_student_records_endpoint(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(require_write_access),
+    user: User = Depends(get_authenticated_user),
 ):
-    return delete_all_student_records(
-        school_id,
-        class_name=class_name,
-        section=section,
-        student_name=student_name,
-        date_from=date_from.isoformat() if date_from else None,
-        date_to=date_to.isoformat() if date_to else None,
+    if is_platform_admin_user(user):
+        return delete_all_student_records(
+            school_id,
+            class_name=class_name,
+            section=section,
+            student_name=student_name,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
+        )
+    return _create_bulk_action_from_route(
+        school_id=school_id,
+        actor=actor,
+        module_name="attendance",
+        action_type="delete_all",
+        reason="Delete all student attendance records requires Super Admin approval.",
+        payload_json={
+            "operation": "attendance.delete_all_student_records",
+            "class_name": class_name,
+            "section": section,
+            "student_name": student_name,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+        },
     )
 
 
@@ -911,13 +1035,29 @@ def delete_all_staff_records_endpoint(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(require_write_access),
+    user: User = Depends(get_authenticated_user),
 ):
-    return delete_all_supabase_staff_records(
-        school_id,
-        department=department,
-        staff_name=staff_name,
-        date_from=date_from.isoformat() if date_from else None,
-        date_to=date_to.isoformat() if date_to else None,
+    if is_platform_admin_user(user):
+        return delete_all_supabase_staff_records(
+            school_id,
+            department=department,
+            staff_name=staff_name,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
+        )
+    return _create_bulk_action_from_route(
+        school_id=school_id,
+        actor=actor,
+        module_name="staff",
+        action_type="delete_all",
+        reason="Delete all staff attendance records requires Super Admin approval.",
+        payload_json={
+            "operation": "attendance.delete_all_staff_records",
+            "department": department,
+            "staff_name": staff_name,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+        },
     )
 
 
@@ -956,7 +1096,7 @@ def list_leaves(
 def create_leave(
     payload: AttendanceLeaveCreate,
     school_id: str = Depends(resolve_school_id_from_actor),
-    actor: Dict[str, str] = Depends(require_write_access),
+    actor: Dict[str, str] = Depends(require_leave_create_access),
 ):
     leave_type_val = payload.leave_type.value if hasattr(payload.leave_type, "value") else str(payload.leave_type)
     result = save_leave_request(
@@ -970,9 +1110,10 @@ def create_leave(
     create_notification(
         school_id,
         f"Leave applied by {result.get('staff_name', 'staff')}",
-        "leave_applied",
+        "leave",
         user_name=actor["name"],
         user_role=actor["role"],
+        metadata={"action": "applied"},
     )
     return AttendanceLeaveResponse(**result)
 
@@ -996,9 +1137,10 @@ def decide_leave(
     create_notification(
         school_id,
         f"Leave {status_val.replace('_', ' ')} for {result.get('staff_name', 'staff')}",
-        f"leave_{status_val}",
+        "leave",
         user_name=actor["name"],
         user_role=actor["role"],
+        metadata={"action": status_val},
     )
     return AttendanceLeaveResponse(**result)
 
@@ -1017,10 +1159,20 @@ def delete_all_leaves(
     school_id: str = Depends(resolve_school_id_from_actor),
     status_filter: Optional[str] = Query(default=None, alias="status"),
     actor: Dict[str, str] = Depends(require_write_access),
+    user: User = Depends(get_authenticated_user),
 ):
     if actor.get("role") == UserRole.TEACHER.value:
         raise HTTPException(status_code=403, detail="Teachers cannot delete all leave requests")
-    return delete_all_leave_requests(school_id, status_filter=status_filter)
+    if is_platform_admin_user(user):
+        return delete_all_leave_requests(school_id, status_filter=status_filter)
+    return _create_bulk_action_from_route(
+        school_id=school_id,
+        actor=actor,
+        module_name="leaves",
+        action_type="delete_all",
+        reason="Delete all leave requests requires Super Admin approval.",
+        payload_json={"operation": "attendance.delete_all_leaves", "status": status_filter},
+    )
 
 
 @router.get("/notifications", response_model=List[AttendanceNotificationResponse])
@@ -1043,8 +1195,18 @@ def delete_single_notification(
 def delete_all_notifications_endpoint(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(require_write_access),
+    user: User = Depends(get_authenticated_user),
 ):
-    return delete_all_notifications(school_id)
+    if is_platform_admin_user(user):
+        return delete_all_notifications(school_id)
+    return _create_bulk_action_from_route(
+        school_id=school_id,
+        actor=actor,
+        module_name="attendance",
+        action_type="delete_all",
+        reason="Delete all attendance notifications requires Super Admin approval.",
+        payload_json={"operation": "attendance.delete_all_notifications"},
+    )
 
 
 @router.get("/reports/data", response_model=AttendanceReportResponse)

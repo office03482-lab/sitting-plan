@@ -3,16 +3,34 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse, Response
 
-from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.models import User
 from app.schemas import StaffImportResponse
+from app.services.bulk_action_requests import (
+    create_bulk_action_request,
+    execute_staff_directory_bulk_delete,
+    is_platform_admin_user,
+)
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.utils.staff_excel import STAFF_TEMPLATE_HEADERS, create_staff_excel_template, parse_staff_excel
 
 router = APIRouter()
+
+
+def _bulk_action_response(request: dict[str, Any], *, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "mode": "approval_required",
+            "request_id": request.get("id"),
+            "status": request.get("status"),
+            "message": message,
+        },
+    )
 
 
 def _normalize(value: Any) -> str:
@@ -246,3 +264,40 @@ async def import_staff(
         errors=errors,
         message=f"Imported {imported_count} staff, updated {updated_count}, skipped {skipped_count}",
     )
+
+
+@router.delete("")
+def delete_all_staff_directory_records(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(get_authenticated_user),
+    staff_type: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+):
+    if is_platform_admin_user(user):
+        return execute_staff_directory_bulk_delete(
+            school_id,
+            search=search,
+            staff_type=staff_type,
+            category=category,
+        )
+
+    profile_id = str(actor.get("profile_id") or "").strip()
+    if not profile_id:
+        raise HTTPException(status_code=400, detail="Authenticated profile is required")
+    request = create_bulk_action_request(
+        school_id=school_id,
+        module_name="staff",
+        action_type="delete_all",
+        requested_by_profile_id=profile_id,
+        requested_role=str(actor.get("role") or "viewer"),
+        reason="Delete all staff directory records requires Super Admin approval.",
+        payload_json={
+            "operation": "staff.delete_all_staff",
+            "staff_type": staff_type,
+            "search": search,
+            "category": category,
+        },
+    )
+    return _bulk_action_response(request, message="Bulk action request created and sent for Super Admin approval.")

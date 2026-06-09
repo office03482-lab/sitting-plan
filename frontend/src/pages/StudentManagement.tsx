@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type Rea
 import { Upload, Download, RefreshCw, CheckCircle, XCircle, AlertTriangle, Edit2, Trash2, Plus, Camera, ExternalLink, FileText, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
+import { useAuthStore } from '@store/auth';
 import { apiService } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
@@ -371,6 +372,8 @@ export default function StudentManagement() {
   const navigate = useNavigate();
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const user = useAuthStore((state) => state.user);
+  const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
@@ -753,7 +756,26 @@ export default function StudentManagement() {
       detail: 'Bulk delete request chal rahi hai. Complete hote hi table refresh hoga.',
     });
     try {
-      await apiService.deleteAllStudents(true); // is_admin=true
+      const response = await apiService.deleteAllStudents(true); // is_admin=true
+      if (response.data?.mode === 'approval_required') {
+        setDeleteAllConfirm(false);
+        setMessage(response.data?.message || 'Delete all students request bhej di gayi hai.');
+        setOperationProgress({
+          kind: 'delete-all',
+          status: 'success',
+          title: 'Delete all students request created',
+          phase: 'Awaiting Super Admin approval',
+          total: totalStudents,
+          processed: 0,
+          successCount: 0,
+          failureCount: 0,
+          percent: 100,
+          unit: 'students',
+          detail: response.data?.message || 'Bulk delete request create ho gayi hai.',
+        });
+        scheduleOperationProgressReset();
+        return;
+      }
       setStudents([]);
       setSearchTerm('');
       setSelectedBatch('');
@@ -1581,7 +1603,7 @@ export default function StudentManagement() {
                 className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-60"
               >
                 <AlertTriangle className="w-4 h-4 mr-2" />
-                Delete All
+                {isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
               </button>
               <button
                 onClick={() => void loadStudents()}
@@ -2420,9 +2442,13 @@ export default function StudentManagement() {
         {deleteAllConfirm && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full">
-              <h3 className="text-lg font-semibold mb-3">Confirm delete all students</h3>
+              <h3 className="text-lg font-semibold mb-3">
+                {isPlatformSuperAdmin ? 'Confirm delete all students' : 'Confirm delete all students request'}
+              </h3>
               <p className="text-sm text-gray-600 mb-6">
-                This action cannot be undone. Are you sure you want to permanently delete all student records?
+                {isPlatformSuperAdmin
+                  ? 'This action cannot be undone. Are you sure you want to permanently delete all student records?'
+                  : 'This will create a bulk delete approval request for Super Admin review. The records will not be deleted immediately.'}
               </p>
               <div className="flex justify-end gap-3">
                 <button
@@ -2438,7 +2464,7 @@ export default function StudentManagement() {
                   disabled={deletingAll}
                   className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                 >
-                  {deletingAll ? 'Deleting...' : 'Delete All'}
+                  {deletingAll ? 'Deleting...' : isPlatformSuperAdmin ? 'Delete All' : 'Request Delete All'}
                 </button>
               </div>
             </div>

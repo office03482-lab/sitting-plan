@@ -23,7 +23,7 @@ export type AttendanceStudentResourceOptions = {
 function normalizeManagedBatches(
   batches: Batch[],
   students: AttendanceStudent[],
-  schoolId: number,
+  schoolId: string | number,
 ): Batch[] {
   const normalizedBatches = toArray<Batch>(batches)
     .filter((item) => String(item.name || '').trim())
@@ -37,7 +37,7 @@ function normalizeManagedBatches(
     return normalizedBatches;
   }
 
-  return buildAttendanceBatches(students, Number(schoolId) || 1);
+  return buildAttendanceBatches(students, schoolId);
 }
 
 export function buildAttendanceStudentResourceOptions(
@@ -58,7 +58,7 @@ export function buildAttendanceStudentResourceOptions(
 }
 
 export async function fetchAttendanceStudentResources(
-  schoolId: number,
+  schoolId: string | number,
   overviewSubjectOptions: AttendanceSubject[] = [],
 ): Promise<AttendanceStudentResources> {
   const studentsRes = await apiService.listIntegratedStudents({
@@ -88,7 +88,7 @@ export async function fetchAttendanceStudentResources(
 }
 
 export async function fetchManagedAttendanceBatches(
-  schoolId: number,
+  schoolId: string | number,
   students: AttendanceStudent[],
 ): Promise<Batch[]> {
   const response = await apiService.listBatches(schoolId, true);

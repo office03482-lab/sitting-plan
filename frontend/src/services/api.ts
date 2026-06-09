@@ -239,6 +239,31 @@ class ApiService {
     });
   }
 
+  async createBulkActionRequest(data: {
+    module_name: string;
+    action_type: string;
+    reason?: string;
+    payload_json?: Record<string, unknown>;
+  }) {
+    return this.api.post('/bulk-action-requests', data);
+  }
+
+  async listBulkActionRequests(params: {
+    status?: string;
+    module_name?: string;
+    school_id?: string | number;
+  } = {}) {
+    return this.api.get('/bulk-action-requests', { params });
+  }
+
+  async approveBulkActionRequest(requestId: string | number) {
+    return this.api.post(`/bulk-action-requests/${requestId}/approve`);
+  }
+
+  async rejectBulkActionRequest(requestId: string | number, data: { reason?: string } = {}) {
+    return this.api.post(`/bulk-action-requests/${requestId}/reject`, data);
+  }
+
   // ==================== Rooms ====================
 
   async createRoom(roomData: Partial<Room>, schoolId: string | number = 1) {
@@ -856,6 +881,15 @@ class ApiService {
     return this.api.delete('/attendance/notifications', {
       params: { school_id: schoolId },
     });
+  }
+
+  async deleteAllStaffDirectory(params: {
+    school_id?: string | number;
+    staff_type?: string;
+    search?: string;
+    category?: string;
+  } = {}) {
+    return this.api.delete('/staff', { params });
   }
 
   async getAttendanceReportData(params: {
