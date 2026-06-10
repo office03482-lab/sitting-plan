@@ -2,7 +2,8 @@ import axios, { AxiosInstance } from 'axios';
 import { runtimeConfig } from '@lib/runtimeConfig';
 import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
-  Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator
+  Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
+  BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
 } from '@types';
 
 export function isRequestCanceled(error: unknown): boolean {
@@ -253,7 +254,7 @@ class ApiService {
     module_name?: string;
     school_id?: string | number;
   } = {}) {
-    return this.api.get('/bulk-action-requests', { params });
+    return this.api.get<BulkActionRequest[]>('/bulk-action-requests', { params });
   }
 
   async approveBulkActionRequest(requestId: string | number) {
@@ -952,6 +953,24 @@ class ApiService {
 
   async deleteRoleUser(userId: string | number) {
     return this.api.delete(`/auth/users/${userId}`);
+  }
+
+  async getPlatformDashboardSummary() {
+    return this.api.get<PlatformDashboardSummary>('/platform/dashboard-summary');
+  }
+
+  async getPlatformWorkflowRequestDetail(requestId: string | number) {
+    return this.api.get<PlatformWorkflowRequestDetail>(`/platform/workflow/${requestId}`);
+  }
+
+  async listPlatformAuditLogs(params: {
+    q?: string;
+    action?: string;
+    module_key?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    return this.api.get<PlatformAuditLogListResponse>('/platform/audit-logs', { params });
   }
 
   async listHostels(schoolId: string | number = 1) {

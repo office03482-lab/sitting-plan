@@ -72,6 +72,81 @@ export interface RolePowerUser {
   updated_at?: string;
 }
 
+export interface BulkActionRequest {
+  id: string;
+  school_id: string;
+  module_name: string;
+  action_type: string;
+  requested_by_profile_id?: string | null;
+  requested_role: string;
+  reason?: string | null;
+  payload_json: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'executed' | string;
+  approved_by_profile_id?: string | null;
+  approved_at?: string | null;
+  rejected_by_profile_id?: string | null;
+  rejected_at?: string | null;
+  cancelled_by_profile_id?: string | null;
+  cancelled_at?: string | null;
+  executed_by_profile_id?: string | null;
+  executed_at?: string | null;
+  execution_result: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PlatformWorkflowEvent {
+  id?: string | null;
+  request_id: string;
+  school_id: string;
+  event_type: string;
+  actor_profile_id?: string | null;
+  actor_role?: string | null;
+  actor_name?: string | null;
+  notes?: string | null;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
+}
+
+export interface PlatformWorkflowRequestDetail {
+  request: BulkActionRequest;
+  requested_by_name?: string | null;
+  approved_by_name?: string | null;
+  rejected_by_name?: string | null;
+  executed_by_name?: string | null;
+  events: PlatformWorkflowEvent[];
+}
+
+export interface PlatformDashboardSummary {
+  workflow_counts: Record<string, number>;
+  schools_count: number;
+  active_users_count: number;
+  recent_workflow_activity: PlatformWorkflowEvent[];
+}
+
+export interface PlatformAuditLog {
+  id: string;
+  school_id?: string | null;
+  school_name?: string | null;
+  profile_id?: string | null;
+  profile_name?: string | null;
+  action: string;
+  module_key?: string | null;
+  entity_table?: string | null;
+  entity_id?: string | null;
+  payload: Record<string, unknown>;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  created_at?: string | null;
+}
+
+export interface PlatformAuditLogListResponse {
+  items: PlatformAuditLog[];
+  total_count: number;
+  limit: number;
+  offset: number;
+}
+
 export interface AuthState {
   user: User | null;
   token: string | null;

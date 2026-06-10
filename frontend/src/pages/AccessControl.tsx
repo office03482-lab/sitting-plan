@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, Pencil } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useAuthStore } from '@store/auth';
 import type { RolePowerUser } from '@types';
 
 type UserRole = 'admin' | 'store_manager' | 'teacher' | 'viewer';
@@ -264,6 +266,8 @@ function PermissionEditor({
 
 export default function AccessControl() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const user = useAuthStore((state) => state.user);
+  const isPlatformAdmin = user?.role_key === 'platform_admin';
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [users, setUsers] = useState<RolePowerUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -418,6 +422,25 @@ export default function AccessControl() {
             User Access List se username, role aur powers edit kar sakte ho. Password ab plain form me store nahi hoga.
           </p>
         </section>
+
+        {isPlatformAdmin ? (
+          <section className="mt-4 rounded-3xl border border-sky-200 bg-sky-50 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-sky-700">Platform Navigation</p>
+                <p className="mt-1 text-sm text-slate-600">Workflow approvals aur platform overview ke quick links.</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Link to="/platform/dashboard" className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50">
+                  Platform Dashboard
+                </Link>
+                <Link to="/platform/workflow" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+                  Workflow Queue
+                </Link>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {error ? (
           <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>

@@ -59,6 +59,7 @@ export default function Layout({ children }: LayoutProps) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const { signOut } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const isPlatformAdmin = user?.role_key === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
 
   const canAccess = (permission?: string) => !permission || isAdmin || hasPermission(permission);
@@ -70,6 +71,18 @@ export default function Layout({ children }: LayoutProps) {
       icon: LayoutDashboard,
       iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%)',
       path: '/',
+    },
+    {
+      key: 'platform-admin',
+      name: 'Platform Administration',
+      icon: ShieldCheck,
+      iconBackground: 'linear-gradient(180deg, #bae6fd 0%, #0f766e 100%)',
+      children: [
+        { name: 'Platform Dashboard', path: '/platform/dashboard' },
+        { name: 'Workflow Queue', path: '/platform/workflow' },
+        { name: 'Audit Logs', path: '/platform/audit-logs' },
+        { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
+      ],
     },
     {
       key: 'admin-office',
@@ -220,6 +233,8 @@ export default function Layout({ children }: LayoutProps) {
 
     return rawSections
       .map((section) => {
+        if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
+        if (section.key === 'security' && isPlatformAdmin) return null;
         const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission));
         const sectionVisible =
           section.path ? canAccess(section.permission) : canAccess(section.permission) && filteredChildren.length > 0;

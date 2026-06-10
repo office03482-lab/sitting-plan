@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-d
 
 import { ErrorBoundary } from '@components/ErrorBoundary';
 import Layout from '@components/Layout';
+import PlatformAdminRoute from '@components/PlatformAdminRoute';
 import { ProtectedRoute } from '@components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthProvider';
 
@@ -30,6 +31,9 @@ import StudentDirectory from '@pages/StudentDirectory';
 import StudentManagement from '@pages/StudentManagement';
 import TeacherManagement from '@pages/TeacherManagement';
 import TimetableManagement from '@pages/TimetableManagement';
+import PlatformDashboard from '@pages/PlatformDashboard';
+import PlatformWorkflowQueue from '@pages/PlatformWorkflowQueue';
+import PlatformAuditLogs from '@pages/PlatformAuditLogs';
 
 function AppShell() {
   const { user } = useAuth();
@@ -200,6 +204,30 @@ function AppShell() {
             <ProtectedRoute requiredPermissions={['admin_office.access_control']}>
               <AccessControl />
             </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/platform/dashboard"
+          element={
+            <PlatformAdminRoute>
+              <PlatformDashboard />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/workflow"
+          element={
+            <PlatformAdminRoute>
+              <PlatformWorkflowQueue />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/audit-logs"
+          element={
+            <PlatformAdminRoute>
+              <PlatformAuditLogs />
+            </PlatformAdminRoute>
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
