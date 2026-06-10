@@ -14,6 +14,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.utils.pdf_base import fmt_date_iso
 from app.middleware.auth import get_authenticated_actor_context
 from app.schemas import (
     InventoryCatalogSet,
@@ -173,40 +174,108 @@ def build_excel_report(report_type: str, rows: List[Dict[str, object]]) -> Bytes
 
 
 def build_pdf_report(report_type: str, rows: List[Dict[str, object]]) -> BytesIO:
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
-    styles = getSampleStyleSheet()
-
-    elements = [
-        Paragraph(report_type.replace("_", " ").title(), styles["Title"]),
-        Spacer(1, 12),
-        Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["BodyText"]),
-        Spacer(1, 12),
-    ]
-
-    if rows:
-        headers = list(rows[0].keys())
-        table_data = [headers] + [[str(row.get(header, "")) for header in headers] for row in rows]
-    else:
-        table_data = [["message"], ["No records found"]]
-
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1d4ed8")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ]
-        )
+    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Table, TableStyle
+    from reportlab.lib import colors
+    from app.utils.pdf_base import (
+        ReportPdfBuilder,
+        build_shared_styles,
+        NAVY, SLATE_700, SLATE_500, SLATE_300, SLATE_200, SLATE_50,
+        WHITE, DARK_TEXT,
+        make_paragraph, safe_pdf_text, fmt_timestamp, fmt_date_iso,
     )
-    elements.append(table)
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
+
+    # Wide reports (>5 columns) use landscape; compact reports use portrait
+    has_sample = bool(rows)
+    sample = rows[0] if has_sample else {}
+    num_cols = len(sample)
+    use_landscape = num_cols > 5
+    pw = landscape(A4) if use_landscape else A4
+    cm = 0.4 * inch
+
+    buffer = BytesIO()
+    builder = ReportPdfBuilder(
+        buffer,
+        pagesize=pw,
+        left_margin=cm, right_margin=cm,
+        top_margin=1.2 * inch,
+        bottom_margin=0.7 * inch,
+        title=report_type.replace("_", " ").title(),
+        author="Sitting Plan System",
+    )
+
+    # ── Column width definitions per report type ──
+    COLUMN_WIDTHS: dict[str, list] = {
+        "current_inventory": [2.2*inch, 1.2*inch, 0.8*inch, 0.7*inch, 1.0*inch, 1.0*inch, 1.5*inch],
+        "stock_in":          [2.0*inch, 1.5*inch, 0.8*inch, 1.2*inch, 1.0*inch, 1.0*inch],
+        "stock_out":         [2.0*inch, 1.5*inch, 0.8*inch, 1.2*inch, 1.0*inch],
+        "low_stock":         [2.5*inch, 1.5*inch, 0.8*inch, 0.8*inch, 1.0*inch],
+        "distribution":      [2.0*inch, 1.2*inch, 1.2*inch, 1.0*inch, 0.8*inch, 0.8*inch],
+    }
+    col_widths = COLUMN_WIDTHS.get(report_type, [1.5*inch] * num_cols)
+
+    # ── Header drawer ──
+    pw_pt, ph_pt = pw
+
+    def _inventory_header(canv, ctx):
+        canv.setFillColor(NAVY)
+        canv.setFont("Helvetica-Bold", 14)
+        canv.drawString(cm, ph_pt - 22, "INVENTORY REPORT")
+        canv.setFillColor(SLATE_700)
+        canv.setFont("Helvetica", 9)
+        canv.drawString(cm, ph_pt - 38, safe_pdf_text(ctx.get("title", "")))
+        canv.setFillColor(SLATE_500)
+        canv.setFont("Helvetica", 7.5)
+        canv.drawString(cm, ph_pt - 50, f"Generated: {fmt_timestamp()}")
+        canv.setStrokeColor(SLATE_300)
+        canv.setLineWidth(0.5)
+        canv.line(cm, ph_pt - 56, pw_pt - cm, ph_pt - 56)
+
+    styles = build_shared_styles()
+
+    # ── Empty state ──
+    if not rows:
+        builder.add_title(report_type.replace("_", " ").title())
+        builder.add_small_note("No records found for the selected criteria.")
+        return builder.build(header_context={"title": report_type.replace("_", " ").title()})
+
+    # ── Build table ──
+    headers = list(sample.keys())
+    col_count = len(headers)
+    if len(col_widths) < col_count:
+        col_widths = col_widths + [1.0*inch] * (col_count - len(col_widths))
+    elif len(col_widths) > col_count:
+        col_widths = col_widths[:col_count]
+
+    header_paras = [make_paragraph(h.replace("_", " ").title(), styles["table_header"]) for h in headers]
+    table_data = [header_paras]
+    for row in rows:
+        cells = [Paragraph(safe_pdf_text(str(row.get(h, ""))), styles["table_body_center"]) for h in headers]
+        table_data.append(cells)
+
+    table = Table(table_data, colWidths=col_widths, repeatRows=1, splitByRow=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+        ("GRID", (0, 1), (-1, -1), 0.4, SLATE_200),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, SLATE_50]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 1), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+
+    builder.add_title(report_type.replace("_", " ").title())
+    builder.add_table(table)
+    builder.add_spacer(0.1 * inch)
+    builder.add_small_note(f"Total records: {len(rows)}")
+
+    return builder.build(header_context={"title": report_type.replace("_", " ").title()})
 
 
 @router.get("/suppliers", response_model=List[SupplierResponse])
@@ -885,15 +954,17 @@ def export_inventory_report(
 
     if export_format == "excel":
         buffer = build_excel_report(report_type, rows)
+        suffix = fmt_date_iso()
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{report_type}.xlsx"'},
+            headers={"Content-Disposition": f'attachment; filename="inventory-{report_type}-{suffix}.xlsx"'},
         )
 
     buffer = build_pdf_report(report_type, rows)
+    suffix = fmt_date_iso()
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{report_type}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="inventory-{report_type}-{suffix}.pdf"'},
     )

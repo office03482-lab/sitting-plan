@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from postgrest.exceptions import APIError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import get_authenticated_actor_context
@@ -252,18 +253,23 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
 
 def _build_supabase_single_room_plan(school_id: str, plan_id: str) -> dict:
     supabase = get_supabase_admin_client()
-    response = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("id, exam_id, room_id, plan_name, plan_type, plan_metadata, batch_distribution")
-        .eq("id", plan_id)
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .single()
-        .execute()
-    )
-    row = response.data
+    try:
+        response = (
+            supabase
+            .schema("exam")
+            .table("seating_plans")
+            .select("id, exam_id, room_id, plan_name, plan_type, plan_metadata, batch_distribution")
+            .eq("id", plan_id)
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+    except APIError as exc:
+        raise HTTPException(status_code=404, detail="Plan not found") from exc
+
+    rows = list(response.data or [])
+    row = rows[0] if rows else None
     if not row:
         raise HTTPException(status_code=404, detail="Plan not found")
 

@@ -333,34 +333,80 @@ def create_timetable_excel(entries: list[TimetableView], view_by: str, session_m
 
 
 def create_timetable_pdf(entries: list[TimetableView], view_by: str, session_mode_filter: str = "all") -> BytesIO:
-    buffer = BytesIO()
-    document = SimpleDocTemplate(
-        buffer,
-        pagesize=landscape(A4),
-        leftMargin=20, rightMargin=20, topMargin=20, bottomMargin=20,
-    )
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "Title",
-        parent=styles["Heading1"],
-        alignment=1,
-        textColor=colors.white,
-        backColor=colors.HexColor("#00A3E0"),
-        spaceAfter=10, leading=18,
-    )
-    section_style = ParagraphStyle(
-        "Section",
-        parent=styles["Heading2"],
-        alignment=1,
-        textColor=colors.white,
-        backColor=colors.HexColor("#00A3E0"),
-        spaceBefore=8, spaceAfter=6, leading=16,
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Table, TableStyle, Spacer, KeepTogether
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.lib.styles import ParagraphStyle
+    from app.utils.pdf_base import (
+        ReportPdfBuilder,
+        build_shared_styles,
+        NAVY, SLATE_700, SLATE_500, SLATE_300, SLATE_200, SLATE_100, SLATE_50,
+        WHITE, DARK_TEXT, MEDIUM_TEXT,
+        make_paragraph, safe_pdf_text, fmt_timestamp,
     )
 
-    story = [Paragraph(build_export_title(view_by, normalize_session_mode_filter(session_mode_filter)), title_style), Spacer(1, 8)]
+    buffer = BytesIO()
+    cm = 0.35 * inch
+    builder = ReportPdfBuilder(
+        buffer,
+        pagesize=landscape(A4),
+        left_margin=cm, right_margin=cm,
+        top_margin=1.2 * inch,
+        bottom_margin=0.7 * inch,
+        title="Timetable Export",
+        author="Sitting Plan System",
+    )
+
+    pw, ph = landscape(A4)
+
+    def _timetable_header(canv, ctx):
+        canv.setFillColor(NAVY)
+        canv.setFont("Helvetica-Bold", 14)
+        canv.drawString(cm, ph - 22, "TIMETABLE")
+        canv.setFillColor(SLATE_700)
+        canv.setFont("Helvetica", 9)
+        canv.drawString(cm, ph - 38, safe_pdf_text(ctx.get("title", "")))
+        canv.setFillColor(SLATE_500)
+        canv.setFont("Helvetica", 7.5)
+        canv.drawString(cm, ph - 50, f"Generated: {fmt_timestamp()}")
+        canv.setStrokeColor(SLATE_300)
+        canv.setLineWidth(0.5)
+        canv.line(cm, ph - 56, pw - cm, ph - 56)
+
+    styles = build_shared_styles()
+    title_text = build_export_title(view_by, normalize_session_mode_filter(session_mode_filter))
+
+    # Custom section style (flat text color, no bg — B&W friendly)
+    section_heading = ParagraphStyle(
+        "TTSection",
+        fontName="Helvetica-Bold",
+        fontSize=10.5,
+        leading=13,
+        textColor=NAVY,
+        spaceBefore=8,
+        spaceAfter=4,
+    )
+
+    # Time column style - light slate bg (B&W friendly)
+    time_style = ParagraphStyle(
+        "TTTime",
+        parent=styles["table_body_center"],
+        fontName="Helvetica-Bold",
+        fontSize=8,
+        leading=10,
+    )
+
+    builder.add_title(title_text)
+    builder.add_spacer(0.08 * inch)
+
     sections = group_entries_for_export(entries, view_by, session_mode_filter)
+    if not sections:
+        builder.add_small_note("No timetable entries found for the selected criteria.")
+        return builder.build(header_context={"title": title_text})
+
     for section in sections:
-        story.append(Paragraph(str(section["title"]), section_style))
+        heading = Paragraph(safe_pdf_text(str(section["title"])), section_heading)
         table_rows = [["TIMINGS", "DAY", "BATCH / CLASS", "TEACHER", "SUBJECT", "MODE TYPE", "ROOM"]]
         for entry in section["entries"]:
             table_rows.append([
@@ -373,26 +419,31 @@ def create_timetable_pdf(entries: list[TimetableView], view_by: str, session_mod
                 build_location_label(entry),
             ])
 
-        table = Table(table_rows, colWidths=[100, 65, 120, 105, 105, 75, 80], repeatRows=1)
+        # Professional colour scheme: navy header, light slate time col, white/gray rows
+        table = Table(table_rows, colWidths=[100, 60, 115, 105, 105, 70, 80], repeatRows=1)
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#00A3E0")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#F4C542")),
-            ("BACKGROUND", (1, 1), (-1, -1), colors.HexColor("#E8FF72")),
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("BACKGROUND", (0, 1), (0, -1), SLATE_50),
+            ("BACKGROUND", (1, 1), (-1, -1), WHITE),
+            ("ROWBACKGROUNDS", (1, 2), (-1, -1), [WHITE, SLATE_50]),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("GRID", (0, 0), (-1, -1), 0.75, colors.HexColor("#1E3A8A")),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-            ("TOPPADDING", (0, 0), (-1, 0), 8),
+            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.4, SLATE_200),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+            ("TOPPADDING", (0, 0), (-1, 0), 7),
+            ("TOPPADDING", (0, 1), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ]))
-        story.append(table)
-        story.append(Spacer(1, 10))
+        builder.add_keep_together([heading, table])
+        builder.add_spacer(0.08 * inch)
 
-    document.build(story)
-    buffer.seek(0)
-    return buffer
+    return builder.build(header_context={"title": title_text})
 
 
 @router.post("", response_model=TimetableEntryResponse)

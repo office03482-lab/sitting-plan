@@ -459,41 +459,149 @@ def build_excel(rows: List[Dict[str, object]], sheet_name: str) -> BytesIO:
 
 
 def build_pdf(rows: List[Dict[str, object]], title: str) -> BytesIO:
+    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Table, TableStyle, Spacer, KeepTogether
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from app.utils.pdf_base import (
+        ReportPdfBuilder,
+        build_shared_styles,
+        NAVY, SLATE_700, SLATE_500, SLATE_300, SLATE_200, SLATE_100, SLATE_50,
+        WHITE, DARK_TEXT, MEDIUM_TEXT,
+        make_paragraph, safe_pdf_text, fmt_timestamp,
+    )
+
     buffer = BytesIO()
-    doc = SimpleDocTemplate(
+    cm = 0.4 * inch  # compact margin
+    builder = ReportPdfBuilder(
         buffer,
         pagesize=landscape(A4),
-        rightMargin=24,
-        leftMargin=24,
-        topMargin=24,
-        bottomMargin=24,
+        left_margin=cm, right_margin=cm,
+        top_margin=1.2 * inch,
+        bottom_margin=0.7 * inch,
+        title=title,
+        author="Sitting Plan System",
     )
-    data: List[List[str]] = [[title]]
-    if rows:
-        headers = list(rows[0].keys())
-        data.append(headers)
-        for row in rows:
-            data.append([str(row.get(header, "")) for header in headers])
-    else:
-        data.append(["No records found"])
 
-    table = Table(data, repeatRows=2 if rows else 1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("SPAN", (0, 0), (-1, 0)),
-                ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#e2e8f0")),
-                ("GRID", (0, 1), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-                ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ]
-        )
-    )
-    doc.build([table, Spacer(1, 12)])
-    buffer.seek(0)
-    return buffer
+    # ── Branded header drawer ──
+    pw, ph = landscape(A4)
+    lm = cm
+
+    def _attendance_header(canv, ctx):
+        canv.setFillColor(NAVY)
+        canv.setFont("Helvetica-Bold", 14)
+        canv.drawString(lm, ph - 22, "ATTENDANCE REPORT")
+        canv.setFillColor(SLATE_700)
+        canv.setFont("Helvetica", 9)
+        canv.drawString(lm, ph - 38, safe_pdf_text(ctx.get("title", "")))
+        canv.setFillColor(SLATE_500)
+        canv.setFont("Helvetica", 7.5)
+        canv.drawString(lm, ph - 50, f"Generated: {fmt_timestamp()}")
+        canv.setStrokeColor(SLATE_300)
+        canv.setLineWidth(0.5)
+        canv.line(lm, ph - 56, pw - cm, ph - 56)
+
+    # ── Determine report type and columns ──
+    REPORT_TYPES = {
+        "Student Summary": {
+            "col_widths": [0.8*inch, 2.0*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch, 1.0*inch],
+            "label": "Student Attendance Summary",
+        },
+        "Staff Summary": {
+            "col_widths": [1.0*inch, 1.8*inch, 1.2*inch, 1.2*inch, 0.8*inch, 0.9*inch, 0.9*inch],
+            "label": "Staff Attendance Summary",
+        },
+        "Leave Summary": {
+            "col_widths": [1.8*inch, 1.2*inch, 1.0*inch, 1.0*inch, 0.8*inch, 1.5*inch],
+            "label": "Leave Summary",
+        },
+    }
+    rt_key = "Student Summary" if "student" in title.lower() else \
+             "Staff Summary" if "staff" in title.lower() else \
+             "Leave Summary"
+    rt_info = REPORT_TYPES.get(rt_key, REPORT_TYPES["Student Summary"])
+    col_widths = rt_info["col_widths"]
+
+    # ── Empty state ──
+    if not rows:
+        builder.add_title(rt_info["label"])
+        builder.add_subtitle(title)
+        builder.add_small_note("No records found for the selected criteria.")
+        return builder.build(header_context={"title": title})
+
+    # ── Build table data ──
+    raw_headers = list(rows[0].keys())
+    # Filter out row_type column from display
+    display_headers = [h for h in raw_headers if h != "row_type"]
+    col_count = len(display_headers)
+
+    styles = build_shared_styles()
+    header_paras = [make_paragraph(h.replace("_", " ").title(), styles["table_header"]) for h in display_headers]
+
+    table_rows: list = [header_paras]
+    row_type_indices: list[tuple[int, str]] = []  # (data_row_index, row_type)
+
+    for row in rows:
+        rtype = str(row.get("row_type", "student"))
+        cells = []
+        for h in display_headers:
+            val = str(row.get(h, ""))
+            if rtype in ("overall_total", "batch_total"):
+                cells.append(Paragraph(safe_pdf_text(val), styles["table_body_bold"]))
+            else:
+                cells.append(Paragraph(safe_pdf_text(val), styles["table_body_center"]))
+        table_rows.append(cells)
+        row_type_indices.append((len(table_rows) - 1, rtype))
+
+    # Adjust col_widths length to match
+    if len(col_widths) < col_count:
+        col_widths = col_widths + [0.8*inch] * (col_count - len(col_widths))
+    elif len(col_widths) > col_count:
+        col_widths = col_widths[:col_count]
+
+    # ── Build table with styling ──
+    total_rows = len(table_rows)
+    table = Table(table_rows, colWidths=col_widths, repeatRows=1, splitByRow=1)
+
+    # Base style
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 1), (-1, -1), 0.4, SLATE_200),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 1), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]
+
+    [style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), SLATE_100))
+     for idx, rtype in row_type_indices if rtype in ("overall_total", "batch_total")]
+
+    # Zebra striping for regular student rows
+    student_rows = [idx for idx, rtype in row_type_indices if rtype == "student"]
+    for pos, idx in enumerate(student_rows):
+        if pos % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), WHITE))
+        else:
+            style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), SLATE_50))
+
+    table.setStyle(TableStyle(style_cmds))
+
+    # ── Assemble document ──
+    builder.add_title(rt_info["label"])
+    builder.add_subtitle(title)
+    builder.add_table(table)
+    builder.add_spacer(0.1 * inch)
+    builder.add_small_note(f"Total records: {len(rows)}")
+
+    return builder.build(header_context={"title": title})
 
 
 async def collect_student_report_records(

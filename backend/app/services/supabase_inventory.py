@@ -1557,7 +1557,7 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
         history.append({
             "entry_id": entry.get("id"),
             "entry_kind": "student_issue",
-            "date": entry.get("entry_date") or entry.get("date"),
+            "date": entry.get("issue_date") or entry.get("date"),
             "material_id": material_id,
             "material_name": material_name,
             "quantity": int(entry.get("quantity_issued") or 0),
@@ -1645,21 +1645,21 @@ def get_report_data(
 
         sq = supabase.schema(s).table("student_issue_entries").select("*").eq("school_id", school_id)
         if date_from:
-            sq = sq.gte("entry_date", date_from)
+            sq = sq.gte("issue_date", date_from)
         if date_to:
-            sq = sq.lte("entry_date", date_to)
+            sq = sq.lte("issue_date", date_to)
         if batch_id:
             sq = sq.eq("batch_id", batch_id)
         if material_id:
             sq = sq.eq("material_item_id", material_id)
         if student_id:
             sq = sq.eq("student_id", student_id)
-        s_rows = list((sq.order("entry_date", desc=True).order("id", desc=True).execute()).data or [])
+        s_rows = list((sq.order("issue_date", desc=True).order("id", desc=True).execute()).data or [])
         s_mat_ids = {str(r.get("material_item_id")) for r in s_rows if r.get("material_item_id")}
         s_materials = {mid: (_select_one("material_items", school_id, mid) or {}).get("name", "") for mid in s_mat_ids}
         for r in s_rows:
             result.append({
-                "date": str(r.get("entry_date") or ""),
+                "date": str(r.get("issue_date") or ""),
                 "scope": "Student",
                 "batch": r.get("batch_name") or "",
                 "student": r.get("student_name") or "",
