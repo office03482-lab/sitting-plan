@@ -295,6 +295,7 @@ class HostelRoomResponse(BaseModel):
 
 class HostelCreate(BaseModel):
     name: str
+    hostel_code: Optional[str] = None
     hostel_head: Optional[str] = None
     warden_name: Optional[str] = None
     gender_category: Optional[str] = None
@@ -306,6 +307,7 @@ class HostelCreate(BaseModel):
 
 class HostelUpdate(BaseModel):
     name: Optional[str] = None
+    hostel_code: Optional[str] = None
     hostel_head: Optional[str] = None
     warden_name: Optional[str] = None
     gender_category: Optional[str] = None
@@ -316,6 +318,7 @@ class HostelUpdate(BaseModel):
 class HostelResponse(BaseModel):
     id: str
     name: str
+    hostel_code: Optional[str] = None
     hostel_head: Optional[str] = None
     warden_name: Optional[str] = None
     gender_category: Optional[str] = None
@@ -1690,3 +1693,55 @@ class BulkActionRequestResponse(BaseModel):
     execution_result: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class PlatformWorkflowEventResponse(BaseModel):
+    id: Optional[str] = None
+    request_id: str
+    school_id: str
+    event_type: str
+    actor_profile_id: Optional[str] = None
+    actor_role: Optional[str] = None
+    actor_name: Optional[str] = None
+    notes: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+class PlatformWorkflowRequestDetailResponse(BaseModel):
+    request: BulkActionRequestResponse
+    requested_by_name: Optional[str] = None
+    approved_by_name: Optional[str] = None
+    rejected_by_name: Optional[str] = None
+    executed_by_name: Optional[str] = None
+    events: List[PlatformWorkflowEventResponse] = Field(default_factory=list)
+
+
+class PlatformAuditLogResponse(BaseModel):
+    id: str
+    school_id: Optional[str] = None
+    school_name: Optional[str] = None
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    action: str
+    module_key: Optional[str] = None
+    entity_table: Optional[str] = None
+    entity_id: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class PlatformAuditLogListResponse(BaseModel):
+    items: List[PlatformAuditLogResponse] = Field(default_factory=list)
+    total_count: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
+class PlatformDashboardSummaryResponse(BaseModel):
+    workflow_counts: Dict[str, int] = Field(default_factory=dict)
+    schools_count: int = 0
+    active_users_count: int = 0
+    recent_workflow_activity: List[PlatformWorkflowEventResponse] = Field(default_factory=list)
