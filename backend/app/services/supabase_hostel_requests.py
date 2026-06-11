@@ -113,6 +113,26 @@ def _load_active_allocation_for_student(school_id: str, student_id: str) -> dict
     return dict(rows[0]) if rows else None
 
 
+def _recalculate_room_occupancy(school_id: str, room_id: str | None) -> None:
+    if not room_id:
+        return
+    client = get_supabase_admin_client()
+    count_response = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_allocations")
+        .select("id", count="exact")
+        .eq("school_id", school_id)
+        .eq("hostel_room_id", room_id)
+        .eq("allocation_status", "active")
+        .eq("is_active", True)
+        .limit(0)
+        .execute()
+    )
+    occupied_beds = count_response.count or 0
+    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"occupied_beds": occupied_beds}).eq("school_id", school_id).eq("id", room_id).execute()
+
+
 def _update_student_hostel_metadata(
     school_id: str,
     student_id: str,
@@ -252,7 +272,7 @@ def create_or_update_hostel_request(
                 "review_notes": None,
                 "reviewed_by_profile_id": None,
             }
-        ).eq("id", request_id).execute()
+        ).eq("school_id", school_id).eq("id", request_id).execute()
     else:
         inserted = _table("hostel_requests").insert(
             {
@@ -313,7 +333,7 @@ def approve_hostel_request(
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
         }
-    ).eq("id", request_id).execute()
+    ).eq("school_id", school_id).eq("id", request_id).execute()
     _table("hostel_allocations").insert(
         {
             "school_id": school_id,
@@ -326,6 +346,7 @@ def approve_hostel_request(
             "is_active": True,
         }
     ).execute()
+    _recalculate_room_occupancy(school_id, room.get("id"))
     _update_student_hostel_metadata(
         school_id,
         student_id,
@@ -364,13 +385,15 @@ def move_hostel_allocation(
     target_hostel_id = hostel_id or _normalize(current_allocation.get("hostel_id")) or _normalize(request_row.get("hostel_id"))
     room = _pick_room_or_raise(school_id, target_hostel_id, preferred_room_id=room_id)
 
+    old_room_id = current_allocation.get("hostel_room_id")
     _table("hostel_allocations").update(
         {
             "allocation_status": "moved",
             "is_active": False,
             "end_date": date.today().isoformat(),
         }
-    ).eq("id", current_allocation["id"]).execute()
+    ).eq("school_id", school_id).eq("id", current_allocation["id"]).execute()
+    _recalculate_room_occupancy(school_id, old_room_id)
 
     bed_label = f"Bed {int(room.get('occupied_beds') or 0) + 1}"
     _table("hostel_allocations").insert(
@@ -385,6 +408,7 @@ def move_hostel_allocation(
             "is_active": True,
         }
     ).execute()
+    _recalculate_room_occupancy(school_id, room.get("id"))
     _table("hostel_requests").update(
         {
             "hostel_id": target_hostel_id,
@@ -393,7 +417,7 @@ def move_hostel_allocation(
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
         }
-    ).eq("id", request_id).execute()
+    ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
         school_id,
         student_id,
@@ -422,14 +446,17 @@ def reject_hostel_request(
     student_id = _normalize(request_row.get("student_id"))
 
     active_allocation = _load_active_allocation_for_student(school_id, student_id)
+    released_room_id: str | None = None
     if active_allocation:
+        released_room_id = active_allocation.get("hostel_room_id")
         _table("hostel_allocations").update(
             {
                 "allocation_status": "released",
                 "is_active": False,
                 "end_date": date.today().isoformat(),
             }
-        ).eq("id", active_allocation["id"]).execute()
+        ).eq("school_id", school_id).eq("id", active_allocation["id"]).execute()
+    _recalculate_room_occupancy(school_id, released_room_id)
 
     _table("hostel_requests").update(
         {
@@ -437,7 +464,7 @@ def reject_hostel_request(
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
         }
-    ).eq("id", request_id).execute()
+    ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
         school_id,
         student_id,
@@ -467,6 +494,7 @@ def vacate_hostel_allocation(
     if not active_allocation:
         raise HTTPException(status_code=400, detail="Only approved hostel allocations can be vacated")
 
+    vacated_room_id = active_allocation.get("hostel_room_id")
     _table("hostel_allocations").update(
         {
             "allocation_status": "released",
@@ -474,14 +502,15 @@ def vacate_hostel_allocation(
             "end_date": date.today().isoformat(),
             "notes": "Vacated",
         }
-    ).eq("id", active_allocation["id"]).execute()
+    ).eq("school_id", school_id).eq("id", active_allocation["id"]).execute()
+    _recalculate_room_occupancy(school_id, vacated_room_id)
     _table("hostel_requests").update(
         {
             "status": "approved",
             "review_notes": "Vacated",
             "reviewed_by_profile_id": actor_profile_id or None,
         }
-    ).eq("id", request_id).execute()
+    ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
         school_id,
         student_id,

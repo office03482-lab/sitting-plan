@@ -283,6 +283,12 @@ class HostelRoomCreate(BaseModel):
     total_beds: int = 1
 
 
+class HostelRoomUpdate(BaseModel):
+    room_number: Optional[str] = None
+    total_beds: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
 class HostelRoomResponse(BaseModel):
     id: str
     hostel_id: str

@@ -11,8 +11,10 @@ from app.services.supabase_hostels import (
     update_hostel as supabase_update_hostel,
     delete_hostel as supabase_delete_hostel,
     add_room as supabase_add_room,
+    update_room as supabase_update_room,
+    delete_room as supabase_delete_room,
 )
-from app.schemas import HostelCreate, HostelResponse, HostelUpdate, HostelRoomCreate, HostelRoomResponse
+from app.schemas import HostelCreate, HostelResponse, HostelUpdate, HostelRoomCreate, HostelRoomResponse, HostelRoomUpdate
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hostels", tags=["Hostels"])
@@ -129,3 +131,44 @@ async def add_hostel_room(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to add room: {exc}") from exc
+
+
+@router.put("/{hostel_id}/rooms/{room_id}", response_model=HostelRoomResponse)
+async def update_hostel_room(
+    hostel_id: str,
+    room_id: str,
+    payload: HostelRoomUpdate,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    try:
+        room = supabase_update_room(school_id, hostel_id, room_id, payload.model_dump(exclude_unset=True))
+        logger.info(
+            f"Action completed - User ID: {actor.get('user_id')}, "
+            f"School ID: {school_id}, Hostel ID: {hostel_id}, Room ID: {room_id}"
+        )
+        return room
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update room: {exc}") from exc
+
+
+@router.delete("/{hostel_id}/rooms/{room_id}")
+async def delete_hostel_room(
+    hostel_id: str,
+    room_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    try:
+        result = supabase_delete_room(school_id, hostel_id, room_id)
+        logger.info(
+            f"Action completed - User ID: {actor.get('user_id')}, "
+            f"School ID: {school_id}, Hostel ID: {hostel_id}, Room ID: {room_id}"
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete room: {exc}") from exc

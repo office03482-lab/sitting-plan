@@ -103,6 +103,7 @@ def list_hostels(school_id: str) -> list[dict[str, Any]]:
         .schema(HOSTEL_SCHEMA)
         .table("hostel_rooms")
         .select("*")
+        .eq("school_id", school_id)
         .in_("hostel_id", hostel_ids)
         .execute()
     )
@@ -135,6 +136,7 @@ def get_hostel(school_id: str, hostel_id: str) -> dict[str, Any]:
         .schema(HOSTEL_SCHEMA)
         .table("hostel_rooms")
         .select("*")
+        .eq("school_id", school_id)
         .eq("hostel_id", hostel["id"])
         .execute()
     )
@@ -218,6 +220,7 @@ def create_hostel(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         .schema(HOSTEL_SCHEMA)
         .table("hostel_rooms")
         .select("*")
+        .eq("school_id", school_id)
         .eq("hostel_id", hostel["id"])
         .execute()
     )
@@ -257,7 +260,7 @@ def update_hostel(school_id: str, hostel_id: str, payload: dict[str, Any]) -> di
 
     if update_data:
         try:
-            client.schema(HOSTEL_SCHEMA).table("hostels").update(update_data).eq("id", hostel_id).execute()
+            client.schema(HOSTEL_SCHEMA).table("hostels").update(update_data).eq("school_id", school_id).eq("id", hostel_id).execute()
         except Exception as exc:
             translated = _translate_hostel_write_error(exc)
             if translated:
@@ -282,23 +285,42 @@ def delete_hostel(school_id: str, hostel_id: str) -> dict[str, str]:
     if not list(existing.data or []):
         raise HTTPException(status_code=404, detail="Hostel not found")
 
-    client.schema(HOSTEL_SCHEMA).table("hostels").update({"is_active": False}).eq("id", hostel_id).execute()
-    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"is_active": False}).eq("hostel_id", hostel_id).execute()
+    active_allocations = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_allocations")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("hostel_id", hostel_id)
+        .eq("allocation_status", "active")
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if active_allocations:
+        raise HTTPException(status_code=400, detail="Cannot delete hostel with active allocations")
 
-    client.table("students").update({
-        "preferred_hostel_id": None,
-        "assigned_hostel_id": None,
-        "assigned_room_id": None,
-        "assigned_bed_label": None,
-        "hostel_request_status": "not_requested",
-    }).eq("school_id", school_id).eq("preferred_hostel_id", hostel_id).execute()
+    active_requests = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_requests")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("hostel_id", hostel_id)
+        .eq("is_active", True)
+        .in_("status", ["pending", "approved"])
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if active_requests:
+        raise HTTPException(status_code=400, detail="Cannot delete hostel with active requests")
 
-    client.table("students").update({
-        "assigned_hostel_id": None,
-        "assigned_room_id": None,
-        "assigned_bed_label": None,
-        "hostel_request_status": "not_requested",
-    }).eq("school_id", school_id).eq("assigned_hostel_id", hostel_id).execute()
+    client.schema(HOSTEL_SCHEMA).table("hostels").update({"is_active": False}).eq("school_id", school_id).eq("id", hostel_id).execute()
+    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"is_active": False}).eq("school_id", school_id).eq("hostel_id", hostel_id).execute()
 
     return {"message": "Hostel deleted successfully"}
 
@@ -318,9 +340,14 @@ def add_room(school_id: str, hostel_id: str, payload: dict[str, Any]) -> dict[st
     if not list(existing.data or []):
         raise HTTPException(status_code=404, detail="Hostel not found")
 
+    room_number = _normalize(payload.get("room_number"))
+    if not room_number:
+        raise HTTPException(status_code=400, detail="Room number is required")
+
     room_data = {
+        "school_id": school_id,
         "hostel_id": hostel_id,
-        "room_number": _normalize(payload.get("room_number")),
+        "room_number": room_number,
         "total_beds": int(payload.get("total_beds") or 2),
         "occupied_beds": 0,
         "is_active": True,
@@ -339,13 +366,105 @@ def sync_room_occupancy(school_id: str, room_id: str) -> None:
     client = get_supabase_admin_client()
     count_response = (
         client
-        .table("students")
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_allocations")
         .select("id", count="exact")
         .eq("school_id", school_id)
-        .eq("assigned_room_id", room_id)
-        .eq("hostel_request_status", "approved")
+        .eq("hostel_room_id", room_id)
+        .eq("allocation_status", "active")
+        .eq("is_active", True)
         .limit(0)
         .execute()
     )
     occupied_beds = count_response.count or 0
-    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"occupied_beds": occupied_beds}).eq("id", room_id).execute()
+    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"occupied_beds": occupied_beds}).eq("school_id", school_id).eq("id", room_id).execute()
+
+
+def update_room(school_id: str, hostel_id: str, room_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    client = get_supabase_admin_client()
+    existing = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("hostel_id", hostel_id)
+        .eq("id", room_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(existing.data or [])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Room not found")
+    current = rows[0]
+
+    room_number = _normalize(payload.get("room_number"))
+    total_beds = payload.get("total_beds")
+    if total_beds is not None:
+        total_beds = int(total_beds)
+        if total_beds < int(current.get("occupied_beds") or 0):
+            raise HTTPException(status_code=400, detail="Total beds cannot be less than occupied beds")
+
+    update_data: dict[str, Any] = {}
+    if room_number:
+        update_data["room_number"] = room_number
+    if total_beds is not None:
+        update_data["total_beds"] = total_beds
+    if "is_active" in payload:
+        update_data["is_active"] = bool(payload["is_active"])
+
+    if update_data:
+        client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update(update_data).eq("school_id", school_id).eq("id", room_id).execute()
+
+    updated = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("id", room_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return _serialize_hostel_room(updated[0] if updated else current)
+
+
+def delete_room(school_id: str, hostel_id: str, room_id: str) -> dict[str, str]:
+    client = get_supabase_admin_client()
+    existing = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("hostel_id", hostel_id)
+        .eq("id", room_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    active = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_allocations")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("hostel_room_id", room_id)
+        .eq("allocation_status", "active")
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if active:
+        raise HTTPException(status_code=400, detail="Cannot delete room with active allocations")
+
+    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"is_active": False}).eq("school_id", school_id).eq("id", room_id).execute()
+    return {"message": "Room deleted successfully"}
