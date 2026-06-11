@@ -34,10 +34,12 @@ from app.utils.academic_batches import (
 from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 from app.services.supabase_attendance import get_students_count as get_supabase_students_count
+from app.services.supabase_hostels import sync_room_occupancy as supabase_sync_room_occupancy
 from app.services.supabase_students import (
     delete_all_students as delete_all_students_supabase,
     delete_student as delete_student_supabase,
     delete_students as delete_students_supabase,
+    find_student_by_roll_number,
     get_student as get_student_supabase,
     list_students as list_students_supabase,
 )
@@ -349,6 +351,95 @@ def sync_hostel_room_occupancy(db: Session, room_id: int | None) -> None:
 def build_next_bed_label(room: HostelRoom) -> str:
     next_bed_index = int(room.occupied_beds or 0)
     return f"Bed {next_bed_index}"
+
+
+def _find_supabase_room_id(school_id: str, legacy_room_id: int | None, db: Session) -> str | None:
+    """Resolve a legacy SQLite hostel_room ID to a Supabase hostel_room UUID.
+
+    Uses hostel name + room_number as the cross-reference key.
+    Returns None if no match is found (graceful fallback).
+    """
+    if not legacy_room_id:
+        return None
+    legacy_room = db.query(HostelRoom).filter(HostelRoom.id == legacy_room_id).first()
+    if not legacy_room or not legacy_room.hostel:
+        return None
+    hostel_name = legacy_room.hostel.name
+    room_number = legacy_room.room_number
+    client = get_supabase_admin_client()
+    hostel_rows = (
+        client.schema("hostel").table("hostels")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("name", hostel_name)
+        .limit(1)
+        .execute()
+    )
+    hostel_data = list(hostel_rows.data or [])
+    if not hostel_data:
+        return None
+    room_rows = (
+        client.schema("hostel").table("hostel_rooms")
+        .select("id")
+        .eq("hostel_id", hostel_data[0]["id"])
+        .eq("room_number", room_number)
+        .limit(1)
+        .execute()
+    )
+    room_data = list(room_rows.data or [])
+    return room_data[0]["id"] if room_data else None
+
+
+def _sync_supabase_student_hostel(
+    school_id: str,
+    roll_number: str,
+    hostel_request_status: str,
+    assigned_hostel_id: int | None = None,
+    assigned_room_id: int | None = None,
+    assigned_bed_label: str | None = None,
+    hostel_notes: str | None = None,
+    db: Session | None = None,
+) -> None:
+    """Synchronize hostel-related fields from legacy SQLite to Supabase student record.
+
+    Uses roll_number as the cross-reference key. Finds the corresponding
+    Supabase hostel_room UUID and calls sync_room_occupancy to keep
+    occupied_beds consistent on the Supabase side.
+    Gracefully skips if the Supabase records are not found.
+    """
+    try:
+        supabase_student = find_student_by_roll_number(school_id, roll_number)
+        if not supabase_student:
+            return
+
+        old_supabase_room_id = supabase_student.get("assigned_room_id") or None
+        update_data: dict[str, Any] = {
+            "hostel_request_status": hostel_request_status,
+        }
+        new_supabase_room_id: str | None = None
+        if db is not None:
+            new_supabase_room_id = _find_supabase_room_id(school_id, assigned_room_id, db)
+            if new_supabase_room_id:
+                update_data["assigned_room_id"] = new_supabase_room_id
+            elif assigned_room_id is not None:
+                update_data["assigned_room_id"] = None
+        if assigned_bed_label is not None:
+            update_data["assigned_bed_label"] = assigned_bed_label
+        if hostel_notes is not None:
+            update_data["hostel_notes"] = hostel_notes
+
+        client = get_supabase_admin_client()
+        client.table("students").update(update_data).eq("id", supabase_student["id"]).execute()
+
+        synced_rooms: set[str] = set()
+        if old_supabase_room_id and old_supabase_room_id != new_supabase_room_id:
+            supabase_sync_room_occupancy(school_id, old_supabase_room_id)
+            synced_rooms.add(old_supabase_room_id)
+        if new_supabase_room_id and new_supabase_room_id not in synced_rooms:
+            supabase_sync_room_occupancy(school_id, new_supabase_room_id)
+
+    except Exception as exc:
+        logger.warning("supabase_sync_skipped roll=%s err=%s", roll_number, exc)
 
 
 @router.get("/template/download", responses={200: {"content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}}}})
@@ -939,6 +1030,14 @@ async def approve_hostel_request(
     student.assigned_bed_label = assigned_bed_label
     student.hostel_notes = request.requested_notes
     db.commit()
+    _sync_supabase_student_hostel(
+        school_id, student.roll_number, "approved",
+        assigned_hostel_id=student.assigned_hostel_id,
+        assigned_room_id=student.assigned_room_id,
+        assigned_bed_label=assigned_bed_label,
+        hostel_notes=student.hostel_notes,
+        db=db,
+    )
     db.refresh(request)
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
@@ -1005,6 +1104,13 @@ async def move_hostel_allocation(
     sync_hostel_room_occupancy(db, previous_room_id)
     sync_hostel_room_occupancy(db, room.id)
     db.commit()
+    _sync_supabase_student_hostel(
+        school_id, student.roll_number, "approved",
+        assigned_hostel_id=student.assigned_hostel_id,
+        assigned_room_id=student.assigned_room_id,
+        assigned_bed_label=student.assigned_bed_label,
+        db=db,
+    )
     db.refresh(request)
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)
@@ -1032,13 +1138,70 @@ async def reject_hostel_request(
     request.reviewed_at = datetime.now(timezone.utc)
 
     student = request.student
+    previous_room_id = student.assigned_room_id if student else None
     if student:
         student.hostel_request_status = "rejected"
         student.assigned_hostel_id = None
         student.assigned_room_id = None
         student.assigned_bed_label = None
 
+    sync_hostel_room_occupancy(db, previous_room_id)
     db.commit()
+    if student:
+        _sync_supabase_student_hostel(
+            school_id, student.roll_number, "rejected",
+            assigned_room_id=None,
+            db=db,
+        )
+    db.refresh(request)
+    logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+    return serialize_hostel_request(request)
+
+@router.post("/hostel-requests/{request_id}/vacate", response_model=StudentHostelRequestResponse)
+async def vacate_hostel_allocation(
+    request_id: int,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    db: Session = Depends(get_db),
+):
+    """Vacate a hostel allocation — releases the bed while preserving request history.
+
+    The request status stays 'approved' (historical record) but the room
+    assignment and bed label are cleared, making the bed available for
+    re-allocation.
+    """
+    ensure_students_legacy_routes_available(school_id)
+    request = db.query(StudentHostelRequest).filter(
+        StudentHostelRequest.id == request_id,
+        StudentHostelRequest.school_id == school_id,
+    ).first()
+    if not request:
+        raise HTTPException(status_code=404, detail="Hostel request not found")
+    if request.status != "approved":
+        raise HTTPException(status_code=400, detail="Only approved hostel allocations can be vacated")
+
+    previous_room_id = request.room_id
+    request.room_id = None
+    request.assigned_bed_label = None
+    request.reviewed_by = actor.get("user_id") or request.reviewed_by
+    request.review_notes = "Vacated"
+    request.reviewed_at = datetime.now(timezone.utc)
+
+    student = request.student
+    if student:
+        student.assigned_hostel_id = None
+        student.assigned_room_id = None
+        student.assigned_bed_label = None
+        student.hostel_request_status = "approved"
+
+    sync_hostel_room_occupancy(db, previous_room_id)
+    db.commit()
+    if student:
+        _sync_supabase_student_hostel(
+            school_id, student.roll_number, "approved",
+            assigned_room_id=None,
+            db=db,
+        )
     db.refresh(request)
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return serialize_hostel_request(request)

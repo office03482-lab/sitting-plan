@@ -1013,6 +1013,10 @@ class ApiService {
     return this.api.post(`/students/hostel-requests/${requestId}/reject`, data, { params: { school_id: schoolId } });
   }
 
+  async vacateStudentHostelAllocation(requestId: string | number, schoolId: string | number = 1) {
+    return this.api.post(`/students/hostel-requests/${requestId}/vacate`, {}, { params: { school_id: schoolId } });
+  }
+
   async downloadStudentTemplate() {
     return this.api.get('/students/template/download', {
       responseType: 'blob',

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.middleware.auth import get_authenticated_actor_context
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_hostels import (
+    get_hostel as supabase_get_hostel,
     list_hostels as supabase_list_hostels,
     create_hostel as supabase_create_hostel,
     update_hostel as supabase_update_hostel,
@@ -31,6 +32,25 @@ async def list_hostels(
         return hostels
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load hostels: {exc}") from exc
+
+
+@router.get("/{hostel_id}", response_model=HostelResponse)
+async def get_hostel(
+    hostel_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    try:
+        hostel = supabase_get_hostel(school_id, hostel_id)
+        logger.info(
+            f"Action completed - User ID: {actor.get('user_id')}, "
+            f"School ID: {school_id}, Hostel ID: {hostel_id}"
+        )
+        return hostel
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to get hostel: {exc}") from exc
 
 
 @router.post("", response_model=HostelResponse)

@@ -111,6 +111,9 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict:
     holidays_raw = fetch_all("holidays", "*", schema="attendance", school_id=school_id, is_active=True)
     staff_dept = fetch_all("staff_members", "department, designation", school_id=school_id, is_active=True)
 
+    hostel_raw = fetch_all("hostels", "*", schema="hostel", school_id=school_id, is_active=True)
+    hostel_rooms_raw = fetch_all("hostel_rooms", "*", schema="hostel", school_id=school_id)
+    hostel_active_rooms = [r for r in hostel_rooms_raw if r.get("is_active")]
     inventory_materials = fetch_all("material_items", "*", schema="inventory", school_id=school_id)
     stock_in = fetch_all("stock_in_entries", "quantity_received", schema="inventory", school_id=school_id)
     stock_out = fetch_all("stock_out_entries", "quantity_issued", schema="inventory", school_id=school_id)
@@ -130,6 +133,12 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict:
         "students_count": students_count,
         "teachers_count": teachers_count,
         "rooms_summary": rooms_summary,
+        "hostel_summary": {
+            "total_hostels": len(hostel_raw),
+            "total_rooms": len(hostel_active_rooms),
+            "total_occupied": sum(int(r.get("occupied_beds") or 0) for r in hostel_active_rooms),
+            "total_capacity": sum(int(r.get("total_beds") or 0) for r in hostel_active_rooms),
+        },
         "attendance_overview": {
             "student_count": students_count,
             "staff_count": count_active_rows("staff_members"),

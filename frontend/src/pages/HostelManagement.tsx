@@ -115,7 +115,7 @@ const normalizeRequest = (request: any): StudentHostelRequest => ({
 });
 
 export default function HostelManagement() {
-  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const [hostels, setHostels] = useState<Hostel[]>([]);
   const [requests, setRequests] = useState<StudentHostelRequest[]>([]);
@@ -149,9 +149,10 @@ export default function HostelManagement() {
   };
 
   const loadRequests = async () => {
+    const schoolId = user?.school_id || 1;
     const [pendingRes, approvedRes] = await Promise.allSettled([
-      apiService.listStudentHostelRequests(1, 'pending'),
-      apiService.listStudentHostelRequests(1, 'approved'),
+      apiService.listStudentHostelRequests(schoolId, 'pending'),
+      apiService.listStudentHostelRequests(schoolId, 'approved'),
     ]);
 
     const nextRequests: StudentHostelRequest[] = [];
@@ -223,8 +224,8 @@ export default function HostelManagement() {
     }));
   };
   const getHostelRooms = (hostelId: string | number, includeRoomId?: string | number) =>
-    (hostels.find((hostel) => hostel.id === hostelId)?.rooms || []).filter(
-      (room) => room.available_beds > 0 || room.id === includeRoomId,
+    (hostels.find((hostel) => String(hostel.id) === String(hostelId))?.rooms || []).filter(
+      (room) => room.available_beds > 0 || String(room.id) === String(includeRoomId),
     );
 
   const handleCreateHostel = async (event: React.FormEvent) => {
@@ -329,13 +330,13 @@ export default function HostelManagement() {
 
   const handleApproveRequest = async (request: StudentHostelRequest, roomId?: string | number) => {
     const selection = getMoveSelection(request);
-    const selectedHostelId = Number(selection.hostelId || request.hostel_id || 0) || request.hostel_id;
-    const selectedRoomId = Number(selection.roomId || roomId || 0) || roomId;
+    const selectedHostelId = selection.hostelId || String(request.hostel_id || '');
+    const selectedRoomId = selection.roomId || (roomId ? String(roomId) : '');
     setApprovingRequestId(request.id);
     try {
       const response = await apiService.approveStudentHostelRequest(request.id, {
         hostel_id: selectedHostelId,
-        room_id: selectedRoomId,
+        room_id: selectedRoomId || undefined,
         reviewed_by: 'Hostel Head',
       });
       upsertRequest(normalizeRequest(response.data));
@@ -350,7 +351,7 @@ export default function HostelManagement() {
 
   const handleMoveAllocation = async (request: StudentHostelRequest) => {
     const selection = getMoveSelection(request);
-    const selectedHostelId = Number(selection.hostelId || request.hostel_id || 0);
+    const selectedHostelId = selection.hostelId || String(request.hostel_id || '');
     if (!selectedHostelId) {
       setMessage('Move ke liye hostel select karo.');
       return;
@@ -360,7 +361,7 @@ export default function HostelManagement() {
     try {
       const response = await apiService.moveStudentHostelAllocation(request.id, {
         hostel_id: selectedHostelId,
-        room_id: selection.roomId ? Number(selection.roomId) : undefined,
+        room_id: selection.roomId || undefined,
         reviewed_by: 'Hostel Head',
       });
       upsertRequest(normalizeRequest(response.data));
@@ -384,6 +385,22 @@ export default function HostelManagement() {
       await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to reject hostel request'));
+    } finally {
+      setApprovingRequestId(null);
+    }
+  };
+
+  const handleVacateAllocation = async (requestId: string | number) => {
+    const confirmed = confirm('Is student ko hostel se vacate karna confirm hai?');
+    if (!confirmed) return;
+    setApprovingRequestId(requestId);
+    try {
+      const response = await apiService.vacateStudentHostelAllocation(requestId);
+      upsertRequest(normalizeRequest(response.data));
+      setMessage('Hostel allocation vacated successfully');
+      await loadHostels();
+    } catch (error: any) {
+      setMessage(readApiError(error, 'Failed to vacate hostel allocation'));
     } finally {
       setApprovingRequestId(null);
     }
@@ -516,7 +533,7 @@ export default function HostelManagement() {
           <div className="mt-4 space-y-3">
             {pendingRequests.map((request) => {
               const selection = getMoveSelection(request);
-              const selectedHostelId = Number(selection.hostelId || request.hostel_id || 0);
+              const selectedHostelId = selection.hostelId || String(request.hostel_id || '');
               const availableRooms = getHostelRooms(selectedHostelId);
 
               return (
@@ -589,7 +606,7 @@ export default function HostelManagement() {
           <div className="mt-4 space-y-3">
             {allocatedStudents.map((request) => {
               const selection = getMoveSelection(request);
-              const selectedHostelId = Number(selection.hostelId || request.hostel_id || 0);
+              const selectedHostelId = selection.hostelId || String(request.hostel_id || '');
               const availableRooms = getHostelRooms(selectedHostelId, request.room_id);
               return (
                 <div key={request.id} className="rounded-2xl border border-slate-200 p-4">
@@ -597,7 +614,7 @@ export default function HostelManagement() {
                   <p className="text-sm text-slate-500">
                     Current Hostel: {request.hostel_name} | Room: {request.room_number || 'Not assigned'} | Bed: {request.assigned_bed_label || 'N/A'}
                   </p>
-                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto]">
                     <select
                       value={selection.hostelId || String(request.hostel_id)}
                       onChange={(e) => updateMoveSelection(request.id, 'hostelId', e.target.value)}
@@ -628,6 +645,14 @@ export default function HostelManagement() {
                       className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
                     >
                       {approvingRequestId === request.id ? 'Moving...' : 'Move Student'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={approvingRequestId === request.id}
+                      onClick={() => handleVacateAllocation(request.id)}
+                      className="rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300 disabled:opacity-50"
+                    >
+                      Vacate
                     </button>
                   </div>
                 </div>
