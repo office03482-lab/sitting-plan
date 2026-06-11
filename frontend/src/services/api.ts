@@ -220,8 +220,10 @@ class ApiService {
     return this.api.get<Student>(`/students/${studentId}`);
   }
 
-  async updateStudent(studentId: string | number, data: Partial<Student>) {
-    return this.api.put<Student>(`/students/${studentId}`, data);
+  async updateStudent(studentId: string | number, data: Partial<Student>, schoolId?: string | number) {
+    return this.api.put<Student>(`/students/${studentId}`, data, {
+      params: schoolId ? { school_id: schoolId } : undefined,
+    });
   }
 
   async deleteStudent(studentId: string | number) {

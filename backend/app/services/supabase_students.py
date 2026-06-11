@@ -279,6 +279,29 @@ def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "class_name": class_name or batch_name if batch_name else None,
         "is_active": bool(payload.get("is_active", True)),
     }
+    metadata = {
+        "preferred_hostel_id": payload.get("preferred_hostel_id"),
+        "hostel_request_status": _normalize(payload.get("hostel_request_status")) or ("pending" if payload.get("hostel_required") and payload.get("preferred_hostel_id") else "not_requested"),
+        "assigned_hostel_id": payload.get("assigned_hostel_id"),
+        "assigned_room_id": payload.get("assigned_room_id"),
+        "assigned_bed_label": _normalize(payload.get("assigned_bed_label")) or None,
+        "hostel_notes": _normalize(payload.get("hostel_notes")) or None,
+        "reference_name": _normalize(payload.get("reference_name")) or None,
+        "reference_number": _normalize(payload.get("reference_number")) or None,
+        "reference_remark": _normalize(payload.get("reference_remark")) or None,
+    }
+    row["metadata"] = metadata
+    row["hostel_required"] = bool(payload.get("hostel_required", False))
+    if "father_name" in payload:
+        row["father_name"] = _normalize(payload.get("father_name")) or None
+    if "section" in payload:
+        row["section"] = _normalize(payload.get("section")) or None
+    if "academic_session" in payload:
+        row["academic_session"] = _normalize(payload.get("academic_session")) or None
+    if "special_needs" in payload:
+        row["special_needs"] = _normalize(payload.get("special_needs")) or None
+    if "boarding_type" in payload:
+        row["boarding_type"] = _normalize(payload.get("boarding_type")) or None
     if "email" in payload and payload["email"]:
         row["email"] = _normalize(payload["email"])
     if "phone" in payload and payload["phone"]:

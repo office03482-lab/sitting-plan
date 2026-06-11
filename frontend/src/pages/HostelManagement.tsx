@@ -105,14 +105,28 @@ const normalizeRequest = (request: any): StudentHostelRequest => ({
   hostel_name: String(request?.hostel_name || ''),
   room_id: request?.room_id ?? undefined,
   room_number: request?.room_number ? String(request.room_number) : undefined,
+  current_room: request?.current_room ? String(request.current_room) : undefined,
   requested_notes: request?.requested_notes ? String(request.requested_notes) : undefined,
   status: String(request?.status || ''),
+  request_status: String(request?.request_status || request?.status || ''),
+  allocation_active: Boolean(request?.allocation_active),
+  allocation_status: request?.allocation_status ? String(request.allocation_status) : undefined,
   assigned_bed_label: request?.assigned_bed_label ? String(request.assigned_bed_label) : undefined,
   reviewed_by: request?.reviewed_by ? String(request.reviewed_by) : undefined,
   review_notes: request?.review_notes ? String(request.review_notes) : undefined,
   requested_at: String(request?.requested_at || ''),
   reviewed_at: request?.reviewed_at ? String(request.reviewed_at) : undefined,
+  vacated_at: request?.vacated_at ? String(request.vacated_at) : undefined,
+  vacated_by: request?.vacated_by ? String(request.vacated_by) : undefined,
 });
+
+const getHistoryStatusLabel = (request: StudentHostelRequest) => {
+  if (request.request_status === 'vacated') return 'vacated';
+  if (request.request_status === 'rejected') return 'rejected';
+  if ((request.review_notes || '').toLowerCase().includes('move')) return 'moved';
+  if (request.request_status === 'approved' && request.allocation_active) return 'approved';
+  return request.request_status || request.status || 'unknown';
+};
 
 export default function HostelManagement() {
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
@@ -125,6 +139,7 @@ export default function HostelManagement() {
   const [editingHostelId, setEditingHostelId] = useState<string | number | null>(null);
   const [deletingHostelId, setDeletingHostelId] = useState<string | number | null>(null);
   const [approvingRequestId, setApprovingRequestId] = useState<string | number | null>(null);
+  const [expandedHostelId, setExpandedHostelId] = useState<string | number | null>(null);
   const [moveSelections, setMoveSelections] = useState<Record<string, { hostelId: string; roomId: string }>>({});
   const [hostelForm, setHostelForm] = useState<HostelFormState>(initialHostelForm);
   const [roomForms, setRoomForms] = useState<Record<string, string>>({});
@@ -150,28 +165,14 @@ export default function HostelManagement() {
 
   const loadRequests = async () => {
     const schoolId = user?.school_id || 1;
-    const [pendingRes, approvedRes] = await Promise.allSettled([
-      apiService.listStudentHostelRequests(schoolId, 'pending'),
-      apiService.listStudentHostelRequests(schoolId, 'approved'),
-    ]);
-
-    const nextRequests: StudentHostelRequest[] = [];
-    const errors: string[] = [];
-
-    if (pendingRes.status === 'fulfilled') {
-      nextRequests.push(...toArray(pendingRes.value.data).map(normalizeRequest));
-    } else {
-      errors.push(readApiError(pendingRes.reason, 'Failed to load pending hostel requests'));
+    try {
+      const response = await apiService.listStudentHostelRequests(schoolId);
+      setRequests(toArray(response.data).map(normalizeRequest));
+      return [] as string[];
+    } catch (error: any) {
+      setRequests([]);
+      return [readApiError(error, 'Failed to load hostel requests')];
     }
-
-    if (approvedRes.status === 'fulfilled') {
-      nextRequests.push(...toArray(approvedRes.value.data).map(normalizeRequest));
-    } else {
-      errors.push(readApiError(approvedRes.reason, 'Failed to load approved hostel allocations'));
-    }
-
-    setRequests(nextRequests);
-    return errors;
   };
 
   const loadAll = async () => {
@@ -206,8 +207,9 @@ export default function HostelManagement() {
     void loadAll();
   }, [canRunRequests]);
 
-  const pendingRequests = requests.filter((request) => request.status === 'pending');
-  const allocatedStudents = requests.filter((request) => request.status === 'approved');
+  const pendingRequests = requests.filter((request) => request.request_status === 'pending');
+  const activeAllocations = requests.filter((request) => request.request_status === 'approved' && request.allocation_active);
+  const allocationHistory = requests.filter((request) => request.request_status !== 'pending');
   const isEditing = editingHostelId !== null;
   const getMoveSelection = (request: StudentHostelRequest) => moveSelections[request.id] || {
     hostelId: String(request.hostel_id || ''),
@@ -227,6 +229,10 @@ export default function HostelManagement() {
     (hostels.find((hostel) => String(hostel.id) === String(hostelId))?.rooms || []).filter(
       (room) => room.available_beds > 0 || String(room.id) === String(includeRoomId),
     );
+  const toggleHostelRooms = (hostelId: string | number) => {
+    setExpandedHostelId((current) => (String(current) === String(hostelId) ? null : hostelId));
+  };
+  const isRoomFull = (room: HostelRoom) => room.available_beds <= 0 || room.occupied_beds >= room.total_beds;
 
   const handleCreateHostel = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -338,6 +344,7 @@ export default function HostelManagement() {
         hostel_id: selectedHostelId,
         room_id: selectedRoomId || undefined,
         reviewed_by: 'Hostel Head',
+        review_notes: 'Approved hostel allocation',
       });
       upsertRequest(normalizeRequest(response.data));
       setMessage(`Hostel approved for ${request.student_name}`);
@@ -363,6 +370,7 @@ export default function HostelManagement() {
         hostel_id: selectedHostelId,
         room_id: selection.roomId || undefined,
         reviewed_by: 'Hostel Head',
+        review_notes: 'Moved hostel allocation',
       });
       upsertRequest(normalizeRequest(response.data));
       setMessage(`Hostel moved for ${request.student_name}`);
@@ -379,6 +387,7 @@ export default function HostelManagement() {
     try {
       const response = await apiService.rejectStudentHostelRequest(requestId, {
         reviewed_by: 'Hostel Head',
+        review_notes: 'Rejected hostel request',
       });
       upsertRequest(normalizeRequest(response.data));
       setMessage('Hostel request rejected');
@@ -426,8 +435,8 @@ export default function HostelManagement() {
             <p className="mt-2 text-3xl font-bold text-amber-700">{pendingRequests.length}</p>
           </div>
           <div className="rounded-3xl bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Allocated Students</p>
-            <p className="mt-2 text-3xl font-bold text-emerald-700">{allocatedStudents.length}</p>
+            <p className="text-sm font-medium text-slate-500">Active Allocations</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-700">{activeAllocations.length}</p>
           </div>
         </div>
 
@@ -476,10 +485,35 @@ export default function HostelManagement() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-900">{hostel.name}</p>
-                      <p className="text-sm text-slate-500">Head: {hostel.hostel_head || 'N/A'} | Warden: {hostel.warden_name || 'N/A'}</p>
-                      <p className="text-sm text-slate-500">Rooms: {hostel.total_rooms} | Seats: {hostel.occupied_beds}/{hostel.total_capacity} occupied | {hostel.available_beds} available</p>
+                      <p className="text-sm text-slate-500">Head: {hostel.hostel_head || 'N/A'}</p>
+                      <p className="text-sm text-slate-500">Warden: {hostel.warden_name || 'N/A'}</p>
+                      <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl bg-slate-50 px-3 py-2">
+                          <span className="block text-xs uppercase tracking-wide text-slate-400">Rooms</span>
+                          <span className="font-semibold text-slate-900">{hostel.total_rooms}</span>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 px-3 py-2">
+                          <span className="block text-xs uppercase tracking-wide text-slate-400">Capacity</span>
+                          <span className="font-semibold text-slate-900">{hostel.total_capacity}</span>
+                        </div>
+                        <div className="rounded-xl bg-amber-50 px-3 py-2">
+                          <span className="block text-xs uppercase tracking-wide text-amber-500">Occupied</span>
+                          <span className="font-semibold text-amber-800">{hostel.occupied_beds}</span>
+                        </div>
+                        <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                          <span className="block text-xs uppercase tracking-wide text-emerald-500">Available</span>
+                          <span className="font-semibold text-emerald-800">{hostel.available_beds}</span>
+                        </div>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleHostelRooms(hostel.id)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        {String(expandedHostelId) === String(hostel.id) ? 'Hide Rooms' : 'View Rooms'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleEditHostel(hostel)}
@@ -497,24 +531,46 @@ export default function HostelManagement() {
                       </button>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-2 md:grid-cols-2">
-                    {hostel.rooms.map((room) => (
-                      <div key={room.id || room.room_number} className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                        Room {room.room_number}: {room.occupied_beds}/{room.total_beds} beds
+                  {String(expandedHostelId) === String(hostel.id) ? (
+                    <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                      <div className="grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                        {hostel.rooms.map((room) => (
+                          <div
+                            key={room.id || room.room_number}
+                            className={`rounded-xl border px-3 py-2 text-sm ${
+                              isRoomFull(room)
+                                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                : 'border-slate-200 bg-white text-slate-700'
+                            }`}
+                          >
+                            <div className="font-semibold text-slate-900">{room.room_number}</div>
+                            <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+                              <span>
+                                {room.occupied_beds}/{room.total_beds}
+                              </span>
+                              <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                                isRoomFull(room) ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                              }`}>
+                                {isRoomFull(room) ? 'FULL' : `${room.available_beds} free`}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
-                    <input
-                      value={roomForms[hostel.id] || ''}
-                      onChange={(e) => setRoomForms((current) => ({ ...current, [hostel.id]: e.target.value }))}
-                      placeholder="Add room number"
-                      className={inputClass}
-                    />
-                    <button type="button" onClick={() => handleAddHostelRoom(hostel.id)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-                      Add Room
-                    </button>
-                  </div>
+                      {hostel.rooms.length === 0 ? <p className="text-sm text-slate-500">No rooms added yet.</p> : null}
+                      <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto]">
+                        <input
+                          value={roomForms[hostel.id] || ''}
+                          onChange={(e) => setRoomForms((current) => ({ ...current, [hostel.id]: e.target.value }))}
+                          placeholder="Add room number"
+                          className={inputClass}
+                        />
+                        <button type="button" onClick={() => handleAddHostelRoom(hostel.id)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                          Add Room
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {!loading && hostels.length === 0 ? <p className="text-sm text-slate-500">No hostels created yet.</p> : null}
@@ -598,13 +654,13 @@ export default function HostelManagement() {
         <section className="rounded-3xl bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-semibold text-slate-900">Allocated Students</h2>
-              <p className="text-sm text-slate-500">Approved students ko yahan se dusre hostel ya room me move kar sakte ho.</p>
+              <h2 className="text-xl font-semibold text-slate-900">Active Allocations</h2>
+              <p className="text-sm text-slate-500">Sirf active hostel allocations yahan dikhengi. Vacated ya rejected requests history me jayengi.</p>
             </div>
-            <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Allocated {allocatedStudents.length}</div>
+            <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Active {activeAllocations.length}</div>
           </div>
           <div className="mt-4 space-y-3">
-            {allocatedStudents.map((request) => {
+            {activeAllocations.map((request) => {
               const selection = getMoveSelection(request);
               const selectedHostelId = selection.hostelId || String(request.hostel_id || '');
               const availableRooms = getHostelRooms(selectedHostelId, request.room_id);
@@ -612,7 +668,7 @@ export default function HostelManagement() {
                 <div key={request.id} className="rounded-2xl border border-slate-200 p-4">
                   <p className="font-semibold text-slate-900">{request.student_name}</p>
                   <p className="text-sm text-slate-500">
-                    Current Hostel: {request.hostel_name} | Room: {request.room_number || 'Not assigned'} | Bed: {request.assigned_bed_label || 'N/A'}
+                    Current Hostel: {request.hostel_name} | Room: {request.current_room || request.room_number || 'Not assigned'} | Bed: {request.assigned_bed_label || 'N/A'}
                   </p>
                   <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_auto_auto]">
                     <select
@@ -658,7 +714,53 @@ export default function HostelManagement() {
                 </div>
               );
             })}
-            {allocatedStudents.length === 0 ? <p className="text-sm text-slate-500">No approved hostel allocations yet.</p> : null}
+            {activeAllocations.length === 0 ? <p className="text-sm text-slate-500">No active hostel allocations.</p> : null}
+          </div>
+        </section>
+
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Allocation History</h2>
+              <p className="text-sm text-slate-500">Approved, vacated, aur rejected request trail yahan visible rahega.</p>
+            </div>
+            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">History {allocationHistory.length}</div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="text-slate-500">
+                <tr>
+                  <th className="pb-3 pr-4 font-medium">Student</th>
+                  <th className="pb-3 pr-4 font-medium">Hostel</th>
+                  <th className="pb-3 pr-4 font-medium">Room</th>
+                  <th className="pb-3 pr-4 font-medium">Bed</th>
+                  <th className="pb-3 pr-4 font-medium">Status</th>
+                  <th className="pb-3 pr-4 font-medium">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {allocationHistory.map((request) => (
+                  <tr key={`history-${request.id}`}>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-slate-900">{request.student_name}</div>
+                      <div className="text-xs text-slate-500">{request.roll_number || 'No roll number'}</div>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-700">{request.hostel_name || '-'}</td>
+                    <td className="py-3 pr-4 text-slate-700">{request.current_room || request.room_number || '-'}</td>
+                    <td className="py-3 pr-4 text-slate-700">{request.assigned_bed_label || '-'}</td>
+                    <td className="py-3 pr-4">
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                        {getHistoryStatusLabel(request)}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 text-slate-500">
+                      {request.vacated_at || request.reviewed_at || request.requested_at || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {allocationHistory.length === 0 ? <p className="text-sm text-slate-500">No allocation history yet.</p> : null}
           </div>
         </section>
       </div>

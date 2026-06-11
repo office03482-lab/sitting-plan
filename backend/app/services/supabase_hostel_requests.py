@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -66,9 +66,11 @@ def _serialize_request(
     student_id = _normalize(request_row.get("student_id"))
     student = students_map.get(student_id, {})
     hostel_id = _normalize(request_row.get("hostel_id"))
-    allocation = active_allocations_by_student.get(student_id)
-    room_id = _normalize((allocation or {}).get("hostel_room_id") or request_row.get("preferred_room_id"))
+    request_status = _normalize(request_row.get("status")) or "pending"
+    allocation = active_allocations_by_student.get(student_id) if request_status == "approved" else None
+    room_id = _normalize((allocation or {}).get("hostel_room_id"))
     reviewed_by_profile_id = _normalize(request_row.get("reviewed_by_profile_id"))
+    vacated_by_profile_id = _normalize(request_row.get("vacated_by_profile_id"))
 
     room = rooms_map.get(room_id, {})
     hostel = hostels_map.get(_normalize((allocation or {}).get("hostel_id") or hostel_id), {})
@@ -87,13 +89,19 @@ def _serialize_request(
         "hostel_name": _normalize(hostel.get("name")),
         "room_id": room.get("id") or None,
         "room_number": room.get("room_number"),
+        "current_room": room.get("room_number"),
         "requested_notes": request_row.get("requested_notes"),
-        "status": _normalize(request_row.get("status")) or "pending",
+        "status": request_status,
+        "request_status": request_status,
+        "allocation_active": bool(allocation),
+        "allocation_status": _normalize((allocation or {}).get("allocation_status")) or None,
         "assigned_bed_label": (allocation or {}).get("bed_label"),
         "reviewed_by": _profile_name(reviewed_profiles_map.get(reviewed_by_profile_id)),
         "review_notes": request_row.get("review_notes"),
         "requested_at": request_row.get("created_at"),
         "reviewed_at": request_row.get("updated_at") if reviewed_by_profile_id else None,
+        "vacated_at": request_row.get("vacated_at"),
+        "vacated_by": _profile_name(reviewed_profiles_map.get(vacated_by_profile_id)),
     }
 
 
@@ -206,7 +214,16 @@ def list_hostel_requests(school_id: str, status_filter: Optional[str] = None) ->
         )
     ]
     active_allocations_by_student = {_normalize(row.get("student_id")): row for row in allocation_rows}
-    reviewed_profiles_map = _load_profiles_map([_normalize(row.get("reviewed_by_profile_id")) for row in request_rows])
+    reviewed_profiles_map = _load_profiles_map(
+        [
+            _normalize(row.get("reviewed_by_profile_id"))
+            for row in request_rows
+        ]
+        + [
+            _normalize(row.get("vacated_by_profile_id"))
+            for row in request_rows
+        ]
+    )
 
     return [
         _serialize_request(
@@ -332,6 +349,8 @@ def approve_hostel_request(
             "status": "approved",
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
+            "vacated_at": None,
+            "vacated_by_profile_id": None,
         }
     ).eq("school_id", school_id).eq("id", request_id).execute()
     _table("hostel_allocations").insert(
@@ -416,6 +435,8 @@ def move_hostel_allocation(
             "status": "approved",
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
+            "vacated_at": None,
+            "vacated_by_profile_id": None,
         }
     ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
@@ -463,6 +484,8 @@ def reject_hostel_request(
             "status": "rejected",
             "review_notes": review_notes,
             "reviewed_by_profile_id": actor_profile_id or None,
+            "vacated_at": None,
+            "vacated_by_profile_id": None,
         }
     ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
@@ -506,9 +529,11 @@ def vacate_hostel_allocation(
     _recalculate_room_occupancy(school_id, vacated_room_id)
     _table("hostel_requests").update(
         {
-            "status": "approved",
+            "status": "vacated",
             "review_notes": "Vacated",
             "reviewed_by_profile_id": actor_profile_id or None,
+            "vacated_at": datetime.now(timezone.utc).isoformat(),
+            "vacated_by_profile_id": actor_profile_id or None,
         }
     ).eq("school_id", school_id).eq("id", request_id).execute()
     _update_student_hostel_metadata(
@@ -516,7 +541,7 @@ def vacate_hostel_allocation(
         student_id,
         hostel_required=True,
         preferred_hostel_id=_normalize(request_row.get("hostel_id")) or None,
-        hostel_request_status="approved",
+        hostel_request_status="vacated",
         assigned_hostel_id=None,
         assigned_room_id=None,
         assigned_bed_label=None,

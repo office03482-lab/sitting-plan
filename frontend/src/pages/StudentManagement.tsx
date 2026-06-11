@@ -373,6 +373,7 @@ export default function StudentManagement() {
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const user = useAuthStore((state) => state.user);
+  const currentSchoolId = user?.school_id || 1;
   const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
@@ -1311,7 +1312,7 @@ export default function StudentManagement() {
         special_needs: toNullableString(studentForm.specialNeeds) as unknown as string | undefined,
         boarding_type: toNullableString(studentForm.boardingType) as unknown as string | undefined,
         hostel_required: studentForm.hostelRequired,
-        preferred_hostel_id: studentForm.hostelRequired && studentForm.preferredHostelId ? Number(studentForm.preferredHostelId) : undefined,
+        preferred_hostel_id: studentForm.hostelRequired && studentForm.preferredHostelId ? studentForm.preferredHostelId : undefined,
         hostel_notes: studentForm.hostelRequired
           ? (toNullableString(studentForm.hostelRequestNote) as unknown as string | undefined)
           : (null as unknown as string | undefined),
@@ -1334,12 +1335,12 @@ export default function StudentManagement() {
       }
 
       if (editStudent) {
-        const response = await apiService.updateStudent(editStudent.id, payload);
+        const response = await apiService.updateStudent(editStudent.id, payload, currentSchoolId);
         if (sendHostelRequestOnSubmit && studentForm.hostelRequired && studentForm.preferredHostelId) {
           await apiService.createStudentHostelRequest(editStudent.id, {
-            hostel_id: Number(studentForm.preferredHostelId),
+            hostel_id: studentForm.preferredHostelId,
             requested_notes: studentForm.hostelRequestNote.trim() || undefined,
-          });
+          }, currentSchoolId);
         }
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
@@ -1350,12 +1351,12 @@ export default function StudentManagement() {
               : 'Student updated successfully'
         );
       } else {
-        const response = await apiService.createStudent(payload);
+        const response = await apiService.createStudent(payload, currentSchoolId);
         if (sendHostelRequestOnSubmit && studentForm.hostelRequired && studentForm.preferredHostelId) {
           await apiService.createStudentHostelRequest(response.data.id, {
-            hostel_id: Number(studentForm.preferredHostelId),
+            hostel_id: studentForm.preferredHostelId,
             requested_notes: studentForm.hostelRequestNote.trim() || undefined,
-          });
+          }, currentSchoolId);
         }
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(

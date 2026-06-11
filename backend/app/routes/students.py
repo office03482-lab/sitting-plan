@@ -50,6 +50,7 @@ from app.services.supabase_students import (
     find_student_by_roll_number,
     get_student as get_student_supabase,
     list_students as list_students_supabase,
+    upsert_student as upsert_student_supabase,
 )
 from app.services.bulk_action_requests import create_bulk_action_request, is_platform_admin_user
 import re
@@ -315,6 +316,7 @@ def serialize_student(student: Student) -> StudentResponse:
 
 
 def serialize_hostel_request(request: StudentHostelRequest) -> StudentHostelRequestResponse:
+    is_active_allocation = request.status == "approved" and bool(request.room_id)
     return StudentHostelRequestResponse(
         id=request.id,
         student_id=request.student_id,
@@ -330,13 +332,19 @@ def serialize_hostel_request(request: StudentHostelRequest) -> StudentHostelRequ
         hostel_name=request.hostel.name if request.hostel else "",
         room_id=request.room_id,
         room_number=request.room.room_number if request.room else None,
+        current_room=request.room.room_number if request.room else None,
         requested_notes=request.requested_notes,
         status=request.status,
+        request_status=request.status,
+        allocation_active=is_active_allocation,
+        allocation_status="active" if is_active_allocation else ("released" if request.status == "vacated" else None),
         assigned_bed_label=request.assigned_bed_label,
         reviewed_by=request.reviewed_by,
         review_notes=request.review_notes,
         requested_at=request.requested_at,
         reviewed_at=request.reviewed_at,
+        vacated_at=request.reviewed_at if request.status == "vacated" else None,
+        vacated_by=request.reviewed_by if request.status == "vacated" else None,
     )
 
 
@@ -783,6 +791,21 @@ async def create_student(
     """
     Create a new student
     """
+    if is_uuid_school_id(school_id):
+        payload = student.dict(exclude_unset=True)
+        payload["preferred_hostel_id"] = str(payload["preferred_hostel_id"]).strip() if payload.get("preferred_hostel_id") is not None else None
+        db_student = upsert_student_supabase(school_id, payload)
+        if db_student.get("hostel_required") and db_student.get("preferred_hostel_id"):
+            create_or_update_hostel_request_supabase(
+                school_id,
+                str(db_student["id"]).strip(),
+                hostel_id=str(db_student["preferred_hostel_id"]).strip(),
+                requested_notes=payload.get("hostel_notes"),
+            )
+            db_student = get_student_supabase(school_id, str(db_student["id"]).strip())
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return db_student
+
     ensure_students_legacy_routes_available(school_id)
     # Check if roll number already exists
     existing = db.query(Student).filter(
@@ -1241,6 +1264,7 @@ async def vacate_hostel_allocation(
         raise HTTPException(status_code=400, detail="Only approved hostel allocations can be vacated")
 
     previous_room_id = request.room_id
+    request.status = "vacated"
     request.room_id = None
     request.assigned_bed_label = None
     request.reviewed_by = actor.get("user_id") or request.reviewed_by
@@ -1252,13 +1276,13 @@ async def vacate_hostel_allocation(
         student.assigned_hostel_id = None
         student.assigned_room_id = None
         student.assigned_bed_label = None
-        student.hostel_request_status = "approved"
+        student.hostel_request_status = "vacated"
 
     sync_hostel_room_occupancy(db, previous_room_id)
     db.commit()
     if student:
         _sync_supabase_student_hostel(
-            school_id, student.roll_number, "approved",
+            school_id, student.roll_number, "vacated",
             assigned_room_id=None,
             db=db,
         )
@@ -1408,6 +1432,22 @@ async def update_student(
     """
     Update student information
     """
+    if is_uuid_school_id(school_id):
+        existing_student = get_student_supabase(school_id, student_id)
+        payload = existing_student | update_data.dict(exclude_unset=True)
+        payload["preferred_hostel_id"] = str(payload["preferred_hostel_id"]).strip() if payload.get("preferred_hostel_id") is not None else None
+        updated_student = upsert_student_supabase(school_id, payload)
+        if updated_student.get("hostel_required") and updated_student.get("preferred_hostel_id"):
+            create_or_update_hostel_request_supabase(
+                school_id,
+                str(updated_student["id"]).strip(),
+                hostel_id=str(updated_student["preferred_hostel_id"]).strip(),
+                requested_notes=payload.get("hostel_notes"),
+            )
+            updated_student = get_student_supabase(school_id, str(updated_student["id"]).strip())
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return updated_student
+
     ensure_students_legacy_routes_available(school_id)
     try:
         legacy_student_id = int(str(student_id).strip())

@@ -364,13 +364,19 @@ class StudentHostelRequestResponse(BaseModel):
     hostel_name: str
     room_id: Optional[str | int] = None
     room_number: Optional[str] = None
+    current_room: Optional[str] = None
     requested_notes: Optional[str] = None
     status: str
+    request_status: str
+    allocation_active: bool = False
+    allocation_status: Optional[str] = None
     assigned_bed_label: Optional[str] = None
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
     requested_at: datetime
     reviewed_at: Optional[datetime] = None
+    vacated_at: Optional[datetime] = None
+    vacated_by: Optional[str] = None
 
 
 # ==================== Room Schemas ====================

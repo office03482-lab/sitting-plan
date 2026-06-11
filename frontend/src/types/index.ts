@@ -192,11 +192,11 @@ export interface Student {
   requires_extra_time: boolean;
   boarding_type?: string;
   hostel_required?: boolean;
-  preferred_hostel_id?: number;
+  preferred_hostel_id?: string | number;
   hostel_request_status?: string;
-  assigned_hostel_id?: number;
+  assigned_hostel_id?: string | number;
   assigned_hostel_name?: string;
-  assigned_room_id?: number;
+  assigned_room_id?: string | number;
   assigned_room_number?: string;
   assigned_bed_label?: string;
   hostel_notes?: string;
@@ -264,13 +264,19 @@ export interface StudentHostelRequest {
   hostel_name: string;
   room_id?: string | number;
   room_number?: string;
+  current_room?: string;
   requested_notes?: string;
   status: string;
+  request_status: string;
+  allocation_active: boolean;
+  allocation_status?: string;
   assigned_bed_label?: string;
   reviewed_by?: string;
   review_notes?: string;
   requested_at: string;
   reviewed_at?: string;
+  vacated_at?: string;
+  vacated_by?: string;
 }
 
 export interface StudentDashboard {
