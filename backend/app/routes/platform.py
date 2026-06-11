@@ -17,9 +17,6 @@ from app.schemas import (
 )
 from app.services.bulk_action_requests import _serialize_bulk_action_request
 from app.services.supabase_admin import get_supabase_admin_client
-from app.database import get_db
-from sqlalchemy.orm import Session
-
 router = APIRouter(prefix="/api/platform", tags=["Platform Administration"])
 
 
@@ -84,7 +81,6 @@ def _serialize_event(row: dict[str, Any], profiles_map: dict[str, dict[str, Any]
 @router.get("/dashboard-summary", response_model=PlatformDashboardSummaryResponse)
 def get_platform_dashboard_summary(
     _: User = Depends(require_platform_admin),
-    db: Session = Depends(get_db),
 ):
     supabase = get_supabase_admin_client()
 
@@ -145,7 +141,23 @@ def get_platform_dashboard_summary(
         for row in event_rows
     ]
 
-    active_users_count = db.query(User).filter(User.is_active.is_(True)).count()
+    active_memberships_count = (
+        supabase.table("school_memberships")
+        .select("profile_id", count="exact")
+        .eq("is_active", True)
+        .eq("status", "active")
+        .execute()
+    )
+    active_profiles_count = (
+        supabase.table("profiles")
+        .select("id", count="exact")
+        .eq("is_active", True)
+        .execute()
+    )
+    active_users_count = max(
+        int(active_memberships_count.count or 0),
+        int(active_profiles_count.count or 0),
+    )
 
     return PlatformDashboardSummaryResponse(
         workflow_counts=workflow_counts,

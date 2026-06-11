@@ -301,8 +301,8 @@ export default function InventoryManagement() {
   const [students, setStudents] = useState<Student[]>([]);
   const [reportData, setReportData] = useState<InventoryReportResponse | null>(null);
   const [historyEntries, setHistoryEntries] = useState<InventoryHistoryEntry[]>([]);
-  const [historyMaterialId, setHistoryMaterialId] = useState<number | null>(null);
-  const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null);
+  const [historyMaterialId, setHistoryMaterialId] = useState<string | number | null>(null);
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | number | null>(null);
 
   const [inventorySubjects, setInventorySubjects] = useState<InventorySubject[]>([]);
   const [inventorySets, setInventorySets] = useState<InventorySet[]>([]);
@@ -312,23 +312,23 @@ export default function InventoryManagement() {
   const [materialSearch, setMaterialSearch] = useState('');
   const [materialSubjectFilter, setMaterialSubjectFilter] = useState('');
   const [materialBatchFilter, setMaterialBatchFilter] = useState('');
-  const [selectedCatalogSubjectId, setSelectedCatalogSubjectId] = useState<number | null>(null);
-  const [selectedCatalogSetId, setSelectedCatalogSetId] = useState<number | null>(null);
+  const [selectedCatalogSubjectId, setSelectedCatalogSubjectId] = useState<string | number | null>(null);
+  const [selectedCatalogSetId, setSelectedCatalogSetId] = useState<string | number | null>(null);
   const [materialForm, setMaterialForm] = useState<MaterialFormState>(initialMaterialForm);
-  const [editingMaterialId, setEditingMaterialId] = useState<number | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<string | number | null>(null);
   const [materialImportFile, setMaterialImportFile] = useState<File | null>(null);
   const [materialImporting, setMaterialImporting] = useState(false);
   const [materialImportResult, setMaterialImportResult] = useState<InventoryMaterialImportResponse | null>(null);
 
   const [subjectForm, setSubjectForm] = useState<SubjectFormState>(initialSubjectForm);
-  const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
+  const [editingSubjectId, setEditingSubjectId] = useState<string | number | null>(null);
   const [setForm, setSetForm] = useState<SetFormState>(initialSetForm);
-  const [editingSetId, setEditingSetId] = useState<number | null>(null);
+  const [editingSetId, setEditingSetId] = useState<string | number | null>(null);
   const [volumeForm, setVolumeForm] = useState<VolumeFormState>(initialVolumeForm);
-  const [editingVolumeId, setEditingVolumeId] = useState<number | null>(null);
+  const [editingVolumeId, setEditingVolumeId] = useState<string | number | null>(null);
 
   const [supplierForm, setSupplierForm] = useState(initialSupplierForm);
-  const [editingSupplierId, setEditingSupplierId] = useState<number | null>(null);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | number | null>(null);
 
   const [stockInForm, setStockInForm] = useState(initialStockInForm);
   const [stockOutForm, setStockOutForm] = useState(initialStockOutForm);
@@ -440,6 +440,9 @@ export default function InventoryManagement() {
     error?.hint ||
     error?.message ||
     fallback;
+
+  const sameId = (left: string | number | null | undefined, right: string | number | null | undefined) =>
+    String(left ?? '') === String(right ?? '');
 
   const buildInventoryFailureMessage = (failedEntries: Array<{ key: string; reason: any }>) => {
     if (!failedEntries.length) {
@@ -815,14 +818,14 @@ export default function InventoryManagement() {
         total_titles: new Set(item.entries.map((entry: StudentIssueEntry) => entry.material_name).filter(Boolean)).size,
         entries: [...item.entries].sort(
           (a: StudentIssueEntry, b: StudentIssueEntry) =>
-            new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime() || b.id - a.id,
+            new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime() || String(b.id).localeCompare(String(a.id)),
         ),
       }))
       .sort((a, b) => (b.latest_date_value || 0) - (a.latest_date_value || 0) || a.student_name.localeCompare(b.student_name));
   }, [studentIssueEntries]);
 
   const activeSubjects = useMemo(
-    () => inventorySubjects.filter((item) => item.is_active || item.id === Number(materialForm.subject_id)),
+    () => inventorySubjects.filter((item) => item.is_active || sameId(item.id, materialForm.subject_id)),
     [inventorySubjects, materialForm.subject_id]
   );
 
@@ -830,8 +833,8 @@ export default function InventoryManagement() {
     () =>
       inventorySets.filter(
         (item) =>
-          (!materialForm.subject_id || item.subject_id === Number(materialForm.subject_id)) &&
-          (item.is_active || item.id === Number(materialForm.set_id))
+          (!materialForm.subject_id || sameId(item.subject_id, materialForm.subject_id)) &&
+          (item.is_active || sameId(item.id, materialForm.set_id))
       ),
     [inventorySets, materialForm.subject_id, materialForm.set_id]
   );
@@ -840,8 +843,8 @@ export default function InventoryManagement() {
     () =>
       inventoryVolumes.filter(
         (item) =>
-          (!materialForm.set_id || item.set_id === Number(materialForm.set_id)) &&
-          (item.is_active || item.id === Number(materialForm.volume_id))
+          (!materialForm.set_id || sameId(item.set_id, materialForm.set_id)) &&
+          (item.is_active || sameId(item.id, materialForm.volume_id))
       ),
     [inventoryVolumes, materialForm.set_id, materialForm.volume_id]
   );
@@ -862,7 +865,7 @@ export default function InventoryManagement() {
       return;
     }
 
-    if (!groupedCatalog.some((subject) => subject.id === selectedCatalogSubjectId)) {
+    if (!groupedCatalog.some((subject) => sameId(subject.id, selectedCatalogSubjectId))) {
       const nextSubject = groupedCatalog[0];
       setSelectedCatalogSubjectId(nextSubject.id);
       setSelectedCatalogSetId(nextSubject.sets[0]?.id ?? null);
@@ -870,7 +873,7 @@ export default function InventoryManagement() {
   }, [groupedCatalog, selectedCatalogSubjectId]);
 
   const selectedCatalogSubject = useMemo(
-    () => groupedCatalog.find((subject) => subject.id === selectedCatalogSubjectId) ?? groupedCatalog[0] ?? null,
+    () => groupedCatalog.find((subject) => sameId(subject.id, selectedCatalogSubjectId)) ?? groupedCatalog[0] ?? null,
     [groupedCatalog, selectedCatalogSubjectId]
   );
 
@@ -880,20 +883,20 @@ export default function InventoryManagement() {
       return;
     }
 
-    if (!selectedCatalogSubject.sets.some((inventorySet) => inventorySet.id === selectedCatalogSetId)) {
+    if (!selectedCatalogSubject.sets.some((inventorySet) => sameId(inventorySet.id, selectedCatalogSetId))) {
       setSelectedCatalogSetId(selectedCatalogSubject.sets[0]?.id ?? null);
     }
   }, [selectedCatalogSetId, selectedCatalogSubject]);
 
   const selectedCatalogSet = useMemo(
-    () => selectedCatalogSubject?.sets.find((inventorySet) => inventorySet.id === selectedCatalogSetId) ?? selectedCatalogSubject?.sets[0] ?? null,
+    () => selectedCatalogSubject?.sets.find((inventorySet) => sameId(inventorySet.id, selectedCatalogSetId)) ?? selectedCatalogSubject?.sets[0] ?? null,
     [selectedCatalogSetId, selectedCatalogSubject]
   );
 
   const scopedMaterials = useMemo(() => {
     return filteredMaterials.filter((item) => {
-      if (selectedCatalogSubject && item.subject_id !== selectedCatalogSubject.id) return false;
-      if (selectedCatalogSet && item.set_id !== selectedCatalogSet.id) return false;
+      if (selectedCatalogSubject && !sameId(item.subject_id, selectedCatalogSubject.id)) return false;
+      if (selectedCatalogSet && !sameId(item.set_id, selectedCatalogSet.id)) return false;
       return true;
     });
   }, [filteredMaterials, selectedCatalogSet, selectedCatalogSubject]);
@@ -904,7 +907,7 @@ export default function InventoryManagement() {
       return;
     }
 
-    if (!filteredMaterials.some((item) => item.id === selectedMaterialId)) {
+    if (!filteredMaterials.some((item) => sameId(item.id, selectedMaterialId))) {
       setSelectedMaterialId(filteredMaterials[0].id);
     }
   }, [filteredMaterials, selectedMaterialId]);
@@ -920,18 +923,18 @@ export default function InventoryManagement() {
   );
 
   const supplierMaterialSummary = useMemo(() => {
-    const summary = new Map<number, {
+    const summary = new Map<string, {
       totalQuantity: number;
       totalEntries: number;
       totalCurrentStock: number;
-      materials: Array<{ materialId: number | null; materialName: string; quantity: number; entries: number; currentStock: number }>;
+      materials: Array<{ materialId: string | number | null; materialName: string; quantity: number; entries: number; currentStock: number }>;
     }>();
     const materialMap = new Map(
-      materials.map((item) => [Number(item.id), item])
+      materials.map((item) => [String(item.id), item])
     );
 
     stockInEntries.forEach((entry) => {
-      const supplierId = Number(entry.supplier_id);
+      const supplierId = String(entry.supplier_id ?? '');
       if (!summary.has(supplierId)) {
         summary.set(supplierId, {
           totalQuantity: 0,
@@ -945,8 +948,8 @@ export default function InventoryManagement() {
       supplierData.totalQuantity += Number(entry.quantity_received || 0);
       supplierData.totalEntries += 1;
 
-      const normalizedMaterialId = Number(entry.material_id);
-      const linkedMaterial = Number.isFinite(normalizedMaterialId) ? materialMap.get(normalizedMaterialId) : undefined;
+      const normalizedMaterialId = String(entry.material_id ?? '');
+      const linkedMaterial = normalizedMaterialId ? materialMap.get(normalizedMaterialId) : undefined;
       const materialBaseName = (linkedMaterial?.name || entry.material_name || 'Unknown Material').trim() || 'Unknown Material';
       const materialSubject = (linkedMaterial?.subject || '').trim();
       const materialSet = (linkedMaterial?.set_name || '').trim();
@@ -964,7 +967,7 @@ export default function InventoryManagement() {
         existingMaterial.currentStock = linkedMaterial?.current_stock ?? existingMaterial.currentStock;
       } else {
         supplierData.materials.push({
-          materialId: Number.isFinite(normalizedMaterialId) ? normalizedMaterialId : null,
+          materialId: normalizedMaterialId || null,
           materialName: normalizedMaterialName,
           quantity: Number(entry.quantity_received || 0),
           entries: 1,
@@ -982,7 +985,7 @@ export default function InventoryManagement() {
   }, [materials, stockInEntries]);
 
   const selectedHistoryMaterial = materials.find((item) => item.id === historyMaterialId);
-  const selectedSidebarMaterial = materials.find((item) => item.id === selectedMaterialId) ?? filteredMaterials[0] ?? null;
+  const selectedSidebarMaterial = materials.find((item) => sameId(item.id, selectedMaterialId)) ?? filteredMaterials[0] ?? null;
   const selectedCatalogSetStock = scopedMaterials.reduce((sum, item) => sum + Number(item.current_stock || 0), 0);
   const recentStockInPreview = [...stockInEntries]
     .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime())
@@ -1094,11 +1097,11 @@ export default function InventoryManagement() {
     });
   };
 
-  const handleDeleteSubject = async (subjectId: number) => {
+  const handleDeleteSubject = async (subjectId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this subject?')) return;
     try {
       await apiService.deleteInventorySubject(subjectId);
-      if (editingSubjectId === subjectId) resetSubjectForm();
+      if (sameId(editingSubjectId, subjectId)) resetSubjectForm();
       setAlert({ type: 'success', message: 'Subject deleted successfully' });
       await refreshMaterials();
     } catch (error: any) {
@@ -1111,7 +1114,7 @@ export default function InventoryManagement() {
     if (!canManageInventory) return;
     try {
       const payload = {
-        subject_id: Number(setForm.subject_id),
+        subject_id: setForm.subject_id,
         name: setForm.name,
         is_active: setForm.is_active,
       };
@@ -1138,11 +1141,11 @@ export default function InventoryManagement() {
     });
   };
 
-  const handleDeleteSet = async (setId: number) => {
+  const handleDeleteSet = async (setId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this set?')) return;
     try {
       await apiService.deleteInventorySet(setId);
-      if (editingSetId === setId) resetSetForm();
+      if (sameId(editingSetId, setId)) resetSetForm();
       setAlert({ type: 'success', message: 'Set deleted successfully' });
       await refreshMaterials();
     } catch (error: any) {
@@ -1155,7 +1158,7 @@ export default function InventoryManagement() {
     if (!canManageInventory) return;
     try {
       const payload = {
-        set_id: Number(volumeForm.set_id),
+        set_id: volumeForm.set_id,
         name: `Volume ${Number(volumeForm.volume_number)}`,
         volume_number: Number(volumeForm.volume_number),
         is_active: volumeForm.is_active,
@@ -1184,11 +1187,11 @@ export default function InventoryManagement() {
     });
   };
 
-  const handleDeleteVolume = async (volumeId: number) => {
+  const handleDeleteVolume = async (volumeId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this volume?')) return;
     try {
       await apiService.deleteInventoryVolume(volumeId);
-      if (editingVolumeId === volumeId) resetVolumeForm();
+      if (sameId(editingVolumeId, volumeId)) resetVolumeForm();
       setAlert({ type: 'success', message: 'Volume deleted successfully' });
       await refreshMaterials();
     } catch (error: any) {
@@ -1202,9 +1205,9 @@ export default function InventoryManagement() {
     try {
       const payload = {
         name: materialForm.name,
-        subject_id: Number(materialForm.subject_id),
-        set_id: Number(materialForm.set_id),
-        volume_id: materialForm.volume_id ? Number(materialForm.volume_id) : null,
+        subject_id: materialForm.subject_id || null,
+        set_id: materialForm.set_id || null,
+        volume_id: materialForm.volume_id || null,
         volume_name: materialForm.volume_id ? undefined : null,
         volume_number: materialForm.volume_id ? undefined : null,
         set_part_name: materialForm.volume_id ? undefined : null,
@@ -1246,12 +1249,12 @@ export default function InventoryManagement() {
     setActiveMaterialOverlay('material');
   };
 
-  const handleDeleteMaterial = async (materialId: number) => {
+  const handleDeleteMaterial = async (materialId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this material master entry?')) return;
     try {
       await apiService.deleteMaterial(materialId);
-      if (editingMaterialId === materialId) resetMaterialForm();
-      if (historyMaterialId === materialId) {
+      if (sameId(editingMaterialId, materialId)) resetMaterialForm();
+      if (sameId(historyMaterialId, materialId)) {
         setHistoryMaterialId(null);
         setHistoryEntries([]);
       }
@@ -1262,7 +1265,7 @@ export default function InventoryManagement() {
     }
   };
 
-  const handleLoadHistory = async (materialId: number) => {
+  const handleLoadHistory = async (materialId: string | number) => {
     try {
       const response = await apiService.getMaterialHistory(materialId);
       setHistoryEntries(response.data);
@@ -1292,11 +1295,11 @@ export default function InventoryManagement() {
     }
   };
 
-  const handleDeleteSupplier = async (supplierId: number) => {
+  const handleDeleteSupplier = async (supplierId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this supplier?')) return;
     try {
       await apiService.deleteSupplier(supplierId);
-      if (editingSupplierId === supplierId) resetSupplierForm();
+      if (sameId(editingSupplierId, supplierId)) resetSupplierForm();
       setAlert({ type: 'success', message: 'Supplier deleted successfully' });
       const response = await apiService.listSuppliers({ school_id: currentSchoolId });
       setSuppliers(response.data);
@@ -1311,8 +1314,8 @@ export default function InventoryManagement() {
     try {
       const response = await apiService.createStockIn({
         date: `${stockInForm.date}T00:00:00`,
-        supplier_id: Number(stockInForm.supplier_id),
-        material_id: Number(stockInForm.material_id),
+        supplier_id: stockInForm.supplier_id,
+        material_id: stockInForm.material_id,
         quantity_received: Number(stockInForm.quantity_received),
         entry_type: stockInForm.entry_type,
         added_by: stockInForm.added_by || user?.full_name || 'Administrator',
@@ -1327,7 +1330,7 @@ export default function InventoryManagement() {
     }
   };
 
-  const handleDeleteStockIn = async (entryId: number) => {
+  const handleDeleteStockIn = async (entryId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this stock-in entry?')) return;
     try {
       await apiService.deleteStockIn(entryId);
@@ -1344,7 +1347,7 @@ export default function InventoryManagement() {
     const selectedBatches = connectedBatchOptions.filter((batch) =>
       stockOutForm.batch_ids.includes(String(batch.id))
     );
-    const selectedMaterialIds = stockOutForm.material_ids.map(Number).filter(Boolean);
+    const selectedMaterialIds = stockOutForm.material_ids.filter(Boolean);
     if (!selectedBatches.length) {
       setAlert({ type: 'warning', message: 'Please select at least one valid batch' });
       return;
@@ -1373,7 +1376,7 @@ export default function InventoryManagement() {
     }
   };
 
-  const handleDeleteStockOut = async (entryId: number) => {
+  const handleDeleteStockOut = async (entryId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this distribution entry?')) return;
     try {
       await apiService.deleteStockOut(entryId);
@@ -1395,7 +1398,7 @@ export default function InventoryManagement() {
       setAlert({ type: 'warning', message: 'Please select at least one student' });
       return;
     }
-    const selectedMaterialIds = studentIssueForm.material_ids.map(Number).filter(Boolean);
+    const selectedMaterialIds = studentIssueForm.material_ids.filter(Boolean);
     if (!selectedMaterialIds.length) {
       setAlert({ type: 'warning', message: 'Please select at least one material' });
       return;
@@ -1420,18 +1423,18 @@ export default function InventoryManagement() {
     }
   };
 
-  const handleDeleteStudentIssue = async (entryId: number) => {
+  const handleDeleteStudentIssue = async (entryId: string | number) => {
     if (!canManageInventory || !window.confirm('Delete this student issue entry?')) return;
     try {
       await apiService.deleteStudentIssue(entryId);
       if (selectedStudentIssueDetail) {
-        const remainingEntries = selectedStudentIssueDetail.entries.filter((entry: StudentIssueEntry) => entry.id !== entryId);
+        const remainingEntries = selectedStudentIssueDetail.entries.filter((entry: StudentIssueEntry) => !sameId(entry.id, entryId));
         if (!remainingEntries.length) {
           setSelectedStudentIssueDetail(null);
         } else {
           const latestEntry = [...remainingEntries].sort(
             (a: StudentIssueEntry, b: StudentIssueEntry) =>
-              new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime() || b.id - a.id,
+                new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime() || String(b.id).localeCompare(String(a.id)),
           )[0];
           setSelectedStudentIssueDetail({
             ...selectedStudentIssueDetail,
@@ -1458,10 +1461,10 @@ export default function InventoryManagement() {
         school_id: currentSchoolId,
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
-        supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,
+        supplier_id: reportFilters.supplier_id || undefined,
         batch_id: reportFilters.batch_id || undefined,
-        student_id: reportFilters.student_id ? Number(reportFilters.student_id) : undefined,
-        material_id: reportFilters.material_id ? Number(reportFilters.material_id) : undefined,
+        student_id: reportFilters.student_id || undefined,
+        material_id: reportFilters.material_id || undefined,
       });
       setReportData(response.data);
     } catch (error: any) {
@@ -1477,10 +1480,10 @@ export default function InventoryManagement() {
         school_id: currentSchoolId,
         date_from: reportFilters.date_from ? `${reportFilters.date_from}T00:00:00` : undefined,
         date_to: reportFilters.date_to ? `${reportFilters.date_to}T23:59:59` : undefined,
-        supplier_id: reportFilters.supplier_id ? Number(reportFilters.supplier_id) : undefined,
+        supplier_id: reportFilters.supplier_id || undefined,
         batch_id: reportFilters.batch_id || undefined,
-        student_id: reportFilters.student_id ? Number(reportFilters.student_id) : undefined,
-        material_id: reportFilters.material_id ? Number(reportFilters.material_id) : undefined,
+        student_id: reportFilters.student_id || undefined,
+        material_id: reportFilters.material_id || undefined,
       });
       downloadBlob(response.data, `${reportFilters.report_type}.${exportFormat === 'excel' ? 'xlsx' : 'pdf'}`);
       setAlert({ type: 'success', message: 'Report exported successfully' });
@@ -2221,7 +2224,7 @@ export default function InventoryManagement() {
                             </select>
                             <select required disabled={!canManageInventory} value={volumeForm.set_id} onChange={(e) => setVolumeForm({ ...volumeForm, set_id: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                               <option value="">Select set</option>
-                              {inventorySets.filter((item) => !volumeForm.subject_id || item.subject_id === Number(volumeForm.subject_id)).map((inventorySet) => (
+                              {inventorySets.filter((item) => !volumeForm.subject_id || sameId(item.subject_id, volumeForm.subject_id)).map((inventorySet) => (
                                 <option key={inventorySet.id} value={inventorySet.id}>{inventorySet.name}</option>
                               ))}
                             </select>
@@ -2534,7 +2537,7 @@ export default function InventoryManagement() {
                 {suppliers.map((supplier) => (
                   <div key={supplier.id} className="rounded-2xl border border-slate-200 p-4">
                     {(() => {
-                      const supplierSummary = supplierMaterialSummary.get(supplier.id);
+                      const supplierSummary = supplierMaterialSummary.get(String(supplier.id));
                       return (
                         <>
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

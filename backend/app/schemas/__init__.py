@@ -109,7 +109,7 @@ class UserRolePowerUpdate(BaseModel):
 
 class UserRolePowerResponse(UserRolePowerBase):
     """Role user response schema"""
-    id: int
+    id: str | int
     is_active: bool
     created_at: datetime
 
@@ -332,20 +332,20 @@ class HostelResponse(BaseModel):
 
 
 class StudentHostelRequestCreate(BaseModel):
-    hostel_id: int
+    hostel_id: str | int
     requested_notes: Optional[str] = None
 
 
 class StudentHostelRequestDecision(BaseModel):
-    hostel_id: Optional[int] = None
-    room_id: Optional[int] = None
+    hostel_id: Optional[str | int] = None
+    room_id: Optional[str | int] = None
     reviewed_by: Optional[str] = None
     review_notes: Optional[str] = None
 
 
 class StudentHostelRequestResponse(BaseModel):
-    id: int
-    student_id: int
+    id: str | int
+    student_id: str | int
     student_name: str
     roll_number: str
     batch: str
@@ -354,9 +354,9 @@ class StudentHostelRequestResponse(BaseModel):
     reference_name: Optional[str] = None
     reference_number: Optional[str] = None
     reference_remark: Optional[str] = None
-    hostel_id: int
+    hostel_id: str | int
     hostel_name: str
-    room_id: Optional[int] = None
+    room_id: Optional[str | int] = None
     room_number: Optional[str] = None
     requested_notes: Optional[str] = None
     status: str
@@ -1099,10 +1099,10 @@ class InventoryDashboardResponse(BaseModel):
 
 
 class InventoryHistoryEntry(BaseModel):
-    entry_id: int
+    entry_id: str | int
     entry_kind: str
     date: datetime
-    material_id: int
+    material_id: str | int
     material_name: str
     quantity: int
     counterparty: str
@@ -1111,7 +1111,7 @@ class InventoryHistoryEntry(BaseModel):
 
 
 class InventoryCatalogVolume(BaseModel):
-    id: int
+    id: str | int
     name: str
     volume_number: int
     is_active: bool
@@ -1119,14 +1119,14 @@ class InventoryCatalogVolume(BaseModel):
 
 
 class InventoryCatalogSet(BaseModel):
-    id: int
+    id: str | int
     name: str
     is_active: bool
     volumes: List[InventoryCatalogVolume] = Field(default_factory=list)
 
 
 class InventoryCatalogSubject(BaseModel):
-    id: int
+    id: str | int
     name: str
     is_active: bool
     sets: List[InventoryCatalogSet] = Field(default_factory=list)

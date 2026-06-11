@@ -59,7 +59,7 @@ export interface User {
 }
 
 export interface RolePowerUser {
-  id: number;
+  id: string | number;
   username: string;
   full_name: string;
   role: UserRole;
@@ -751,7 +751,7 @@ export type MaterialUnitType = 'book' | 'notebook' | 'sheet' | 'kit' | 'piece' |
 export type StockInType = 'purchase' | 'return' | 'adjustment' | 'donation';
 
 export interface Supplier {
-  id: number;
+  id: string | number;
   name: string;
   contact_person?: string;
   phone?: string;
@@ -763,23 +763,23 @@ export interface Supplier {
 }
 
 export interface InventorySubject {
-  id: number;
+  id: string | number;
   name: string;
   is_active: boolean;
 }
 
 export interface InventorySet {
-  id: number;
-  subject_id: number;
+  id: string | number;
+  subject_id: string | number;
   name: string;
   is_active: boolean;
   subject_name?: string;
 }
 
 export interface InventoryVolume {
-  id: number;
-  subject_id: number;
-  set_id?: number;
+  id: string | number;
+  subject_id: string | number;
+  set_id?: string | number;
   volume_number: string;
   name?: string;
   is_active: boolean;
@@ -788,7 +788,7 @@ export interface InventoryVolume {
 }
 
 export interface InventoryCatalogSubject {
-  id?: number;
+  id?: string | number;
   name?: string;
   subject: InventorySubject;
   sets: InventorySet[];
@@ -796,11 +796,11 @@ export interface InventoryCatalogSubject {
 }
 
 export interface MaterialItem {
-  id: number;
+  id: string | number;
   name: string;
-  subject_id?: number;
-  set_id?: number;
-  volume_id?: number;
+  subject_id?: string | number;
+  set_id?: string | number;
+  volume_id?: string | number;
   subject?: string;
   set_name?: string;
   volume_name?: string;
@@ -824,11 +824,11 @@ export interface InventoryMaterialImportResponse {
 }
 
 export interface StockInEntry {
-  id: number;
+  id: string | number;
   date?: string;
-  supplier_id?: number;
+  supplier_id?: string | number;
   supplier_name?: string;
-  material_id: number;
+  material_id: string | number;
   material_name?: string;
   quantity_received: number;
   entry_type: StockInType;
@@ -838,11 +838,11 @@ export interface StockInEntry {
 }
 
 export interface StockOutEntry {
-  id: number;
+  id: string | number;
   date?: string;
-  batch_id?: number;
+  batch_id?: string | number;
   batch_name?: string;
-  material_id: number;
+  material_id: string | number;
   material_name?: string;
   quantity_issued: number;
   issued_by?: string;
@@ -851,13 +851,13 @@ export interface StockOutEntry {
 }
 
 export interface StudentIssueEntry {
-  id: number;
+  id: string | number;
   date?: string;
-  batch_id?: number;
+  batch_id?: string | number;
   batch_name?: string;
-  student_id: number;
+  student_id: string | number;
   student_name: string;
-  material_id: number;
+  material_id: string | number;
   material_name?: string;
   quantity_issued: number;
   issued_by?: string;
@@ -866,14 +866,14 @@ export interface StudentIssueEntry {
 }
 
 export interface InventoryHistoryEntry {
-  id: number;
+  id: string | number;
   action: string;
   quantity: number;
   date?: string;
   actor?: string;
   notes?: string;
   entry_kind?: string;
-  entry_id?: number;
+  entry_id?: string | number;
   counterparty?: string;
   [key: string]: unknown;
 }

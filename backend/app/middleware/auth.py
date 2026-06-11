@@ -96,7 +96,17 @@ def _normalize_role_key(role_key: str | None) -> str:
     return str(role_key or "").strip().lower()
 
 
-def _map_supabase_role_to_legacy_role(role_key: str | None) -> UserRole:
+def _map_supabase_role_to_legacy_role(role_key: str | None, role_metadata: dict[str, Any] | None = None) -> UserRole:
+    if isinstance(role_metadata, dict):
+        legacy_role = _normalize_role_key(role_metadata.get("legacy_role"))
+        if legacy_role == "admin":
+            return UserRole.ADMIN
+        if legacy_role == "teacher":
+            return UserRole.TEACHER
+        if legacy_role == "store_manager":
+            return UserRole.STORE_MANAGER
+        if legacy_role == "viewer":
+            return UserRole.VIEWER
     normalized = _normalize_role_key(role_key)
     if normalized in {"platform_admin", "school_admin"}:
         return UserRole.ADMIN
@@ -107,7 +117,11 @@ def _map_supabase_role_to_legacy_role(role_key: str | None) -> UserRole:
     return UserRole.VIEWER
 
 
-def _map_supabase_role_to_user_type(role_key: str | None) -> str:
+def _map_supabase_role_to_user_type(role_key: str | None, role_metadata: dict[str, Any] | None = None) -> str:
+    if isinstance(role_metadata, dict):
+        configured = str(role_metadata.get("user_type") or "").strip().lower()
+        if configured in {"teaching", "non_teaching", "student"}:
+            return configured
     normalized = _normalize_role_key(role_key)
     if normalized == "teacher":
         return "teaching"
@@ -174,7 +188,8 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
             roles (
               role_key,
               role_name,
-              is_system
+              is_system,
+              metadata
             )
             """
         )
@@ -231,6 +246,7 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
                 permissions.append(str(permission_key).strip().lower())
 
     role_key = _normalize_role_key(role.get("role_key"))
+    role_metadata = role.get("metadata") if isinstance(role.get("metadata"), dict) else None
     return {
         "profile_id": resolved_profile_id,
         "membership_id": str(active_membership.get("id") or "").strip(),
@@ -243,8 +259,8 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
         "username": str(profile.get("display_name") or profile.get("email") or payload.get("email") or "").strip(),
         "is_active": bool(profile.get("is_active")),
         "role_key": role_key,
-        "role": _map_supabase_role_to_legacy_role(role_key),
-        "user_type": _map_supabase_role_to_user_type(role_key),
+        "role": _map_supabase_role_to_legacy_role(role_key, role_metadata),
+        "user_type": _map_supabase_role_to_user_type(role_key, role_metadata),
         "permissions": permissions,
         "auth_source": "supabase",
     }

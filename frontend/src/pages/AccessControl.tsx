@@ -273,7 +273,7 @@ export default function AccessControl() {
   const [loading, setLoading] = useState(true);
   const [createForm, setCreateForm] = useState<UserFormState>(initialForm);
   const [editForm, setEditForm] = useState<UserFormState>(initialForm);
-  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedCreateModules, setExpandedCreateModules] = useState<Record<string, boolean>>({
     timetable: true,

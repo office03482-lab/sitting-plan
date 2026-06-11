@@ -35,6 +35,14 @@ from app.utils.excel import parse_student_excel, create_student_excel_template
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client, insert_rows
 from app.services.supabase_attendance import get_students_count as get_supabase_students_count
 from app.services.supabase_hostels import sync_room_occupancy as supabase_sync_room_occupancy
+from app.services.supabase_hostel_requests import (
+    approve_hostel_request as approve_hostel_request_supabase,
+    create_or_update_hostel_request as create_or_update_hostel_request_supabase,
+    list_hostel_requests as list_hostel_requests_supabase,
+    move_hostel_allocation as move_hostel_allocation_supabase,
+    reject_hostel_request as reject_hostel_request_supabase,
+    vacate_hostel_allocation as vacate_hostel_allocation_supabase,
+)
 from app.services.supabase_students import (
     delete_all_students as delete_all_students_supabase,
     delete_student as delete_student_supabase,
@@ -886,6 +894,10 @@ async def list_hostel_requests(
     status_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
+    if is_uuid_school_id(school_id):
+        requests = list_hostel_requests_supabase(school_id, status_filter=status_filter)
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {len(requests)}")
+        return requests
     ensure_students_legacy_routes_available(school_id)
     try:
         query = (
@@ -914,6 +926,15 @@ async def create_or_update_hostel_request(
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if is_uuid_school_id(school_id):
+        request = create_or_update_hostel_request_supabase(
+            school_id,
+            str(student_id).strip(),
+            hostel_id=str(payload.hostel_id),
+            requested_notes=payload.requested_notes,
+        )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return request
     ensure_students_legacy_routes_available(school_id)
     try:
         legacy_student_id = int(str(student_id).strip())
@@ -969,12 +990,23 @@ async def create_or_update_hostel_request(
 
 @router.post("/hostel-requests/{request_id}/approve", response_model=StudentHostelRequestResponse)
 async def approve_hostel_request(
-    request_id: int,
+    request_id: str,
     payload: StudentHostelRequestDecision,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if is_uuid_school_id(school_id):
+        request = approve_hostel_request_supabase(
+            school_id,
+            str(request_id).strip(),
+            actor_profile_id=actor.get("profile_id"),
+            hostel_id=str(payload.hostel_id).strip() if payload.hostel_id is not None else None,
+            room_id=str(payload.room_id).strip() if payload.room_id is not None else None,
+            review_notes=payload.review_notes,
+        )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return request
     ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
@@ -1045,12 +1077,23 @@ async def approve_hostel_request(
 
 @router.post("/hostel-requests/{request_id}/move", response_model=StudentHostelRequestResponse)
 async def move_hostel_allocation(
-    request_id: int,
+    request_id: str,
     payload: StudentHostelRequestDecision,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if is_uuid_school_id(school_id):
+        request = move_hostel_allocation_supabase(
+            school_id,
+            str(request_id).strip(),
+            actor_profile_id=actor.get("profile_id"),
+            hostel_id=str(payload.hostel_id).strip() if payload.hostel_id is not None else None,
+            room_id=str(payload.room_id).strip() if payload.room_id is not None else None,
+            review_notes=payload.review_notes,
+        )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return request
     ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
@@ -1118,12 +1161,21 @@ async def move_hostel_allocation(
 
 @router.post("/hostel-requests/{request_id}/reject", response_model=StudentHostelRequestResponse)
 async def reject_hostel_request(
-    request_id: int,
+    request_id: str,
     payload: StudentHostelRequestDecision,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
 ):
+    if is_uuid_school_id(school_id):
+        request = reject_hostel_request_supabase(
+            school_id,
+            str(request_id).strip(),
+            actor_profile_id=actor.get("profile_id"),
+            review_notes=payload.review_notes,
+        )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return request
     ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,
@@ -1159,7 +1211,7 @@ async def reject_hostel_request(
 
 @router.post("/hostel-requests/{request_id}/vacate", response_model=StudentHostelRequestResponse)
 async def vacate_hostel_allocation(
-    request_id: int,
+    request_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     db: Session = Depends(get_db),
@@ -1170,6 +1222,14 @@ async def vacate_hostel_allocation(
     assignment and bed label are cleared, making the bed available for
     re-allocation.
     """
+    if is_uuid_school_id(school_id):
+        request = vacate_hostel_allocation_supabase(
+            school_id,
+            str(request_id).strip(),
+            actor_profile_id=actor.get("profile_id"),
+        )
+        logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
+        return request
     ensure_students_legacy_routes_available(school_id)
     request = db.query(StudentHostelRequest).filter(
         StudentHostelRequest.id == request_id,

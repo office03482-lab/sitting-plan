@@ -121,6 +121,130 @@ def _get_metadata(row: dict) -> dict:
     return {}
 
 
+def _public_t(table: str):
+    return _client().table(table)
+
+
+def _select_subject(school_id: str, subject_id: str) -> dict | None:
+    response = (
+        _public_t("subjects")
+        .select("*")
+        .eq("id", subject_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    return dict(rows[0]) if rows else None
+
+
+def _list_subject_rows(school_id: str, is_active: Optional[bool] = None) -> list[dict]:
+    query = _public_t("subjects").select("*").eq("school_id", school_id)
+    if is_active is not None:
+        query = query.eq("is_active", is_active)
+    return [dict(row) for row in list(query.order("name", desc=False).execute().data or [])]
+
+
+def _select_category(school_id: str, category_id: str) -> dict | None:
+    return _select_one("material_categories", school_id, category_id)
+
+
+def _list_category_rows(school_id: str, is_active: Optional[bool] = None) -> list[dict]:
+    query = _t("material_categories").select("*").eq("school_id", school_id)
+    if is_active is not None:
+        query = query.eq("is_active", is_active)
+    return [dict(row) for row in list(query.order("name", desc=False).execute().data or [])]
+
+
+def _build_set_category_code(subject_id: str, name: str) -> str:
+    return f"SET|{subject_id}|{_build_inventory_code('SET', name)}"
+
+
+def _build_volume_category_code(volume_number: int, name: str) -> str:
+    return f"VOL|{volume_number}|{_build_inventory_code('VOL', name)}"
+
+
+def _extract_set_subject_id(category_row: dict | None) -> str | None:
+    if not isinstance(category_row, dict):
+        return None
+    code = _normalize(category_row.get("category_code"))
+    if code.startswith("SET|"):
+        parts = code.split("|", 2)
+        if len(parts) >= 3:
+            return parts[1] or None
+    return None
+
+
+def _extract_volume_number(category_row: dict | None) -> int | None:
+    if not isinstance(category_row, dict):
+        return None
+    code = _normalize(category_row.get("category_code"))
+    if code.startswith("VOL|"):
+        parts = code.split("|", 2)
+        if len(parts) >= 3:
+            try:
+                return int(parts[1])
+            except (TypeError, ValueError):
+                return None
+    name = _normalize(category_row.get("name"))
+    if name.lower().startswith("volume "):
+        try:
+            return int(name.split(" ", 1)[1].strip())
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _material_category_context(
+    row: dict,
+    categories_by_id: dict[str, dict] | None = None,
+) -> dict[str, Any]:
+    category_id = _normalize(row.get("category_id"))
+    if not category_id:
+        return {
+            "set_id": None,
+            "set_name": "",
+            "volume_id": None,
+            "volume_name": "",
+            "volume_number": None,
+            "set_part_name": None,
+        }
+
+    category = (categories_by_id or {}).get(category_id)
+    if not category:
+        return {
+            "set_id": category_id,
+            "set_name": "",
+            "volume_id": None,
+            "volume_name": "",
+            "volume_number": None,
+            "set_part_name": None,
+        }
+
+    parent_id = _normalize(category.get("parent_category_id"))
+    if parent_id:
+        parent = (categories_by_id or {}).get(parent_id)
+        volume_name = _normalize(category.get("name"))
+        volume_number = _extract_volume_number(category)
+        return {
+            "set_id": parent_id or None,
+            "set_name": _normalize((parent or {}).get("name")),
+            "volume_id": category_id,
+            "volume_name": volume_name,
+            "volume_number": volume_number,
+            "set_part_name": f"Volume {volume_number} - {volume_name}" if volume_number and volume_name else None,
+        }
+
+    return {
+        "set_id": category_id,
+        "set_name": _normalize(category.get("name")),
+        "volume_id": None,
+        "volume_name": "",
+        "volume_number": None,
+        "set_part_name": None,
+    }
+
+
 def _calculate_material_stock(school_id: str, material_id: str) -> dict:
     supabase = _client()
     s = _INVENTORY_SCHEMA
@@ -273,39 +397,36 @@ def _serialize_subject(row: dict) -> dict:
 
 
 def list_subjects(school_id: str, is_active: Optional[bool] = None) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    query = supabase.schema(s).table("subjects").select("*").eq("school_id", school_id)
-    if is_active is not None:
-        query = query.eq("is_active", is_active)
-    resp = query.order("name", desc=False).execute()
-    return [_serialize_subject(r) for r in list(resp.data or [])]
+    return [_serialize_subject(row) for row in _list_subject_rows(school_id, is_active=is_active)]
 
 
 def create_subject(school_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Subject name is required")
 
-    dup = supabase.schema(s).table("subjects").select("id").eq("school_id", school_id).ilike("name", name).limit(1).execute()
+    dup = _public_t("subjects").select("id").eq("school_id", school_id).ilike("name", name).limit(1).execute()
     if list(dup.data or []):
         raise HTTPException(status_code=400, detail="Subject already exists")
 
     row = {
         "school_id": school_id,
+        "subject_code": _build_inventory_code("SUB", name),
         "name": name,
+        "class_name": "",
+        "metadata": {},
         "is_active": bool(payload.get("is_active", True)),
     }
-    created = _insert_and_return("subjects", row)
+    response = _public_t("subjects").insert(row).execute()
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="subjects insert returned no data")
+    created = dict(rows[0])
     return _serialize_subject(created)
 
 
 def update_subject(school_id: str, subject_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("subjects", school_id, subject_id)
+    existing = _select_subject(school_id, subject_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Subject not found")
 
@@ -313,7 +434,7 @@ def update_subject(school_id: str, subject_id: str, payload: dict) -> dict:
         name = (payload["name"] or "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="Subject name cannot be empty")
-        dup = supabase.schema(s).table("subjects").select("id").eq("school_id", school_id).ilike("name", name).neq("id", subject_id).limit(1).execute()
+        dup = _public_t("subjects").select("id").eq("school_id", school_id).ilike("name", name).neq("id", subject_id).limit(1).execute()
         if list(dup.data or []):
             raise HTTPException(status_code=400, detail="Another subject with this name already exists")
         updates = {"name": name}
@@ -323,32 +444,31 @@ def update_subject(school_id: str, subject_id: str, payload: dict) -> dict:
     if "is_active" in payload:
         updates["is_active"] = bool(payload["is_active"])
 
-    if "name" in updates:
-        linked = supabase.schema(s).table("material_items").select("id,metadata").eq("subject_id", subject_id).eq("school_id", school_id).execute()
-        for item in list(linked.data or []):
-            meta = _get_metadata(item)
-            meta["subject_text"] = name
-            supabase.schema(s).table("material_items").update({"metadata": meta, "subject_id": subject_id}).eq("id", item["id"]).execute()
+    if updates:
+        _public_t("subjects").update(updates).eq("id", subject_id).eq("school_id", school_id).execute()
+        if "name" in updates:
+            linked = _t("material_items").select("id,metadata").eq("subject_id", subject_id).eq("school_id", school_id).execute()
+            for item in list(linked.data or []):
+                meta = _get_metadata(item)
+                meta["subject_text"] = updates["name"]
+                _t("material_items").update({"metadata": meta, "subject_id": subject_id}).eq("id", item["id"]).execute()
 
-    updated = _update_and_return("subjects", subject_id, school_id, updates)
+    updated = _select_subject(school_id, subject_id)
+    if not updated:
+        raise HTTPException(status_code=500, detail="subjects update could not reload")
     return _serialize_subject(updated)
 
 
 def delete_subject(school_id: str, subject_id: str) -> dict:
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("subjects", school_id, subject_id)
+    existing = _select_subject(school_id, subject_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Subject not found")
 
-    sets = _t("sets", s).select("id").eq("subject_id", subject_id).eq("school_id", school_id).limit(1).execute()
-    if list(sets.data or []):
-        raise HTTPException(status_code=400, detail="Delete linked sets first")
-
-    mats = _t("material_items", s).select("id").eq("subject_id", subject_id).eq("school_id", school_id).limit(1).execute()
+    mats = _t("material_items").select("id").eq("subject_id", subject_id).eq("school_id", school_id).limit(1).execute()
     if list(mats.data or []):
         raise HTTPException(status_code=400, detail="Delete linked materials first")
 
-    _delete_row("subjects", subject_id, school_id)
+    _public_t("subjects").delete().eq("id", subject_id).eq("school_id", school_id).execute()
     return {"message": "Subject deleted successfully"}
 
 
@@ -358,7 +478,7 @@ def delete_subject(school_id: str, subject_id: str) -> dict:
 def _serialize_set(row: dict, subject_name: str = "") -> dict:
     return {
         "id": row.get("id"),
-        "subject_id": row.get("subject_id"),
+        "subject_id": _extract_set_subject_id(row),
         "subject_name": subject_name,
         "name": row.get("name") or "",
         "school_id": row.get("school_id"),
@@ -369,29 +489,21 @@ def _serialize_set(row: dict, subject_name: str = "") -> dict:
 
 
 def list_sets(school_id: str, subject_id: Optional[str] = None, is_active: Optional[bool] = None) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    query = supabase.schema(s).table("sets").select("*").eq("school_id", school_id)
+    rows = [row for row in _list_category_rows(school_id, is_active=is_active) if not _normalize(row.get("parent_category_id"))]
     if subject_id:
-        query = query.eq("subject_id", subject_id)
-    if is_active is not None:
-        query = query.eq("is_active", is_active)
-    resp = query.order("name", desc=False).execute()
-    rows = list(resp.data or [])
+        rows = [row for row in rows if _extract_set_subject_id(row) == subject_id]
 
-    subject_ids = {str(r.get("subject_id")) for r in rows if r.get("subject_id")}
-    subjects = {}
-    for sid in subject_ids:
-        sub = _select_one("subjects", school_id, sid)
-        if sub:
-            subjects[sid] = sub.get("name", "")
-
-    return [_serialize_set(r, subjects.get(str(r.get("subject_id")), "")) for r in rows]
+    subject_name_map = {
+        _normalize(row.get("id")): _normalize(row.get("name"))
+        for row in _list_subject_rows(school_id)
+    }
+    return [
+        _serialize_set(row, subject_name_map.get(_extract_set_subject_id(row) or "", ""))
+        for row in rows
+    ]
 
 
 def create_set(school_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
     subject_id = str(payload.get("subject_id") or "")
     name = (payload.get("name") or "").strip()
 
@@ -400,95 +512,92 @@ def create_set(school_id: str, payload: dict) -> dict:
     if not name:
         raise HTTPException(status_code=400, detail="Set name is required")
 
-    subject = _select_one("subjects", school_id, subject_id)
+    subject = _select_subject(school_id, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
 
-    dup = supabase.schema(s).table("sets").select("id").eq("school_id", school_id).eq("subject_id", subject_id).ilike("name", name).limit(1).execute()
-    if list(dup.data or []):
+    existing_sets = list_sets(school_id, subject_id=subject_id)
+    if any((row.get("name") or "").strip().lower() == name.lower() for row in existing_sets):
         raise HTTPException(status_code=400, detail="Set already exists for this subject")
 
     row = {
         "school_id": school_id,
-        "subject_id": subject_id,
+        "category_code": _build_set_category_code(subject_id, name),
         "name": name,
+        "parent_category_id": None,
         "is_active": bool(payload.get("is_active", True)),
     }
-    created = _insert_and_return("sets", row)
+    created = _insert_and_return("material_categories", row)
     return _serialize_set(created, subject.get("name", ""))
 
 
 def update_set(school_id: str, set_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("sets", school_id, set_id)
+    existing = _select_category(school_id, set_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Set not found")
 
-    next_subject_id = str(payload.get("subject_id", existing.get("subject_id", "")))
+    next_subject_id = str(payload.get("subject_id", _extract_set_subject_id(existing) or ""))
     next_name = str(payload.get("name", existing.get("name", ""))).strip()
 
     if not next_name:
         raise HTTPException(status_code=400, detail="Set name cannot be empty")
 
-    subject = _select_one("subjects", school_id, next_subject_id)
+    subject = _select_subject(school_id, next_subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
 
-    dup = supabase.schema(s).table("sets").select("id").eq("school_id", school_id).eq("subject_id", next_subject_id).ilike("name", next_name).neq("id", set_id).limit(1).execute()
-    if list(dup.data or []):
+    if any(
+        (row.get("name") or "").strip().lower() == next_name.lower() and _normalize(row.get("id")) != set_id
+        for row in list_sets(school_id, subject_id=next_subject_id)
+    ):
         raise HTTPException(status_code=400, detail="Another set with this name already exists for the selected subject")
 
     updates = {
-        "subject_id": next_subject_id,
+        "category_code": _build_set_category_code(next_subject_id, next_name),
         "name": next_name,
     }
     if "is_active" in payload:
         updates["is_active"] = bool(payload["is_active"])
 
-    updated = _update_and_return("sets", set_id, school_id, updates)
+    updated = _update_and_return("material_categories", set_id, school_id, updates)
 
-    linked = supabase.schema(s).table("material_items").select("id,metadata").eq("set_id", set_id).eq("school_id", school_id).execute()
+    linked = _t("material_items").select("id,metadata,subject_id").eq("category_id", set_id).eq("school_id", school_id).execute()
     for item in list(linked.data or []):
         meta = _get_metadata(item)
         meta["set_text"] = next_name
-        meta["subject_category_id"] = next_subject_id
-        supabase.schema(s).table("material_items").update({
+        meta["subject_text"] = subject.get("name", "")
+        _t("material_items").update({
             "metadata": meta,
-            "set_id": next_subject_id,
+            "subject_id": next_subject_id,
         }).eq("id", item["id"]).execute()
 
     return _serialize_set(updated, subject.get("name", ""))
 
 
 def delete_set(school_id: str, set_id: str) -> dict:
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("sets", school_id, set_id)
+    existing = _select_category(school_id, set_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Set not found")
 
-    volumes = _t("volumes", s).select("id").eq("set_id", set_id).eq("school_id", school_id).execute()
+    volumes = _t("material_categories").select("id").eq("parent_category_id", set_id).eq("school_id", school_id).execute()
     volume_ids = [str(r["id"]) for r in list(volumes.data or [])]
 
-    mats = _t("material_items", s).select("id").eq("school_id", school_id).or_(f"set_id.eq.{set_id}" + (f",volume_id.in.({','.join(volume_ids)})" if volume_ids else "")).execute()
+    mats = _t("material_items").select("id").eq("school_id", school_id).or_(f"category_id.eq.{set_id}" + (f",category_id.in.({','.join(volume_ids)})" if volume_ids else "")).execute()
     for item in list(mats.data or []):
         meta = _get_metadata(item)
         meta.pop("set_category_id", None)
         meta.pop("volume_category_id", None)
-        _t("material_items", s).update({
-            "set_id": None,
-            "set_name": None,
-            "volume_id": None,
-            "volume_name": None,
-            "volume_number": None,
-            "set_part_name": None,
+        meta.pop("set_text", None)
+        meta.pop("volume_text", None)
+        _t("material_items").update({
+            "category_id": None,
             "metadata": meta,
         }).eq("id", item["id"]).execute()
 
     for vid in volume_ids:
-        _delete_row("volumes", vid, school_id)
+        _delete_row("material_categories", vid, school_id)
 
-    _delete_row("sets", set_id, school_id)
+    _delete_row("material_categories", set_id, school_id)
     return {"message": "Set deleted successfully"}
 
 
@@ -498,12 +607,12 @@ def delete_set(school_id: str, set_id: str) -> dict:
 def _serialize_volume(row: dict, set_name: str = "", subject_id: str = "", subject_name: str = "") -> dict:
     return {
         "id": row.get("id"),
-        "set_id": row.get("set_id"),
+        "set_id": row.get("parent_category_id"),
         "set_name": set_name,
         "subject_id": subject_id,
         "subject_name": subject_name,
         "name": row.get("name") or "",
-        "volume_number": int(row.get("volume_number") or 1),
+        "volume_number": int(_extract_volume_number(row) or 1),
         "school_id": row.get("school_id"),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
@@ -512,145 +621,132 @@ def _serialize_volume(row: dict, set_name: str = "", subject_id: str = "", subje
 
 
 def list_volumes(school_id: str, subject_id: Optional[str] = None, set_id: Optional[str] = None, is_active: Optional[bool] = None) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    query = supabase.schema(s).table("volumes").select("*, sets!inner(*)").eq("volumes.school_id", school_id)
-    if set_id:
-        query = query.eq("volumes.set_id", set_id)
-    if subject_id:
-        query = query.eq("sets.subject_id", subject_id)
-    if is_active is not None:
-        query = query.eq("volumes.is_active", is_active)
-    resp = query.order("volumes.volume_number", desc=False).order("volumes.name", desc=False).execute()
-    rows = list(resp.data or [])
-
-    set_ids = {str(r.get("set_id")) for r in rows if r.get("set_id")}
-    sets_map = {}
-    for sid in set_ids:
-        subj = _select_one("subjects", school_id, sid)
-        srow = _select_one("sets", school_id, sid)
-        if srow:
-            sets_map[sid] = {
-                "name": srow.get("name", ""),
-                "subject_id": srow.get("subject_id", ""),
-            }
+    categories = [
+        row for row in _list_category_rows(school_id, is_active=is_active)
+        if _normalize(row.get("parent_category_id"))
+    ]
+    sets_by_id = {
+        _normalize(row.get("id")): row
+        for row in _list_category_rows(school_id, is_active=None)
+    }
+    subject_name_map = {
+        _normalize(row.get("id")): _normalize(row.get("name"))
+        for row in _list_subject_rows(school_id)
+    }
 
     result = []
-    for r in rows:
-        sid = str(r.get("set_id", ""))
-        sinfo = sets_map.get(sid, {})
-        subj_id = sinfo.get("subject_id", "")
-        sub = _select_one("subjects", school_id, subj_id) if subj_id else None
-        result.append(_serialize_volume(
-            r,
-            set_name=sinfo.get("name", ""),
-            subject_id=subj_id,
-            subject_name=sub.get("name", "") if sub else "",
-        ))
-    return result
+    for row in categories:
+        parent_id = _normalize(row.get("parent_category_id"))
+        if set_id and parent_id != set_id:
+            continue
+        parent = sets_by_id.get(parent_id)
+        linked_subject_id = _extract_set_subject_id(parent)
+        if subject_id and linked_subject_id != subject_id:
+            continue
+        result.append(
+            _serialize_volume(
+                row,
+                set_name=_normalize((parent or {}).get("name")),
+                subject_id=linked_subject_id or "",
+                subject_name=subject_name_map.get(linked_subject_id or "", ""),
+            )
+        )
+    return sorted(result, key=lambda item: (int(item.get("volume_number") or 0), (item.get("name") or "").lower()))
 
 
 def create_volume(school_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
     set_id = str(payload.get("set_id") or "")
-    name = (payload.get("name") or "").strip()
-    volume_number = int(payload.get("volume_number") or 1)
+    volume_number = int(payload.get("volume_number") or 0)
+    name = (payload.get("name") or "").strip() or f"Volume {volume_number}"
 
     if not set_id:
         raise HTTPException(status_code=400, detail="set_id is required")
-    if not name:
-        raise HTTPException(status_code=400, detail="Volume name is required")
+    if volume_number <= 0:
+        raise HTTPException(status_code=400, detail="volume_number must be > 0")
 
-    inventory_set = _select_one("sets", school_id, set_id)
+    inventory_set = _select_category(school_id, set_id)
     if not inventory_set:
         raise HTTPException(status_code=404, detail="Set not found")
 
-    dup = supabase.schema(s).table("volumes").select("id").eq("school_id", school_id).eq("set_id", set_id).eq("volume_number", volume_number).limit(1).execute()
-    if list(dup.data or []):
+    if any(int(row.get("volume_number") or 0) == volume_number for row in list_volumes(school_id, set_id=set_id)):
         raise HTTPException(status_code=400, detail="Volume number already exists for this set")
 
     row = {
         "school_id": school_id,
-        "set_id": set_id,
+        "parent_category_id": set_id,
+        "category_code": _build_volume_category_code(volume_number, name),
         "name": name,
-        "volume_number": volume_number,
         "is_active": bool(payload.get("is_active", True)),
     }
-    created = _insert_and_return("volumes", row)
+    created = _insert_and_return("material_categories", row)
 
-    subject = _select_one("subjects", school_id, inventory_set.get("subject_id", "")) if inventory_set.get("subject_id") else None
-    return _serialize_volume(created, inventory_set.get("name", ""), inventory_set.get("subject_id", ""), subject.get("name", "") if subject else "")
+    subject_id = _extract_set_subject_id(inventory_set) or ""
+    subject = _select_subject(school_id, subject_id) if subject_id else None
+    return _serialize_volume(created, inventory_set.get("name", ""), subject_id, subject.get("name", "") if subject else "")
 
 
 def update_volume(school_id: str, volume_id: str, payload: dict) -> dict:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("volumes", school_id, volume_id)
+    existing = _select_category(school_id, volume_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Volume not found")
 
-    next_set_id = str(payload.get("set_id", existing.get("set_id", "")))
-    next_volume_number = int(payload.get("volume_number", existing.get("volume_number", 1)))
+    next_set_id = str(payload.get("set_id", existing.get("parent_category_id", "")))
+    next_volume_number = int(payload.get("volume_number") or _extract_volume_number(existing) or 0)
     next_name = str(payload.get("name", existing.get("name", ""))).strip()
 
     if not next_name:
         raise HTTPException(status_code=400, detail="Volume name cannot be empty")
 
-    inventory_set = _select_one("sets", school_id, next_set_id)
+    inventory_set = _select_category(school_id, next_set_id)
     if not inventory_set:
         raise HTTPException(status_code=404, detail="Set not found")
 
-    dup = supabase.schema(s).table("volumes").select("id").eq("school_id", school_id).eq("set_id", next_set_id).eq("volume_number", next_volume_number).neq("id", volume_id).limit(1).execute()
-    if list(dup.data or []):
+    if any(
+        int(row.get("volume_number") or 0) == next_volume_number and _normalize(row.get("id")) != volume_id
+        for row in list_volumes(school_id, set_id=next_set_id)
+    ):
         raise HTTPException(status_code=400, detail="Another volume with this number already exists for the selected set")
 
     updates = {
-        "set_id": next_set_id,
+        "parent_category_id": next_set_id,
+        "category_code": _build_volume_category_code(next_volume_number, next_name),
         "name": next_name,
-        "volume_number": next_volume_number,
     }
     if "is_active" in payload:
         updates["is_active"] = bool(payload["is_active"])
 
-    updated = _update_and_return("volumes", volume_id, school_id, updates)
+    updated = _update_and_return("material_categories", volume_id, school_id, updates)
 
-    linked = supabase.schema(s).table("material_items").select("id,metadata").eq("volume_id", volume_id).eq("school_id", school_id).execute()
+    linked = _t("material_items").select("id,metadata").eq("category_id", volume_id).eq("school_id", school_id).execute()
     for item in list(linked.data or []):
         meta = _get_metadata(item)
         meta["volume_text"] = next_name
-        meta["set_category_id"] = next_set_id
-        supabase.schema(s).table("material_items").update({
+        meta["set_text"] = inventory_set.get("name", "")
+        _t("material_items").update({
             "metadata": meta,
-            "volume_name": next_name,
-            "volume_number": next_volume_number,
-            "set_id": next_set_id,
-            "set_part_name": f"Volume {next_volume_number} - {next_name}",
         }).eq("id", item["id"]).execute()
 
-    subject = _select_one("subjects", school_id, inventory_set.get("subject_id", "")) if inventory_set.get("subject_id") else None
-    return _serialize_volume(updated, inventory_set.get("name", ""), inventory_set.get("subject_id", ""), subject.get("name", "") if subject else "")
+    subject_id = _extract_set_subject_id(inventory_set) or ""
+    subject = _select_subject(school_id, subject_id) if subject_id else None
+    return _serialize_volume(updated, inventory_set.get("name", ""), subject_id, subject.get("name", "") if subject else "")
 
 
 def delete_volume(school_id: str, volume_id: str) -> dict:
-    s = _INVENTORY_SCHEMA
-    existing = _select_one("volumes", school_id, volume_id)
+    existing = _select_category(school_id, volume_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Volume not found")
 
-    mats = _t("material_items", s).select("id,metadata").eq("volume_id", volume_id).eq("school_id", school_id).execute()
+    mats = _t("material_items").select("id,metadata").eq("category_id", volume_id).eq("school_id", school_id).execute()
     for item in list(mats.data or []):
         meta = _get_metadata(item)
         meta.pop("volume_category_id", None)
-        _t("material_items", s).update({
-            "volume_id": None,
-            "volume_name": None,
-            "volume_number": None,
-            "set_part_name": None,
+        meta.pop("volume_text", None)
+        _t("material_items").update({
+            "category_id": existing.get("parent_category_id"),
             "metadata": meta,
         }).eq("id", item["id"]).execute()
 
-    _delete_row("volumes", volume_id, school_id)
+    _delete_row("material_categories", volume_id, school_id)
     return {"message": "Volume deleted successfully"}
 
 
@@ -658,96 +754,70 @@ def delete_volume(school_id: str, volume_id: str) -> dict:
 
 
 def get_catalog(school_id: str, include_inactive: bool = True) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
+    subjects = list_subjects(school_id, is_active=None if include_inactive else True)
+    sets = list_sets(school_id, is_active=None if include_inactive else True)
+    volumes = list_volumes(school_id, is_active=None if include_inactive else True)
+    materials = list_materials(school_id, is_active=None if include_inactive else True)
 
-    subj_query = supabase.schema(s).table("subjects").select("*").eq("school_id", school_id)
-    if not include_inactive:
-        subj_query = subj_query.eq("is_active", True)
-    subjects = list((subj_query.order("name", desc=False).execute()).data or [])
-
-    sets_q = supabase.schema(s).table("sets").select("*").eq("school_id", school_id)
-    if not include_inactive:
-        sets_q = sets_q.eq("is_active", True)
-    all_sets = list((sets_q.order("name", desc=False).execute()).data or [])
-
-    vols_q = supabase.schema(s).table("volumes").select("*").eq("school_id", school_id)
-    if not include_inactive:
-        vols_q = vols_q.eq("is_active", True)
-    all_volumes = list((vols_q.order("volume_number", desc=False).order("name", desc=False).execute()).data or [])
-
-    mats = list((supabase.schema(s).table("material_items").select("*").eq("school_id", school_id).execute()).data or [])
-    material_map: dict[str, list[dict]] = {}
-    for m in mats:
-        vid = str(m.get("volume_id") or "")
-        if vid:
-            material_map.setdefault(vid, []).append(m)
-
-    def _serialize_material(m: dict) -> dict:
-        meta = _get_metadata(m)
-        return {
-            "id": m.get("id"),
-            "name": m.get("name") or "",
-            "subject_id": m.get("subject_id"),
-            "subject": meta.get("subject_text") or "",
-            "set_id": m.get("set_id"),
-            "set_name": meta.get("set_text") or "",
-            "volume_id": m.get("volume_id"),
-            "volume_name": m.get("volume_name") or "",
-            "volume_number": m.get("volume_number"),
-            "set_part_name": m.get("set_part_name") or "",
-            "batch_names": _parse_batch_names(meta),
-            "description": m.get("description") or "",
-            "unit_type": m.get("unit_type") or "book",
-            "price": float(m.get("unit_price") or 0),
-            "low_stock_threshold": int(m.get("low_stock_threshold") or 10),
-            "school_id": m.get("school_id"),
-            "current_stock": int(m.get("current_stock") or 0),
-            "total_distributed": int(m.get("total_distributed") or 0),
-            "is_active": bool(m.get("is_active", True)),
-            "created_at": m.get("created_at"),
-            "updated_at": m.get("updated_at"),
-        }
-
-    sets_by_subject: dict[str, list[dict]] = {}
-    for inv_set in all_sets:
-        sets_by_subject.setdefault(str(inv_set.get("subject_id") or ""), []).append(inv_set)
+    materials_by_volume: dict[str, list[dict]] = {}
+    materials_by_set: dict[str, list[dict]] = {}
+    for material in materials:
+        volume_id = _normalize(material.get("volume_id"))
+        set_id = _normalize(material.get("set_id"))
+        if volume_id:
+            materials_by_volume.setdefault(volume_id, []).append(material)
+        elif set_id:
+            materials_by_set.setdefault(set_id, []).append(material)
 
     volumes_by_set: dict[str, list[dict]] = {}
-    for vol in all_volumes:
-        volumes_by_set.setdefault(str(vol.get("set_id") or ""), []).append(vol)
+    for volume in volumes:
+        volumes_by_set.setdefault(_normalize(volume.get("set_id")), []).append(volume)
+
+    sets_by_subject: dict[str, list[dict]] = {}
+    for inventory_set in sets:
+        sets_by_subject.setdefault(_normalize(inventory_set.get("subject_id")), []).append(inventory_set)
 
     result = []
-    for subj in subjects:
-        sid = str(subj.get("id", ""))
+    for subject in subjects:
+        subject_id = _normalize(subject.get("id"))
         set_nodes = []
-        for inv_set in sets_by_subject.get(sid, []):
-            siid = str(inv_set.get("id", ""))
+        for inventory_set in sets_by_subject.get(subject_id, []):
+            set_id = _normalize(inventory_set.get("id"))
             volume_nodes = []
-            for vol in volumes_by_set.get(siid, []):
-                vid = str(vol.get("id", ""))
-                volume_nodes.append({
-                    "id": vol.get("id"),
-                    "name": vol.get("name") or "",
-                    "volume_number": int(vol.get("volume_number") or 1),
-                    "is_active": bool(vol.get("is_active", True)),
-                    "materials": sorted(
-                        [_serialize_material(m) for m in material_map.get(vid, [])],
-                        key=lambda x: (x.get("name") or "").lower(),
+            for volume in volumes_by_set.get(set_id, []):
+                volume_nodes.append(
+                    {
+                        "id": volume.get("id"),
+                        "name": volume.get("name") or "",
+                        "volume_number": int(volume.get("volume_number") or 1),
+                        "is_active": bool(volume.get("is_active", True)),
+                        "materials": sorted(
+                            materials_by_volume.get(_normalize(volume.get("id")), []),
+                            key=lambda item: (item.get("name") or "").lower(),
+                        ),
+                    }
+                )
+
+            set_nodes.append(
+                {
+                    "id": inventory_set.get("id"),
+                    "name": inventory_set.get("name") or "",
+                    "is_active": bool(inventory_set.get("is_active", True)),
+                    "volumes": sorted(
+                        volume_nodes,
+                        key=lambda item: (int(item.get("volume_number") or 0), (item.get("name") or "").lower()),
                     ),
-                })
-            set_nodes.append({
-                "id": inv_set.get("id"),
-                "name": inv_set.get("name") or "",
-                "is_active": bool(inv_set.get("is_active", True)),
-                "volumes": sorted(volume_nodes, key=lambda v: (v.get("volume_number", 1), (v.get("name") or "").lower())),
-            })
-        result.append({
-            "id": subj.get("id"),
-            "name": subj.get("name") or "",
-            "is_active": bool(subj.get("is_active", True)),
-            "sets": sorted(set_nodes, key=lambda s: (s.get("name") or "").lower()),
-        })
+                }
+            )
+
+        result.append(
+            {
+                "id": subject.get("id"),
+                "name": subject.get("name") or "",
+                "is_active": bool(subject.get("is_active", True)),
+                "sets": sorted(set_nodes, key=lambda item: (item.get("name") or "").lower()),
+            }
+        )
     return result
 
 
@@ -756,17 +826,18 @@ def get_catalog(school_id: str, include_inactive: bool = True) -> list[dict]:
 
 def _serialize_material(row: dict) -> dict:
     meta = _get_metadata(row)
+    category_context = row.get("_category_context") if isinstance(row.get("_category_context"), dict) else _material_category_context(row)
     return {
         "id": row.get("id"),
         "name": row.get("name") or "",
         "subject_id": row.get("subject_id"),
         "subject": meta.get("subject_text") or "",
-        "set_id": row.get("set_id"),
-        "set_name": meta.get("set_text") or "",
-        "volume_id": row.get("volume_id"),
-        "volume_name": row.get("volume_name") or "",
-        "volume_number": row.get("volume_number"),
-        "set_part_name": row.get("set_part_name") or "",
+        "set_id": category_context.get("set_id"),
+        "set_name": category_context.get("set_name") or meta.get("set_text") or "",
+        "volume_id": category_context.get("volume_id"),
+        "volume_name": category_context.get("volume_name") or meta.get("volume_text") or "",
+        "volume_number": category_context.get("volume_number"),
+        "set_part_name": category_context.get("set_part_name"),
         "batch_names": _parse_batch_names(meta),
         "description": row.get("description") or "",
         "unit_type": row.get("unit_type") or "book",
@@ -795,24 +866,46 @@ def list_materials(
         query = query.eq("is_active", is_active)
     resp = query.order("name", desc=False).execute()
     rows = list(resp.data or [])
+    categories_by_id = {
+        _normalize(row.get("id")): row
+        for row in _list_category_rows(school_id, is_active=None)
+    }
+    subjects_by_id = {
+        _normalize(row.get("id")): row
+        for row in _list_subject_rows(school_id, is_active=None)
+    }
+
+    serialized_rows = []
+    for row in rows:
+        meta = _get_metadata(row)
+        subject_id_value = _normalize(row.get("subject_id"))
+        if subject_id_value and not meta.get("subject_text"):
+            meta["subject_text"] = _normalize((subjects_by_id.get(subject_id_value) or {}).get("name"))
+            row = {**row, "metadata": meta}
+        row_copy = dict(row)
+        row_copy["_category_context"] = _material_category_context(row_copy, categories_by_id)
+        serialized_rows.append(row_copy)
 
     if search:
         p = search.strip().lower()
-        rows = [
-            r for r in rows
+        serialized_rows = [
+            r for r in serialized_rows
             if p in (r.get("name") or "").lower()
-            or p in (r.get("subject_id") or "").lower()
-            or p in (r.get("set_part_name") or "").lower()
-            or p in (r.get("volume_name") or "").lower()
+            or p in _normalize((subjects_by_id.get(_normalize(r.get("subject_id"))) or {}).get("name")).lower()
+            or p in _normalize(r.get("_category_context", {}).get("set_name")).lower()
+            or p in _normalize(r.get("_category_context", {}).get("volume_name")).lower()
         ]
     if subject:
         sp = subject.strip().lower()
-        rows = [r for r in rows if sp in _get_metadata(r).get("subject_text", "").lower()]
+        serialized_rows = [r for r in serialized_rows if sp in _get_metadata(r).get("subject_text", "").lower()]
     if batch_name:
         bp = batch_name.strip().lower()
-        rows = [r for r in rows if bp in (r.get("class_name") or "").lower() or bp in str(_get_metadata(r).get("batch_names", "")).lower()]
+        serialized_rows = [r for r in serialized_rows if bp in (r.get("class_name") or "").lower() or bp in str(_get_metadata(r).get("batch_names", "")).lower()]
 
-    return [_serialize_material(r) for r in rows]
+    result = []
+    for row in serialized_rows:
+        result.append(_serialize_material(row))
+    return result
 
 
 def create_material(school_id: str, payload: dict) -> dict:
@@ -830,37 +923,40 @@ def create_material(school_id: str, payload: dict) -> dict:
     subject_id = payload.get("subject_id")
     set_id = payload.get("set_id")
     volume_id = payload.get("volume_id")
+    category_id = None
 
     if subject_id:
-        subject = _select_one("subjects", school_id, str(subject_id))
+        subject = _select_subject(school_id, str(subject_id))
         if subject:
             meta["subject_text"] = subject.get("name", "")
             meta["subject_category_id"] = str(subject["id"])
 
     if set_id:
-        inv_set = _select_one("sets", school_id, str(set_id))
+        inv_set = _select_category(school_id, str(set_id))
         if inv_set:
             meta["set_text"] = inv_set.get("name", "")
             meta["set_category_id"] = str(inv_set["id"])
-            if not subject_id and inv_set.get("subject_id"):
-                sub = _select_one("subjects", school_id, str(inv_set["subject_id"]))
+            category_id = str(inv_set["id"])
+            if not subject_id and _extract_set_subject_id(inv_set):
+                sub = _select_subject(school_id, str(_extract_set_subject_id(inv_set)))
                 if sub:
                     meta["subject_text"] = sub.get("name", "")
                     meta["subject_category_id"] = str(sub["id"])
                     subject_id = sub["id"]
 
     if volume_id:
-        vol = _select_one("volumes", school_id, str(volume_id))
+        vol = _select_category(school_id, str(volume_id))
         if vol:
             meta["volume_text"] = vol.get("name", "")
             meta["volume_category_id"] = str(vol["id"])
-            if not set_id and vol.get("set_id"):
-                inv_set_ref = _select_one("sets", school_id, str(vol["set_id"]))
+            category_id = str(vol["id"])
+            if not set_id and vol.get("parent_category_id"):
+                inv_set_ref = _select_category(school_id, str(vol["parent_category_id"]))
                 if inv_set_ref:
                     meta["set_text"] = inv_set_ref.get("name", "")
                     meta["set_category_id"] = str(inv_set_ref["id"])
                     set_id = inv_set_ref["id"]
-                    sub = _select_one("subjects", school_id, str(inv_set_ref.get("subject_id", "")))
+                    sub = _select_subject(school_id, str(_extract_set_subject_id(inv_set_ref) or ""))
                     if sub:
                         meta["subject_text"] = sub.get("name", "")
                         meta["subject_category_id"] = str(sub["id"])
@@ -871,24 +967,13 @@ def create_material(school_id: str, payload: dict) -> dict:
         meta["batch_names"] = batch_names
 
     unit_type = _normalize_unit_type(payload.get("unit_type"))
-    vol_num = payload.get("volume_number")
-    vol_name = meta.get("volume_text") or payload.get("volume_name") or ""
-    set_part_name = None
-    if vol_num and vol_name:
-        set_part_name = f"Volume {vol_num} - {vol_name}"
-    elif payload.get("set_part_name"):
-        set_part_name = str(payload.get("set_part_name")).strip() or None
 
     row = {
         "school_id": school_id,
+        "category_id": category_id,
         "item_code": _build_inventory_code("MAT", name),
         "name": name,
         "subject_id": subject_id,
-        "set_id": set_id,
-        "volume_id": volume_id,
-        "volume_name": vol_name or None,
-        "volume_number": vol_num,
-        "set_part_name": set_part_name,
         "class_name": ", ".join(batch_names) if batch_names else None,
         "description": (payload.get("description") or "").strip() or None,
         "unit_type": unit_type,
@@ -934,13 +1019,12 @@ def update_material(school_id: str, material_id: str, payload: dict) -> dict:
 
     meta = _get_metadata(existing)
     subject_id = existing.get("subject_id")
-    set_id = existing.get("set_id")
-    volume_id = existing.get("volume_id")
+    category_id = existing.get("category_id")
 
     if "subject_id" in payload:
         subject_id = payload["subject_id"]
         if subject_id:
-            sub = _select_one("subjects", school_id, str(subject_id))
+            sub = _select_subject(school_id, str(subject_id))
             meta["subject_text"] = sub.get("name", "") if sub else ""
             meta["subject_category_id"] = str(subject_id)
         else:
@@ -948,26 +1032,33 @@ def update_material(school_id: str, material_id: str, payload: dict) -> dict:
             meta.pop("subject_category_id", None)
 
     if "set_id" in payload:
-        set_id = payload["set_id"]
-        if set_id:
-            inv_set = _select_one("sets", school_id, str(set_id))
+        next_set_id = payload["set_id"]
+        if next_set_id:
+            inv_set = _select_category(school_id, str(next_set_id))
             meta["set_text"] = inv_set.get("name", "") if inv_set else ""
-            meta["set_category_id"] = str(set_id)
-            if inv_set and inv_set.get("subject_id"):
-                meta["subject_category_id"] = str(inv_set["subject_id"])
+            meta["set_category_id"] = str(next_set_id)
+            category_id = str(next_set_id)
+            if inv_set and _extract_set_subject_id(inv_set):
+                linked_subject_id = _extract_set_subject_id(inv_set)
+                meta["subject_category_id"] = str(linked_subject_id)
+                if not subject_id:
+                    subject_id = linked_subject_id
         else:
             meta.pop("set_text", None)
             meta.pop("set_category_id", None)
+            category_id = None
 
     if "volume_id" in payload:
-        volume_id = payload["volume_id"]
-        if volume_id:
-            vol = _select_one("volumes", school_id, str(volume_id))
+        next_volume_id = payload["volume_id"]
+        if next_volume_id:
+            vol = _select_category(school_id, str(next_volume_id))
             meta["volume_text"] = vol.get("name", "") if vol else ""
-            meta["volume_category_id"] = str(volume_id)
+            meta["volume_category_id"] = str(next_volume_id)
+            category_id = str(next_volume_id)
         else:
             meta.pop("volume_text", None)
             meta.pop("volume_category_id", None)
+            category_id = meta.get("set_category_id") or None
 
     if "batch_names" in payload:
         bn = _normalize_batch_names(payload["batch_names"])
@@ -976,32 +1067,7 @@ def update_material(school_id: str, material_id: str, payload: dict) -> dict:
 
     updates["metadata"] = meta
     updates["subject_id"] = subject_id
-    updates["set_id"] = set_id
-    updates["volume_id"] = volume_id
-
-    vol_name = meta.get("volume_text") or payload.get("volume_name") or existing.get("volume_name") or ""
-    vol_num = payload.get("volume_number") or existing.get("volume_number")
-    if "volume_name" in payload:
-        updates["volume_name"] = (payload["volume_name"] or "").strip() or None
-    if "volume_number" in payload:
-        updates["volume_number"] = payload["volume_number"]
-    if "set_name" in payload:
-        updates["set_name"] = (payload["set_name"] or "").strip() or None
-    if "set_part_name" in payload:
-        updates["set_part_name"] = (payload["set_part_name"] or "").strip() or None
-    if "subject" in payload:
-        updates["subject"] = (payload["subject"] or "").strip() or None
-
-    vol_num_final = updates.get("volume_number") or existing.get("volume_number")
-    vol_name_final = updates.get("volume_name") or meta.get("volume_text") or existing.get("volume_name") or ""
-    if vol_num_final and vol_name_final:
-        updates["set_part_name"] = f"Volume {vol_num_final} - {vol_name_final}"
-
-    if volume_id is None and "volume_id" in payload:
-        updates["volume_id"] = None
-        updates["volume_name"] = None
-        updates["volume_number"] = None
-        updates["set_part_name"] = None
+    updates["category_id"] = category_id
 
     updated = _update_and_return("material_items", material_id, school_id, updates)
     return _serialize_material(updated)
@@ -1682,7 +1748,7 @@ def get_report_data(
                 "material": r.get("name") or "",
                 "subject": _get_metadata(r).get("subject_text", ""),
                 "set_name": _get_metadata(r).get("set_text", ""),
-                "set_part_name": r.get("set_part_name") or "",
+                "set_part_name": _material_category_context(r).get("set_part_name") or "",
                 "batches": ", ".join(_parse_batch_names(_get_metadata(r))),
                 "unit_type": r.get("unit_type") or "book",
                 "price": float(r.get("unit_price") or 0),
@@ -1704,7 +1770,7 @@ def get_report_data(
                 "material": r.get("name") or "",
                 "subject": _get_metadata(r).get("subject_text", ""),
                 "set_name": _get_metadata(r).get("set_text", ""),
-                "set_part_name": r.get("set_part_name") or "",
+                "set_part_name": _material_category_context(r).get("set_part_name") or "",
                 "batches": ", ".join(_parse_batch_names(_get_metadata(r))),
                 "current_stock": int(r.get("current_stock") or 0),
                 "low_stock_threshold": int(r.get("low_stock_threshold") or 10),
