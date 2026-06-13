@@ -4,6 +4,7 @@ import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
+  BatchAnalytics, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestResult, PlatformAnalytics, SchoolAnalytics, StudentAnalytics, TestAnalyticsDetail,
 } from '@types';
 
 export function isRequestCanceled(error: unknown): boolean {
@@ -265,6 +266,212 @@ class ApiService {
 
   async rejectBulkActionRequest(requestId: string | number, data: { reason?: string } = {}) {
     return this.api.post(`/bulk-action-requests/${requestId}/reject`, data);
+  }
+
+  // ==================== Online Tests ====================
+
+  async listOnlineTests() {
+    return this.api.get<OnlineTest[]>('/online-tests/tests');
+  }
+
+  async getOnlineTest(testId: string | number) {
+    return this.api.get<OnlineTest>(`/online-tests/tests/${testId}`);
+  }
+
+  async createOnlineTest(data: Record<string, unknown>) {
+    return this.api.post<OnlineTest>('/online-tests/tests', data);
+  }
+
+  async updateOnlineTest(testId: string | number, data: Record<string, unknown>) {
+    return this.api.put<OnlineTest>(`/online-tests/tests/${testId}`, data);
+  }
+
+  async deleteOnlineTest(testId: string | number) {
+    return this.api.delete(`/online-tests/tests/${testId}`);
+  }
+
+  async listOnlineTestQuestions(params: {
+    test_id?: string | number;
+    section_id?: string | number;
+  } = {}) {
+    return this.api.get<OnlineTestQuestion[]>('/online-tests/questions', { params });
+  }
+
+  async createOnlineTestQuestion(data: Record<string, unknown>) {
+    return this.api.post<OnlineTestQuestion>('/online-tests/questions', data);
+  }
+
+  async updateOnlineTestQuestion(questionId: string | number, data: Record<string, unknown>) {
+    return this.api.put<OnlineTestQuestion>(`/online-tests/questions/${questionId}`, data);
+  }
+
+  async deleteOnlineTestQuestion(questionId: string | number) {
+    return this.api.delete(`/online-tests/questions/${questionId}`);
+  }
+
+  async listOnlineTestAttempts(params: { test_id?: string | number } = {}) {
+    return this.api.get<OnlineTestAttempt[]>('/online-tests/attempts', { params });
+  }
+
+  async getOnlineTestAttempt(attemptId: string | number) {
+    return this.api.get<OnlineTestAttempt>(`/online-tests/attempts/${attemptId}`);
+  }
+
+  async createOnlineTestAttempt(data: { test_id: string | number }) {
+    return this.api.post<OnlineTestAttempt>('/online-tests/attempts', data);
+  }
+
+  async saveOnlineTestResponse(
+    attemptId: string | number,
+    data: {
+      question_id: string | number;
+      response_payload: Record<string, unknown>;
+      is_marked_for_review?: boolean;
+    }
+  ) {
+    return this.api.post<OnlineTestAttempt>(`/online-tests/attempts/${attemptId}/responses`, data);
+  }
+
+  async submitOnlineTestAttempt(attemptId: string | number) {
+    return this.api.post<OnlineTestResult>(`/online-tests/attempts/${attemptId}/submit`);
+  }
+
+  async listOnlineTestResults(params: {
+    test_id?: string | number;
+    student_id?: string | number;
+  } = {}) {
+    return this.api.get<OnlineTestResult[]>('/online-tests/results', { params });
+  }
+
+  async getOnlineTestResult(resultId: string | number) {
+    return this.api.get<OnlineTestResult>(`/online-tests/results/${resultId}`);
+  }
+
+  async getOnlineTestAnalytics(params: {
+    test_id?: string | number;
+    target_school_id?: string | number;
+    global_view?: boolean;
+  } = {}) {
+    return this.api.get<OnlineTestAnalytics>('/online-tests/results/analytics', { params });
+  }
+
+  async getStudentAnalytics(studentId: string | number) {
+    return this.api.get<StudentAnalytics>(`/analytics/student/${studentId}`);
+  }
+
+  async getTestAnalyticsDetail(testId: string | number) {
+    return this.api.get<TestAnalyticsDetail>(`/analytics/test/${testId}`);
+  }
+
+  async getBatchAnalytics(batchId: string | number) {
+    return this.api.get<BatchAnalytics>(`/analytics/batch/${batchId}`);
+  }
+
+  async getSchoolAnalytics(schoolId: string | number) {
+    return this.api.get<SchoolAnalytics>(`/analytics/school/${schoolId}`);
+  }
+
+  async getPlatformAnalytics() {
+    return this.api.get<PlatformAnalytics>('/analytics/platform');
+  }
+
+  // ==================== LMS ====================
+
+  async listLmsCourses() {
+    return this.api.get<LmsCourse[]>('/lms/courses');
+  }
+
+  async getLmsCourse(courseId: string | number) {
+    return this.api.get<LmsCourse>(`/lms/courses/${courseId}`);
+  }
+
+  async createLmsCourse(data: Record<string, unknown>) {
+    return this.api.post<LmsCourse>('/lms/courses', data);
+  }
+
+  async updateLmsCourse(courseId: string | number, data: Record<string, unknown>) {
+    return this.api.put<LmsCourse>(`/lms/courses/${courseId}`, data);
+  }
+
+  async deleteLmsCourse(courseId: string | number) {
+    return this.api.delete(`/lms/courses/${courseId}`);
+  }
+
+  async listLmsModules(courseId: string | number) {
+    return this.api.get<LmsCourseModule[]>('/lms/modules', { params: { course_id: courseId } });
+  }
+
+  async createLmsModule(data: Record<string, unknown>) {
+    return this.api.post<LmsCourseModule>('/lms/modules', data);
+  }
+
+  async updateLmsModule(moduleId: string | number, data: Record<string, unknown>) {
+    return this.api.put<LmsCourseModule>(`/lms/modules/${moduleId}`, data);
+  }
+
+  async deleteLmsModule(moduleId: string | number) {
+    return this.api.delete(`/lms/modules/${moduleId}`);
+  }
+
+  async listLmsLessons(params: { course_id?: string | number; module_id?: string | number } = {}) {
+    return this.api.get<LmsLesson[]>('/lms/lessons', { params });
+  }
+
+  async getLmsLesson(lessonId: string | number) {
+    return this.api.get<LmsLesson>(`/lms/lessons/${lessonId}`);
+  }
+
+  async createLmsLesson(data: Record<string, unknown>) {
+    return this.api.post<LmsLesson>('/lms/lessons', data);
+  }
+
+  async updateLmsLesson(lessonId: string | number, data: Record<string, unknown>) {
+    return this.api.put<LmsLesson>(`/lms/lessons/${lessonId}`, data);
+  }
+
+  async deleteLmsLesson(lessonId: string | number) {
+    return this.api.delete(`/lms/lessons/${lessonId}`);
+  }
+
+  async getLmsProgress(params: { child_student_id?: string | number } = {}) {
+    return this.api.get<LmsProgressDashboard>('/lms/progress', { params });
+  }
+
+  async updateLmsProgress(data: {
+    course_id: string | number;
+    module_id?: string | number | null;
+    lesson_id: string | number;
+    last_watched_position_seconds?: number;
+    watch_percentage?: number;
+    assignment_completion_percentage?: number;
+    is_completed?: boolean;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.api.post<LmsProgressItem>('/lms/progress', data);
+  }
+
+  async listLmsAssignments(params: { course_id?: string | number } = {}) {
+    return this.api.get<LmsAssignment[]>('/lms/assignments', { params });
+  }
+
+  async getLmsAssignment(assignmentId: string | number) {
+    return this.api.get<LmsAssignment>(`/lms/assignments/${assignmentId}`);
+  }
+
+  async createLmsAssignment(data: Record<string, unknown>) {
+    return this.api.post<LmsAssignment>('/lms/assignments', data);
+  }
+
+  async updateLmsAssignment(assignmentId: string | number, data: Record<string, unknown>) {
+    return this.api.put<LmsAssignment>(`/lms/assignments/${assignmentId}`, data);
+  }
+
+  async deleteLmsAssignment(assignmentId: string | number) {
+    return this.api.delete(`/lms/assignments/${assignmentId}`);
+  }
+
+  async submitLmsAssignment(assignmentId: string | number, data: { submission_text?: string; attachment_url?: string; metadata?: Record<string, unknown> } = {}) {
+    return this.api.post<LmsAssignmentSubmission>(`/lms/assignments/${assignmentId}/submit`, data);
   }
 
   // ==================== Rooms ====================
@@ -592,6 +799,48 @@ class ApiService {
     return this.api.get('/timetable/count', {
       params: { school_id: schoolId },
     });
+  }
+
+  // ==================== Live Classes ====================
+
+  async listLiveClasses(params: {
+    status_filter?: string;
+    skip?: number;
+    limit?: number;
+  } = {}) {
+    return this.api.get<LiveClassSession[]>('/live-classes', { params });
+  }
+
+  async getLiveClass(sessionId: string | number) {
+    return this.api.get<LiveClassSession>(`/live-classes/${sessionId}`);
+  }
+
+  async createLiveClass(data: Record<string, unknown>) {
+    return this.api.post<LiveClassSession>('/live-classes', data);
+  }
+
+  async startLiveClass(sessionId: string | number) {
+    return this.api.post<{ session: LiveClassSession; message: string }>(`/live-classes/${sessionId}/start`);
+  }
+
+  async endLiveClass(sessionId: string | number) {
+    return this.api.post<{ session: LiveClassSession; message: string }>(`/live-classes/${sessionId}/end`);
+  }
+
+  async joinLiveClass(sessionId: string | number) {
+    return this.api.post<LiveClassAttendance>(`/live-classes/${sessionId}/join`);
+  }
+
+  async leaveLiveClass(sessionId: string | number) {
+    return this.api.post<LiveClassAttendance>(`/live-classes/${sessionId}/leave`);
+  }
+
+  async getLiveClassAttendance(sessionId: string | number) {
+    return this.api.get<LiveClassAttendance[]>(`/live-classes/${sessionId}/attendance`);
+  }
+
+  async uploadLiveClassRecording(sessionId: string | number, data: Record<string, unknown>) {
+    return this.api.post<LiveClassRecording>(`/live-classes/${sessionId}/recording`, data);
   }
 
   // ==================== Settings ====================

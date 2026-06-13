@@ -149,7 +149,7 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -257,6 +257,26 @@ app.include_router(
 app.include_router(
     platform.router,
     dependencies=[Depends(get_authenticated_user)],
+)
+
+app.include_router(
+    online_tests.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("online_tests"))],
+)
+
+app.include_router(
+    analytics.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("online_tests"))],
+)
+
+app.include_router(
+    lms.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("lms", "edupay.parent_portal"))],
+)
+
+app.include_router(
+    live_classes.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("live_classes", "edupay.parent_portal"))],
 )
 
 app.include_router(

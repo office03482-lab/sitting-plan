@@ -420,7 +420,7 @@ export interface Teacher {
 
 // ==================== Timetable ====================
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-export type TimetableSessionMode = 'offline' | 'online';
+export type TimetableSessionMode = 'offline' | 'online' | 'hybrid';
 export type TimetableSessionType = 'regular_class' | 'break_time' | 'doubt_session' | 'extra_class' | 'self_study';
 export type TimetableExtraClassScope = 'class_wise' | 'subject_wise' | 'general';
 
@@ -434,6 +434,11 @@ export interface TimetableEntry {
   extra_class_scope?: TimetableExtraClassScope;
   online_platform?: string;
   online_link?: string;
+  online_provider?: string;
+  meeting_link?: string;
+  meeting_id?: string;
+  meeting_password?: string;
+  recording_url?: string;
   notes?: string;
   day_of_week: DayOfWeek;
   start_time: string;
@@ -466,9 +471,80 @@ export interface TimetableView {
   extra_class_scope?: TimetableExtraClassScope;
   online_platform?: string;
   online_link?: string;
+  online_provider?: string;
+  meeting_link?: string;
+  meeting_id?: string;
+  meeting_password?: string;
+  recording_url?: string;
   notes?: string;
   start_date?: string;
   end_date?: string;
+}
+
+export interface LiveClassAttendance {
+  id: string;
+  school_id: string;
+  session_id: string;
+  profile_id?: string | null;
+  student_id?: string | null;
+  participant_name: string;
+  role_key: string;
+  join_timestamp?: string | null;
+  leave_timestamp?: string | null;
+  total_duration_seconds: number;
+  attendance_percentage: number;
+  attendance_status: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LiveClassSession {
+  id: string;
+  school_id: string;
+  timetable_entry_id: string;
+  course_id?: string | null;
+  module_id?: string | null;
+  lesson_id?: string | null;
+  session_date: string;
+  provider: string;
+  provider_session_id?: string | null;
+  meeting_link?: string | null;
+  meeting_id?: string | null;
+  meeting_password?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+  actual_start_at?: string | null;
+  actual_end_at?: string | null;
+  status: string;
+  notes_url?: string | null;
+  recording_url?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  timetable_entry?: TimetableView | null;
+  attendance_rate?: number | null;
+  average_watch_time_seconds?: number | null;
+  participation_count: number;
+}
+
+export interface LiveClassRecording {
+  id: string;
+  school_id: string;
+  session_id: string;
+  course_id?: string | null;
+  module_id?: string | null;
+  lesson_id?: string | null;
+  title: string;
+  recording_url: string;
+  notes_url?: string | null;
+  duration_seconds: number;
+  published_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 // ==================== Invigilator ====================
@@ -1011,6 +1087,445 @@ export interface EduPayParentPortal {
   };
   children: EduPayParentPortalChild[];
   payment_history: EduPayParentPortalPayment[];
+}
+
+// ==================== Online Tests ====================
+export interface OnlineTestSection {
+  id: string;
+  test_id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  display_order: number;
+  question_type: string;
+  marks_per_question: number;
+  negative_marks: number;
+  question_count: number;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTest {
+  id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  instructions?: string | null;
+  test_code?: string | null;
+  subject_id?: string | null;
+  batch_id?: string | null;
+  test_type: string;
+  delivery_mode: string;
+  status: string;
+  duration_minutes: number;
+  total_marks: number;
+  pass_marks?: number | null;
+  max_attempts: number;
+  shuffle_questions: boolean;
+  shuffle_options: boolean;
+  show_result_immediately: boolean;
+  allow_review: boolean;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  published_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  sections: OnlineTestSection[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTestQuestion {
+  id: string;
+  school_id: string;
+  test_id: string;
+  section_id: string;
+  question_code?: string | null;
+  display_order: number;
+  question_type: string;
+  difficulty_level: string;
+  prompt_text: string;
+  option_items: Array<Record<string, unknown>>;
+  answer_key: Record<string, unknown>;
+  explanation?: string | null;
+  marks: number;
+  negative_marks: number;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTestResponseEntry {
+  id: string;
+  school_id: string;
+  attempt_id: string;
+  test_id: string;
+  question_id: string;
+  student_id: string;
+  response_payload: Record<string, unknown>;
+  is_marked_for_review: boolean;
+  is_correct?: boolean | null;
+  marks_awarded?: number | null;
+  answered_at?: string | null;
+  evaluated_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTestAttempt {
+  id: string;
+  school_id: string;
+  test_id: string;
+  student_id: string;
+  attempt_number: number;
+  status: string;
+  started_at?: string | null;
+  submitted_at?: string | null;
+  auto_submitted_at?: string | null;
+  evaluated_at?: string | null;
+  total_questions_snapshot: number;
+  answered_questions_snapshot: number;
+  time_spent_seconds: number;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  responses: OnlineTestResponseEntry[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTestResult {
+  id: string;
+  school_id: string;
+  attempt_id: string;
+  test_id: string;
+  student_id: string;
+  status: string;
+  total_questions: number;
+  attempted_questions: number;
+  correct_answers: number;
+  incorrect_answers: number;
+  unanswered_questions: number;
+  score_obtained: number;
+  max_score: number;
+  percentage?: number | null;
+  rank_in_batch?: number | null;
+  rank_in_school?: number | null;
+  published_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OnlineTestAnalytics {
+  scope: string;
+  school_id?: string | null;
+  test_id?: string | null;
+  total_tests: number;
+  total_attempts: number;
+  completed_attempts: number;
+  evaluated_results: number;
+  average_score: number;
+  average_percentage: number;
+  highest_score: number;
+  lowest_score: number;
+  published_results: number;
+}
+
+export interface AnalyticsSubjectPerformance {
+  subject_id?: string | null;
+  subject_name: string;
+  percentage: number;
+  tests_taken: number;
+  score_obtained: number;
+  max_score: number;
+}
+
+export interface AnalyticsChapterPerformance {
+  chapter_name: string;
+  percentage: number;
+  attempts_count: number;
+  topic_count: number;
+}
+
+export interface AnalyticsStudentRank {
+  student_id: string;
+  student_name: string;
+  batch_id?: string | null;
+  batch_name?: string | null;
+  class_name?: string | null;
+  percentage: number;
+  score_obtained: number;
+  max_score: number;
+  rank: number;
+}
+
+export interface AnalyticsQuestionDifficulty {
+  question_id: string;
+  prompt_text: string;
+  difficulty_level: string;
+  correct_rate: number;
+  attempted_count: number;
+  average_marks: number;
+  classification: string;
+}
+
+export interface AnalyticsBatchComparison {
+  batch_id?: string | null;
+  batch_name: string;
+  student_count: number;
+  average_percentage: number;
+  average_score: number;
+}
+
+export interface AnalyticsTrend {
+  name: string;
+  average_percentage: number;
+  tests_count: number;
+}
+
+export interface AnalyticsMonthlyProgress {
+  period: string;
+  average_percentage: number;
+  tests_count: number;
+}
+
+export interface StudentAnalytics {
+  school_id: string;
+  student_id: string;
+  student_name: string;
+  overall_percentage: number;
+  subject_percentages: AnalyticsSubjectPerformance[];
+  chapter_percentages: AnalyticsChapterPerformance[];
+  weak_topics: string[];
+  strong_topics: string[];
+  accuracy: number;
+  speed: number;
+  rank?: number | null;
+  percentile: number;
+  suggestions: string[];
+  latest_test_id?: string | null;
+  generated_at?: string | null;
+}
+
+export interface TestAnalyticsDetail {
+  school_id: string;
+  test_id: string;
+  test_title: string;
+  subject_id?: string | null;
+  batch_id?: string | null;
+  teacher_name?: string | null;
+  average_percentage: number;
+  average_score: number;
+  participant_count: number;
+  completion_rate: number;
+  topper_list: AnalyticsStudentRank[];
+  weak_students: AnalyticsStudentRank[];
+  question_difficulty_analysis: AnalyticsQuestionDifficulty[];
+  chapter_performance: AnalyticsChapterPerformance[];
+  batch_comparison: AnalyticsBatchComparison[];
+  generated_at?: string | null;
+}
+
+export interface BatchAnalytics {
+  school_id: string;
+  batch_id: string;
+  batch_name: string;
+  class_name?: string | null;
+  section?: string | null;
+  overall_percentage: number;
+  active_students: number;
+  subject_percentages: AnalyticsSubjectPerformance[];
+  weak_students: AnalyticsStudentRank[];
+  strong_students: AnalyticsStudentRank[];
+  monthly_progress: AnalyticsMonthlyProgress[];
+  weak_topics: string[];
+  suggestions: string[];
+  generated_at?: string | null;
+}
+
+export interface SchoolAnalytics {
+  school_id: string;
+  school_name: string;
+  class_wise_performance: AnalyticsTrend[];
+  teacher_wise_performance: AnalyticsTrend[];
+  subject_wise_trends: AnalyticsTrend[];
+  monthly_progress: AnalyticsMonthlyProgress[];
+  active_students: number;
+  active_tests: number;
+  average_score: number;
+  average_percentage: number;
+  generated_at?: string | null;
+}
+
+export interface PlatformSchoolComparison {
+  school_id: string;
+  school_name: string;
+  average_percentage: number;
+  tests_count: number;
+  active_students: number;
+}
+
+export interface PlatformAnalytics {
+  cross_school_comparison: PlatformSchoolComparison[];
+  active_students: number;
+  active_tests: number;
+  average_score: number;
+  average_percentage: number;
+  usage_metrics: Record<string, number | string>;
+  generated_at?: string | null;
+}
+
+export interface LmsLessonResource {
+  id: string;
+  school_id: string;
+  course_id: string;
+  lesson_id: string;
+  resource_type: string;
+  title: string;
+  resource_url?: string | null;
+  text_content?: string | null;
+  file_size_bytes?: number | null;
+  metadata?: Record<string, unknown>;
+  is_downloadable: boolean;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsLesson {
+  id: string;
+  school_id: string;
+  course_id: string;
+  module_id: string;
+  title: string;
+  description?: string | null;
+  lesson_type: string;
+  video_url?: string | null;
+  content_text?: string | null;
+  duration_seconds: number;
+  display_order: number;
+  is_preview: boolean;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  resources: LmsLessonResource[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsCourseModule {
+  id: string;
+  school_id: string;
+  course_id: string;
+  title: string;
+  description?: string | null;
+  display_order: number;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  lessons: LmsLesson[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsCourse {
+  id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  course_code?: string | null;
+  subject_id?: string | null;
+  batch_id?: string | null;
+  thumbnail_url?: string | null;
+  intro_video_url?: string | null;
+  target_class_name?: string | null;
+  target_section?: string | null;
+  visibility: string;
+  is_published: boolean;
+  estimated_duration_minutes: number;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  module_count: number;
+  lesson_count: number;
+  assignment_count: number;
+  modules: LmsCourseModule[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsAssignmentSubmission {
+  id: string;
+  school_id: string;
+  assignment_id: string;
+  student_id: string;
+  submission_text?: string | null;
+  attachment_url?: string | null;
+  status: string;
+  score_awarded?: number | null;
+  feedback?: string | null;
+  submitted_at?: string | null;
+  graded_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsAssignment {
+  id: string;
+  school_id: string;
+  course_id: string;
+  module_id?: string | null;
+  lesson_id?: string | null;
+  title: string;
+  description?: string | null;
+  attachment_url?: string | null;
+  due_at?: string | null;
+  max_score: number;
+  status: string;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  submission?: LmsAssignmentSubmission | null;
+  submission_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsProgressItem {
+  id: string;
+  school_id: string;
+  student_id: string;
+  course_id: string;
+  module_id?: string | null;
+  lesson_id: string;
+  last_watched_position_seconds: number;
+  watch_percentage: number;
+  assignment_completion_percentage: number;
+  course_completion_percentage: number;
+  lessons_completed: number;
+  is_completed: boolean;
+  last_accessed_at?: string | null;
+  completed_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsAiInsights {
+  weak_chapters: string[];
+  recommended_lessons: string[];
+  recommended_tests: string[];
+  revision_suggestions: string[];
+}
+
+export interface LmsProgressDashboard {
+  progress_items: LmsProgressItem[];
+  enrolled_courses: LmsCourse[];
+  ai_insights: LmsAiInsights;
 }
 
 // ==================== UI State ====================

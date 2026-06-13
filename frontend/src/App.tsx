@@ -19,7 +19,18 @@ import FeeManagement from '@pages/FeeManagement';
 import HostelManagement from '@pages/HostelManagement';
 import InventoryManagement from '@pages/InventoryManagement';
 import InvigilatorManagement from '@pages/InvigilatorManagement';
+import LmsAssignments from '@pages/LmsAssignments';
+import LiveClasses from '@pages/LiveClasses';
 import Login from '@pages/Login';
+import OnlineTestCreate from '@pages/OnlineTestCreate';
+import OnlineTestEdit from '@pages/OnlineTestEdit';
+import OnlineTestResults from '@pages/OnlineTestResults';
+import OnlineTestTake from '@pages/OnlineTestTake';
+import OnlineTests from '@pages/OnlineTests';
+import CourseDetail from '@pages/CourseDetail';
+import Courses from '@pages/Courses';
+import LessonPlayer from '@pages/LessonPlayer';
+import MyLearning from '@pages/MyLearning';
 import Reports from '@pages/Reports';
 import RoomConfiguration from '@pages/RoomConfiguration';
 import SeatingGeneration from '@pages/SeatingGeneration';
@@ -179,6 +190,94 @@ function AppShell() {
           element={
             <ProtectedRoute requiredPermissions={['edupay']}>
               <FeeManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/courses"
+          element={
+            <ProtectedRoute requiredPermissions={['lms.view', 'lms.manage', 'lms.progress', 'edupay.parent_portal']}>
+              <Courses />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/course/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['lms.view', 'lms.manage', 'lms.progress', 'edupay.parent_portal']}>
+              <CourseDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/lesson/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['lms.view', 'lms.manage', 'lms.progress', 'edupay.parent_portal']}>
+              <LessonPlayer />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/my-learning"
+          element={
+            <ProtectedRoute requiredPermissions={['lms.progress', 'lms.manage', 'edupay.parent_portal']}>
+              <MyLearning />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/assignments"
+          element={
+            <ProtectedRoute requiredPermissions={['lms.assignments', 'lms.manage', 'lms.progress']}>
+              <LmsAssignments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/live-classes"
+          element={
+            <ProtectedRoute requiredPermissions={['live_classes.view', 'live_classes.manage', 'live_classes.join', 'live_classes.attendance', 'edupay.parent_portal']}>
+              <LiveClasses />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/online-tests"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+              <OnlineTests />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/online-tests/create"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OnlineTestCreate />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/online-tests/edit/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OnlineTestEdit />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/online-tests/take/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'student']}>
+              <OnlineTestTake />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/online-tests/results/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+              <OnlineTestResults />
             </ProtectedRoute>
           }
         />

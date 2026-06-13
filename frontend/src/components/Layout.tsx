@@ -20,11 +20,13 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Video,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
+import type { UserRole } from '@types';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 
 interface LayoutProps {
@@ -35,6 +37,7 @@ type MenuChild = {
   name: string;
   path: string;
   permission?: string;
+  roles?: UserRole[];
 };
 
 type MenuSection = {
@@ -43,6 +46,7 @@ type MenuSection = {
   icon: typeof LayoutDashboard;
   iconBackground: string;
   permission?: string;
+  roles?: UserRole[];
   path?: string;
   children?: MenuChild[];
 };
@@ -62,7 +66,11 @@ export default function Layout({ children }: LayoutProps) {
   const isPlatformAdmin = user?.role_key === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
 
-  const canAccess = (permission?: string) => !permission || isAdmin || hasPermission(permission);
+  const canAccess = (permission?: string, roles?: UserRole[]) => {
+    const roleAllowed = !roles?.length || Boolean(user?.role && roles.includes(user.role));
+    const permissionAllowed = !permission || isAdmin || hasPermission(permission);
+    return roleAllowed && permissionAllowed;
+  };
 
   const rawSections: MenuSection[] = [
     {
@@ -158,6 +166,38 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
+      key: 'lms',
+      name: 'Learning Hub',
+      icon: GraduationCap,
+      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #0f172a 100%)',
+      roles: ['admin', 'teacher', 'student', 'viewer'],
+      children: [
+        { name: 'Courses', path: '/courses', permission: 'lms.view' },
+        { name: 'My Learning', path: '/my-learning' },
+        { name: 'Assignments', path: '/assignments', permission: 'lms.assignments' },
+      ],
+    },
+    {
+      key: 'online-tests',
+      name: 'Online Tests',
+      icon: ClipboardCheck,
+      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #1d4ed8 100%)',
+      roles: ['admin', 'teacher', 'student'],
+      children: [
+        { name: 'Overview', path: '/online-tests', roles: ['admin', 'teacher', 'student'] },
+        { name: 'Create Test', path: '/online-tests/create', roles: ['admin', 'teacher'] },
+      ],
+    },
+    {
+      key: 'live-classes',
+      name: 'Live Classes',
+      icon: Video,
+      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #2563eb 100%)',
+      children: [
+        { name: 'Session Hub', path: '/live-classes', permission: 'live_classes.view' },
+      ],
+    },
+    {
       key: 'inventory',
       name: 'Inventory Control',
       icon: Package,
@@ -235,9 +275,11 @@ export default function Layout({ children }: LayoutProps) {
       .map((section) => {
         if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
         if (section.key === 'security' && isPlatformAdmin) return null;
-        const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission));
+        const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission, child.roles));
         const sectionVisible =
-          section.path ? canAccess(section.permission) : canAccess(section.permission) && filteredChildren.length > 0;
+          section.path
+            ? canAccess(section.permission, section.roles)
+            : canAccess(section.permission, section.roles) && filteredChildren.length > 0;
 
         if (!sectionVisible) return null;
 

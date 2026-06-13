@@ -333,6 +333,8 @@ def serialize_timetable_row(
     ui_session_type = resolve_ui_session_type(row)
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     subject_value = str((metadata or {}).get("subject") or subject_name or "").strip()
+    online_provider = metadata.get("online_provider") or metadata.get("online_platform")
+    meeting_link = row.get("online_link")
     return {
         "id": row.get("id"),
         "teacher_id": row.get("staff_member_id"),
@@ -341,8 +343,13 @@ def serialize_timetable_row(
         "session_mode": row.get("session_mode") or "offline",
         "session_type": ui_session_type,
         "extra_class_scope": metadata.get("extra_class_scope"),
-        "online_platform": metadata.get("online_platform"),
-        "online_link": row.get("online_link"),
+        "online_platform": online_provider,
+        "online_link": meeting_link,
+        "online_provider": online_provider,
+        "meeting_link": meeting_link,
+        "meeting_id": row.get("meeting_id"),
+        "meeting_password": row.get("meeting_password"),
+        "recording_url": row.get("recording_url"),
         "notes": row.get("notes"),
         "day_of_week": row.get("day_of_week"),
         "start_time": str(row.get("start_time") or "")[:5],
@@ -564,7 +571,8 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "subject": entry_data.get("subject"),
         "ui_session_type": ui_session_type,
         "extra_class_scope": entry_data.get("extra_class_scope"),
-        "online_platform": entry_data.get("online_platform"),
+        "online_platform": entry_data.get("online_provider") or entry_data.get("online_platform"),
+        "online_provider": entry_data.get("online_provider") or entry_data.get("online_platform"),
     }
     payload = {
         "school_id": school_id,
@@ -578,7 +586,10 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "subject_id": _resolve_subject_id_for_timetable(school_id, entry_data.get("class_name"), entry_data.get("subject")),
         "session_mode": entry_data.get("session_mode") or "offline",
         "session_type": normalize_session_type_for_db(ui_session_type),
-        "online_link": entry_data.get("online_link"),
+        "online_link": entry_data.get("meeting_link") or entry_data.get("online_link"),
+        "meeting_id": entry_data.get("meeting_id"),
+        "meeting_password": entry_data.get("meeting_password"),
+        "recording_url": entry_data.get("recording_url"),
         "notes": entry_data.get("notes"),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", True)),
@@ -643,7 +654,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "subject": entry_data.get("subject", existing.get("subject")),
         "ui_session_type": next_session_type,
         "extra_class_scope": entry_data.get("extra_class_scope", existing.get("extra_class_scope")),
-        "online_platform": entry_data.get("online_platform", existing.get("online_platform")),
+        "online_platform": entry_data.get("online_provider", entry_data.get("online_platform", existing.get("online_platform"))),
+        "online_provider": entry_data.get("online_provider", entry_data.get("online_platform", existing.get("online_provider"))),
     }
     payload = {
         "staff_member_id": next_teacher_id,
@@ -659,7 +671,10 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         ),
         "session_mode": entry_data.get("session_mode", existing.get("session_mode")),
         "session_type": normalize_session_type_for_db(next_session_type),
-        "online_link": entry_data.get("online_link", existing.get("online_link")),
+        "online_link": entry_data.get("meeting_link", entry_data.get("online_link", existing.get("meeting_link", existing.get("online_link")))),
+        "meeting_id": entry_data.get("meeting_id", existing.get("meeting_id")),
+        "meeting_password": entry_data.get("meeting_password", existing.get("meeting_password")),
+        "recording_url": entry_data.get("recording_url", existing.get("recording_url")),
         "notes": entry_data.get("notes", existing.get("notes")),
         "metadata": metadata,
         "is_active": bool(entry_data.get("is_active", existing.get("is_active", True))),

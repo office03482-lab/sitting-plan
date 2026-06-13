@@ -670,6 +670,11 @@ class TimetableEntryBase(BaseModel):
     extra_class_scope: Optional[str] = None
     online_platform: Optional[str] = None
     online_link: Optional[str] = None
+    online_provider: Optional[str] = None
+    meeting_link: Optional[str] = None
+    meeting_id: Optional[str] = None
+    meeting_password: Optional[str] = None
+    recording_url: Optional[str] = None
     notes: Optional[str] = None
     day_of_week: DayOfWeek
     start_time: str = Field(..., pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')  # HH:MM format
@@ -694,6 +699,11 @@ class TimetableEntryUpdate(BaseModel):
     extra_class_scope: Optional[str] = None
     online_platform: Optional[str] = None
     online_link: Optional[str] = None
+    online_provider: Optional[str] = None
+    meeting_link: Optional[str] = None
+    meeting_id: Optional[str] = None
+    meeting_password: Optional[str] = None
+    recording_url: Optional[str] = None
     notes: Optional[str] = None
     day_of_week: Optional[DayOfWeek] = None
     start_time: Optional[str] = Field(None, pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$')
@@ -733,6 +743,11 @@ class TimetableView(BaseModel):
     extra_class_scope: Optional[str] = None
     online_platform: Optional[str] = None
     online_link: Optional[str] = None
+    online_provider: Optional[str] = None
+    meeting_link: Optional[str] = None
+    meeting_id: Optional[str] = None
+    meeting_password: Optional[str] = None
+    recording_url: Optional[str] = None
     notes: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -1773,3 +1788,806 @@ class PlatformDashboardSummaryResponse(BaseModel):
     schools_count: int = 0
     active_users_count: int = 0
     recent_workflow_activity: List[PlatformWorkflowEventResponse] = Field(default_factory=list)
+
+
+class OnlineTestSectionResponse(BaseModel):
+    id: str
+    test_id: str
+    school_id: str
+    title: str
+    description: Optional[str] = None
+    display_order: int
+    question_type: str
+    marks_per_question: float
+    negative_marks: float
+    question_count: int
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    test_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    test_type: str = "objective"
+    delivery_mode: str = "scheduled"
+    status: str = "draft"
+    duration_minutes: int = 60
+    total_marks: float = 0
+    pass_marks: Optional[float] = None
+    max_attempts: int = 1
+    shuffle_questions: bool = False
+    shuffle_options: bool = False
+    show_result_immediately: bool = False
+    allow_review: bool = True
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OnlineTestUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    test_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    test_type: Optional[str] = None
+    delivery_mode: Optional[str] = None
+    status: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    total_marks: Optional[float] = None
+    pass_marks: Optional[float] = None
+    max_attempts: Optional[int] = None
+    shuffle_questions: Optional[bool] = None
+    shuffle_options: Optional[bool] = None
+    show_result_immediately: Optional[bool] = None
+    allow_review: Optional[bool] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class OnlineTestResponse(BaseModel):
+    id: str
+    school_id: str
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    test_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    test_type: str
+    delivery_mode: str
+    status: str
+    duration_minutes: int
+    total_marks: float
+    pass_marks: Optional[float] = None
+    max_attempts: int
+    shuffle_questions: bool
+    shuffle_options: bool
+    show_result_immediately: bool
+    allow_review: bool
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    sections: List[OnlineTestSectionResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestQuestionCreate(BaseModel):
+    test_id: str
+    section_id: Optional[str] = None
+    question_code: Optional[str] = None
+    display_order: int = 1
+    question_type: str = "single_choice"
+    difficulty_level: str = "medium"
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float = 1
+    negative_marks: float = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OnlineTestQuestionUpdate(BaseModel):
+    section_id: Optional[str] = None
+    question_code: Optional[str] = None
+    display_order: Optional[int] = None
+    question_type: Optional[str] = None
+    difficulty_level: Optional[str] = None
+    prompt_text: Optional[str] = None
+    option_items: Optional[List[Dict[str, Any]]] = None
+    answer_key: Optional[Dict[str, Any]] = None
+    explanation: Optional[str] = None
+    marks: Optional[float] = None
+    negative_marks: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class OnlineTestQuestionResponse(BaseModel):
+    id: str
+    school_id: str
+    test_id: str
+    section_id: str
+    question_code: Optional[str] = None
+    display_order: int
+    question_type: str
+    difficulty_level: str
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float
+    negative_marks: float
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestAttemptCreate(BaseModel):
+    test_id: str
+
+
+class OnlineTestAttemptResponseUpsert(BaseModel):
+    question_id: str
+    response_payload: Dict[str, Any] = Field(default_factory=dict)
+    is_marked_for_review: bool = False
+
+
+class OnlineTestAttemptResponse(BaseModel):
+    id: str
+    school_id: str
+    test_id: str
+    student_id: str
+    attempt_number: int
+    status: str
+    started_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+    auto_submitted_at: Optional[datetime] = None
+    evaluated_at: Optional[datetime] = None
+    total_questions_snapshot: int
+    answered_questions_snapshot: int
+    time_spent_seconds: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    responses: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestResultResponse(BaseModel):
+    id: str
+    school_id: str
+    attempt_id: str
+    test_id: str
+    student_id: str
+    status: str
+    total_questions: int
+    attempted_questions: int
+    correct_answers: int
+    incorrect_answers: int
+    unanswered_questions: int
+    score_obtained: float
+    max_score: float
+    percentage: Optional[float] = None
+    rank_in_batch: Optional[int] = None
+    rank_in_school: Optional[int] = None
+    published_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestAnalyticsResponse(BaseModel):
+    scope: str
+    school_id: Optional[str] = None
+    test_id: Optional[str] = None
+    total_tests: int = 0
+    total_attempts: int = 0
+    completed_attempts: int = 0
+    evaluated_results: int = 0
+    average_score: float = 0
+    average_percentage: float = 0
+    highest_score: float = 0
+    lowest_score: float = 0
+    published_results: int = 0
+
+
+class AnalyticsSubjectPerformanceResponse(BaseModel):
+    subject_id: Optional[str] = None
+    subject_name: str
+    percentage: float
+    tests_taken: int
+    score_obtained: float
+    max_score: float
+
+
+class AnalyticsChapterPerformanceResponse(BaseModel):
+    chapter_name: str
+    percentage: float
+    attempts_count: int
+    topic_count: int
+
+
+class AnalyticsTopicPerformanceResponse(BaseModel):
+    chapter_name: str
+    topic_name: str
+    attempts_count: int
+    correct_count: int
+    incorrect_count: int
+    unanswered_count: int
+    percentage: float
+
+
+class AnalyticsStudentRankResponse(BaseModel):
+    student_id: str
+    student_name: str
+    batch_id: Optional[str] = None
+    batch_name: Optional[str] = None
+    class_name: Optional[str] = None
+    percentage: float
+    score_obtained: float
+    max_score: float
+    rank: int
+
+
+class AnalyticsQuestionDifficultyResponse(BaseModel):
+    question_id: str
+    prompt_text: str
+    difficulty_level: str
+    correct_rate: float
+    attempted_count: int
+    average_marks: float
+    classification: str
+
+
+class AnalyticsBatchComparisonResponse(BaseModel):
+    batch_id: Optional[str] = None
+    batch_name: str
+    student_count: int
+    average_percentage: float
+    average_score: float
+
+
+class AnalyticsTrendResponse(BaseModel):
+    name: str
+    average_percentage: float
+    tests_count: int
+
+
+class AnalyticsMonthlyProgressResponse(BaseModel):
+    period: str
+    average_percentage: float
+    tests_count: int
+
+
+class StudentAnalyticsResponse(BaseModel):
+    school_id: str
+    student_id: str
+    student_name: str
+    overall_percentage: float
+    subject_percentages: List[AnalyticsSubjectPerformanceResponse] = Field(default_factory=list)
+    chapter_percentages: List[AnalyticsChapterPerformanceResponse] = Field(default_factory=list)
+    weak_topics: List[str] = Field(default_factory=list)
+    strong_topics: List[str] = Field(default_factory=list)
+    accuracy: float
+    speed: float
+    rank: Optional[int] = None
+    percentile: float
+    suggestions: List[str] = Field(default_factory=list)
+    latest_test_id: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
+class TestAnalyticsResponse(BaseModel):
+    school_id: str
+    test_id: str
+    test_title: str
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    teacher_name: Optional[str] = None
+    average_percentage: float
+    average_score: float
+    participant_count: int
+    completion_rate: float
+    topper_list: List[AnalyticsStudentRankResponse] = Field(default_factory=list)
+    weak_students: List[AnalyticsStudentRankResponse] = Field(default_factory=list)
+    question_difficulty_analysis: List[AnalyticsQuestionDifficultyResponse] = Field(default_factory=list)
+    chapter_performance: List[AnalyticsChapterPerformanceResponse] = Field(default_factory=list)
+    batch_comparison: List[AnalyticsBatchComparisonResponse] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class BatchAnalyticsResponse(BaseModel):
+    school_id: str
+    batch_id: str
+    batch_name: str
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    overall_percentage: float
+    active_students: int
+    subject_percentages: List[AnalyticsSubjectPerformanceResponse] = Field(default_factory=list)
+    weak_students: List[AnalyticsStudentRankResponse] = Field(default_factory=list)
+    strong_students: List[AnalyticsStudentRankResponse] = Field(default_factory=list)
+    monthly_progress: List[AnalyticsMonthlyProgressResponse] = Field(default_factory=list)
+    weak_topics: List[str] = Field(default_factory=list)
+    suggestions: List[str] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class SchoolAnalyticsResponse(BaseModel):
+    school_id: str
+    school_name: str
+    class_wise_performance: List[AnalyticsTrendResponse] = Field(default_factory=list)
+    teacher_wise_performance: List[AnalyticsTrendResponse] = Field(default_factory=list)
+    subject_wise_trends: List[AnalyticsTrendResponse] = Field(default_factory=list)
+    monthly_progress: List[AnalyticsMonthlyProgressResponse] = Field(default_factory=list)
+    active_students: int
+    active_tests: int
+    average_score: float
+    average_percentage: float
+    generated_at: Optional[datetime] = None
+
+
+class PlatformSchoolComparisonResponse(BaseModel):
+    school_id: str
+    school_name: str
+    average_percentage: float
+    tests_count: int
+    active_students: int
+
+
+class PlatformAnalyticsResponse(BaseModel):
+    cross_school_comparison: List[PlatformSchoolComparisonResponse] = Field(default_factory=list)
+    active_students: int
+    active_tests: int
+    average_score: float
+    average_percentage: float
+    usage_metrics: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: Optional[datetime] = None
+
+
+class LiveClassSessionBase(BaseModel):
+    timetable_entry_id: str
+    session_date: date
+    course_id: Optional[str] = None
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    provider: str = "google_meet"
+    meeting_link: Optional[str] = None
+    meeting_id: Optional[str] = None
+    meeting_password: Optional[str] = None
+    scheduled_start_at: Optional[datetime] = None
+    scheduled_end_at: Optional[datetime] = None
+    notes_url: Optional[str] = None
+    recording_url: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveClassSessionCreate(LiveClassSessionBase):
+    pass
+
+
+class LiveClassSessionResponse(BaseModel):
+    id: str
+    school_id: str
+    timetable_entry_id: str
+    course_id: Optional[str] = None
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    session_date: date
+    provider: str
+    provider_session_id: Optional[str] = None
+    meeting_link: Optional[str] = None
+    meeting_id: Optional[str] = None
+    meeting_password: Optional[str] = None
+    scheduled_start_at: Optional[datetime] = None
+    scheduled_end_at: Optional[datetime] = None
+    actual_start_at: Optional[datetime] = None
+    actual_end_at: Optional[datetime] = None
+    status: str
+    notes_url: Optional[str] = None
+    recording_url: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    timetable_entry: Optional[TimetableView] = None
+    attendance_rate: Optional[float] = None
+    average_watch_time_seconds: Optional[float] = None
+    participation_count: int = 0
+
+
+class LiveClassSessionActionResponse(BaseModel):
+    session: LiveClassSessionResponse
+    message: str
+
+
+class LiveClassJoinLeaveResponse(BaseModel):
+    session_id: str
+    attendance_id: str
+    profile_id: Optional[str] = None
+    student_id: Optional[str] = None
+    join_timestamp: Optional[datetime] = None
+    leave_timestamp: Optional[datetime] = None
+    total_duration_seconds: int
+    attendance_percentage: float
+    attendance_status: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LiveClassAttendanceResponse(BaseModel):
+    id: str
+    school_id: str
+    session_id: str
+    profile_id: Optional[str] = None
+    student_id: Optional[str] = None
+    participant_name: str = ""
+    role_key: str
+    join_timestamp: Optional[datetime] = None
+    leave_timestamp: Optional[datetime] = None
+    total_duration_seconds: int
+    attendance_percentage: float
+    attendance_status: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LiveClassRecordingCreate(BaseModel):
+    title: str
+    recording_url: str
+    notes_url: Optional[str] = None
+    duration_seconds: int = 0
+    course_id: Optional[str] = None
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveClassRecordingResponse(BaseModel):
+    id: str
+    school_id: str
+    session_id: str
+    course_id: Optional[str] = None
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    title: str
+    recording_url: str
+    notes_url: Optional[str] = None
+    duration_seconds: int
+    published_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LiveClassAnalyticsSummary(BaseModel):
+    attendance_rate: float = 0
+    average_watch_time_seconds: float = 0
+    participation: int = 0
+    missed_classes: int = 0
+    watch_completion_percentage: float = 0
+
+
+class LmsLessonResourceBase(BaseModel):
+    resource_type: str = "pdf"
+    title: str
+    resource_url: Optional[str] = None
+    text_content: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_downloadable: bool = True
+
+
+class LmsLessonResourceCreate(LmsLessonResourceBase):
+    pass
+
+
+class LmsLessonResourceUpdate(BaseModel):
+    resource_type: Optional[str] = None
+    title: Optional[str] = None
+    resource_url: Optional[str] = None
+    text_content: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_downloadable: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+class LmsLessonResourceResponse(LmsLessonResourceBase):
+    id: str
+    school_id: str
+    course_id: str
+    lesson_id: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsLessonBase(BaseModel):
+    module_id: str
+    title: str
+    description: Optional[str] = None
+    lesson_type: str = "video"
+    video_url: Optional[str] = None
+    content_text: Optional[str] = None
+    duration_seconds: int = 0
+    display_order: int = 1
+    is_preview: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    resources: List[LmsLessonResourceCreate] = Field(default_factory=list)
+
+
+class LmsLessonCreate(LmsLessonBase):
+    course_id: str
+
+
+class LmsLessonUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    lesson_type: Optional[str] = None
+    video_url: Optional[str] = None
+    content_text: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    display_order: Optional[int] = None
+    is_preview: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+    resources: Optional[List[LmsLessonResourceCreate]] = None
+
+
+class LmsLessonResponse(BaseModel):
+    id: str
+    school_id: str
+    course_id: str
+    module_id: str
+    title: str
+    description: Optional[str] = None
+    lesson_type: str
+    video_url: Optional[str] = None
+    content_text: Optional[str] = None
+    duration_seconds: int
+    display_order: int
+    is_preview: bool
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    resources: List[LmsLessonResourceResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsCourseModuleBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    display_order: int = 1
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsCourseModuleCreate(LmsCourseModuleBase):
+    course_id: str
+
+
+class LmsCourseModuleUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    display_order: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class LmsCourseModuleResponse(BaseModel):
+    id: str
+    school_id: str
+    course_id: str
+    title: str
+    description: Optional[str] = None
+    display_order: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    lessons: List[LmsLessonResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsCourseBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    course_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    intro_video_url: Optional[str] = None
+    target_class_name: Optional[str] = None
+    target_section: Optional[str] = None
+    visibility: str = "batch"
+    is_published: bool = False
+    estimated_duration_minutes: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsCourseCreate(LmsCourseBase):
+    pass
+
+
+class LmsCourseUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    course_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    intro_video_url: Optional[str] = None
+    target_class_name: Optional[str] = None
+    target_section: Optional[str] = None
+    visibility: Optional[str] = None
+    is_published: Optional[bool] = None
+    estimated_duration_minutes: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class LmsCourseResponse(BaseModel):
+    id: str
+    school_id: str
+    title: str
+    description: Optional[str] = None
+    course_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    intro_video_url: Optional[str] = None
+    target_class_name: Optional[str] = None
+    target_section: Optional[str] = None
+    visibility: str
+    is_published: bool
+    estimated_duration_minutes: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    module_count: int = 0
+    lesson_count: int = 0
+    assignment_count: int = 0
+    modules: List[LmsCourseModuleResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsAssignmentBase(BaseModel):
+    course_id: str
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    attachment_url: Optional[str] = None
+    due_at: Optional[datetime] = None
+    max_score: float = 100
+    status: str = "draft"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsAssignmentCreate(LmsAssignmentBase):
+    pass
+
+
+class LmsAssignmentUpdate(BaseModel):
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    attachment_url: Optional[str] = None
+    due_at: Optional[datetime] = None
+    max_score: Optional[float] = None
+    status: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class LmsAssignmentSubmissionCreate(BaseModel):
+    submission_text: Optional[str] = None
+    attachment_url: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsAssignmentSubmissionGrade(BaseModel):
+    status: str = "graded"
+    score_awarded: Optional[float] = None
+    feedback: Optional[str] = None
+
+
+class LmsAssignmentSubmissionResponse(BaseModel):
+    id: str
+    school_id: str
+    assignment_id: str
+    student_id: str
+    submission_text: Optional[str] = None
+    attachment_url: Optional[str] = None
+    status: str
+    score_awarded: Optional[float] = None
+    feedback: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    graded_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsAssignmentResponse(BaseModel):
+    id: str
+    school_id: str
+    course_id: str
+    module_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    attachment_url: Optional[str] = None
+    due_at: Optional[datetime] = None
+    max_score: float
+    status: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    submission: Optional[LmsAssignmentSubmissionResponse] = None
+    submission_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsProgressUpdate(BaseModel):
+    course_id: str
+    module_id: Optional[str] = None
+    lesson_id: str
+    last_watched_position_seconds: int = 0
+    watch_percentage: float = 0
+    assignment_completion_percentage: float = 0
+    is_completed: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsProgressResponse(BaseModel):
+    id: str
+    school_id: str
+    student_id: str
+    course_id: str
+    module_id: Optional[str] = None
+    lesson_id: str
+    last_watched_position_seconds: int
+    watch_percentage: float
+    assignment_completion_percentage: float
+    course_completion_percentage: float
+    lessons_completed: int
+    is_completed: bool
+    last_accessed_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class LmsAiInsightsResponse(BaseModel):
+    weak_chapters: List[str] = Field(default_factory=list)
+    recommended_lessons: List[str] = Field(default_factory=list)
+    recommended_tests: List[str] = Field(default_factory=list)
+    revision_suggestions: List[str] = Field(default_factory=list)
+
+
+class LmsProgressDashboardResponse(BaseModel):
+    progress_items: List[LmsProgressResponse] = Field(default_factory=list)
+    enrolled_courses: List[LmsCourseResponse] = Field(default_factory=list)
+    ai_insights: LmsAiInsightsResponse = Field(default_factory=LmsAiInsightsResponse)

@@ -170,6 +170,11 @@ def build_timetable_view(entry: dict[str, Any]) -> TimetableView:
         extra_class_scope=entry.get("extra_class_scope"),
         online_platform=entry.get("online_platform"),
         online_link=entry.get("online_link"),
+        online_provider=entry.get("online_provider"),
+        meeting_link=entry.get("meeting_link"),
+        meeting_id=entry.get("meeting_id"),
+        meeting_password=entry.get("meeting_password"),
+        recording_url=entry.get("recording_url"),
         notes=entry.get("notes"),
     )
     if is_break_entry(view):
@@ -200,6 +205,11 @@ def build_timetable_response(entry: dict[str, Any]) -> TimetableEntryResponse:
         extra_class_scope=entry.get("extra_class_scope"),
         online_platform=entry.get("online_platform"),
         online_link=entry.get("online_link"),
+        online_provider=entry.get("online_provider"),
+        meeting_link=entry.get("meeting_link"),
+        meeting_id=entry.get("meeting_id"),
+        meeting_password=entry.get("meeting_password"),
+        recording_url=entry.get("recording_url"),
         notes=entry.get("notes"),
     )
     session_type = response.session_type or ""

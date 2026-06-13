@@ -64,6 +64,17 @@ const POWER_MODULES: PowerModule[] = [
     ],
   },
   {
+    key: 'live_classes',
+    label: 'Live Classes',
+    sections: [
+      { key: 'live_classes.view', label: 'View Live Classes' },
+      { key: 'live_classes.manage', label: 'Manage Live Classes' },
+      { key: 'live_classes.join', label: 'Join Live Classes' },
+      { key: 'live_classes.attendance', label: 'Live Class Attendance' },
+      { key: 'live_classes.reports', label: 'Live Class Reports' },
+    ],
+  },
+  {
     key: 'inventory',
     label: 'Inventory',
     sections: [

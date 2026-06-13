@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, CheckCircle2, Clock3, ShieldCheck, Users, XCircle } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
-import type { PlatformDashboardSummary } from '@types';
+import type { PlatformAnalytics, PlatformDashboardSummary } from '@types';
 
 const countCardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
 
@@ -18,6 +18,7 @@ function formatDateTime(value?: string | null) {
 
 export default function PlatformDashboard() {
   const [summary, setSummary] = useState<PlatformDashboardSummary | null>(null);
+  const [analytics, setAnalytics] = useState<PlatformAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,9 +28,13 @@ export default function PlatformDashboard() {
     const loadSummary = async () => {
       setLoading(true);
       try {
-        const response = await apiService.getPlatformDashboardSummary();
+        const [summaryResponse, analyticsResponse] = await Promise.all([
+          apiService.getPlatformDashboardSummary(),
+          apiService.getPlatformAnalytics(),
+        ]);
         if (!active) return;
-        setSummary(response.data);
+        setSummary(summaryResponse.data);
+        setAnalytics(analyticsResponse.data);
         setError(null);
       } catch (requestError: any) {
         if (!active) return;
@@ -132,6 +137,65 @@ export default function PlatformDashboard() {
             {!loading && !(summary?.recent_workflow_activity || []).length ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">Workflow activity abhi available nahi hai.</div>
             ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Online Test Platform Analytics</h2>
+            <p className="mt-1 text-sm text-slate-500">Cross-school comparison, adoption, and usage metrics.</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['Active Students', analytics?.active_students || 0],
+            ['Active Tests', analytics?.active_tests || 0],
+            ['Average Score', analytics?.average_score || 0],
+            ['Average %', `${analytics?.average_percentage || 0}%`],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{label}</p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">{loading ? '...' : value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-[1.8fr_1fr]">
+          <div className="overflow-hidden rounded-2xl border border-slate-200">
+            <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr] gap-4 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+              <span>School</span>
+              <span>Average %</span>
+              <span>Tests</span>
+              <span>Students</span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {(analytics?.cross_school_comparison || []).slice(0, 8).map((item) => (
+                <div key={item.school_id} className="grid grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr] gap-4 px-4 py-3 text-sm text-slate-700">
+                  <span className="font-medium text-slate-900">{item.school_name}</span>
+                  <span>{item.average_percentage}%</span>
+                  <span>{item.tests_count}</span>
+                  <span>{item.active_students}</span>
+                </div>
+              ))}
+              {!loading && !(analytics?.cross_school_comparison || []).length ? (
+                <div className="px-4 py-8 text-center text-sm text-slate-500">Online test analytics abhi available nahi hai.</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Usage Metrics</p>
+            <div className="mt-4 space-y-3 text-sm text-slate-700">
+              {Object.entries(analytics?.usage_metrics || {}).map(([key, value]) => (
+                <div key={key} className="flex items-center justify-between gap-3">
+                  <span className="capitalize">{key.replace(/_/g, ' ')}</span>
+                  <span className="font-semibold text-slate-900">{value}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
