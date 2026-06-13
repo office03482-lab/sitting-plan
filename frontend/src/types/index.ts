@@ -176,6 +176,7 @@ export interface Student {
   id: string | number;
   roll_number: string;
   name: string;
+  full_name?: string;
   photoDataUrl?: string;
   father_name?: string;
   batch: string;
@@ -192,11 +193,11 @@ export interface Student {
   requires_extra_time: boolean;
   boarding_type?: string;
   hostel_required?: boolean;
-  preferred_hostel_id?: string | number;
+  preferred_hostel_id?: string;
   hostel_request_status?: string;
-  assigned_hostel_id?: string | number;
+  assigned_hostel_id?: string;
   assigned_hostel_name?: string;
-  assigned_room_id?: string | number;
+  assigned_room_id?: string;
   assigned_room_number?: string;
   assigned_bed_label?: string;
   hostel_notes?: string;

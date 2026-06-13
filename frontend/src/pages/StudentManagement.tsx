@@ -1285,6 +1285,9 @@ export default function StudentManagement() {
         photoDataUrl: studentPhotoDataUrl || undefined,
       });
       const syncAdmissionSnapshot = (studentId: string | number, rollNumber: string, queueForEduPay: boolean) => {
+        if (!queueForEduPay) {
+          return;
+        }
         const existingRequest = readEduPayAdmissionRequests().find(
           (item) => String(item.linkedStudentId ?? '') === String(studentId) || item.linkedStudentRollNumber === rollNumber,
         );
@@ -1297,7 +1300,7 @@ export default function StudentManagement() {
         });
       };
       const payload: Partial<Student> = {
-        name: fullName,
+        full_name: fullName,
         roll_number: studentForm.rollNumber.trim(),
         father_name: toNullableString(studentForm.fatherName) as unknown as string | undefined,
         batch: batchName,
@@ -1324,7 +1327,7 @@ export default function StudentManagement() {
         return;
       }
 
-      if (!payload.name || !payload.roll_number || !payload.batch) {
+      if (!payload.full_name || !payload.roll_number || !payload.batch) {
         alert('Name, roll number, aur batch required hai.');
         return;
       }
@@ -1336,12 +1339,6 @@ export default function StudentManagement() {
 
       if (editStudent) {
         const response = await apiService.updateStudent(editStudent.id, payload, currentSchoolId);
-        if (sendHostelRequestOnSubmit && studentForm.hostelRequired && studentForm.preferredHostelId) {
-          await apiService.createStudentHostelRequest(editStudent.id, {
-            hostel_id: studentForm.preferredHostelId,
-            requested_notes: studentForm.hostelRequestNote.trim() || undefined,
-          }, currentSchoolId);
-        }
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired
@@ -1352,12 +1349,6 @@ export default function StudentManagement() {
         );
       } else {
         const response = await apiService.createStudent(payload, currentSchoolId);
-        if (sendHostelRequestOnSubmit && studentForm.hostelRequired && studentForm.preferredHostelId) {
-          await apiService.createStudentHostelRequest(response.data.id, {
-            hostel_id: studentForm.preferredHostelId,
-            requested_notes: studentForm.hostelRequestNote.trim() || undefined,
-          }, currentSchoolId);
-        }
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired

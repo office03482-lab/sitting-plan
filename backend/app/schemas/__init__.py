@@ -170,7 +170,7 @@ class BatchReorderRequest(BaseModel):
 class StudentBase(BaseModel):
     """Base student schema"""
     roll_number: str
-    name: str
+    name: str = Field(validation_alias=AliasChoices("name", "full_name"))
     father_name: Optional[str] = None
     batch: str  # Batch enum as string
     class_name: Optional[str] = None
@@ -183,17 +183,25 @@ class StudentBase(BaseModel):
     requires_extra_time: bool = False
     boarding_type: Optional[str] = None
     hostel_required: bool = False
-    preferred_hostel_id: Optional[Any] = None
+    preferred_hostel_id: Optional[str] = None
     hostel_request_status: Optional[str] = None
-    assigned_hostel_id: Optional[Any] = None
+    assigned_hostel_id: Optional[str] = None
     assigned_hostel_name: Optional[str] = None
-    assigned_room_id: Optional[Any] = None
+    assigned_room_id: Optional[str] = None
     assigned_room_number: Optional[str] = None
     assigned_bed_label: Optional[str] = None
     hostel_notes: Optional[str] = None
     reference_name: Optional[str] = None
     reference_number: Optional[str] = None
     reference_remark: Optional[str] = None
+
+    @field_validator("preferred_hostel_id", "assigned_hostel_id", "assigned_room_id", mode="before")
+    @classmethod
+    def normalize_optional_hostel_identifiers(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 class StudentCreate(StudentBase):
@@ -204,7 +212,7 @@ class StudentCreate(StudentBase):
 class StudentUpdate(BaseModel):
     """Update student schema"""
     roll_number: Optional[str] = None
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, validation_alias=AliasChoices("name", "full_name"))
     father_name: Optional[str] = None
     batch: Optional[str] = None
     class_name: Optional[str] = None
@@ -217,16 +225,24 @@ class StudentUpdate(BaseModel):
     requires_extra_time: Optional[bool] = None
     boarding_type: Optional[str] = None
     hostel_required: Optional[bool] = None
-    preferred_hostel_id: Optional[int] = None
+    preferred_hostel_id: Optional[str] = None
     hostel_request_status: Optional[str] = None
-    assigned_hostel_id: Optional[int] = None
-    assigned_room_id: Optional[int] = None
+    assigned_hostel_id: Optional[str] = None
+    assigned_room_id: Optional[str] = None
     assigned_bed_label: Optional[str] = None
     hostel_notes: Optional[str] = None
     reference_name: Optional[str] = None
     reference_number: Optional[str] = None
     reference_remark: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("preferred_hostel_id", "assigned_hostel_id", "assigned_room_id", mode="before")
+    @classmethod
+    def normalize_optional_hostel_identifiers(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 class StudentResponse(StudentBase):

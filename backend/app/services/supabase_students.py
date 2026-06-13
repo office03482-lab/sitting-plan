@@ -15,6 +15,11 @@ def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_optional_id(value: Any) -> str | None:
+    normalized = _normalize(value)
+    return normalized or None
+
+
 def _looks_like_academic_batch_name(name: str | None) -> bool:
     from app.utils.academic_batches import looks_like_academic_batch_name
     return looks_like_academic_batch_name(name)
@@ -53,6 +58,25 @@ def _resolve_batch_id(school_id: str, batch_name: str) -> str | None:
         if _normalize(row.get("name")).lower() == normalized_name.lower():
             return str(row["id"])
     return None
+
+
+def _resolve_batch_name(school_id: str, batch_id: Any) -> str | None:
+    normalized_batch_id = _normalize(batch_id)
+    if not normalized_batch_id:
+        return None
+    response = (
+        get_supabase_admin_client()
+        .table("batches")
+        .select("id, name")
+        .eq("school_id", school_id)
+        .eq("id", normalized_batch_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(response.data or [])
+    if not rows:
+        return None
+    return _normalize(rows[0].get("name")) or None
 
 
 def _get_metadata(row: dict[str, Any]) -> dict[str, Any]:
@@ -97,11 +121,11 @@ def _serialize_student(row: dict[str, Any], batch_name_map: dict[str, str] | Non
         "requires_extra_time": bool(row.get("requires_extra_time", False)),
         "boarding_type": _normalize(row.get("boarding_type")) or None,
         "hostel_required": bool(row.get("hostel_required", False)),
-        "preferred_hostel_id": metadata.get("preferred_hostel_id"),
+        "preferred_hostel_id": _normalize_optional_id(metadata.get("preferred_hostel_id")),
         "hostel_request_status": _normalize(metadata.get("hostel_request_status", "not_requested")),
-        "assigned_hostel_id": metadata.get("assigned_hostel_id"),
+        "assigned_hostel_id": _normalize_optional_id(metadata.get("assigned_hostel_id")),
         "assigned_hostel_name": None,
-        "assigned_room_id": metadata.get("assigned_room_id"),
+        "assigned_room_id": _normalize_optional_id(metadata.get("assigned_room_id")),
         "assigned_room_number": None,
         "assigned_bed_label": _normalize(metadata.get("assigned_bed_label")) or None,
         "hostel_notes": _normalize(metadata.get("hostel_notes")) or None,
@@ -261,29 +285,32 @@ def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not roll_number:
         raise HTTPException(status_code=400, detail="Roll number is required")
 
-    name = _normalize(payload.get("name") or payload.get("candidate_name"))
+    name = _normalize(payload.get("full_name") or payload.get("name") or payload.get("candidate_name"))
     if not name:
         raise HTTPException(status_code=400, detail="Student name is required")
 
     batch_name = _normalize(payload.get("batch"))
-    batch_id = _resolve_batch_id(school_id, batch_name) if batch_name else None
+    batch_id = _normalize_optional_id(payload.get("batch_id"))
+    if batch_name:
+        batch_id = _resolve_batch_id(school_id, batch_name)
+    elif batch_id:
+        batch_name = _resolve_batch_name(school_id, batch_id) or ""
     class_name = _normalize_class_name(batch_name, batch_name)
 
     row = {
         "school_id": school_id,
         "roll_number": roll_number,
         "full_name": name,
-        "name": name,
         "batch_id": batch_id,
-        "batch": batch_name,
         "class_name": class_name or batch_name if batch_name else None,
         "is_active": bool(payload.get("is_active", True)),
     }
     metadata = {
-        "preferred_hostel_id": payload.get("preferred_hostel_id"),
+        "legacy_batch_label": batch_name or None,
+        "preferred_hostel_id": _normalize_optional_id(payload.get("preferred_hostel_id")),
         "hostel_request_status": _normalize(payload.get("hostel_request_status")) or ("pending" if payload.get("hostel_required") and payload.get("preferred_hostel_id") else "not_requested"),
-        "assigned_hostel_id": payload.get("assigned_hostel_id"),
-        "assigned_room_id": payload.get("assigned_room_id"),
+        "assigned_hostel_id": _normalize_optional_id(payload.get("assigned_hostel_id")),
+        "assigned_room_id": _normalize_optional_id(payload.get("assigned_room_id")),
         "assigned_bed_label": _normalize(payload.get("assigned_bed_label")) or None,
         "hostel_notes": _normalize(payload.get("hostel_notes")) or None,
         "reference_name": _normalize(payload.get("reference_name")) or None,
