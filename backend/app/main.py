@@ -149,7 +149,7 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes, study_planner, parent_portal, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -277,6 +277,51 @@ app.include_router(
 app.include_router(
     live_classes.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("live_classes", "edupay.parent_portal"))],
+)
+
+app.include_router(
+    study_planner.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
+)
+
+app.include_router(
+    parent_portal.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("parent_intelligence", "edupay.parent_portal"))],
+)
+
+app.include_router(
+    ai_tutor.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_tutor"))],
+)
+
+app.include_router(
+    doubts.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("doubt_solver"))],
+)
+
+app.include_router(
+    teacher_ai.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("teacher_ai"))],
+)
+
+app.include_router(
+    monetization.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("edupay"))],
+)
+
+app.include_router(
+    bi.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("bi"))],
+)
+
+app.include_router(
+    predictions.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("predictions", "edupay.parent_portal"))],
+)
+
+app.include_router(
+    ai_agents.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
 )
 
 app.include_router(

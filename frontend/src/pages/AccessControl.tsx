@@ -75,6 +75,53 @@ const POWER_MODULES: PowerModule[] = [
     ],
   },
   {
+    key: 'study_planner',
+    label: 'Study Planner',
+    sections: [
+      { key: 'study_planner.view', label: 'View Study Planner' },
+      { key: 'study_planner.goals', label: 'Manage Learning Goals' },
+      { key: 'study_planner.reports', label: 'Study Planner Reports' },
+    ],
+  },
+  {
+    key: 'ai_tutor',
+    label: 'AI Tutor',
+    sections: [
+      { key: 'ai_tutor.chat', label: 'Use AI Tutor' },
+      { key: 'ai_tutor.review', label: 'Review Tutor Conversations' },
+      { key: 'ai_tutor.manage', label: 'Manage Tutor Prompts' },
+    ],
+  },
+  {
+    key: 'doubt_solver',
+    label: 'AI Doubt Solver',
+    sections: [
+      { key: 'doubt_solver.solve', label: 'Solve Academic Doubts' },
+      { key: 'doubt_solver.review', label: 'Review Doubt History' },
+      { key: 'doubt_solver.manage', label: 'Manage Doubt Solver' },
+      { key: 'doubt_solver.escalate', label: 'Handle Teacher Escalations' },
+    ],
+  },
+  {
+    key: 'teacher_ai',
+    label: 'Teacher AI Assistant',
+    sections: [
+      { key: 'teacher_ai.generate', label: 'Generate Papers and Assignments' },
+      { key: 'teacher_ai.evaluate', label: 'Generate Evaluation and Remarks' },
+      { key: 'teacher_ai.reports', label: 'Generate Parent and Progress Reports' },
+    ],
+  },
+  {
+    key: 'parent_intelligence',
+    label: 'Parent Intelligence',
+    sections: [
+      { key: 'parent_intelligence.view', label: 'View Parent Intelligence' },
+      { key: 'parent_intelligence.alerts', label: 'Manage Parent Alerts' },
+      { key: 'parent_intelligence.communication', label: 'Parent Communication Actions' },
+      { key: 'parent_intelligence.reports', label: 'Parent Intelligence Reports' },
+    ],
+  },
+  {
     key: 'inventory',
     label: 'Inventory',
     sections: [
@@ -95,6 +142,30 @@ const POWER_MODULES: PowerModule[] = [
       { key: 'edupay.fees', label: 'Fee Structures' },
       { key: 'edupay.payments', label: 'Payment Tracking' },
       { key: 'edupay.parent_portal', label: 'Parent Portal' },
+      { key: 'edupay.commerce', label: 'Commerce and Orders' },
+      { key: 'edupay.subscriptions', label: 'Subscriptions' },
+      { key: 'edupay.revenue', label: 'Revenue Dashboard' },
+    ],
+  },
+  {
+    key: 'bi',
+    label: 'Enterprise BI',
+    sections: [
+      { key: 'bi.academic', label: 'Academic BI Dashboard' },
+      { key: 'bi.finance', label: 'Finance BI Dashboard' },
+      { key: 'bi.operations', label: 'Operations BI Dashboard' },
+      { key: 'bi.platform', label: 'Platform BI Dashboard' },
+      { key: 'bi.reports', label: 'BI Report Builder and Exports' },
+    ],
+  },
+  {
+    key: 'ai_agents',
+    label: 'AI Academic Operating System',
+    sections: [
+      { key: 'ai_agents.view', label: 'View AI Command Center' },
+      { key: 'ai_agents.run', label: 'Run AI Agents' },
+      { key: 'ai_agents.approve', label: 'Approve AI Recommendations' },
+      { key: 'ai_agents.reports', label: 'AI Operating Reports' },
     ],
   },
   {

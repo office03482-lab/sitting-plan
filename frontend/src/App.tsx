@@ -19,6 +19,10 @@ import FeeManagement from '@pages/FeeManagement';
 import HostelManagement from '@pages/HostelManagement';
 import InventoryManagement from '@pages/InventoryManagement';
 import InvigilatorManagement from '@pages/InvigilatorManagement';
+import CommercePage from '@pages/CommercePage';
+import BusinessIntelligencePage from '@pages/BusinessIntelligencePage';
+import PredictiveIntelligencePage from '@pages/PredictiveIntelligencePage';
+import AiAcademicOperatingSystemPage from '@pages/AiAcademicOperatingSystemPage';
 import LmsAssignments from '@pages/LmsAssignments';
 import LiveClasses from '@pages/LiveClasses';
 import Login from '@pages/Login';
@@ -27,6 +31,10 @@ import OnlineTestEdit from '@pages/OnlineTestEdit';
 import OnlineTestResults from '@pages/OnlineTestResults';
 import OnlineTestTake from '@pages/OnlineTestTake';
 import OnlineTests from '@pages/OnlineTests';
+import AiTutorPage from '@pages/AiTutorPage';
+import AiDoubtSolverPage from '@pages/AiDoubtSolverPage';
+import TeacherAiAssistantPage from '@pages/TeacherAiAssistantPage';
+import ParentIntelligencePortal from '@pages/ParentIntelligencePortal';
 import CourseDetail from '@pages/CourseDetail';
 import Courses from '@pages/Courses';
 import LessonPlayer from '@pages/LessonPlayer';
@@ -40,6 +48,7 @@ import StaffBulkUpload from '@pages/StaffBulkUpload';
 import StaffDirectory from '@pages/StaffDirectory';
 import StudentDirectory from '@pages/StudentDirectory';
 import StudentManagement from '@pages/StudentManagement';
+import StudyPlanner from '@pages/StudyPlanner';
 import TeacherManagement from '@pages/TeacherManagement';
 import TimetableManagement from '@pages/TimetableManagement';
 import PlatformDashboard from '@pages/PlatformDashboard';
@@ -194,6 +203,38 @@ function AppShell() {
           }
         />
         <Route
+          path="/commerce"
+          element={
+            <ProtectedRoute requiredPermissions={['edupay.commerce', 'edupay.subscriptions', 'edupay.revenue']}>
+              <CommercePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/bi"
+          element={
+            <ProtectedRoute requiredPermissions={['bi.academic', 'bi.finance', 'bi.operations', 'bi.platform', 'bi.reports']}>
+              <BusinessIntelligencePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/predictions"
+          element={
+            <ProtectedRoute requiredPermissions={['predictions.student', 'predictions.campus', 'predictions.finance', 'predictions.manage', 'edupay.parent_portal']}>
+              <PredictiveIntelligencePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ai-command-center"
+          element={
+            <ProtectedRoute requiredPermissions={['ai_agents.view', 'ai_agents.run', 'ai_agents.approve', 'ai_agents.reports']}>
+              <AiAcademicOperatingSystemPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/courses"
           element={
             <ProtectedRoute requiredPermissions={['lms.view', 'lms.manage', 'lms.progress', 'edupay.parent_portal']}>
@@ -278,6 +319,46 @@ function AppShell() {
           element={
             <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
               <OnlineTestResults />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/study-planner"
+          element={
+            <ProtectedRoute requiredPermissions={['study_planner.view', 'study_planner.goals', 'study_planner.reports', 'edupay.parent_portal']}>
+              <StudyPlanner />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ai-tutor"
+          element={
+            <ProtectedRoute requiredPermissions={['ai_tutor.chat', 'ai_tutor.review', 'ai_tutor.manage']}>
+              <AiTutorPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/doubts"
+          element={
+            <ProtectedRoute requiredPermissions={['doubt_solver.solve', 'doubt_solver.review', 'doubt_solver.manage', 'doubt_solver.escalate']}>
+              <AiDoubtSolverPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/teacher-ai"
+          element={
+            <ProtectedRoute requiredPermissions={['teacher_ai.generate', 'teacher_ai.evaluate', 'teacher_ai.reports']}>
+              <TeacherAiAssistantPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent-intelligence"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.alerts', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentIntelligencePortal />
             </ProtectedRoute>
           }
         />

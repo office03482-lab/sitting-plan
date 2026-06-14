@@ -1354,6 +1354,136 @@ class EduPayParentPortalResponse(BaseModel):
     payment_history: List[EduPayPaymentResponse] = Field(default_factory=list)
 
 
+class CommerceOrderItemRequest(BaseModel):
+    product_id: str
+    quantity: int = 1
+
+
+class PaymentCreateOrderRequest(BaseModel):
+    provider_key: str
+    items: List[CommerceOrderItemRequest] = Field(default_factory=list)
+    coupon_code: Optional[str] = None
+    referral_code: Optional[str] = None
+    affiliate_code: Optional[str] = None
+    credits_to_redeem: Optional[float] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PaymentCreateOrderItemResponse(BaseModel):
+    product_id: str
+    title: str
+    quantity: int
+    unit_price: float
+    total_price: float
+    product_type: str
+    pricing_model: str
+
+
+class PaymentCreateOrderResponse(BaseModel):
+    order_id: str
+    school_id: Optional[str] = None
+    provider_key: str
+    provider_order_id: str
+    payment_link: str
+    subtotal_amount: float
+    discount_amount: float
+    credits_redeemed: float
+    total_amount: float
+    currency: str
+    coupon: Optional[Dict[str, Any]] = None
+    items: List[PaymentCreateOrderItemResponse] = Field(default_factory=list)
+    mode: str
+
+
+class PaymentVerifyRequest(BaseModel):
+    provider_key: str
+    order_id: str
+    provider_order_id: str
+    provider_payment_id: Optional[str] = None
+    signature: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PaymentVerifyResponse(BaseModel):
+    order_id: str
+    status: str
+    provider_payment_id: str
+    subscriptions_created: int = 0
+    mode: str
+    verified_at: Optional[str] = None
+
+
+class CouponApplyRequest(BaseModel):
+    code: str
+    order_amount: float
+
+
+class CouponApplyResponse(BaseModel):
+    coupon_id: str
+    code: str
+    coupon_type: str
+    discount_amount: float
+    final_amount: float
+    currency: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CommerceSubscriptionResponse(BaseModel):
+    id: str
+    school_id: Optional[str] = None
+    profile_id: Optional[str] = None
+    student_id: Optional[str] = None
+    product_id: str
+    order_id: Optional[str] = None
+    provider_key: str
+    plan_name: str
+    subscription_status: str
+    start_date: str
+    expiry_date: Optional[str] = None
+    renewal_date: Optional[str] = None
+    auto_renew: bool = False
+    renewal_count: int = 0
+    amount: float
+    currency: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SubscriptionListResponse(BaseModel):
+    subscriptions: List[CommerceSubscriptionResponse] = Field(default_factory=list)
+    generated_at: Optional[str] = None
+
+
+class RevenueProductSummary(BaseModel):
+    title: str
+    revenue: float
+
+
+class RevenueSchoolSummary(BaseModel):
+    school_id: str
+    revenue: float
+
+
+class RevenueDashboardResponse(BaseModel):
+    scope: str
+    total_revenue: float
+    mrr: float
+    arr: float
+    monthly_revenue: float
+    yearly_revenue: float
+    course_sales: float
+    test_sales: float
+    affiliate_sales: float
+    affiliate_commissions: float
+    pending_payouts: float
+    active_subscriptions: int
+    orders_count: int
+    paid_orders_count: int
+    product_catalog: List[Dict[str, Any]] = Field(default_factory=list)
+    top_products: List[RevenueProductSummary] = Field(default_factory=list)
+    school_revenue: List[RevenueSchoolSummary] = Field(default_factory=list)
+    generated_at: Optional[str] = None
+
+
 # ==================== Attendance Schemas ====================
 
 class AttendanceStudentCreate(BaseModel):
@@ -2286,6 +2416,354 @@ class LiveClassAnalyticsSummary(BaseModel):
     watch_completion_percentage: float = 0
 
 
+class StudyTaskResponse(BaseModel):
+    task_type: str
+    title: str
+    description: str
+    subject_name: Optional[str] = None
+    chapter_name: Optional[str] = None
+    recommended_resource_type: Optional[str] = None
+    recommended_resource_id: Optional[str] = None
+    recommended_resource_url: Optional[str] = None
+    estimated_minutes: int = 0
+    priority: int = 1
+    status: str = "pending"
+    source_module: Optional[str] = None
+    source_entity_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StudyPlanResponse(BaseModel):
+    role: str
+    scope: str
+    plan_date: str
+    exam_mode: Optional[str] = None
+    target_student_id: Optional[str] = None
+    target_student_name: Optional[str] = None
+    total_estimated_minutes: int = 0
+    completion_percentage: float = 0
+    streak_count: int = 0
+    badges: List[str] = Field(default_factory=list)
+    milestones: List[str] = Field(default_factory=list)
+    achievement_level: Optional[str] = None
+    risk_level: Optional[str] = None
+    tasks: List[StudyTaskResponse] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: Optional[datetime] = None
+
+
+class StudyPlannerWeekResponse(BaseModel):
+    role: str
+    target_student_id: Optional[str] = None
+    target_student_name: Optional[str] = None
+    today_plan: Optional[StudyPlanResponse] = None
+    tomorrow_plan: Optional[StudyPlanResponse] = None
+    weekly_plan: Dict[str, Any] = Field(default_factory=dict)
+    monthly_plan: Dict[str, Any] = Field(default_factory=dict)
+    streak_count: int = 0
+    badges: List[str] = Field(default_factory=list)
+    milestones: List[str] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class StudyRecommendationItemResponse(BaseModel):
+    recommendation_type: str
+    title: str
+    summary: Optional[str] = None
+    score: float = 0
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LearningGoalCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    goal_type: str = "daily"
+    exam_mode: Optional[str] = None
+    target_date: Optional[str] = None
+    target_value: Optional[float] = None
+    current_value: Optional[float] = 0
+    status: Optional[str] = "active"
+    target_student_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LearningGoalResponse(BaseModel):
+    id: str
+    school_id: str
+    student_id: str
+    student_name: str
+    goal_type: str
+    exam_mode: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    target_date: Optional[str] = None
+    target_value: Optional[float] = None
+    current_value: float = 0
+    status: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AiTutorRequest(BaseModel):
+    topic: Optional[str] = None
+    question: Optional[str] = None
+    prompt: Optional[str] = None
+    problem_statement: Optional[str] = None
+    target_student_id: Optional[str] = None
+    class_level: Optional[str] = None
+    image_url: Optional[str] = None
+    image_reference: Optional[str] = None
+    voice_reference: Optional[str] = None
+    teacher_prompt: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AiTutorQuestionResponse(BaseModel):
+    level: str
+    question: str
+
+
+class AiTutorFlashCardResponse(BaseModel):
+    front: str
+    back: str
+
+
+class AiTutorConversationSummaryResponse(BaseModel):
+    id: str
+    school_id: str
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    profile_id: Optional[str] = None
+    role_key: str
+    mode: str
+    topic: str
+    user_prompt: str
+    response_text: str
+    teacher_prompt: Optional[str] = None
+    attachments: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+class DoubtInputBase(BaseModel):
+    question: Optional[str] = None
+    prompt: Optional[str] = None
+    target_student_id: Optional[str] = None
+    source_language: Optional[str] = "english"
+    image_url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    screenshot_url: Optional[str] = None
+    handwritten_note_url: Optional[str] = None
+    voice_reference: Optional[str] = None
+    extracted_text: Optional[str] = None
+    file_name: Optional[str] = None
+    teacher_prompt: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DoubtHistoryResponse(BaseModel):
+    session_id: str
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    input_type: str
+    source_language: str
+    detected_subject: Optional[str] = None
+    detected_topic: Optional[str] = None
+    confidence_score: float = 0
+    escalation_status: str
+    final_answer: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class DoubtSolverResponse(BaseModel):
+    session_id: str
+    question_id: Optional[str] = None
+    solution_id: Optional[str] = None
+    input_type: str
+    source_language: str
+    normalized_question: str
+    extracted_text: str
+    detected_subject: str
+    detected_topic: str
+    confidence_score: float = 0
+    extracted_equations: List[str] = Field(default_factory=list)
+    extracted_diagrams: List[str] = Field(default_factory=list)
+    extracted_mcqs: List[Dict[str, Any]] = Field(default_factory=list)
+    extracted_numericals: List[str] = Field(default_factory=list)
+    explanation: str
+    final_answer: Optional[str] = None
+    shortcut_method: Optional[str] = None
+    common_mistakes: List[str] = Field(default_factory=list)
+    step_by_step: List[str] = Field(default_factory=list)
+    personalization: Dict[str, Any] = Field(default_factory=dict)
+    recommendations: List[Dict[str, Any]] = Field(default_factory=list)
+    escalation_status: str
+    teacher_resolution_notes: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
+class TeacherAiQuestionPaperRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    batch_id: Optional[str] = None
+    subject_id: Optional[str] = None
+    topic: Optional[str] = None
+    paper_type: str = "unit_test"
+    difficulty_level: str = "medium"
+    question_types: List[str] = Field(default_factory=lambda: ["mcq", "subjective", "numerical", "hots"])
+    question_count: int = 10
+    duration_minutes: int = 60
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherAiGeneratedQuestion(BaseModel):
+    question_type: str
+    difficulty: str
+    marks: float
+    prompt: str
+    source: str
+
+
+class TeacherAiQuestionPaperResponse(BaseModel):
+    job_id: str
+    paper_id: Optional[str] = None
+    paper_type: str
+    title: str
+    topic: str
+    difficulty_level: str
+    duration_minutes: int
+    total_marks: float
+    questions: List[TeacherAiGeneratedQuestion] = Field(default_factory=list)
+    instructions: Optional[str] = None
+    context_signals: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: Optional[datetime] = None
+
+
+class TeacherAiAssignmentRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    batch_id: Optional[str] = None
+    subject_id: Optional[str] = None
+    topic: Optional[str] = None
+    assignment_type: str = "homework"
+    difficulty_level: str = "medium"
+    task_count: int = 8
+    estimated_minutes: int = 30
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherAiAssignmentTask(BaseModel):
+    task_no: int
+    task_type: str
+    difficulty_level: str
+    prompt: str
+    expected_outcome: str
+
+
+class TeacherAiAssignmentResponse(BaseModel):
+    job_id: str
+    assignment_id: Optional[str] = None
+    assignment_type: str
+    title: str
+    difficulty_level: str
+    estimated_minutes: int
+    tasks: List[TeacherAiAssignmentTask] = Field(default_factory=list)
+    instructions: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: Optional[datetime] = None
+
+
+class TeacherAiLessonPlanRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    teacher_id: Optional[str] = None
+    class_name: Optional[str] = None
+    topic: Optional[str] = None
+    plan_scope: str = "daily"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherAiLessonPlanSlot(BaseModel):
+    day_of_week: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    subject: Optional[str] = None
+    class_name: Optional[str] = None
+    chapter: str
+    objective: str
+    activity: str
+
+
+class TeacherAiLessonPlanResponse(BaseModel):
+    job_id: str
+    plan_scope: str
+    title: str
+    topic: str
+    schedule: List[TeacherAiLessonPlanSlot] = Field(default_factory=list)
+    holiday_notes: List[str] = Field(default_factory=list)
+    teaching_goals: List[str] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
+class TeacherAiReportCommentsRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    student_id: str
+    report_type: str = "progress_report"
+    score: Optional[float] = None
+    max_score: Optional[float] = None
+    written_response: Optional[str] = None
+    teacher_note: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherAiReportCommentsResponse(BaseModel):
+    job_id: str
+    report_id: Optional[str] = None
+    report_type: str
+    title: str
+    summary: Optional[str] = None
+    remarks: Optional[str] = None
+    improvement_suggestions: List[str] = Field(default_factory=list)
+    score_payload: Dict[str, Any] = Field(default_factory=dict)
+    analytics_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    teacher_note: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
+class AiTutorResponse(BaseModel):
+    mode: str
+    topic: str
+    student_profile: Dict[str, Any] = Field(default_factory=dict)
+    personalization: Dict[str, Any] = Field(default_factory=dict)
+    explanation: str
+    key_points: List[str] = Field(default_factory=list)
+    examples: List[str] = Field(default_factory=list)
+    revision_plan: List[str] = Field(default_factory=list)
+    challenge_questions: List[str] = Field(default_factory=list)
+    practice_questions: List[AiTutorQuestionResponse] = Field(default_factory=list)
+    answer_strategy: List[str] = Field(default_factory=list)
+    chapter_summary: List[str] = Field(default_factory=list)
+    revision_notes: List[str] = Field(default_factory=list)
+    flash_cards: List[AiTutorFlashCardResponse] = Field(default_factory=list)
+    formula_sheet: List[str] = Field(default_factory=list)
+    recommended_lessons: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_recordings: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_assignments: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_tests: List[Any] = Field(default_factory=list)
+    planner_hits: List[Dict[str, Any]] = Field(default_factory=list)
+    attendance_summary: Dict[str, Any] = Field(default_factory=dict)
+    analytics_summary: Dict[str, Any] = Field(default_factory=dict)
+    conversation_id: Optional[str] = None
+    context_id: Optional[str] = None
+    recommendation_id: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
 class LmsLessonResourceBase(BaseModel):
     resource_type: str = "pdf"
     title: str
@@ -2591,3 +3069,302 @@ class LmsProgressDashboardResponse(BaseModel):
     progress_items: List[LmsProgressResponse] = Field(default_factory=list)
     enrolled_courses: List[LmsCourseResponse] = Field(default_factory=list)
     ai_insights: LmsAiInsightsResponse = Field(default_factory=LmsAiInsightsResponse)
+
+
+class BiTrendPoint(BaseModel):
+    period: str
+    value: float
+
+
+class BiWeakTopic(BaseModel):
+    topic: str
+    mentions: int
+
+
+class BiCampusRevenue(BaseModel):
+    campus_name: str
+    revenue: float
+
+
+class AcademicBiResponse(BaseModel):
+    scope: str
+    school_id: str
+    period: str
+    attendance_trends: List[BiTrendPoint] = Field(default_factory=list)
+    performance_trends: List[BiTrendPoint] = Field(default_factory=list)
+    completion_rates: List[BiTrendPoint] = Field(default_factory=list)
+    weak_topics: List[BiWeakTopic] = Field(default_factory=list)
+    student_count: int = 0
+    generated_at: Optional[str] = None
+
+
+class FinanceBiResponse(BaseModel):
+    scope: str
+    school_id: str
+    period: str
+    revenue_trends: List[BiTrendPoint] = Field(default_factory=list)
+    subscriptions: int = 0
+    mrr: float = 0
+    arr: float = 0
+    campus_revenue: List[BiCampusRevenue] = Field(default_factory=list)
+    generated_at: Optional[str] = None
+
+
+class OperationsBiResponse(BaseModel):
+    scope: str
+    school_id: str
+    period: str
+    hostel_utilization: float = 0
+    inventory_utilization: float = 0
+    staff_workload: float = 0
+    operations_trends: List[BiTrendPoint] = Field(default_factory=list)
+    generated_at: Optional[str] = None
+
+
+class PlatformBiResponse(BaseModel):
+    scope: str
+    period: str
+    tenant_growth: int = 0
+    ai_usage: int = 0
+    lms_usage: int = 0
+    active_users: int = 0
+    churn_risk: float = 0
+    trends: List[BiTrendPoint] = Field(default_factory=list)
+    generated_at: Optional[str] = None
+
+
+class SavedBiReportCreateRequest(BaseModel):
+    report_name: str
+    dashboard_key: str
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    selected_metrics: List[str] = Field(default_factory=list)
+    export_format: str = "csv"
+    cadence: Optional[str] = None
+
+
+class SavedBiReportResponse(BaseModel):
+    id: str
+    school_id: Optional[str] = None
+    created_by_profile_id: Optional[str] = None
+    report_name: str
+    dashboard_key: str
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    selected_metrics: List[str] = Field(default_factory=list)
+    export_format: str
+    is_shared: bool = False
+    is_active: bool = True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class BiReportExportResponse(BaseModel):
+    report_id: Optional[str] = None
+    filename: str
+    content_type: str
+    content: str
+    generated_at: Optional[str] = None
+
+
+class PredictiveModelRegistryResponse(BaseModel):
+    id: Optional[str] = None
+    school_id: Optional[str] = None
+    model_key: str
+    model_name: Optional[str] = None
+    model_scope: Optional[str] = None
+    model_type: Optional[str] = None
+    target_metric: Optional[str] = None
+    version: Optional[str] = None
+    status: Optional[str] = None
+    confidence_notes: Optional[str] = None
+    last_run_at: Optional[str] = None
+    feature_sources: List[str] = Field(default_factory=list)
+    thresholds: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PredictionInsightResponse(BaseModel):
+    prediction_type: str
+    risk_level: str
+    score: float
+    confidence_score: float
+    headline: str
+    explanation: str
+    recommended_actions: List[str] = Field(default_factory=list)
+    contributing_factors: List[str] = Field(default_factory=list)
+    model_key: Optional[str] = None
+    model_type: Optional[str] = None
+    predicted_for_date: Optional[str] = None
+
+
+class StudentPredictionItemResponse(BaseModel):
+    student_id: str
+    student_name: str
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    overall_risk_score: float
+    overall_risk_level: str
+    dropout_risk: float
+    attendance_risk: float
+    exam_failure_risk: float
+    engagement_decline_risk: float
+    confidence_score: float
+    attendance_average: float = 0
+    test_average: float = 0
+    engagement_average: float = 0
+    top_factors: List[str] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+    predictions: List[PredictionInsightResponse] = Field(default_factory=list)
+
+
+class StudentPredictionsResponse(BaseModel):
+    scope: str
+    school_id: str
+    generated_at: Optional[str] = None
+    students: List[StudentPredictionItemResponse] = Field(default_factory=list)
+    early_warnings: List[str] = Field(default_factory=list)
+    automated_actions: List[str] = Field(default_factory=list)
+    model_registry: List[PredictiveModelRegistryResponse] = Field(default_factory=list)
+
+
+class PredictionRiskOverviewResponse(BaseModel):
+    risk_type: str
+    risk_level: str
+    score: float
+    confidence_score: float
+    headline: str
+    explanation: str
+    recommended_actions: List[str] = Field(default_factory=list)
+
+
+class PredictionForecastPointResponse(BaseModel):
+    period: str
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    forecast_value: float
+    lower_bound: Optional[float] = None
+    upper_bound: Optional[float] = None
+
+
+class CampusPredictionsResponse(BaseModel):
+    scope: str
+    school_id: str
+    generated_at: Optional[str] = None
+    risk_overview: List[PredictionRiskOverviewResponse] = Field(default_factory=list)
+    admissions_forecast: List[PredictionForecastPointResponse] = Field(default_factory=list)
+    hostel_forecast: List[PredictionForecastPointResponse] = Field(default_factory=list)
+    active_staff_count: int = 0
+    model_registry: List[PredictiveModelRegistryResponse] = Field(default_factory=list)
+    automated_actions: List[str] = Field(default_factory=list)
+
+
+class FinancePredictionsResponse(BaseModel):
+    scope: str
+    school_id: str
+    generated_at: Optional[str] = None
+    risk_overview: List[PredictionRiskOverviewResponse] = Field(default_factory=list)
+    revenue_forecast: List[PredictionForecastPointResponse] = Field(default_factory=list)
+    fee_default_forecast: List[PredictionForecastPointResponse] = Field(default_factory=list)
+    total_revenue_window: float = 0
+    total_pending_window: float = 0
+    model_registry: List[PredictiveModelRegistryResponse] = Field(default_factory=list)
+    automated_actions: List[str] = Field(default_factory=list)
+
+
+class AiAgentRunRequest(BaseModel):
+    agent_key: Optional[str] = None
+
+
+class AiAgentRunResponse(BaseModel):
+    message: str
+    jobs: List[Dict[str, Any]] = Field(default_factory=list)
+    recommendations_created: int = 0
+    actions_created: int = 0
+    generated_at: Optional[str] = None
+
+
+class AiAgentActionResponse(BaseModel):
+    id: Optional[str] = None
+    school_id: str
+    job_id: Optional[str] = None
+    recommendation_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_key: str
+    action_label: str
+    target_module: str
+    action_type: str
+    execution_payload: Dict[str, Any] = Field(default_factory=dict)
+    approval_scope: str
+    approval_status: str
+    execution_status: str
+    approved_by_profile_id: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AiAgentRecommendationResponse(BaseModel):
+    id: str
+    school_id: str
+    job_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    agent_key: str
+    agent_name: Optional[str] = None
+    title: str
+    summary: str
+    severity: str
+    recommendation_type: str
+    target_scope: str
+    target_entity_id: Optional[str] = None
+    approval_scope: str
+    approval_status: str
+    approval_notes: Optional[str] = None
+    approved_by_profile_id: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    source_modules: List[str] = Field(default_factory=list)
+    confidence_score: float = 0
+    rationale: Dict[str, Any] = Field(default_factory=dict)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actions: List[AiAgentActionResponse] = Field(default_factory=list)
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AiAgentCardResponse(BaseModel):
+    agent_key: str
+    agent_name: str
+    domain_key: Optional[str] = None
+    approval_scope: str
+    source_modules: List[str] = Field(default_factory=list)
+    recommendation_count: int = 0
+    pending_count: int = 0
+    critical_count: int = 0
+    latest_recommendations: List[AiAgentRecommendationResponse] = Field(default_factory=list)
+
+
+class AiAgentDashboardSummaryResponse(BaseModel):
+    agents: int = 0
+    recommendations: int = 0
+    pending_approvals: int = 0
+    critical_alerts: int = 0
+    severity_breakdown: Dict[str, int] = Field(default_factory=dict)
+
+
+class AiAgentDashboardResponse(BaseModel):
+    scope: str
+    school_id: str
+    generated_at: Optional[str] = None
+    summary: AiAgentDashboardSummaryResponse = Field(default_factory=AiAgentDashboardSummaryResponse)
+    critical_alerts: List[AiAgentRecommendationResponse] = Field(default_factory=list)
+    pending_approvals: List[AiAgentRecommendationResponse] = Field(default_factory=list)
+    agent_cards: List[AiAgentCardResponse] = Field(default_factory=list)
+
+
+class AiAgentApproveRequest(BaseModel):
+    recommendation_id: str
+    decision: str
+    notes: Optional[str] = None

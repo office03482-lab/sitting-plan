@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import {
+  Activity,
   BookOpen,
   Building,
   Bus,
@@ -19,6 +20,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Users,
   Video,
   X,
@@ -90,6 +92,17 @@ export default function Layout({ children }: LayoutProps) {
         { name: 'Workflow Queue', path: '/platform/workflow' },
         { name: 'Audit Logs', path: '/platform/audit-logs' },
         { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
+      ],
+    },
+    {
+      key: 'enterprise-bi',
+      name: 'Enterprise BI',
+      icon: Activity,
+      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #0f766e 100%)',
+      children: [
+        { name: 'BI Dashboard', path: '/bi', permission: 'bi.academic' },
+        { name: 'Predictive AI', path: '/predictions', permission: 'predictions.student' },
+        { name: 'AI Command Center', path: '/ai-command-center', permission: 'ai_agents.view' },
       ],
     },
     {
@@ -189,6 +202,56 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
+      key: 'study-planner',
+      name: 'Study Planner',
+      icon: BookOpen,
+      iconBackground: 'linear-gradient(180deg, #dbeafe 0%, #2563eb 100%)',
+      roles: ['admin', 'teacher', 'student', 'viewer'],
+      children: [
+        { name: 'AI Planner', path: '/study-planner', roles: ['admin', 'teacher', 'student', 'viewer'] },
+      ],
+    },
+    {
+      key: 'ai-tutor',
+      name: 'AI Tutor',
+      icon: Sparkles,
+      iconBackground: 'linear-gradient(180deg, #fde68a 0%, #f59e0b 100%)',
+      roles: ['admin', 'teacher', 'student'],
+      children: [
+        { name: 'Tutor Workspace', path: '/ai-tutor', permission: 'ai_tutor.chat', roles: ['admin', 'teacher', 'student'] },
+      ],
+    },
+    {
+      key: 'doubt-solver',
+      name: 'AI Doubts',
+      icon: Search,
+      iconBackground: 'linear-gradient(180deg, #fed7aa 0%, #ea580c 100%)',
+      roles: ['admin', 'teacher', 'student'],
+      children: [
+        { name: 'Doubt Solver', path: '/doubts', permission: 'doubt_solver.solve', roles: ['admin', 'teacher', 'student'] },
+      ],
+    },
+    {
+      key: 'teacher-ai',
+      name: 'Teacher Copilot',
+      icon: Sparkles,
+      iconBackground: 'linear-gradient(180deg, #bbf7d0 0%, #15803d 100%)',
+      roles: ['admin', 'teacher'],
+      children: [
+        { name: 'Teacher Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate', roles: ['admin', 'teacher'] },
+      ],
+    },
+    {
+      key: 'parent-intelligence',
+      name: 'Parent Intelligence',
+      icon: Bus,
+      iconBackground: 'linear-gradient(180deg, #dbeafe 0%, #1d4ed8 100%)',
+      roles: ['admin', 'viewer'],
+      children: [
+        { name: 'Parent Dashboard', path: '/parent-intelligence', permission: 'parent_intelligence.view', roles: ['admin', 'viewer'] },
+      ],
+    },
+    {
       key: 'live-classes',
       name: 'Live Classes',
       icon: Video,
@@ -220,6 +283,7 @@ export default function Layout({ children }: LayoutProps) {
       permission: 'edupay',
       children: [
         { name: 'BRAIN OF HIMACHAL Dashboard', path: '/edupay', permission: 'edupay' },
+        { name: 'Revenue & Commerce', path: '/commerce', permission: 'edupay.revenue' },
       ],
     },
     {

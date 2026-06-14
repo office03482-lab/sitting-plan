@@ -4,7 +4,13 @@ import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
-  BatchAnalytics, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestResult, PlatformAnalytics, SchoolAnalytics, StudentAnalytics, TestAnalyticsDetail,
+  BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
+  CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
+  DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
+  TeacherAiAssignmentResponse, TeacherAiLessonPlanResponse, TeacherAiQuestionPaperResponse, TeacherAiReportCommentsResponse,
+  AcademicBiDashboard, FinanceBiDashboard, OperationsBiDashboard, PlatformBiDashboard, SavedBiReport, BiReportExportResponse,
+  CampusPredictionsDashboard, FinancePredictionsDashboard, StudentPredictionsDashboard,
+  AiAgentDashboard, AiAgentRecommendation, AiAgentRunResponse,
 } from '@types';
 
 export function isRequestCanceled(error: unknown): boolean {
@@ -373,6 +379,172 @@ class ApiService {
 
   async getPlatformAnalytics() {
     return this.api.get<PlatformAnalytics>('/analytics/platform');
+  }
+
+  async getAcademicBiDashboard(params: { period?: 'daily' | 'weekly' | 'monthly' | 'yearly' } = {}) {
+    return this.api.get<AcademicBiDashboard>('/bi/academic', { params });
+  }
+
+  async getFinanceBiDashboard(params: { period?: 'daily' | 'weekly' | 'monthly' | 'yearly' } = {}) {
+    return this.api.get<FinanceBiDashboard>('/bi/finance', { params });
+  }
+
+  async getOperationsBiDashboard(params: { period?: 'daily' | 'weekly' | 'monthly' | 'yearly' } = {}) {
+    return this.api.get<OperationsBiDashboard>('/bi/operations', { params });
+  }
+
+  async getPlatformBiDashboard(params: { period?: 'daily' | 'weekly' | 'monthly' | 'yearly' } = {}) {
+    return this.api.get<PlatformBiDashboard>('/bi/platform', { params });
+  }
+
+  async listBiReports() {
+    return this.api.get<SavedBiReport[]>('/bi/reports');
+  }
+
+  async createBiReport(data: Record<string, unknown>) {
+    return this.api.post<SavedBiReport>('/bi/reports', data);
+  }
+
+  async exportBiReport(params: { dashboard_key: 'academic' | 'finance' | 'operations' | 'platform'; period?: 'daily' | 'weekly' | 'monthly' | 'yearly' }) {
+    return this.api.get<BiReportExportResponse>('/bi/reports/export', { params });
+  }
+
+  async getStudentPredictions(params: { student_id?: string; limit?: number } = {}) {
+    return this.api.get<StudentPredictionsDashboard>('/predictions/student', { params });
+  }
+
+  async getCampusPredictions() {
+    return this.api.get<CampusPredictionsDashboard>('/predictions/campus');
+  }
+
+  async getFinancePredictions() {
+    return this.api.get<FinancePredictionsDashboard>('/predictions/finance');
+  }
+
+  async getAiAgentsDashboard() {
+    return this.api.get<AiAgentDashboard>('/ai-agents/dashboard');
+  }
+
+  async runAiAgents(data: { agent_key?: string | null } = {}) {
+    return this.api.post<AiAgentRunResponse>('/ai-agents/run', data);
+  }
+
+  async listAiAgentRecommendations() {
+    return this.api.get<AiAgentRecommendation[]>('/ai-agents/recommendations');
+  }
+
+  async approveAiAgentRecommendation(data: { recommendation_id: string; decision: 'approved' | 'rejected'; notes?: string }) {
+    return this.api.post<AiAgentRecommendation>('/ai-agents/approve', data);
+  }
+
+  async getStudyPlannerToday() {
+    return this.api.get<Record<string, unknown>>('/study-planner/today');
+  }
+
+  async getStudyPlannerWeek() {
+    return this.api.get<StudyPlannerWeek | Record<string, unknown>>('/study-planner/week');
+  }
+
+  async getStudyPlannerRecommendations() {
+    return this.api.get<Record<string, unknown>>('/study-planner/recommendations');
+  }
+
+  async getParentIntelligenceDashboard() {
+    return this.api.get<ParentDashboardResponse>('/parent/dashboard');
+  }
+
+  async getParentIntelligenceInsights() {
+    return this.api.get<ParentInsightsResponse>('/parent/insights');
+  }
+
+  async getParentIntelligenceRiskScore() {
+    return this.api.get<ParentRiskScoreResponse>('/parent/risk-score');
+  }
+
+  async getParentIntelligenceAlerts() {
+    return this.api.get<ParentAlertsResponse>('/parent/alerts');
+  }
+
+  async acknowledgeParentIntelligenceAlert(alertId: string | number) {
+    return this.api.post<{ message: string; alert_id: string }>(`/parent/alerts/${alertId}/acknowledge`);
+  }
+
+  async contactParentIntelligenceTeacher(data: {
+    student_id: string;
+    message: string;
+  }) {
+    return this.api.post<{ message: string; student_id: string; student_name: string }>('/parent/communication/contact-teacher', data);
+  }
+
+  async requestParentIntelligenceMeeting(data: {
+    student_id: string;
+    preferred_date?: string;
+    note?: string;
+  }) {
+    return this.api.post<{ message: string; student_id: string; student_name: string; preferred_date?: string }>('/parent/communication/request-meeting', data);
+  }
+
+  async aiTutorChat(data: Record<string, unknown>) {
+    return this.api.post<import('@types').AiTutorResponse>('/ai/chat', data);
+  }
+
+  async aiTutorExplain(data: Record<string, unknown>) {
+    return this.api.post<import('@types').AiTutorResponse>('/ai/explain', data);
+  }
+
+  async aiTutorPractice(data: Record<string, unknown>) {
+    return this.api.post<import('@types').AiTutorResponse>('/ai/practice', data);
+  }
+
+  async aiTutorRevision(data: Record<string, unknown>) {
+    return this.api.post<import('@types').AiTutorResponse>('/ai/revision', data);
+  }
+
+  async solveTextDoubt(data: DoubtSolverInput) {
+    return this.api.post<DoubtSolverResponse>('/doubts/text', data);
+  }
+
+  async solveImageDoubt(data: DoubtSolverInput) {
+    return this.api.post<DoubtSolverResponse>('/doubts/image', data);
+  }
+
+  async solvePdfDoubt(data: DoubtSolverInput) {
+    return this.api.post<DoubtSolverResponse>('/doubts/pdf', data);
+  }
+
+  async getDoubtHistory(params: { target_student_id?: string; limit?: number } = {}) {
+    return this.api.get<DoubtHistoryItem[]>('/doubts/history', { params });
+  }
+
+  async generateTeacherQuestionPaper(data: Record<string, unknown>) {
+    return this.api.post<TeacherAiQuestionPaperResponse>('/teacher-ai/question-paper', data);
+  }
+
+  async generateTeacherAssignment(data: Record<string, unknown>) {
+    return this.api.post<TeacherAiAssignmentResponse>('/teacher-ai/assignment', data);
+  }
+
+  async generateTeacherLessonPlan(data: Record<string, unknown>) {
+    return this.api.post<TeacherAiLessonPlanResponse>('/teacher-ai/lesson-plan', data);
+  }
+
+  async generateTeacherReportComments(data: Record<string, unknown>) {
+    return this.api.post<TeacherAiReportCommentsResponse>('/teacher-ai/report-comments', data);
+  }
+
+  async createStudyPlannerGoal(data: {
+    target_student_id?: string | null;
+    goal_type: string;
+    exam_mode?: string | null;
+    title: string;
+    description?: string | null;
+    target_date?: string | null;
+    target_value?: number | null;
+    current_value?: number | null;
+    status?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.api.post<LearningGoal>('/study-planner/goals', data);
   }
 
   // ==================== LMS ====================
@@ -1362,6 +1534,26 @@ class ApiService {
 
   async createEduPayPayment(data: Record<string, unknown>) {
     return this.api.post('/edupay/payments', data);
+  }
+
+  async createCommerceOrder(data: Record<string, unknown>) {
+    return this.api.post<CommerceOrderResponse>('/payments/create-order', data);
+  }
+
+  async verifyCommerceOrder(data: Record<string, unknown>) {
+    return this.api.post<CommercePaymentVerifyResponse>('/payments/verify', data);
+  }
+
+  async listCommerceSubscriptions(params: { school_scope?: boolean } = {}) {
+    return this.api.get<CommerceSubscriptionsResponse>('/subscriptions', { params });
+  }
+
+  async applyCommerceCoupon(data: { code: string; order_amount: number }) {
+    return this.api.post<CommerceCouponResponse>('/coupons/apply', data);
+  }
+
+  async getRevenueDashboard(params: { global_view?: boolean } = {}) {
+    return this.api.get<RevenueDashboard>('/revenue/dashboard', { params });
   }
 
   // ==================== Inventory ====================

@@ -547,6 +547,194 @@ export interface LiveClassRecording {
   updated_at?: string | null;
 }
 
+export interface StudyTask {
+  task_type: string;
+  title: string;
+  description: string;
+  subject_name?: string | null;
+  chapter_name?: string | null;
+  recommended_resource_type?: string | null;
+  recommended_resource_id?: string | null;
+  recommended_resource_url?: string | null;
+  estimated_minutes: number;
+  priority: number;
+  status: string;
+  source_module?: string | null;
+  source_entity_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface StudyPlan {
+  role: string;
+  scope: string;
+  plan_date: string;
+  exam_mode?: string | null;
+  target_student_id?: string | null;
+  target_student_name?: string | null;
+  total_estimated_minutes: number;
+  completion_percentage: number;
+  streak_count: number;
+  badges: string[];
+  milestones: string[];
+  achievement_level?: string | null;
+  risk_level?: string | null;
+  tasks: StudyTask[];
+  summary: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  generated_at?: string | null;
+}
+
+export interface StudyPlannerWeek {
+  role: string;
+  target_student_id?: string | null;
+  target_student_name?: string | null;
+  today_plan?: StudyPlan | null;
+  tomorrow_plan?: StudyPlan | null;
+  weekly_plan: Record<string, unknown>;
+  monthly_plan: Record<string, unknown>;
+  streak_count: number;
+  badges: string[];
+  milestones: string[];
+  generated_at?: string | null;
+}
+
+export interface ParentTrendMetrics {
+  marks: number;
+  attendance: number;
+  engagement: number;
+}
+
+export interface ParentInsight {
+  student_id?: string;
+  student_name?: string;
+  insight_type: string;
+  title: string;
+  summary: string;
+  severity: string;
+  trend_window_days?: number;
+  payload?: Record<string, unknown>;
+}
+
+export interface ParentAlertAction {
+  action_type: string;
+  label: string;
+  student_id: string;
+  channel?: string;
+}
+
+export interface ParentAlert {
+  id?: string;
+  student_id?: string;
+  student_name?: string;
+  alert_type: string;
+  title: string;
+  message: string;
+  severity: string;
+  status?: string;
+  alert_payload?: Record<string, unknown>;
+  communication_actions?: ParentAlertAction[];
+}
+
+export interface ParentChildDashboard {
+  student_id: string;
+  student_name: string;
+  class_name?: string | null;
+  section?: string | null;
+  academic_health_score: number;
+  attendance_score: number;
+  test_performance_score: number;
+  learning_consistency_score: number;
+  engagement_score: number;
+  risk_level: string;
+  risk_factors: string[];
+  trend_7d: ParentTrendMetrics;
+  trend_30d: ParentTrendMetrics;
+  trend_90d: ParentTrendMetrics;
+  weak_topics: string[];
+  strong_topics: string[];
+  suggestions: string[];
+  insights: ParentInsight[];
+  alerts: ParentAlert[];
+  communication_actions: ParentAlertAction[];
+  hostel_status?: Record<string, unknown> | null;
+  generated_at?: string;
+}
+
+export interface ParentDashboardResponse {
+  role: string;
+  children_count: number;
+  academic_health_score: number;
+  risk_level: string;
+  children: ParentChildDashboard[];
+  generated_at?: string;
+}
+
+export interface ParentInsightsResponse {
+  role: string;
+  insights: ParentInsight[];
+  children: Array<{
+    student_id: string;
+    student_name: string;
+    academic_health_score: number;
+    weak_topics: string[];
+    suggestions: string[];
+    communication_actions: ParentAlertAction[];
+  }>;
+  generated_at?: string;
+}
+
+export interface ParentRiskScoreResponse {
+  role: string;
+  children: Array<{
+    student_id: string;
+    student_name: string;
+    academic_health_score: number;
+    attendance_score: number;
+    test_performance_score: number;
+    learning_consistency_score: number;
+    engagement_score: number;
+    risk_level: string;
+    risk_factors: string[];
+    trend_7d: ParentTrendMetrics;
+    trend_30d: ParentTrendMetrics;
+    trend_90d: ParentTrendMetrics;
+  }>;
+  generated_at?: string;
+}
+
+export interface ParentAlertsResponse {
+  role: string;
+  alerts: ParentAlert[];
+  generated_at?: string;
+}
+
+export interface StudyRecommendationItem {
+  recommendation_type: string;
+  title: string;
+  summary?: string | null;
+  score: number;
+  payload: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LearningGoal {
+  id: string;
+  school_id: string;
+  student_id: string;
+  student_name: string;
+  goal_type: string;
+  exam_mode?: string | null;
+  title: string;
+  description?: string | null;
+  target_date?: string | null;
+  target_value?: number | null;
+  current_value: number;
+  status: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 // ==================== Invigilator ====================
 export interface Invigilator {
   id: string | number;
@@ -1089,6 +1277,107 @@ export interface EduPayParentPortal {
   payment_history: EduPayParentPortalPayment[];
 }
 
+export interface CommerceOrderItem {
+  product_id: string;
+  title: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  product_type: string;
+  pricing_model: string;
+}
+
+export interface CommerceOrderResponse {
+  order_id: string;
+  school_id?: string | null;
+  provider_key: string;
+  provider_order_id: string;
+  payment_link: string;
+  subtotal_amount: number;
+  discount_amount: number;
+  credits_redeemed: number;
+  total_amount: number;
+  currency: string;
+  coupon?: Record<string, unknown> | null;
+  items: CommerceOrderItem[];
+  mode: string;
+}
+
+export interface CommercePaymentVerifyResponse {
+  order_id: string;
+  status: string;
+  provider_payment_id: string;
+  subscriptions_created: number;
+  mode: string;
+  verified_at?: string | null;
+}
+
+export interface CommerceCouponResponse {
+  coupon_id: string;
+  code: string;
+  coupon_type: string;
+  discount_amount: number;
+  final_amount: number;
+  currency: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CommerceSubscription {
+  id: string;
+  school_id?: string | null;
+  profile_id?: string | null;
+  student_id?: string | null;
+  product_id: string;
+  order_id?: string | null;
+  provider_key: string;
+  plan_name: string;
+  subscription_status: string;
+  start_date: string;
+  expiry_date?: string | null;
+  renewal_date?: string | null;
+  auto_renew: boolean;
+  renewal_count: number;
+  amount: number;
+  currency: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CommerceSubscriptionsResponse {
+  subscriptions: CommerceSubscription[];
+  generated_at?: string | null;
+}
+
+export interface RevenueTopProduct {
+  title: string;
+  revenue: number;
+}
+
+export interface RevenueSchoolSummary {
+  school_id: string;
+  revenue: number;
+}
+
+export interface RevenueDashboard {
+  scope: string;
+  total_revenue: number;
+  mrr: number;
+  arr: number;
+  monthly_revenue: number;
+  yearly_revenue: number;
+  course_sales: number;
+  test_sales: number;
+  affiliate_sales: number;
+  affiliate_commissions: number;
+  pending_payouts: number;
+  active_subscriptions: number;
+  orders_count: number;
+  paid_orders_count: number;
+  product_catalog: Record<string, unknown>[];
+  top_products: RevenueTopProduct[];
+  school_revenue: RevenueSchoolSummary[];
+  generated_at?: string | null;
+}
+
 // ==================== Online Tests ====================
 export interface OnlineTestSection {
   id: string;
@@ -1526,6 +1815,463 @@ export interface LmsProgressDashboard {
   progress_items: LmsProgressItem[];
   enrolled_courses: LmsCourse[];
   ai_insights: LmsAiInsights;
+}
+
+export interface AiTutorPracticeQuestion {
+  level: string;
+  question: string;
+}
+
+export interface AiTutorFlashCard {
+  front: string;
+  back: string;
+}
+
+export interface AiTutorResponse {
+  mode: string;
+  topic: string;
+  student_profile: Record<string, unknown>;
+  personalization: Record<string, unknown>;
+  explanation: string;
+  key_points: string[];
+  examples: string[];
+  revision_plan: string[];
+  challenge_questions: string[];
+  practice_questions: AiTutorPracticeQuestion[];
+  answer_strategy: string[];
+  chapter_summary: string[];
+  revision_notes: string[];
+  flash_cards: AiTutorFlashCard[];
+  formula_sheet: string[];
+  recommended_lessons: Record<string, unknown>[];
+  recommended_recordings: Record<string, unknown>[];
+  recommended_assignments: Record<string, unknown>[];
+  recommended_tests: unknown[];
+  planner_hits: Record<string, unknown>[];
+  attendance_summary: Record<string, unknown>;
+  analytics_summary: Record<string, unknown>;
+  conversation_id?: string | null;
+  context_id?: string | null;
+  recommendation_id?: string | null;
+  generated_at?: string | null;
+}
+
+export interface DoubtSolverInput {
+  question?: string;
+  prompt?: string;
+  target_student_id?: string | null;
+  source_language?: string | null;
+  image_url?: string | null;
+  pdf_url?: string | null;
+  screenshot_url?: string | null;
+  handwritten_note_url?: string | null;
+  voice_reference?: string | null;
+  extracted_text?: string | null;
+  file_name?: string | null;
+  teacher_prompt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DoubtHistoryItem {
+  session_id: string;
+  student_id?: string | null;
+  student_name?: string | null;
+  input_type: string;
+  source_language: string;
+  detected_subject?: string | null;
+  detected_topic?: string | null;
+  confidence_score: number;
+  escalation_status: string;
+  final_answer?: string | null;
+  created_at?: string | null;
+}
+
+export interface DoubtSolverResponse {
+  session_id: string;
+  question_id?: string | null;
+  solution_id?: string | null;
+  input_type: string;
+  source_language: string;
+  normalized_question: string;
+  extracted_text: string;
+  detected_subject: string;
+  detected_topic: string;
+  confidence_score: number;
+  extracted_equations: string[];
+  extracted_diagrams: string[];
+  extracted_mcqs: Array<Record<string, unknown>>;
+  extracted_numericals: string[];
+  explanation: string;
+  final_answer?: string | null;
+  shortcut_method?: string | null;
+  common_mistakes: string[];
+  step_by_step: string[];
+  personalization: Record<string, unknown>;
+  recommendations: Array<Record<string, unknown>>;
+  escalation_status: string;
+  teacher_resolution_notes?: string | null;
+  generated_at?: string | null;
+}
+
+export interface TeacherAiGeneratedQuestion {
+  question_type: string;
+  difficulty: string;
+  marks: number;
+  prompt: string;
+  source: string;
+}
+
+export interface TeacherAiQuestionPaperResponse {
+  job_id: string;
+  paper_id?: string | null;
+  paper_type: string;
+  title: string;
+  topic: string;
+  difficulty_level: string;
+  duration_minutes: number;
+  total_marks: number;
+  questions: TeacherAiGeneratedQuestion[];
+  instructions?: string | null;
+  context_signals: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  generated_at?: string | null;
+}
+
+export interface TeacherAiAssignmentTask {
+  task_no: number;
+  task_type: string;
+  difficulty_level: string;
+  prompt: string;
+  expected_outcome: string;
+}
+
+export interface TeacherAiAssignmentResponse {
+  job_id: string;
+  assignment_id?: string | null;
+  assignment_type: string;
+  title: string;
+  difficulty_level: string;
+  estimated_minutes: number;
+  tasks: TeacherAiAssignmentTask[];
+  instructions?: string | null;
+  metadata: Record<string, unknown>;
+  generated_at?: string | null;
+}
+
+export interface TeacherAiLessonPlanSlot {
+  day_of_week?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  subject?: string | null;
+  class_name?: string | null;
+  chapter: string;
+  objective: string;
+  activity: string;
+}
+
+export interface TeacherAiLessonPlanResponse {
+  job_id: string;
+  plan_scope: string;
+  title: string;
+  topic: string;
+  schedule: TeacherAiLessonPlanSlot[];
+  holiday_notes: string[];
+  teaching_goals: string[];
+  generated_at?: string | null;
+}
+
+export interface TeacherAiReportCommentsResponse {
+  job_id: string;
+  report_id?: string | null;
+  report_type: string;
+  title: string;
+  summary?: string | null;
+  remarks?: string | null;
+  improvement_suggestions: string[];
+  score_payload: Record<string, unknown>;
+  analytics_snapshot: Record<string, unknown>;
+  teacher_note?: string | null;
+  generated_at?: string | null;
+}
+
+export interface BiTrendPoint {
+  period: string;
+  value: number;
+}
+
+export interface BiWeakTopic {
+  topic: string;
+  mentions: number;
+}
+
+export interface AcademicBiDashboard {
+  scope: string;
+  school_id: string;
+  period: string;
+  attendance_trends: BiTrendPoint[];
+  performance_trends: BiTrendPoint[];
+  completion_rates: BiTrendPoint[];
+  weak_topics: BiWeakTopic[];
+  student_count: number;
+  generated_at?: string | null;
+}
+
+export interface BiCampusRevenue {
+  campus_name: string;
+  revenue: number;
+}
+
+export interface FinanceBiDashboard {
+  scope: string;
+  school_id: string;
+  period: string;
+  revenue_trends: BiTrendPoint[];
+  subscriptions: number;
+  mrr: number;
+  arr: number;
+  campus_revenue: BiCampusRevenue[];
+  generated_at?: string | null;
+}
+
+export interface OperationsBiDashboard {
+  scope: string;
+  school_id: string;
+  period: string;
+  hostel_utilization: number;
+  inventory_utilization: number;
+  staff_workload: number;
+  operations_trends: BiTrendPoint[];
+  generated_at?: string | null;
+}
+
+export interface PlatformBiDashboard {
+  scope: string;
+  period: string;
+  tenant_growth: number;
+  ai_usage: number;
+  lms_usage: number;
+  active_users: number;
+  churn_risk: number;
+  trends: BiTrendPoint[];
+  generated_at?: string | null;
+}
+
+export interface SavedBiReport {
+  id: string;
+  school_id?: string | null;
+  created_by_profile_id?: string | null;
+  report_name: string;
+  dashboard_key: string;
+  filters: Record<string, unknown>;
+  selected_metrics: string[];
+  export_format: string;
+  is_shared: boolean;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface BiReportExportResponse {
+  report_id?: string | null;
+  filename: string;
+  content_type: string;
+  content: string;
+  generated_at?: string | null;
+}
+
+export interface PredictiveModelRegistry {
+  id?: string | null;
+  school_id?: string | null;
+  model_key: string;
+  model_name?: string | null;
+  model_scope?: string | null;
+  model_type?: string | null;
+  target_metric?: string | null;
+  version?: string | null;
+  status?: string | null;
+  confidence_notes?: string | null;
+  last_run_at?: string | null;
+  feature_sources: string[];
+  thresholds: Record<string, unknown>;
+}
+
+export interface PredictionInsight {
+  prediction_type: string;
+  risk_level: 'low' | 'medium' | 'high' | 'critical' | string;
+  score: number;
+  confidence_score: number;
+  headline: string;
+  explanation: string;
+  recommended_actions: string[];
+  contributing_factors: string[];
+  model_key?: string | null;
+  model_type?: string | null;
+  predicted_for_date?: string | null;
+}
+
+export interface StudentPredictionItem {
+  student_id: string;
+  student_name: string;
+  class_name?: string | null;
+  section?: string | null;
+  overall_risk_score: number;
+  overall_risk_level: 'low' | 'medium' | 'high' | 'critical' | string;
+  dropout_risk: number;
+  attendance_risk: number;
+  exam_failure_risk: number;
+  engagement_decline_risk: number;
+  confidence_score: number;
+  attendance_average: number;
+  test_average: number;
+  engagement_average: number;
+  top_factors: string[];
+  recommended_actions: string[];
+  predictions: PredictionInsight[];
+}
+
+export interface StudentPredictionsDashboard {
+  scope: string;
+  school_id: string;
+  generated_at?: string | null;
+  students: StudentPredictionItem[];
+  early_warnings: string[];
+  automated_actions: string[];
+  model_registry: PredictiveModelRegistry[];
+}
+
+export interface PredictionRiskOverview {
+  risk_type: string;
+  risk_level: 'low' | 'medium' | 'high' | 'critical' | string;
+  score: number;
+  confidence_score: number;
+  headline: string;
+  explanation: string;
+  recommended_actions: string[];
+}
+
+export interface PredictionForecastPoint {
+  period: string;
+  period_start?: string | null;
+  period_end?: string | null;
+  forecast_value: number;
+  lower_bound?: number | null;
+  upper_bound?: number | null;
+}
+
+export interface CampusPredictionsDashboard {
+  scope: string;
+  school_id: string;
+  generated_at?: string | null;
+  risk_overview: PredictionRiskOverview[];
+  admissions_forecast: PredictionForecastPoint[];
+  hostel_forecast: PredictionForecastPoint[];
+  active_staff_count: number;
+  model_registry: PredictiveModelRegistry[];
+  automated_actions: string[];
+}
+
+export interface FinancePredictionsDashboard {
+  scope: string;
+  school_id: string;
+  generated_at?: string | null;
+  risk_overview: PredictionRiskOverview[];
+  revenue_forecast: PredictionForecastPoint[];
+  fee_default_forecast: PredictionForecastPoint[];
+  total_revenue_window: number;
+  total_pending_window: number;
+  model_registry: PredictiveModelRegistry[];
+  automated_actions: string[];
+}
+
+export interface AiAgentRunResponse {
+  message: string;
+  jobs: Array<Record<string, unknown>>;
+  recommendations_created: number;
+  actions_created: number;
+  generated_at?: string | null;
+}
+
+export interface AiAgentAction {
+  id?: string | null;
+  school_id: string;
+  job_id?: string | null;
+  recommendation_id?: string | null;
+  agent_id?: string | null;
+  agent_key: string;
+  action_label: string;
+  target_module: string;
+  action_type: string;
+  execution_payload: Record<string, unknown>;
+  approval_scope: string;
+  approval_status: string;
+  execution_status: string;
+  approved_by_profile_id?: string | null;
+  approved_at?: string | null;
+  notes?: string | null;
+  metadata: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AiAgentRecommendation {
+  id: string;
+  school_id: string;
+  job_id?: string | null;
+  agent_id?: string | null;
+  agent_key: string;
+  agent_name?: string | null;
+  title: string;
+  summary: string;
+  severity: string;
+  recommendation_type: string;
+  target_scope: string;
+  target_entity_id?: string | null;
+  approval_scope: string;
+  approval_status: string;
+  approval_notes?: string | null;
+  approved_by_profile_id?: string | null;
+  approved_at?: string | null;
+  source_modules: string[];
+  confidence_score: number;
+  rationale: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  actions: AiAgentAction[];
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AiAgentCard {
+  agent_key: string;
+  agent_name: string;
+  domain_key?: string | null;
+  approval_scope: string;
+  source_modules: string[];
+  recommendation_count: number;
+  pending_count: number;
+  critical_count: number;
+  latest_recommendations: AiAgentRecommendation[];
+}
+
+export interface AiAgentDashboardSummary {
+  agents: number;
+  recommendations: number;
+  pending_approvals: number;
+  critical_alerts: number;
+  severity_breakdown: Record<string, number>;
+}
+
+export interface AiAgentDashboard {
+  scope: string;
+  school_id: string;
+  generated_at?: string | null;
+  summary: AiAgentDashboardSummary;
+  critical_alerts: AiAgentRecommendation[];
+  pending_approvals: AiAgentRecommendation[];
+  agent_cards: AiAgentCard[];
 }
 
 // ==================== UI State ====================

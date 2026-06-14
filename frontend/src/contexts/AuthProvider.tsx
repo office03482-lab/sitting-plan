@@ -185,6 +185,8 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
 function getDefaultRouteForUser(user?: User | null) {
   if (!user) return '/login';
   if (user.role === 'admin') return '/';
+  if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent-intelligence';
+  if (user.permissions?.includes('doubt_solver.solve')) return '/doubts';
   if (user.role === 'store_manager') return '/inventory';
   if (user.role === 'teacher') return user.permissions?.includes('attendance') ? '/attendance-management' : '/timetable';
   if (user.role === 'staff') {
