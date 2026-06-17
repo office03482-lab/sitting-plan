@@ -7,7 +7,7 @@ import json
 import time
 from datetime import date, datetime
 from typing import Any, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
@@ -35,6 +35,38 @@ def _select_one(table: str, school_id: str, record_id: str, schema: str | None =
     return dict(rows[0])
 
 
+def _chunked(values: list[str], size: int = 200) -> list[list[str]]:
+    return [values[index:index + size] for index in range(0, len(values), size)]
+
+
+def _select_many(
+    table: str,
+    school_id: str,
+    record_ids: set[str] | list[str],
+    columns: str = "*",
+    schema: str | None = _INVENTORY_SCHEMA,
+) -> dict[str, dict]:
+    normalized_ids = [_normalize(record_id) for record_id in record_ids if _normalize(record_id)]
+    if not normalized_ids:
+        return {}
+
+    result: dict[str, dict] = {}
+    query_table = _t(table, schema)
+    for chunk in _chunked(normalized_ids):
+        response = (
+            query_table
+            .select(columns)
+            .eq("school_id", school_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        for row in list(response.data or []):
+            row_id = _normalize(row.get("id"))
+            if row_id:
+                result[row_id] = dict(row)
+    return result
+
+
 def _insert_and_return(table: str, payload: dict, schema: str | None = _INVENTORY_SCHEMA) -> dict:
     resp = _t(table, schema).insert(payload).execute()
     rows = list(resp.data or [])
@@ -57,6 +89,20 @@ def _delete_row(table: str, record_id: str, school_id: str, schema: str | None =
 
 def _now_iso() -> str:
     return datetime.utcnow().isoformat()
+
+
+def _normalize(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _coerce_uuid_or_none(value: Any) -> str | None:
+    candidate = _normalize(value)
+    if not candidate:
+        return None
+    try:
+        return str(UUID(candidate))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def _normalize_batch_names(batch_names: Optional[list[str]]) -> list[str]:
@@ -125,6 +171,28 @@ def _public_t(table: str):
     return _client().table(table)
 
 
+def _select_many_public(table: str, school_id: str, record_ids: set[str] | list[str], columns: str = "*") -> dict[str, dict]:
+    normalized_ids = [_normalize(record_id) for record_id in record_ids if _normalize(record_id)]
+    if not normalized_ids:
+        return {}
+
+    result: dict[str, dict] = {}
+    query_table = _public_t(table)
+    for chunk in _chunked(normalized_ids):
+        response = (
+            query_table
+            .select(columns)
+            .eq("school_id", school_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        for row in list(response.data or []):
+            row_id = _normalize(row.get("id"))
+            if row_id:
+                result[row_id] = dict(row)
+    return result
+
+
 def _select_subject(school_id: str, subject_id: str) -> dict | None:
     response = (
         _public_t("subjects")
@@ -136,6 +204,50 @@ def _select_subject(school_id: str, subject_id: str) -> dict | None:
     )
     rows = list(response.data or [])
     return dict(rows[0]) if rows else None
+
+
+def _select_batch(school_id: str, batch_id: str) -> dict | None:
+    response = (
+        _client().table("batches").select("*").eq("id", batch_id).eq("school_id", school_id).limit(1).execute()
+    )
+    rows = list(response.data or [])
+    return dict(rows[0]) if rows else None
+
+
+def _select_many_batches(school_id: str, batch_ids: set[str] | list[str], columns: str = "*") -> dict[str, dict]:
+    normalized_ids = [_normalize(batch_id) for batch_id in batch_ids if _normalize(batch_id)]
+    if not normalized_ids:
+        return {}
+
+    result: dict[str, dict] = {}
+    for chunk in _chunked(normalized_ids):
+        response = (
+            _client()
+            .table("batches")
+            .select(columns)
+            .eq("school_id", school_id)
+            .in_("id", chunk)
+            .execute()
+        )
+        for row in list(response.data or []):
+            row_id = _normalize(row.get("id"))
+            if row_id:
+                result[row_id] = dict(row)
+    return result
+
+
+def _resolve_student_batch_name(school_id: str, student_row: dict[str, Any]) -> str:
+    batch_id = _normalize(student_row.get("batch_id"))
+    if batch_id:
+        batch = _select_batch(school_id, batch_id)
+        if batch and _normalize(batch.get("name")):
+            return _normalize(batch.get("name"))
+
+    for key in ("batch", "batch_name", "class_name"):
+        value = _normalize(student_row.get(key))
+        if value:
+            return value
+    return "Unassigned Batch"
 
 
 def _list_subject_rows(school_id: str, is_active: Optional[bool] = None) -> list[dict]:
@@ -267,6 +379,67 @@ def _calculate_material_stock(school_id: str, material_id: str) -> dict:
         "current_stock": max(total_in - total_out, 0),
         "total_distributed": total_out,
     }
+
+
+def _batch_material_stock(school_id: str, material_ids: list[str]) -> dict[str, dict]:
+    if not material_ids:
+        return {}
+    supabase = _client()
+    s = _INVENTORY_SCHEMA
+
+    def fetch_rows(table: str, quantity_column: str) -> tuple[str, str, list[dict[str, Any]]]:
+        response = (
+            supabase.schema(s)
+            .table(table)
+            .select(f"material_item_id, {quantity_column}")
+            .eq("school_id", school_id)
+            .in_("material_item_id", material_ids)
+            .execute()
+        )
+        return table, quantity_column, [dict(row) for row in list(response.data or [])]
+
+    total_in_map: dict[str, int] = {}
+    total_out_map: dict[str, int] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [
+            pool.submit(fetch_rows, "stock_in_entries", "quantity_received"),
+            pool.submit(fetch_rows, "stock_out_entries", "quantity_issued"),
+            pool.submit(fetch_rows, "student_issue_entries", "quantity_issued"),
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            table, quantity_column, rows = future.result()
+            target_map = total_in_map if table == "stock_in_entries" else total_out_map
+            for row in rows:
+                mid = _normalize(row.get("material_item_id"))
+                if mid:
+                    target_map[mid] = target_map.get(mid, 0) + int(row.get(quantity_column) or 0)
+
+    result: dict[str, dict] = {}
+    for mid in material_ids:
+        nmid = _normalize(mid)
+        if not nmid:
+            continue
+        total_in = total_in_map.get(nmid, 0)
+        total_out = total_out_map.get(nmid, 0)
+        result[nmid] = {
+            "current_stock": max(total_in - total_out, 0),
+            "total_distributed": total_out,
+        }
+    return result
+
+
+def _sync_material_stock(school_id: str, material_id: str) -> dict:
+    material = _select_one("material_items", school_id, material_id)
+    if not material:
+        return {"current_stock": 0, "total_distributed": 0}
+
+    stock = _calculate_material_stock(school_id, material_id)
+    updates = {"current_stock": stock["current_stock"]}
+    if "total_distributed" in material:
+        updates["total_distributed"] = stock["total_distributed"]
+
+    _client().schema(_INVENTORY_SCHEMA).table("material_items").update(updates).eq("id", material_id).eq("school_id", school_id).execute()
+    return stock
 
 
 # ==================== Suppliers ====================
@@ -827,6 +1000,9 @@ def get_catalog(school_id: str, include_inactive: bool = True) -> list[dict]:
 def _serialize_material(row: dict) -> dict:
     meta = _get_metadata(row)
     category_context = row.get("_category_context") if isinstance(row.get("_category_context"), dict) else _material_category_context(row)
+    distributed = row.get("_distributed_total")
+    if distributed is None:
+        distributed = row.get("total_distributed")
     return {
         "id": row.get("id"),
         "name": row.get("name") or "",
@@ -845,7 +1021,7 @@ def _serialize_material(row: dict) -> dict:
         "low_stock_threshold": int(row.get("low_stock_threshold") or 10),
         "school_id": row.get("school_id"),
         "current_stock": int(row.get("current_stock") or 0),
-        "total_distributed": int(row.get("total_distributed") or 0),
+        "total_distributed": int(distributed or 0),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -866,6 +1042,13 @@ def list_materials(
         query = query.eq("is_active", is_active)
     resp = query.order("name", desc=False).execute()
     rows = list(resp.data or [])
+    if rows and any("total_distributed" not in row for row in rows):
+        material_ids = [_normalize(r.get("id")) for r in rows]
+        stock_map = _batch_material_stock(school_id, material_ids)
+        for row in rows:
+            mid = _normalize(row.get("id"))
+            if mid and mid in stock_map:
+                row["_distributed_total"] = stock_map[mid].get("total_distributed", 0)
     categories_by_id = {
         _normalize(row.get("id")): row
         for row in _list_category_rows(school_id, is_active=None)
@@ -1101,7 +1284,7 @@ def _serialize_stock_in(entry: dict, supplier_name: str = "", material_name: str
         "material_name": material_name,
         "quantity_received": int(entry.get("quantity_received") or 0),
         "entry_type": entry.get("entry_type") or "purchase",
-        "added_by": entry.get("added_by") or entry.get("created_by") or "",
+        "added_by": entry.get("added_by") or entry.get("added_by_profile_id") or entry.get("created_by") or "",
         "notes": entry.get("notes") or None,
         "school_id": entry.get("school_id"),
         "created_at": entry.get("created_at") or entry.get("entry_date"),
@@ -1175,14 +1358,13 @@ def create_stock_in(school_id: str, payload: dict) -> dict:
         "entry_date": entry_date,
         "quantity_received": quantity,
         "entry_type": str(payload.get("entry_type") or "purchase").strip() or "purchase",
-        "added_by": str(payload.get("added_by") or "system").strip(),
+        "added_by_profile_id": _coerce_uuid_or_none(payload.get("added_by")),
         "notes": (payload.get("notes") or "").strip() or None,
         "unit_price": float(payload.get("unit_price") or material.get("unit_price") or 0),
     }
     created = _insert_and_return("stock_in_entries", row)
 
-    stock = _calculate_material_stock(school_id, material_id)
-    supabase.schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+    _sync_material_stock(school_id, material_id)
 
     return _serialize_stock_in(created, supplier.get("name", ""), material.get("name", ""))
 
@@ -1206,8 +1388,7 @@ def delete_stock_in(school_id: str, entry_id: str) -> dict:
     _delete_row("stock_in_entries", entry_id, school_id)
 
     if material_id:
-        stock = _calculate_material_stock(school_id, material_id)
-        _client().schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+        _sync_material_stock(school_id, material_id)
 
     return {"message": "Stock-in entry deleted successfully"}
 
@@ -1215,16 +1396,16 @@ def delete_stock_in(school_id: str, entry_id: str) -> dict:
 # ==================== Stock Out ====================
 
 
-def _serialize_stock_out(entry: dict, material_name: str = "") -> dict:
+def _serialize_stock_out(entry: dict, material_name: str = "", batch_name: str = "") -> dict:
     return {
         "id": entry.get("id"),
         "date": entry.get("entry_date") or entry.get("date"),
         "batch_id": entry.get("batch_id"),
-        "batch_name": entry.get("batch_name") or "",
+        "batch_name": batch_name or entry.get("batch_name") or "",
         "material_id": entry.get("material_item_id") or entry.get("material_id"),
         "material_name": material_name,
         "quantity_issued": int(entry.get("quantity_issued") or 0),
-        "issued_by": entry.get("issued_by") or "",
+        "issued_by": entry.get("issued_by") or entry.get("issued_by_profile_id") or "",
         "remarks": entry.get("remarks") or None,
         "school_id": entry.get("school_id"),
         "created_at": entry.get("created_at") or entry.get("entry_date"),
@@ -1243,13 +1424,26 @@ def list_stock_out(school_id: str, batch_id: Optional[str] = None, material_id: 
     rows = list(resp.data or [])
 
     material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
+    batch_ids = {str(r.get("batch_id")) for r in rows if r.get("batch_id")}
     materials = {}
     for mid in material_ids:
         mrow = _select_one("material_items", school_id, mid)
         if mrow:
             materials[mid] = mrow.get("name", "")
+    batches = {}
+    for bid in batch_ids:
+        brow = _select_batch(school_id, bid)
+        if brow:
+            batches[bid] = brow.get("name", "")
 
-    return [_serialize_stock_out(r, materials.get(str(r.get("material_item_id")), "")) for r in rows]
+    return [
+        _serialize_stock_out(
+            r,
+            materials.get(str(r.get("material_item_id")), ""),
+            batches.get(str(r.get("batch_id")), ""),
+        )
+        for r in rows
+    ]
 
 
 def create_stock_out(school_id: str, payload: dict) -> dict:
@@ -1316,22 +1510,20 @@ def create_stock_out(school_id: str, payload: dict) -> dict:
             "school_id": school_id,
             "material_item_id": material_id,
             "batch_id": batch.get("id"),
-            "batch_name": batch.get("name") or "",
             "entry_date": entry_date,
             "quantity_issued": quantity,
-            "issued_by": str(payload.get("issued_by") or "system").strip(),
+            "issued_by_profile_id": _coerce_uuid_or_none(payload.get("issued_by")),
             "remarks": (payload.get("remarks") or "").strip() or None,
         }
         created = _insert_and_return("stock_out_entries", row)
         if not created_entry:
             created_entry = created
 
-    stock = _calculate_material_stock(school_id, material_id)
-    supabase.schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+    _sync_material_stock(school_id, material_id)
 
     if not created_entry:
         raise HTTPException(status_code=500, detail="Stock-out entry creation failed")
-    return _serialize_stock_out(created_entry, material.get("name", ""))
+    return _serialize_stock_out(created_entry, material.get("name", ""), selected_batches[0].get("name", ""))
 
 
 def delete_stock_out(school_id: str, entry_id: str) -> dict:
@@ -1344,8 +1536,7 @@ def delete_stock_out(school_id: str, entry_id: str) -> dict:
     _delete_row("stock_out_entries", entry_id, school_id)
 
     if material_id:
-        stock = _calculate_material_stock(school_id, material_id)
-        _client().schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+        _sync_material_stock(school_id, material_id)
 
     return {"message": "Stock-out entry deleted successfully"}
 
@@ -1420,7 +1611,7 @@ def create_student_issue(school_id: str, payload: dict) -> dict:
             raise HTTPException(status_code=404, detail=f"Student {sid} not found")
         students.append(dict(rows[0]))
 
-    batch_names_set = {((s.get("batch") or "").strip() or "Unassigned Batch") for s in students}
+    batch_names_set = {_resolve_student_batch_name(school_id, s) for s in students}
     if len(batch_names_set) > 1:
         raise HTTPException(status_code=400, detail="Selected students must belong to the same batch")
 
@@ -1429,12 +1620,12 @@ def create_student_issue(school_id: str, payload: dict) -> dict:
     batch_id_payload = payload.get("batch_id")
 
     if batch_id_payload:
-        resp = _client().table("batches").select("*").eq("id", batch_id_payload).eq("school_id", school_id).limit(1).execute()
-        rows = list(resp.data or [])
-        if not rows:
+        selected_batch = _select_batch(school_id, str(batch_id_payload))
+        if not selected_batch:
             raise HTTPException(status_code=404, detail="Batch not found")
-        selected_batch = dict(rows[0])
-        if selected_batch.get("name") != batch_name:
+        if selected_batch.get("name") != batch_name and any(
+            _normalize(student.get("batch_id")) != _normalize(selected_batch.get("id")) for student in students
+        ):
             raise HTTPException(status_code=400, detail="Selected students do not belong to the chosen batch")
     else:
         resp = _client().table("batches").select("*").eq("school_id", school_id).ilike("name", batch_name).limit(1).execute()
@@ -1469,15 +1660,14 @@ def create_student_issue(school_id: str, payload: dict) -> dict:
             "batch_name": batch_name,
             "issue_date": entry_date,
             "quantity_issued": quantity,
-            "issued_by_profile_id": str(payload.get("issued_by") or "system").strip(),
+            "issued_by_profile_id": _coerce_uuid_or_none(payload.get("issued_by")),
             "remarks": (payload.get("remarks") or "").strip() or None,
         }
         created = _insert_and_return("student_issue_entries", row)
         if not created_entry:
             created_entry = created
 
-    stock = _calculate_material_stock(school_id, material_id)
-    supabase.schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+    _sync_material_stock(school_id, material_id)
 
     if not created_entry:
         raise HTTPException(status_code=500, detail="Student issue entry creation failed")
@@ -1494,8 +1684,7 @@ def delete_student_issue(school_id: str, entry_id: str) -> dict:
     _delete_row("student_issue_entries", entry_id, school_id)
 
     if material_id:
-        stock = _calculate_material_stock(school_id, material_id)
-        _client().schema(s).table("material_items").update(stock).eq("id", material_id).eq("school_id", school_id).execute()
+        _sync_material_stock(school_id, material_id)
 
     return {"message": "Student issue entry deleted successfully"}
 
@@ -1603,6 +1792,9 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
 
     rows = list((supabase.schema(s).table("stock_out_entries").select("*").eq("material_item_id", material_id).eq("school_id", school_id).execute()).data or [])
     for entry in rows:
+        batch_name = ""
+        if entry.get("batch_id"):
+            batch_name = (_select_batch(school_id, str(entry.get("batch_id"))) or {}).get("name", "")
         history.append({
             "entry_id": entry.get("id"),
             "entry_kind": "stock_out",
@@ -1610,8 +1802,8 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
             "material_id": material_id,
             "material_name": material_name,
             "quantity": int(entry.get("quantity_issued") or 0),
-            "counterparty": entry.get("batch_name") or "",
-            "performed_by": entry.get("issued_by") or "",
+            "counterparty": batch_name or entry.get("batch_name") or "",
+            "performed_by": entry.get("issued_by") or entry.get("issued_by_profile_id") or "",
             "notes": entry.get("remarks") or None,
         })
 
@@ -1652,9 +1844,17 @@ def get_report_data(
     supabase = _client()
     s = _INVENTORY_SCHEMA
     normalized_type = report_type.strip().lower()
+    inventory_columns = (
+        "id,name,subject_id,category_id,unit_type,unit_price,current_stock,is_active,metadata"
+    )
 
     if normalized_type == "stock_in":
-        query = supabase.schema(s).table("stock_in_entries").select("*").eq("school_id", school_id)
+        query = (
+            supabase.schema(s)
+            .table("stock_in_entries")
+            .select("entry_date,supplier_id,material_item_id,quantity_received,entry_type,added_by_profile_id,notes")
+            .eq("school_id", school_id)
+        )
         if date_from:
             query = query.gte("entry_date", date_from)
         if date_to:
@@ -1666,8 +1866,14 @@ def get_report_data(
         rows = list((query.order("entry_date", desc=True).order("id", desc=True).execute()).data or [])
         supplier_ids = {str(r.get("supplier_id")) for r in rows if r.get("supplier_id")}
         material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
-        suppliers = {sid: (_select_one("suppliers", school_id, sid) or {}).get("name", "") for sid in supplier_ids}
-        materials = {mid: (_select_one("material_items", school_id, mid) or {}).get("name", "") for mid in material_ids}
+        suppliers = {
+            sid: row.get("name", "")
+            for sid, row in _select_many("suppliers", school_id, supplier_ids, columns="id,name").items()
+        }
+        materials = {
+            mid: row.get("name", "")
+            for mid, row in _select_many("material_items", school_id, material_ids, columns="id,name").items()
+        }
         return [
             {
                 "date": str(r.get("entry_date") or ""),
@@ -1683,9 +1889,15 @@ def get_report_data(
 
     if normalized_type in ("batch_distribution", "distribution"):
         result: list[dict] = []
+        batch_rows: list[dict[str, Any]] = []
 
         if student_id is None:
-            bq = supabase.schema(s).table("stock_out_entries").select("*").eq("school_id", school_id)
+            bq = (
+                supabase.schema(s)
+                .table("stock_out_entries")
+                .select("entry_date,batch_id,material_item_id,quantity_issued,issued_by_profile_id,remarks")
+                .eq("school_id", school_id)
+            )
             if date_from:
                 bq = bq.gte("entry_date", date_from)
             if date_to:
@@ -1694,22 +1906,14 @@ def get_report_data(
                 bq = bq.eq("batch_id", batch_id)
             if material_id:
                 bq = bq.eq("material_item_id", material_id)
-            b_rows = list((bq.order("entry_date", desc=True).order("id", desc=True).execute()).data or [])
-            mat_ids = {str(r.get("material_item_id")) for r in b_rows if r.get("material_item_id")}
-            b_materials = {mid: (_select_one("material_items", school_id, mid) or {}).get("name", "") for mid in mat_ids}
-            for r in b_rows:
-                result.append({
-                    "date": str(r.get("entry_date") or ""),
-                    "scope": "Batch",
-                    "batch": r.get("batch_name") or "",
-                    "student": "",
-                    "material": b_materials.get(str(r.get("material_item_id")), ""),
-                    "quantity_issued": int(r.get("quantity_issued") or 0),
-                    "issued_by": r.get("issued_by") or "",
-                    "remarks": r.get("remarks") or "",
-                })
+            batch_rows = [dict(row) for row in list((bq.order("entry_date", desc=True).order("id", desc=True).execute()).data or [])]
 
-        sq = supabase.schema(s).table("student_issue_entries").select("*").eq("school_id", school_id)
+        sq = (
+            supabase.schema(s)
+            .table("student_issue_entries")
+            .select("issue_date,batch_id,student_id,material_item_id,quantity_issued,issued_by_profile_id,remarks")
+            .eq("school_id", school_id)
+        )
         if date_from:
             sq = sq.gte("issue_date", date_from)
         if date_to:
@@ -1720,18 +1924,53 @@ def get_report_data(
             sq = sq.eq("material_item_id", material_id)
         if student_id:
             sq = sq.eq("student_id", student_id)
-        s_rows = list((sq.order("issue_date", desc=True).order("id", desc=True).execute()).data or [])
-        s_mat_ids = {str(r.get("material_item_id")) for r in s_rows if r.get("material_item_id")}
-        s_materials = {mid: (_select_one("material_items", school_id, mid) or {}).get("name", "") for mid in s_mat_ids}
-        for r in s_rows:
+        student_rows = [dict(row) for row in list((sq.order("issue_date", desc=True).order("id", desc=True).execute()).data or [])]
+
+        material_ids = {
+            _normalize(row.get("material_item_id"))
+            for row in [*batch_rows, *student_rows]
+            if _normalize(row.get("material_item_id"))
+        }
+        materials = {
+            mid: row.get("name", "")
+            for mid, row in _select_many("material_items", school_id, material_ids, columns="id,name").items()
+        }
+        batch_ids = {
+            _normalize(row.get("batch_id"))
+            for row in [*batch_rows, *student_rows]
+            if _normalize(row.get("batch_id"))
+        }
+        batches = {
+            bid: row.get("name", "")
+            for bid, row in _select_many_batches(school_id, batch_ids, columns="id,name").items()
+        }
+        student_ids = {_normalize(row.get("student_id")) for row in student_rows if _normalize(row.get("student_id"))}
+        students = {
+            sid: row.get("full_name", "")
+            for sid, row in _select_many_public("students", school_id, student_ids, columns="id,full_name").items()
+        }
+
+        for r in batch_rows:
+            result.append({
+                "date": str(r.get("entry_date") or ""),
+                "scope": "Batch",
+                "batch": batches.get(str(r.get("batch_id")), ""),
+                "student": "",
+                "material": materials.get(str(r.get("material_item_id")), ""),
+                "quantity_issued": int(r.get("quantity_issued") or 0),
+                "issued_by": r.get("issued_by") or r.get("issued_by_profile_id") or "",
+                "remarks": r.get("remarks") or "",
+            })
+
+        for r in student_rows:
             result.append({
                 "date": str(r.get("issue_date") or ""),
                 "scope": "Student",
-                "batch": r.get("batch_name") or "",
-                "student": r.get("student_name") or "",
-                "material": s_materials.get(str(r.get("material_item_id")), ""),
+                "batch": batches.get(str(r.get("batch_id")), ""),
+                "student": students.get(str(r.get("student_id")), ""),
+                "material": materials.get(str(r.get("material_item_id")), ""),
                 "quantity_issued": int(r.get("quantity_issued") or 0),
-                "issued_by": r.get("issued_by") or "",
+                "issued_by": r.get("issued_by") or r.get("issued_by_profile_id") or "",
                 "remarks": r.get("remarks") or "",
             })
 
@@ -1739,28 +1978,53 @@ def get_report_data(
         return result
 
     if normalized_type in ("current_inventory", "inventory"):
-        query = supabase.schema(s).table("material_items").select("*").eq("school_id", school_id)
+        query = supabase.schema(s).table("material_items").select(inventory_columns).eq("school_id", school_id)
         if material_id:
             query = query.eq("id", material_id)
         rows = list((query.order("name", desc=False).execute()).data or [])
+        if rows and any("total_distributed" not in row for row in rows):
+            material_ids = [_normalize(r.get("id")) for r in rows]
+            stock_map = _batch_material_stock(school_id, material_ids)
+            for row in rows:
+                mid = _normalize(row.get("id"))
+                if mid and mid in stock_map:
+                    row["_distributed_total"] = stock_map[mid].get("total_distributed", 0)
+        category_rows = list(
+            (
+                supabase.schema(s)
+                .table("material_categories")
+                .select("id,name,parent_category_id,category_code")
+                .eq("school_id", school_id)
+                .order("name", desc=False)
+                .execute()
+            ).data
+            or []
+        )
+        categories_by_id = {_normalize(row.get("id")): row for row in category_rows}
         return [
             {
                 "material": r.get("name") or "",
                 "subject": _get_metadata(r).get("subject_text", ""),
                 "set_name": _get_metadata(r).get("set_text", ""),
-                "set_part_name": _material_category_context(r).get("set_part_name") or "",
+                "set_part_name": _material_category_context(r, categories_by_id).get("set_part_name") or "",
                 "batches": ", ".join(_parse_batch_names(_get_metadata(r))),
                 "unit_type": r.get("unit_type") or "book",
                 "price": float(r.get("unit_price") or 0),
                 "current_stock": int(r.get("current_stock") or 0),
-                "distributed": int(r.get("total_distributed") or 0),
+                "distributed": int(r.get("_distributed_total") or r.get("total_distributed") or 0),
                 "status": "Active" if bool(r.get("is_active", True)) else "Inactive",
             }
             for r in rows
         ]
 
     if normalized_type == "low_stock":
-        query = supabase.schema(s).table("material_items").select("*").eq("school_id", school_id).eq("is_active", True)
+        query = (
+            supabase.schema(s)
+            .table("material_items")
+            .select(inventory_columns + ",low_stock_threshold")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+        )
         if material_id:
             query = query.eq("id", material_id)
         rows = list((query.order("current_stock", desc=False).order("name", desc=False).execute()).data or [])
