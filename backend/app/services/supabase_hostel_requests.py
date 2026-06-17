@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import time
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -23,6 +24,21 @@ def _client():
 
 def _table(name: str):
     return _client().schema(HOSTEL_SCHEMA).table(name)
+
+
+def _execute_with_retry(action, *, attempts: int = 3, delay_seconds: float = 0.35):
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(delay_seconds * attempt)
+    if last_error:
+        raise last_error
+    raise RuntimeError("Retry helper exhausted without result")
 
 
 def _load_hostels_map(school_id: str) -> dict[str, dict[str, Any]]:
@@ -77,9 +93,9 @@ def _serialize_request(
     return {
         "id": request_row.get("id"),
         "student_id": student.get("id") or student_id,
-        "student_name": student.get("name") or "",
+        "student_name": student.get("full_name") or student.get("name") or "",
         "roll_number": student.get("roll_number") or "",
-        "batch": student.get("batch") or "",
+        "batch": student.get("batch_name") or student.get("batch") or "",
         "class_name": student.get("class_name"),
         "section": student.get("section"),
         "reference_name": student.get("reference_name"),
@@ -125,7 +141,7 @@ def _recalculate_room_occupancy(school_id: str, room_id: str | None) -> None:
     if not room_id:
         return
     client = get_supabase_admin_client()
-    count_response = (
+    count_response = _execute_with_retry(lambda: (
         client
         .schema(HOSTEL_SCHEMA)
         .table("hostel_allocations")
@@ -136,9 +152,16 @@ def _recalculate_room_occupancy(school_id: str, room_id: str | None) -> None:
         .eq("is_active", True)
         .limit(0)
         .execute()
-    )
+    ))
     occupied_beds = count_response.count or 0
-    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"occupied_beds": occupied_beds}).eq("school_id", school_id).eq("id", room_id).execute()
+    _execute_with_retry(
+        lambda: client.schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .update({"occupied_beds": occupied_beds})
+        .eq("school_id", school_id)
+        .eq("id", room_id)
+        .execute()
+    )
 
 
 def _update_student_hostel_metadata(

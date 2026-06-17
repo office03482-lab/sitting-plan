@@ -30,6 +30,8 @@ from app.schemas import (
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_timetable import (
+    check_batch_conflicts as check_batch_conflicts_supabase,
+    check_room_conflicts as check_room_conflicts_supabase,
     check_teacher_conflicts as check_teacher_conflicts_supabase,
     create_timetable_entry as create_timetable_entry_supabase,
     delete_all_timetable_entries as delete_all_timetable_entries_supabase,
@@ -71,6 +73,59 @@ def require_timetable_manage_access(
     if actor.get("role") == UserRole.TEACHER.value:
         raise HTTPException(status_code=403, detail="Teachers can only view their own timetable")
     return actor
+
+
+def _resolve_actor_teacher_scope(school_id: str, actor: dict[str, Any]) -> tuple[str | None, str]:
+    actor_email = str(actor.get("email") or "").strip()
+    actor_name = str(actor.get("name") or "").strip()
+    if not actor_email and not actor_name:
+        return None, actor_name.casefold()
+
+    query = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .select("id, full_name")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .eq("staff_type", "teaching")
+    )
+    if actor_email:
+        query = query.ilike("email", actor_email)
+    else:
+        query = query.ilike("full_name", actor_name)
+    response = query.limit(1).execute()
+    rows = list(response.data or [])
+    if rows:
+        return str(rows[0].get("id") or "").strip() or None, str(rows[0].get("full_name") or actor_name).strip().casefold()
+    return None, actor_name.casefold()
+
+
+def _filter_rows_for_teacher_actor(rows: list[dict[str, Any]], school_id: str, actor: dict[str, Any]) -> list[dict[str, Any]]:
+    if actor.get("role") != UserRole.TEACHER.value:
+        return rows
+    actor_teacher_id, actor_teacher_name = _resolve_actor_teacher_scope(school_id, actor)
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if actor_teacher_id and str(row.get("teacher_id") or row.get("staff_member_id") or "").strip() == actor_teacher_id:
+            filtered.append(row)
+            continue
+        teacher_name = str(row.get("teacher_name") or "").strip().casefold()
+        if actor_teacher_name and teacher_name and teacher_name == actor_teacher_name:
+            filtered.append(row)
+    return filtered
+
+
+def _enforce_teacher_entry_scope(entry: dict[str, Any], school_id: str, actor: dict[str, Any]) -> None:
+    if actor.get("role") != UserRole.TEACHER.value:
+        return
+    actor_teacher_id, actor_teacher_name = _resolve_actor_teacher_scope(school_id, actor)
+    entry_teacher_id = str(entry.get("teacher_id") or entry.get("staff_member_id") or "").strip()
+    entry_teacher_name = str(entry.get("teacher_name") or "").strip().casefold()
+    if actor_teacher_id and entry_teacher_id == actor_teacher_id:
+        return
+    if actor_teacher_name and entry_teacher_name and entry_teacher_name == actor_teacher_name:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teachers can only view their own timetable")
 
 
 def format_time_label(time_value: str) -> str:
@@ -487,9 +542,7 @@ async def list_timetable_entries(
             reference_date=reference_date.isoformat() if reference_date else None,
         ),
     )
-    teacher_id_filter = str(teacher_id) if teacher_id else None
-    if actor.get("role") == UserRole.TEACHER.value and teacher_id_filter:
-        rows = [r for r in rows if str(r.get("teacher_id")) == teacher_id_filter]
+    rows = _filter_rows_for_teacher_actor(rows, school_id, actor)
     return [build_timetable_view(r) for r in rows]
 
 
@@ -499,8 +552,7 @@ async def get_timetable_entries_count(
     actor: dict[str, str] = Depends(get_authenticated_actor_context),
 ):
     entries = list_timetable_entries_supabase(school_id)
-    if actor.get("role") == UserRole.TEACHER.value:
-        entries = [e for e in entries if str(e.get("teacher_id")) == str(actor.get("user_id"))]
+    entries = _filter_rows_for_teacher_actor(entries, school_id, actor)
     return len(entries)
 
 
@@ -516,13 +568,13 @@ async def export_timetable(
     batch_name: str | None = Query(default=None),
     actor: dict[str, str] = Depends(get_authenticated_actor_context),
 ):
-    entries = coerce_timetable_views(list_timetable_entries_supabase(
+    entries = coerce_timetable_views(_filter_rows_for_teacher_actor(list_timetable_entries_supabase(
         school_id,
         day_of_week=day_of_week.value if day_of_week else None,
         teacher_id=str(teacher_id) if teacher_id else None,
         class_name=batch_name if view_by == "batch" else None,
         room_id=str(room_id) if room_id else None,
-    ))
+    ), school_id, actor))
     if not entries:
         raise HTTPException(status_code=404, detail="No timetable entries found for export")
 
@@ -549,6 +601,7 @@ async def get_timetable_entry(
     actor: dict[str, str] = Depends(get_authenticated_actor_context),
 ):
     result = get_timetable_entry_supabase(school_id, entry_id)
+    _enforce_teacher_entry_scope(result, school_id, actor)
     return build_timetable_response(result)
 
 
@@ -589,6 +642,8 @@ async def check_conflict(
     day_of_week: DayOfWeek = Body(...),
     start_time: str = Body(...),
     end_time: str = Body(...),
+    room_id: str | int | None = Body(default=None),
+    class_name: str | None = Body(default=None),
     exclude_entry_id: str | int = Body(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict[str, str] = Depends(require_timetable_manage_access),
@@ -610,6 +665,42 @@ async def check_conflict(
             ],
             message="Conflict detected: Teacher is already assigned during this time slot",
         )
+    if room_id:
+        room_conflicts = check_room_conflicts_supabase(
+            school_id,
+            str(room_id),
+            day_of_week.value,
+            start_time,
+            end_time,
+            exclude_entry_id=str(exclude_entry_id) if exclude_entry_id else None,
+        )
+        if room_conflicts:
+            return ConflictCheckResponse(
+                has_conflict=True,
+                conflicting_entries=[
+                    get_timetable_entry_supabase(school_id, str(c["id"]))
+                    for c in room_conflicts
+                ],
+                message="Conflict detected: Room is already assigned during this time slot",
+            )
+    if class_name:
+        batch_conflicts = check_batch_conflicts_supabase(
+            school_id,
+            class_name,
+            day_of_week.value,
+            start_time,
+            end_time,
+            exclude_entry_id=str(exclude_entry_id) if exclude_entry_id else None,
+        )
+        if batch_conflicts:
+            return ConflictCheckResponse(
+                has_conflict=True,
+                conflicting_entries=[
+                    get_timetable_entry_supabase(school_id, str(c["id"]))
+                    for c in batch_conflicts
+                ],
+                message="Conflict detected: Batch/Class already has a timetable entry during this time slot",
+            )
     return ConflictCheckResponse(has_conflict=False, message="No conflicts detected")
 
 

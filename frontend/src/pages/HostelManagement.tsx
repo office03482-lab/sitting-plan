@@ -15,6 +15,11 @@ type HostelFormState = {
   total_rooms: number;
 };
 
+type RoomFormState = {
+  room_number: string;
+  total_beds: number;
+};
+
 const initialHostelForm: HostelFormState = {
   name: '',
   hostel_head: '',
@@ -23,6 +28,11 @@ const initialHostelForm: HostelFormState = {
   address: '',
   total_rooms: 0,
 };
+
+const createInitialRoomForm = (): RoomFormState => ({
+  room_number: '',
+  total_beds: 2,
+});
 
 const stringifyErrorValue = (value: unknown, fallback: string): string => {
   if (typeof value === 'string' && value.trim()) return value;
@@ -131,6 +141,7 @@ const getHistoryStatusLabel = (request: StudentHostelRequest) => {
 export default function HostelManagement() {
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const schoolId = user?.school_id || 1;
   const [hostels, setHostels] = useState<Hostel[]>([]);
   const [requests, setRequests] = useState<StudentHostelRequest[]>([]);
   const [message, setMessage] = useState('');
@@ -142,7 +153,7 @@ export default function HostelManagement() {
   const [expandedHostelId, setExpandedHostelId] = useState<string | number | null>(null);
   const [moveSelections, setMoveSelections] = useState<Record<string, { hostelId: string; roomId: string }>>({});
   const [hostelForm, setHostelForm] = useState<HostelFormState>(initialHostelForm);
-  const [roomForms, setRoomForms] = useState<Record<string, string>>({});
+  const [roomForms, setRoomForms] = useState<Record<string, RoomFormState>>({});
 
   const upsertHostel = (nextHostel: Hostel) => {
     setHostels((current) => {
@@ -164,7 +175,6 @@ export default function HostelManagement() {
   };
 
   const loadRequests = async () => {
-    const schoolId = user?.school_id || 1;
     try {
       const response = await apiService.listStudentHostelRequests(schoolId);
       setRequests(toArray(response.data).map(normalizeRequest));
@@ -315,22 +325,66 @@ export default function HostelManagement() {
   };
 
   const handleAddHostelRoom = async (hostelId: string | number) => {
-    const roomNumber = (roomForms[hostelId] || '').trim();
+    const roomForm = roomForms[String(hostelId)] || createInitialRoomForm();
+    const roomNumber = roomForm.room_number.trim();
+    const totalBeds = Number(roomForm.total_beds) || 0;
     if (!roomNumber) {
       setMessage('Room number required hai.');
+      return;
+    }
+    if (totalBeds <= 0) {
+      setMessage('Total beds 1 ya usse zyada hone chahiye.');
       return;
     }
 
     try {
       await apiService.addHostelRoom(hostelId, {
         room_number: roomNumber,
-        total_beds: 2,
+        total_beds: totalBeds,
       });
-      setRoomForms((current) => ({ ...current, [hostelId]: '' }));
+      setRoomForms((current) => ({ ...current, [String(hostelId)]: createInitialRoomForm() }));
       setMessage('Hostel room added successfully');
       await loadHostels();
     } catch (error: any) {
       setMessage(readApiError(error, 'Failed to add hostel room'));
+    }
+  };
+
+  const handleEditHostelRoom = async (hostelId: string | number, room: HostelRoom) => {
+    const nextRoomNumber = prompt('Room number update karo', room.room_number)?.trim();
+    if (!nextRoomNumber) return;
+
+    const nextBedsRaw = prompt('Total beds update karo', String(room.total_beds))?.trim();
+    if (!nextBedsRaw) return;
+
+    const nextBeds = Number(nextBedsRaw);
+    if (!Number.isFinite(nextBeds) || nextBeds <= 0) {
+      setMessage('Total beds valid number hona chahiye.');
+      return;
+    }
+
+    try {
+      await apiService.updateHostelRoom(hostelId, room.id, {
+        room_number: nextRoomNumber,
+        total_beds: nextBeds,
+      });
+      setMessage('Hostel room updated successfully');
+      await loadHostels();
+    } catch (error: any) {
+      setMessage(readApiError(error, 'Failed to update hostel room'));
+    }
+  };
+
+  const handleDeleteHostelRoom = async (hostelId: string | number, room: HostelRoom) => {
+    const confirmed = confirm(`Delete room "${room.room_number}"?`);
+    if (!confirmed) return;
+
+    try {
+      await apiService.deleteHostelRoom(hostelId, room.id);
+      setMessage('Hostel room deleted successfully');
+      await loadHostels();
+    } catch (error: any) {
+      setMessage(readApiError(error, 'Failed to delete hostel room'));
     }
   };
 
@@ -412,6 +466,42 @@ export default function HostelManagement() {
       setMessage(readApiError(error, 'Failed to vacate hostel allocation'));
     } finally {
       setApprovingRequestId(null);
+    }
+  };
+
+  const [reportType, setReportType] = useState<'occupancy' | 'allocation' | 'vacancy'>('occupancy');
+  const [reportData, setReportData] = useState<Record<string, unknown>[] | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState('');
+
+  const handleLoadReport = async () => {
+    setReportLoading(true);
+    setReportError('');
+    setReportData(null);
+    try {
+      const res = await apiService.getHostelReport({ report_type: reportType, school_id: schoolId });
+      setReportData(res.data.rows.map((r: { values: Record<string, unknown> }) => r.values));
+    } catch (err: unknown) {
+      setReportError(readApiError(err, 'Failed to load report'));
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleExportReport = async (format: 'pdf' | 'excel' | 'csv') => {
+    try {
+      const res = await apiService.exportHostelReport({ report_type: reportType, export_format: format, school_id: schoolId });
+      const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `hostel-${reportType}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      setReportError(readApiError(err, 'Failed to export report'));
     }
   };
 
@@ -554,15 +644,55 @@ export default function HostelManagement() {
                                 {isRoomFull(room) ? 'FULL' : `${room.available_beds} free`}
                               </span>
                             </div>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleEditHostelRoom(hostel.id, room)}
+                                className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteHostelRoom(hostel.id, room)}
+                                className="rounded-lg bg-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-200"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
                       {hostel.rooms.length === 0 ? <p className="text-sm text-slate-500">No rooms added yet.</p> : null}
-                      <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto]">
+                      <div className="mt-4 grid gap-2 md:grid-cols-[1fr_120px_auto]">
                         <input
-                          value={roomForms[hostel.id] || ''}
-                          onChange={(e) => setRoomForms((current) => ({ ...current, [hostel.id]: e.target.value }))}
+                          value={roomForms[String(hostel.id)]?.room_number || ''}
+                          onChange={(e) =>
+                            setRoomForms((current) => ({
+                              ...current,
+                              [String(hostel.id)]: {
+                                ...(current[String(hostel.id)] || createInitialRoomForm()),
+                                room_number: e.target.value,
+                              },
+                            }))
+                          }
                           placeholder="Add room number"
+                          className={inputClass}
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          value={roomForms[String(hostel.id)]?.total_beds || 2}
+                          onChange={(e) =>
+                            setRoomForms((current) => ({
+                              ...current,
+                              [String(hostel.id)]: {
+                                ...(current[String(hostel.id)] || createInitialRoomForm()),
+                                total_beds: Number(e.target.value) || 0,
+                              },
+                            }))
+                          }
+                          placeholder="Beds"
                           className={inputClass}
                         />
                         <button type="button" onClick={() => handleAddHostelRoom(hostel.id)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
@@ -762,6 +892,66 @@ export default function HostelManagement() {
             </table>
             {allocationHistory.length === 0 ? <p className="text-sm text-slate-500">No allocation history yet.</p> : null}
           </div>
+        </section>
+
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-slate-900">Reports</h2>
+          <p className="text-sm text-slate-500">Hostel occupancy, allocation, aur vacancy reports yahan se dekhein aur export karein.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(['occupancy', 'allocation', 'vacancy'] as const).map((rt) => (
+              <button
+                key={rt}
+                type="button"
+                onClick={() => { setReportType(rt); setReportData(null); setReportError(''); }}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  reportType === rt
+                    ? 'bg-slate-900 text-white'
+                    : 'border border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                {rt === 'occupancy' ? 'Occupancy' : rt === 'allocation' ? 'Allocation' : 'Vacancy'}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleLoadReport}
+              disabled={reportLoading}
+              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {reportLoading ? 'Loading...' : `Load ${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report`}
+            </button>
+            <button type="button" onClick={() => handleExportReport('pdf')} className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700">PDF</button>
+            <button type="button" onClick={() => handleExportReport('excel')} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">Excel</button>
+            <button type="button" onClick={() => handleExportReport('csv')} className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-700">CSV</button>
+          </div>
+          {reportError ? <p className="mt-3 text-sm text-rose-600">{reportError}</p> : null}
+          {reportData && reportData.length > 0 ? (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="text-slate-500">
+                  <tr>
+                    {Object.keys(reportData[0]).map((key) => (
+                      <th key={key} className="pb-3 pr-4 font-medium capitalize">{key.replace(/_/g, ' ')}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {reportData.map((row, idx) => (
+                    <tr key={idx} className={String(row.hostel_name) === 'GRAND TOTAL' ? 'bg-slate-100 font-semibold' : ''}>
+                      {Object.keys(reportData[0]).map((key) => (
+                        <td key={key} className="py-2.5 pr-4 text-slate-700">{String(row[key] ?? '')}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-xs text-slate-400">Total records: {reportData.length}</p>
+            </div>
+          ) : reportData && reportData.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No records found for this report.</p>
+          ) : null}
         </section>
       </div>
     </div>

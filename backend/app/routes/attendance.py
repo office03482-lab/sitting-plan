@@ -2,8 +2,9 @@
 Attendance management routes (Supabase-native)
 """
 
+import csv
 from datetime import date, datetime, time as dt_time
-from io import BytesIO
+from io import BytesIO, StringIO
 import re
 from typing import Any, Dict, List, Optional
 
@@ -1368,7 +1369,7 @@ async def export_report(
     report_type: str = Query(
         ..., pattern="^(student_summary|staff_summary|leave_summary)$"
     ),
-    export_format: str = Query(..., pattern="^(excel|pdf)$"),
+    export_format: str = Query(..., pattern="^(excel|pdf|csv)$"),
     school_id: str = Depends(resolve_school_id_from_actor),
     batch_names: Optional[str] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
@@ -1402,6 +1403,26 @@ async def export_report(
         else []
     )
     rows = build_report_rows(report_type, student_records, staff_records, leaves)
+
+    if export_format == "csv":
+        text_buffer = StringIO()
+        if rows:
+            headers = list(rows[0].keys())
+            writer = csv.DictWriter(text_buffer, fieldnames=headers, extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({header: row.get(header, "") for header in headers})
+        else:
+            writer = csv.writer(text_buffer)
+            writer.writerow(["message"])
+            writer.writerow(["No records found"])
+        binary_buffer = BytesIO(text_buffer.getvalue().encode("utf-8"))
+        binary_buffer.seek(0)
+        return StreamingResponse(
+            binary_buffer,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{report_type}.csv"'},
+        )
 
     if export_format == "excel":
         buffer = build_excel(rows, report_type)

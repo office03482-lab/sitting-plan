@@ -294,8 +294,11 @@ def serialize_student(student: Student) -> StudentResponse:
     return StudentResponse(
         id=student.id,
         roll_number=student.roll_number,
+        full_name=student.name,
         name=student.name,
         father_name=student.father_name,
+        batch_id=student.batch_id,
+        batch_name=student.batch,
         batch=student.batch,
         class_name=safe_class_name,
         section=student.section,
@@ -819,8 +822,9 @@ async def create_student(
             detail="Student with this roll number already exists"
         )
 
-    batch = get_or_create_batch(db, school_id, student.batch, category="batch")
-    normalized_class_name = normalize_student_class_name(student.class_name, student.batch)
+    target_batch_name = student.batch_name or ""
+    batch = get_or_create_batch(db, school_id, target_batch_name, category="batch")
+    normalized_class_name = normalize_student_class_name(student.class_name, target_batch_name)
     normalized_section = (student.section or "").strip() or None
     if normalized_class_name:
         get_or_create_batch(db, school_id, normalized_class_name, category="class")
@@ -828,7 +832,7 @@ async def create_student(
     # Create student
     db_student = Student(
         roll_number=student.roll_number,
-        name=student.name,
+        name=student.full_name,
         father_name=student.father_name,
         batch=batch.name,
         batch_id=batch.id,
@@ -1475,16 +1479,20 @@ async def update_student(
 
         update_dict['roll_number'] = normalized_roll_number
 
-    if 'batch' in update_dict and update_dict['batch'] is not None:
-        batch = get_or_create_batch(db, student.school_id, update_dict['batch'], category="batch")
+    if 'batch_name' in update_dict and update_dict['batch_name'] is not None:
+        batch = get_or_create_batch(db, student.school_id, update_dict['batch_name'], category="batch")
         update_dict['batch'] = batch.name
         update_dict['batch_id'] = batch.id
+        update_dict.pop('batch_name', None)
 
     if 'class_name' in update_dict:
         normalized_class_name = normalize_student_class_name(update_dict['class_name'], update_dict.get('batch', student.batch))
         update_dict['class_name'] = normalized_class_name or None
         if normalized_class_name:
             get_or_create_batch(db, student.school_id, normalized_class_name, category="class")
+
+    if 'full_name' in update_dict:
+        update_dict['name'] = update_dict.pop('full_name')
 
     if 'section' in update_dict:
         normalized_section = (update_dict['section'] or '').strip()

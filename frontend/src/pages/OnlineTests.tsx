@@ -195,6 +195,30 @@ export default function OnlineTests() {
     }
   };
 
+  const handleLifecycleAction = async (
+    action: 'publish' | 'unpublish' | 'duplicate',
+    testId: string,
+  ) => {
+    try {
+      setRefreshing(true);
+      if (action === 'publish') {
+        await apiService.publishOnlineTest(testId);
+        setBanner({ type: 'success', message: 'Online test published successfully.' });
+      } else if (action === 'unpublish') {
+        await apiService.unpublishOnlineTest(testId);
+        setBanner({ type: 'success', message: 'Online test moved back to draft.' });
+      } else {
+        await apiService.duplicateOnlineTest(testId);
+        setBanner({ type: 'success', message: 'Online test duplicated successfully.' });
+      }
+      await loadDashboard(true);
+    } catch (requestError) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(requestError, `Online test ${action} failed.`) });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   if (loading) {
     return <LoadingSpinner message="Online tests load ho rahe hain..." />;
   }
@@ -571,6 +595,22 @@ export default function OnlineTests() {
                         <PenSquare className="h-4 w-4" />
                         Edit
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => void handleLifecycleAction(test.status === 'published' ? 'unpublish' : 'publish', test.id)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
+                      >
+                        <PlayCircle className="h-4 w-4" />
+                        {test.status === 'published' ? 'Unpublish' : 'Publish'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLifecycleAction('duplicate', test.id)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+                      >
+                        <ClipboardList className="h-4 w-4" />
+                        Duplicate
+                      </button>
                       <button
                         type="button"
                         onClick={() => void handleDelete(test.id)}

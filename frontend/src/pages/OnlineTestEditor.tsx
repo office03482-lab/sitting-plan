@@ -428,6 +428,7 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                             <option value="multiple_choice">Multiple choice</option>
                             <option value="short_answer">Short answer</option>
                             <option value="long_answer">Long answer</option>
+                            <option value="numeric">Numerical</option>
                           </select>
                         </div>
                         <div>

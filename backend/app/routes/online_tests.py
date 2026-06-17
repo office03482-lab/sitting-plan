@@ -8,6 +8,7 @@ from app.middleware.auth import get_authenticated_actor_context, get_authenticat
 from app.models import User, UserRole
 from app.schemas import (
     OnlineTestAnalyticsResponse,
+    OnlineTestAttemptCreate,
     OnlineTestAttemptResponse,
     OnlineTestAttemptResponseUpsert,
     OnlineTestCreate,
@@ -26,10 +27,13 @@ from app.services.supabase_online_tests import (
     create_test,
     delete_question,
     delete_test,
+    duplicate_test,
     get_result,
+    get_attempt,
     get_results_analytics,
     get_test,
     get_test_for_student,
+    list_attempts,
     list_questions,
     list_questions_for_student,
     list_results,
@@ -38,6 +42,7 @@ from app.services.supabase_online_tests import (
     save_attempt,
     start_attempt,
     submit_attempt,
+    unpublish_test,
     update_question,
     update_test,
 )
@@ -74,6 +79,7 @@ def require_view_user(
     _: User = Depends(
         require_permissions(
             "online_tests.view",
+            "online_tests.attempt",
             "online_tests.manage",
             "online_tests.grade",
             "online_tests.reports",
@@ -276,6 +282,28 @@ async def api_close_test(
     return close_test(school_id, test_id, actor.get("profile_id"))
 
 
+@router.post("/tests/{test_id}/duplicate", response_model=OnlineTestResponse)
+async def api_duplicate_test(
+    test_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    return duplicate_test(school_id, test_id, actor.get("profile_id"))
+
+
+@router.post("/tests/{test_id}/unpublish", response_model=OnlineTestResponse)
+async def api_unpublish_test(
+    test_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    return unpublish_test(school_id, test_id, actor.get("profile_id"))
+
+
 @router.post("/tests/{test_id}/start", response_model=OnlineTestAttemptResponse)
 async def api_start_attempt(
     test_id: str,
@@ -288,6 +316,61 @@ async def api_start_attempt(
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
     return start_attempt(school_id, test_id, profile_id)
+
+
+@router.post("/attempts", response_model=OnlineTestAttemptResponse)
+async def api_create_attempt(
+    payload: OnlineTestAttemptCreate,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_attempt_user),
+):
+    del user
+    profile_id = str(actor.get("profile_id") or "").strip()
+    if not profile_id:
+        raise HTTPException(status_code=403, detail="Student profile context is missing")
+    return start_attempt(school_id, payload.test_id, profile_id)
+
+
+@router.get("/attempts", response_model=list[OnlineTestAttemptResponse])
+async def api_list_attempts(
+    test_id: str | None = Query(default=None),
+    student_id: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    user: User = Depends(require_view_user),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    if _is_student_user(user):
+        profile_id = str(actor.get("profile_id") or "").strip()
+        if not profile_id:
+            raise HTTPException(status_code=403, detail="Student profile context is missing")
+        from app.services.supabase_online_tests import _get_student_by_profile_id
+
+        resolved_student_id = str(_get_student_by_profile_id(school_id, profile_id).get("id") or "").strip()
+        return list_attempts(school_id, student_id=resolved_student_id, test_id=test_id, skip=skip, limit=limit)
+    return list_attempts(school_id, student_id=student_id, test_id=test_id, skip=skip, limit=limit)
+
+
+@router.get("/attempts/{attempt_id}", response_model=OnlineTestAttemptResponse)
+async def api_get_attempt(
+    attempt_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    user: User = Depends(require_view_user),
+    actor: dict = Depends(get_authenticated_actor_context),
+):
+    attempt = get_attempt(school_id, attempt_id)
+    if _is_student_user(user):
+        profile_id = str(actor.get("profile_id") or "").strip()
+        if not profile_id:
+            raise HTTPException(status_code=403, detail="Student profile context is missing")
+        from app.services.supabase_online_tests import _get_student_by_profile_id
+
+        student = _get_student_by_profile_id(school_id, profile_id)
+        if str(attempt.get("student_id") or "").strip() != str(student.get("id") or "").strip():
+            raise HTTPException(status_code=403, detail="Students can view only their own attempts")
+    return attempt
 
 
 @router.post("/attempts/{attempt_id}/save", response_model=OnlineTestAttemptResponse)
@@ -364,7 +447,15 @@ async def api_list_results(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
     school_id: str = Depends(resolve_school_id_from_actor),
-    user: User = Depends(require_grade_user),
+    user: User = Depends(require_view_user),
+    actor: dict = Depends(get_authenticated_actor_context),
 ):
-    del user
+    if _is_student_user(user):
+        profile_id = str(actor.get("profile_id") or "").strip()
+        if not profile_id:
+            raise HTTPException(status_code=403, detail="Student profile context is missing")
+        from app.services.supabase_online_tests import _get_student_by_profile_id
+
+        resolved_student_id = str(_get_student_by_profile_id(school_id, profile_id).get("id") or "").strip()
+        return list_results(school_id, test_id=test_id, student_id=resolved_student_id, skip=skip, limit=limit)
     return list_results(school_id, test_id=test_id, student_id=student_id, skip=skip, limit=limit)

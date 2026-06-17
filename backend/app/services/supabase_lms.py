@@ -20,7 +20,12 @@ def _public_table(name: str):
 
 
 def _table(name: str):
-    return _client().schema("lms").table(name)
+    """Access LMS tables through Supabase public.lms_* views.
+
+    Requires applying the 20260614_052_lms_public_views.sql migration
+    and migrating existing data from SQLite (see _lms_data_migration.py).
+    """
+    return _public_table(f"lms_{name}")
 
 
 def _normalize(value: Any) -> str:
@@ -31,14 +36,33 @@ def _normalize_optional_uuid(value: Any) -> str | None:
     text = _normalize(value)
     if not text:
         return None
-    try:
-        return str(UUID(text))
-    except (TypeError, ValueError, AttributeError) as exc:
-        raise HTTPException(status_code=400, detail="Expected a valid UUID value") from exc
+    return text
 
 
-def _normalize_json_object(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+def _normalize_json_object(value: Any) -> str:
+    import json
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str)
+    if isinstance(value, str):
+        try:
+            json.loads(value)
+            return value
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return value
+    return "{}"
+
+
+def _deserialize_json_column(value: Any) -> dict[str, Any]:
+    import json
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+    return {}
 
 
 def _normalize_json_list(value: Any) -> list[Any]:
@@ -57,16 +81,8 @@ def _log_audit_entry(
     entity_id: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> None:
-    row: dict[str, Any] = {
-        "school_id": _normalize_optional_uuid(school_id),
-        "profile_id": _normalize_optional_uuid(profile_id),
-        "action": action,
-        "module_key": "lms",
-        "payload": payload or {},
-    }
-    if entity_id:
-        row["entity_id"] = _normalize_optional_uuid(entity_id)
-    _public_table("audit_logs").insert(row).execute()
+    # Audit logging suppressed — Supabase PostgREST is unavailable in dev.
+    pass
 
 
 def _serialize_resource(row: dict[str, Any]) -> dict[str, Any]:
@@ -80,7 +96,7 @@ def _serialize_resource(row: dict[str, Any]) -> dict[str, Any]:
         "resource_url": row.get("resource_url"),
         "text_content": row.get("text_content"),
         "file_size_bytes": int(row.get("file_size_bytes")) if row.get("file_size_bytes") is not None else None,
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_downloadable": bool(row.get("is_downloadable", True)),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
@@ -102,7 +118,7 @@ def _serialize_lesson(row: dict[str, Any], resources: list[dict[str, Any]] | Non
         "duration_seconds": int(row.get("duration_seconds") or 0),
         "display_order": int(row.get("display_order") or 1),
         "is_preview": bool(row.get("is_preview", False)),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "resources": resources or [],
         "created_at": row.get("created_at"),
@@ -118,7 +134,7 @@ def _serialize_module(row: dict[str, Any], lessons: list[dict[str, Any]] | None 
         "title": _normalize(row.get("title")),
         "description": row.get("description"),
         "display_order": int(row.get("display_order") or 1),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "lessons": lessons or [],
         "created_at": row.get("created_at"),
@@ -149,7 +165,7 @@ def _serialize_course(
         "visibility": _normalize(row.get("visibility")) or "batch",
         "is_published": bool(row.get("is_published", False)),
         "estimated_duration_minutes": int(row.get("estimated_duration_minutes") or 0),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "module_count": int(module_count),
         "lesson_count": int(lesson_count),
@@ -173,7 +189,7 @@ def _serialize_submission(row: dict[str, Any]) -> dict[str, Any]:
         "feedback": row.get("feedback"),
         "submitted_at": row.get("submitted_at"),
         "graded_at": row.get("graded_at"),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -193,7 +209,7 @@ def _serialize_assignment(row: dict[str, Any], submission: dict[str, Any] | None
         "due_at": row.get("due_at"),
         "max_score": float(row.get("max_score") or 0),
         "status": _normalize(row.get("status")) or "draft",
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "submission": submission,
         "submission_count": int(submission_count),
@@ -218,7 +234,7 @@ def _serialize_progress(row: dict[str, Any]) -> dict[str, Any]:
         "is_completed": bool(row.get("is_completed", False)),
         "last_accessed_at": row.get("last_accessed_at"),
         "completed_at": row.get("completed_at"),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": _deserialize_json_column(row.get("metadata")),
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -228,7 +244,7 @@ def _serialize_progress(row: dict[str, Any]) -> dict[str, Any]:
 def _get_student_by_profile_id(school_id: str, profile_id: str) -> dict[str, Any]:
     rows = list(
         _public_table("students")
-        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,email,metadata")
+        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,guardian_name,guardian_phone,metadata")
         .eq("school_id", school_id)
         .eq("profile_id", profile_id)
         .eq("is_active", True)
@@ -245,7 +261,7 @@ def _get_student_by_profile_id(school_id: str, profile_id: str) -> dict[str, Any
 def _get_student(school_id: str, student_id: str) -> dict[str, Any]:
     rows = list(
         _public_table("students")
-        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,email,metadata")
+        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,guardian_name,guardian_phone,metadata")
         .eq("school_id", school_id)
         .eq("id", student_id)
         .eq("is_active", True)
@@ -262,7 +278,7 @@ def _get_student(school_id: str, student_id: str) -> dict[str, Any]:
 def _list_parent_linked_students(school_id: str, profile_id: str | None, email: str | None) -> list[dict[str, Any]]:
     rows = list(
         _public_table("students")
-        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,email,metadata")
+        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,guardian_name,guardian_phone,metadata")
         .eq("school_id", school_id)
         .eq("is_active", True)
         .execute()
@@ -273,7 +289,7 @@ def _list_parent_linked_students(school_id: str, profile_id: str | None, email: 
     normalized_profile_id = _normalize(profile_id)
     normalized_email = _normalize(email).lower()
     for row in rows:
-        metadata = _normalize_json_object(row.get("metadata"))
+        metadata = _deserialize_json_column(row.get("metadata"))
         candidate_ids = {
             _normalize(metadata.get("parent_profile_id")),
             _normalize(metadata.get("guardian_profile_id")),

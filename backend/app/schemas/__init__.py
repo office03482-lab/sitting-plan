@@ -170,9 +170,10 @@ class BatchReorderRequest(BaseModel):
 class StudentBase(BaseModel):
     """Base student schema"""
     roll_number: str
-    name: str = Field(validation_alias=AliasChoices("name", "full_name"))
+    full_name: str = Field(validation_alias=AliasChoices("full_name", "name"))
     father_name: Optional[str] = None
-    batch: str  # Batch enum as string
+    batch_id: Optional[str] = None
+    batch_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("batch_name", "batch"))
     class_name: Optional[str] = None
     section: Optional[str] = None
     academic_session: Optional[str] = None
@@ -195,6 +196,22 @@ class StudentBase(BaseModel):
     reference_number: Optional[str] = None
     reference_remark: Optional[str] = None
 
+    @field_validator("batch_id", mode="before")
+    @classmethod
+    def normalize_optional_batch_id(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("batch_name", mode="before")
+    @classmethod
+    def normalize_optional_batch_name(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     @field_validator("preferred_hostel_id", "assigned_hostel_id", "assigned_room_id", mode="before")
     @classmethod
     def normalize_optional_hostel_identifiers(cls, value: Any) -> Optional[str]:
@@ -202,6 +219,12 @@ class StudentBase(BaseModel):
             return None
         normalized = str(value).strip()
         return normalized or None
+
+    @model_validator(mode="after")
+    def validate_batch_reference(self):
+        if not self.batch_id and not self.batch_name:
+            raise ValueError("Either batch_id or batch_name is required")
+        return self
 
 
 class StudentCreate(StudentBase):
@@ -212,9 +235,10 @@ class StudentCreate(StudentBase):
 class StudentUpdate(BaseModel):
     """Update student schema"""
     roll_number: Optional[str] = None
-    name: Optional[str] = Field(default=None, validation_alias=AliasChoices("name", "full_name"))
+    full_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("full_name", "name"))
     father_name: Optional[str] = None
-    batch: Optional[str] = None
+    batch_id: Optional[str] = None
+    batch_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("batch_name", "batch"))
     class_name: Optional[str] = None
     section: Optional[str] = None
     academic_session: Optional[str] = None
@@ -236,6 +260,22 @@ class StudentUpdate(BaseModel):
     reference_remark: Optional[str] = None
     is_active: Optional[bool] = None
 
+    @field_validator("batch_id", mode="before")
+    @classmethod
+    def normalize_optional_batch_id(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("batch_name", mode="before")
+    @classmethod
+    def normalize_optional_batch_name(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     @field_validator("preferred_hostel_id", "assigned_hostel_id", "assigned_room_id", mode="before")
     @classmethod
     def normalize_optional_hostel_identifiers(cls, value: Any) -> Optional[str]:
@@ -249,6 +289,8 @@ class StudentResponse(StudentBase):
     """Student response schema"""
     id: str | int
     school_id: str | int
+    name: Optional[str] = None
+    batch: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -351,6 +393,17 @@ class HostelResponse(BaseModel):
     available_beds: int
     total_rooms: int
     rooms: List[HostelRoomResponse] = Field(default_factory=list)
+
+
+class HostelReportRow(BaseModel):
+    values: Dict[str, Any]
+
+
+class HostelReportResponse(BaseModel):
+    report_type: str
+    generated_at: datetime
+    rows: List[HostelReportRow] = Field(default_factory=list)
+    total_records: int
 
 
 class StudentHostelRequestCreate(BaseModel):
@@ -2114,6 +2167,8 @@ class OnlineTestResultResponse(BaseModel):
     percentage: Optional[float] = None
     rank_in_batch: Optional[int] = None
     rank_in_school: Optional[int] = None
+    passed: Optional[bool] = None
+    pass_marks: Optional[float] = None
     published_at: Optional[datetime] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool

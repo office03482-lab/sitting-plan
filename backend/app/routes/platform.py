@@ -16,7 +16,7 @@ from app.schemas import (
     PlatformWorkflowRequestDetailResponse,
 )
 from app.services.bulk_action_requests import _serialize_bulk_action_request
-from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_admin import create_supabase_admin_client
 router = APIRouter(prefix="/api/platform", tags=["Platform Administration"])
 
 
@@ -26,12 +26,13 @@ def require_platform_admin(user: User = Depends(get_authenticated_user)) -> User
     return user
 
 
-def _load_profiles_map(profile_ids: set[str]) -> dict[str, dict[str, Any]]:
+def _load_profiles_map(profile_ids: set[str], supabase=None) -> dict[str, dict[str, Any]]:
     ids = [item for item in profile_ids if item]
     if not ids:
         return {}
+    supabase = supabase or create_supabase_admin_client()
     response = (
-        get_supabase_admin_client()
+        supabase
         .table("profiles")
         .select("id,full_name,display_name,email")
         .in_("id", ids)
@@ -41,12 +42,13 @@ def _load_profiles_map(profile_ids: set[str]) -> dict[str, dict[str, Any]]:
     return {str(row.get("id")): dict(row) for row in rows}
 
 
-def _load_schools_map(school_ids: set[str]) -> dict[str, dict[str, Any]]:
+def _load_schools_map(school_ids: set[str], supabase=None) -> dict[str, dict[str, Any]]:
     ids = [item for item in school_ids if item]
     if not ids:
         return {}
+    supabase = supabase or create_supabase_admin_client()
     response = (
-        get_supabase_admin_client()
+        supabase
         .table("schools")
         .select("id,name")
         .in_("id", ids)
@@ -82,7 +84,7 @@ def _serialize_event(row: dict[str, Any], profiles_map: dict[str, dict[str, Any]
 def get_platform_dashboard_summary(
     _: User = Depends(require_platform_admin),
 ):
-    supabase = get_supabase_admin_client()
+    supabase = create_supabase_admin_client()
 
     request_rows = list(
         (
@@ -122,7 +124,7 @@ def get_platform_dashboard_summary(
         value = str(row.get("actor_profile_id") or "").strip()
         if value:
             profile_ids.add(value)
-    profiles_map = _load_profiles_map(profile_ids)
+    profiles_map = _load_profiles_map(profile_ids, supabase)
 
     workflow_counts = {
         "pending": 0,
@@ -172,7 +174,7 @@ def get_platform_workflow_request_detail(
     request_id: str,
     _: User = Depends(require_platform_admin),
 ):
-    supabase = get_supabase_admin_client()
+    supabase = create_supabase_admin_client()
     request_rows = list(
         (
             supabase.schema("workflow")
@@ -210,7 +212,7 @@ def get_platform_workflow_request_detail(
         value = str(row.get("actor_profile_id") or "").strip()
         if value:
             profile_ids.add(value)
-    profiles_map = _load_profiles_map({item for item in profile_ids if item})
+    profiles_map = _load_profiles_map({item for item in profile_ids if item}, supabase)
 
     serialized_request = _serialize_bulk_action_request(request_row)
     return PlatformWorkflowRequestDetailResponse(
@@ -255,7 +257,7 @@ def list_platform_audit_logs(
     offset: int = Query(default=0, ge=0),
     _: User = Depends(require_platform_admin),
 ):
-    supabase = get_supabase_admin_client()
+    supabase = create_supabase_admin_client()
     query = supabase.table("audit_logs").select("*").order("created_at", desc=True)
     if action:
         query = query.eq("action", action)
@@ -287,8 +289,8 @@ def list_platform_audit_logs(
 
     profile_ids = {str(row.get("profile_id") or "").strip() for row in rows if row.get("profile_id")}
     school_ids = {str(row.get("school_id") or "").strip() for row in rows if row.get("school_id")}
-    profiles_map = _load_profiles_map(profile_ids)
-    schools_map = _load_schools_map(school_ids)
+    profiles_map = _load_profiles_map(profile_ids, supabase)
+    schools_map = _load_schools_map(school_ids, supabase)
 
     result: list[PlatformAuditLogResponse] = []
     for row in rows:

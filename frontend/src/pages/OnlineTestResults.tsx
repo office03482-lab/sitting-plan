@@ -42,11 +42,16 @@ export default function OnlineTestResults() {
   }, [result?.percentage]);
 
   const statCards: ResultStatCard[] = result
-    ? [
+      ? [
         { label: 'Score', value: `${result.score_obtained}/${result.max_score}`, icon: Award },
         { label: 'Percentage', value: `${result.percentage || 0}%`, icon: Target },
         { label: 'Correct', value: result.correct_answers, icon: CheckCircle2 },
         { label: 'Unanswered', value: result.unanswered_questions, icon: CircleOff },
+        {
+          label: 'Pass / Fail',
+          value: result.passed === null || result.passed === undefined ? 'Not configured' : result.passed ? 'Pass' : 'Fail',
+          icon: result.passed ? CheckCircle2 : CircleOff,
+        },
       ]
     : [];
 
@@ -134,6 +139,7 @@ export default function OnlineTestResults() {
             ['Incorrect Answers', result.incorrect_answers],
             ['Rank in Batch', result.rank_in_batch ?? 'Pending'],
             ['Rank in School', result.rank_in_school ?? 'Pending'],
+            ['Pass Marks', result.pass_marks ?? 'Not set'],
             ['Published', result.published_at ? new Date(result.published_at).toLocaleString() : 'Pending'],
           ].map(([label, value]) => (
             <div key={String(label)} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">

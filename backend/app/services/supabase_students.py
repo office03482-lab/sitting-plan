@@ -107,10 +107,12 @@ def _serialize_student(row: dict[str, Any], batch_name_map: dict[str, str] | Non
     return {
         "id": row.get("id"),
         "roll_number": _normalize(row.get("roll_number")),
+        "full_name": _normalize(row.get("full_name")),
         "name": _normalize(row.get("full_name")),
         "father_name": _normalize(row.get("father_name")) or None,
-        "batch": batch_name,
         "batch_id": batch_id or None,
+        "batch_name": batch_name or None,
+        "batch": batch_name,
         "class_name": safe_class_name,
         "section": _normalize(row.get("section")) or None,
         "academic_session": _normalize(row.get("academic_session")) or None,
@@ -277,7 +279,8 @@ def find_student_by_roll_number(school_id: str, roll_number: str) -> dict[str, A
     rows = list(response.data or [])
     if not rows:
         return None
-    return _serialize_student(rows[0])
+    batch_name_map = _get_batch_name_map(school_id)
+    return _serialize_student(rows[0], batch_name_map)
 
 
 def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -285,24 +288,27 @@ def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not roll_number:
         raise HTTPException(status_code=400, detail="Roll number is required")
 
-    name = _normalize(payload.get("full_name") or payload.get("name") or payload.get("candidate_name"))
-    if not name:
+    full_name = _normalize(payload.get("full_name") or payload.get("name") or payload.get("candidate_name"))
+    if not full_name:
         raise HTTPException(status_code=400, detail="Student name is required")
 
-    batch_name = _normalize(payload.get("batch"))
+    batch_name = _normalize(payload.get("batch_name") or payload.get("batch") or payload.get("managed_batch"))
     batch_id = _normalize_optional_id(payload.get("batch_id"))
-    if batch_name:
+    if batch_name and not batch_id:
         batch_id = _resolve_batch_id(school_id, batch_name)
     elif batch_id:
         batch_name = _resolve_batch_name(school_id, batch_id) or ""
-    class_name = _normalize_class_name(batch_name, batch_name)
+    elif not batch_name:
+        raise HTTPException(status_code=400, detail="Batch reference is required")
+
+    class_name = _normalize_class_name(payload.get("class_name"), batch_name)
 
     row = {
         "school_id": school_id,
         "roll_number": roll_number,
-        "full_name": name,
+        "full_name": full_name,
         "batch_id": batch_id,
-        "class_name": class_name or batch_name if batch_name else None,
+        "class_name": class_name or None,
         "is_active": bool(payload.get("is_active", True)),
     }
     metadata = {
@@ -329,10 +335,10 @@ def upsert_student(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         row["special_needs"] = _normalize(payload.get("special_needs")) or None
     if "boarding_type" in payload:
         row["boarding_type"] = _normalize(payload.get("boarding_type")) or None
-    if "email" in payload and payload["email"]:
-        row["email"] = _normalize(payload["email"])
-    if "phone" in payload and payload["phone"]:
-        row["phone"] = _normalize(payload["phone"])
+    if "email" in payload:
+        row["email"] = _normalize(payload.get("email")) or None
+    if "phone" in payload:
+        row["phone"] = _normalize(payload.get("phone")) or None
 
     existing = find_student_by_roll_number(school_id, roll_number)
     if existing:

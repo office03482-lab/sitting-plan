@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 ONLINE_TESTS_SCHEMA = "online_tests"
 ONLINE_TESTS_MODULE_KEY = "online_tests"
+_ONLINE_TESTS_PUBLIC_PREFIX = "online_test_"
 
 
 def _client():
@@ -19,7 +20,10 @@ def _client():
 
 
 def _table(name: str):
-    return _client().schema(ONLINE_TESTS_SCHEMA).table(name)
+    # Access via public.online_test_* views (PostgREST workaround for
+    # non-exposed private schema).  Requires applying the
+    # 20260614_055_online_tests_public_views.sql migration first.
+    return _client().table(f"{_ONLINE_TESTS_PUBLIC_PREFIX}{name}")
 
 
 def _normalize(value: Any) -> str:
@@ -199,6 +203,7 @@ def _serialize_attempt(row: dict[str, Any], responses: list[dict[str, Any]] | No
 
 
 def _serialize_result(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = _normalize_json_object(row.get("metadata"))
     return {
         "id": _normalize(row.get("id")),
         "school_id": _normalize(row.get("school_id")),
@@ -216,8 +221,10 @@ def _serialize_result(row: dict[str, Any]) -> dict[str, Any]:
         "percentage": float(row.get("percentage")) if row.get("percentage") is not None else None,
         "rank_in_batch": int(row.get("rank_in_batch")) if row.get("rank_in_batch") is not None else None,
         "rank_in_school": int(row.get("rank_in_school")) if row.get("rank_in_school") is not None else None,
+        "passed": metadata.get("passed") if "passed" in metadata else None,
+        "pass_marks": float(metadata.get("pass_marks")) if metadata.get("pass_marks") is not None else None,
         "published_at": row.get("published_at"),
-        "metadata": _normalize_json_object(row.get("metadata")),
+        "metadata": metadata,
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -424,6 +431,23 @@ def _question_rows_for_test(school_id: str, test_id: str) -> list[dict[str, Any]
     return [dict(row) for row in rows]
 
 
+def _student_rows_by_ids(school_id: str, student_ids: list[str]) -> dict[str, dict[str, Any]]:
+    cleaned_ids = [_normalize(student_id) for student_id in student_ids if _normalize(student_id)]
+    if not cleaned_ids:
+        return {}
+    rows = list(
+        _client()
+        .table("students")
+        .select("id, batch_id")
+        .eq("school_id", school_id)
+        .in_("id", cleaned_ids)
+        .execute()
+        .data
+        or []
+    )
+    return {_normalize(row.get("id")): dict(row) for row in rows}
+
+
 def _attempt_responses_rows(school_id: str, attempt_id: str) -> list[dict[str, Any]]:
     rows = list(
         _table("test_responses")
@@ -481,6 +505,71 @@ def _score_response(question: dict[str, Any], response_payload: dict[str, Any]) 
         return False, 0.0
     is_correct = given == expected and bool(expected)
     return is_correct, marks if is_correct else max(0.0, -negative_marks)
+
+
+def _recalculate_result_ranks(school_id: str, test_id: str) -> None:
+    result_rows = [
+        dict(row)
+        for row in list(
+            _table("test_results")
+            .select("id, student_id, score_obtained, percentage, published_at, created_at")
+            .eq("school_id", school_id)
+            .eq("test_id", test_id)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    ]
+    if not result_rows:
+        return
+
+    student_map = _student_rows_by_ids(school_id, [_normalize(row.get("student_id")) for row in result_rows])
+
+    def _sort_key(row: dict[str, Any]) -> tuple[float, float, str, str]:
+        return (
+            float(row.get("score_obtained") or 0),
+            float(row.get("percentage") or 0),
+            _normalize(row.get("published_at") or row.get("created_at")),
+            _normalize(row.get("id")),
+        )
+
+    ranked_school = sorted(result_rows, key=_sort_key, reverse=True)
+    for school_rank, row in enumerate(ranked_school, start=1):
+        _table("test_results").update({"rank_in_school": school_rank}).eq("school_id", school_id).eq(
+            "id", _normalize(row.get("id"))
+        ).execute()
+
+    batch_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in result_rows:
+        batch_id = _normalize(student_map.get(_normalize(row.get("student_id")), {}).get("batch_id")) or "unassigned"
+        batch_groups.setdefault(batch_id, []).append(row)
+
+    for batch_rows in batch_groups.values():
+        for batch_rank, row in enumerate(sorted(batch_rows, key=_sort_key, reverse=True), start=1):
+            _table("test_results").update({"rank_in_batch": batch_rank}).eq("school_id", school_id).eq(
+                "id", _normalize(row.get("id"))
+            ).execute()
+
+
+def _build_duplicate_test_code(school_id: str, base_code: str | None) -> str | None:
+    normalized_base = _normalize(base_code)
+    if not normalized_base:
+        return None
+    suffix_seed = datetime.now(timezone.utc).strftime("%H%M%S")
+    candidate = f"{normalized_base}-COPY-{suffix_seed}"
+    existing = list(
+        _table("tests")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("test_code", candidate)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return candidate if not existing else f"{candidate}-{datetime.now(timezone.utc).strftime('%f')[:3]}"
 
 
 def _assert_student_can_access_test(student: dict[str, Any], test: dict[str, Any]) -> None:
@@ -624,6 +713,8 @@ def update_test(school_id: str, test_id: str, profile_id: str | None, payload: d
     if new_status == "published" and old_status != "published":
         update_payload["published_at"] = _utc_now_iso()
         update_payload["published_by_profile_id"] = _normalize_optional_uuid(profile_id)
+    elif old_status == "published" and new_status != "published":
+        update_payload["published_at"] = None
 
     _table("tests").update(update_payload).eq("school_id", school_id).eq("id", test_id).execute()
     _log_audit_entry(
@@ -655,6 +746,19 @@ def publish_test(school_id: str, test_id: str, profile_id: str | None) -> dict[s
     return get_test(school_id, test_id)
 
 
+def unpublish_test(school_id: str, test_id: str, profile_id: str | None) -> dict[str, Any]:
+    _get_test_row(school_id, test_id)
+    _table("tests").update({"status": "draft", "published_at": None}).eq("school_id", school_id).eq("id", test_id).execute()
+    _log_audit_entry(
+        school_id=school_id,
+        profile_id=profile_id,
+        action="online_tests.test_unpublished",
+        entity_id=test_id,
+        payload={"status": "draft"},
+    )
+    return get_test(school_id, test_id)
+
+
 def close_test(school_id: str, test_id: str, profile_id: str | None) -> dict[str, Any]:
     _get_test_row(school_id, test_id)
     _table("tests").update({"status": "closed"}).eq("school_id", school_id).eq("id", test_id).execute()
@@ -666,6 +770,123 @@ def close_test(school_id: str, test_id: str, profile_id: str | None) -> dict[str
         payload={"status": "closed"},
     )
     return get_test(school_id, test_id)
+
+
+def duplicate_test(school_id: str, test_id: str, profile_id: str | None) -> dict[str, Any]:
+    source_test = _get_test_row(school_id, test_id)
+    source_sections = list(
+        _table("test_sections")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("test_id", test_id)
+        .is_("deleted_at", "null")
+        .order("display_order", desc=False)
+        .execute()
+        .data
+        or []
+    )
+    source_questions = _question_rows_for_test(school_id, test_id)
+
+    duplicated_test = create_test(
+        school_id,
+        profile_id,
+        {
+            "title": f"{_normalize(source_test.get('title'))} (Copy)",
+            "description": source_test.get("description"),
+            "instructions": source_test.get("instructions"),
+            "test_code": _build_duplicate_test_code(school_id, source_test.get("test_code")),
+            "subject_id": source_test.get("subject_id"),
+            "batch_id": source_test.get("batch_id"),
+            "test_type": source_test.get("test_type"),
+            "delivery_mode": source_test.get("delivery_mode"),
+            "status": "draft",
+            "duration_minutes": source_test.get("duration_minutes"),
+            "total_marks": source_test.get("total_marks"),
+            "pass_marks": source_test.get("pass_marks"),
+            "max_attempts": source_test.get("max_attempts"),
+            "shuffle_questions": source_test.get("shuffle_questions"),
+            "shuffle_options": source_test.get("shuffle_options"),
+            "show_result_immediately": source_test.get("show_result_immediately"),
+            "allow_review": source_test.get("allow_review"),
+            "starts_at": source_test.get("starts_at"),
+            "ends_at": source_test.get("ends_at"),
+            "metadata": _normalize_json_object(source_test.get("metadata")),
+        },
+    )
+
+    duplicated_test_id = _normalize(duplicated_test.get("id"))
+    default_section_id = _normalize((duplicated_test.get("sections") or [{}])[0].get("id"))
+    section_map: dict[str, str] = {}
+    ordered_source_sections = [dict(row) for row in source_sections]
+    if ordered_source_sections:
+        first_section = ordered_source_sections[0]
+        _table("test_sections").update(
+            {
+                "section_code": first_section.get("section_code"),
+                "title": first_section.get("title"),
+                "description": first_section.get("description"),
+                "display_order": first_section.get("display_order"),
+                "question_type": first_section.get("question_type"),
+                "marks_per_question": first_section.get("marks_per_question"),
+                "negative_marks": first_section.get("negative_marks"),
+                "question_count": 0,
+            }
+        ).eq("school_id", school_id).eq("id", default_section_id).execute()
+        section_map[_normalize(first_section.get("id"))] = default_section_id
+
+        for section in ordered_source_sections[1:]:
+            response = _table("test_sections").insert(
+                {
+                    "school_id": school_id,
+                    "test_id": duplicated_test_id,
+                    "section_code": section.get("section_code"),
+                    "title": section.get("title"),
+                    "description": section.get("description"),
+                    "display_order": section.get("display_order"),
+                    "question_type": section.get("question_type"),
+                    "marks_per_question": section.get("marks_per_question"),
+                    "negative_marks": section.get("negative_marks"),
+                    "question_count": 0,
+                    "is_active": bool(section.get("is_active", True)),
+                }
+            ).execute()
+            rows = list(response.data or [])
+            if not rows:
+                raise HTTPException(status_code=500, detail="Failed to duplicate test section")
+            section_map[_normalize(section.get("id"))] = _normalize(rows[0].get("id"))
+
+    for question in source_questions:
+        source_section_id = _normalize(question.get("section_id"))
+        target_section_id = section_map.get(source_section_id) or default_section_id
+        _table("test_questions").insert(
+            {
+                "school_id": school_id,
+                "test_id": duplicated_test_id,
+                "section_id": target_section_id,
+                "question_code": question.get("question_code"),
+                "display_order": question.get("display_order"),
+                "question_type": question.get("question_type"),
+                "difficulty_level": question.get("difficulty_level"),
+                "prompt_text": question.get("prompt_text"),
+                "option_items": list(question.get("option_items") or []),
+                "answer_key": _normalize_json_object(question.get("answer_key")),
+                "explanation": question.get("explanation"),
+                "marks": question.get("marks"),
+                "negative_marks": question.get("negative_marks"),
+                "metadata": _normalize_json_object(question.get("metadata")),
+                "is_active": bool(question.get("is_active", True)),
+            }
+        ).execute()
+        _recount_section_questions(school_id, target_section_id)
+
+    _log_audit_entry(
+        school_id=school_id,
+        profile_id=profile_id,
+        action="online_tests.test_duplicated",
+        entity_id=duplicated_test_id,
+        payload={"source_test_id": test_id},
+    )
+    return get_test(school_id, duplicated_test_id)
 
 
 def delete_test(school_id: str, test_id: str, profile_id: str | None) -> dict[str, Any]:
@@ -1054,6 +1275,7 @@ def save_attempt(school_id: str, attempt_id: str, profile_id: str, payload: dict
 def submit_attempt(school_id: str, attempt_id: str, profile_id: str) -> dict[str, Any]:
     attempt = _get_attempt_row(school_id, attempt_id)
     student = _get_student_by_profile_id(school_id, profile_id)
+    test = _get_test_row(school_id, _normalize(attempt.get("test_id")))
     if _normalize(attempt.get("student_id")) != _normalize(student.get("id")):
         raise HTTPException(status_code=403, detail="Students can submit only their own attempts")
     if _normalize(attempt.get("status")) != "in_progress":
@@ -1091,10 +1313,19 @@ def submit_attempt(school_id: str, attempt_id: str, profile_id: str) -> dict[str
     unanswered_questions = max(total_questions - answered_questions, 0)
     percentage = round((score_obtained / max_score) * 100, 2) if max_score > 0 else 0.0
     submitted_at = _utc_now_iso()
+    pass_marks = float(test.get("pass_marks")) if test.get("pass_marks") is not None else None
+    passed = score_obtained >= pass_marks if pass_marks is not None else None
+    auto_submitted_at = None
+    started_at = attempt.get("started_at")
+    if started_at and test.get("duration_minutes"):
+        started_at_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) >= started_at_dt + timedelta(minutes=int(test.get("duration_minutes") or 0)):
+            auto_submitted_at = submitted_at
     _table("test_attempts").update(
         {
             "status": "submitted",
             "submitted_at": submitted_at,
+            "auto_submitted_at": auto_submitted_at,
             "evaluated_at": submitted_at,
             "answered_questions_snapshot": answered_questions,
         }
@@ -1125,19 +1356,27 @@ def submit_attempt(school_id: str, attempt_id: str, profile_id: str) -> dict[str
         "max_score": round(max_score, 2),
         "percentage": percentage,
         "published_at": submitted_at,
-        "metadata": {"auto_evaluated": True},
+        "metadata": {
+            "auto_evaluated": True,
+            "passed": passed,
+            "pass_marks": pass_marks,
+            "auto_submitted": bool(auto_submitted_at),
+        },
         "is_active": True,
     }
     if existing_result_rows:
         result_id = _normalize(existing_result_rows[0].get("id"))
         _table("test_results").update(result_payload).eq("school_id", school_id).eq("id", result_id).execute()
+        _recalculate_result_ranks(school_id, _normalize(attempt.get("test_id")))
         result = get_result(school_id, result_id)
     else:
         response = _table("test_results").insert(result_payload).execute()
         rows = list(response.data or [])
         if not rows:
             raise HTTPException(status_code=500, detail="Result creation failed during attempt submission")
-        result = _serialize_result(dict(rows[0]))
+        created_result_id = _normalize(rows[0].get("id"))
+        _recalculate_result_ranks(school_id, _normalize(attempt.get("test_id")))
+        result = get_result(school_id, created_result_id)
     _log_audit_entry(
         school_id=school_id,
         profile_id=profile_id,

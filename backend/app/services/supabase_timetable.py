@@ -509,6 +509,29 @@ def _check_room_exists(school_id: str, room_id: str | None) -> str | None:
     return room_id
 
 
+def _ensure_active_staff_member(school_id: str, staff_member_id: str | None) -> str:
+    candidate = str(staff_member_id or "").strip()
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Teacher is required")
+    result = (
+        get_supabase_admin_client()
+        .table("staff_members")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("id", candidate)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not list(result.data or []):
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    return candidate
+
+
+def _time_ranges_overlap(start_time: str, end_time: str, existing_start: str, existing_end: str) -> bool:
+    return start_time < existing_end and end_time > existing_start
+
+
 def check_teacher_conflicts(
     school_id: str,
     teacher_id: str,
@@ -532,7 +555,72 @@ def check_teacher_conflicts(
     for row in rows:
         existing_start = str(row.get("start_time") or "")[:5]
         existing_end = str(row.get("end_time") or "")[:5]
-        if start_time < existing_end and end_time > existing_start:
+        if _time_ranges_overlap(start_time, end_time, existing_start, existing_end):
+            conflicts.append(row)
+    return conflicts
+
+
+def check_room_conflicts(
+    school_id: str,
+    room_id: str,
+    day_of_week: str,
+    start_time: str,
+    end_time: str,
+    *,
+    exclude_entry_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = (
+        get_timetable_table_query()
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("room_id", room_id)
+        .eq("day_of_week", day_of_week)
+        .eq("is_active", True)
+    )
+    response = query.execute()
+    rows = [row for row in list(response.data or []) if str(row.get("id")) != str(exclude_entry_id or "")]
+    conflicts = []
+    for row in rows:
+        existing_start = str(row.get("start_time") or "")[:5]
+        existing_end = str(row.get("end_time") or "")[:5]
+        if _time_ranges_overlap(start_time, end_time, existing_start, existing_end):
+            conflicts.append(row)
+    return conflicts
+
+
+def _batch_sets_overlap(left_class_name: Any, right_class_name: Any) -> bool:
+    left_batches = set(_expand_timetable_batches(left_class_name))
+    right_batches = set(_expand_timetable_batches(right_class_name))
+    if not left_batches or not right_batches:
+        return False
+    return not left_batches.isdisjoint(right_batches)
+
+
+def check_batch_conflicts(
+    school_id: str,
+    class_name: str,
+    day_of_week: str,
+    start_time: str,
+    end_time: str,
+    *,
+    exclude_entry_id: str | None = None,
+) -> list[dict[str, Any]]:
+    query = (
+        get_timetable_table_query()
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("day_of_week", day_of_week)
+        .eq("is_active", True)
+    )
+    response = query.execute()
+    rows = [row for row in list(response.data or []) if str(row.get("id")) != str(exclude_entry_id or "")]
+    conflicts = []
+    for row in rows:
+        existing_start = str(row.get("start_time") or "")[:5]
+        existing_end = str(row.get("end_time") or "")[:5]
+        if not _time_ranges_overlap(start_time, end_time, existing_start, existing_end):
+            continue
+        if _batch_sets_overlap(class_name, row.get("class_name")):
             conflicts.append(row)
     return conflicts
 
@@ -551,6 +639,7 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
 
     skip_conflict = bool(entry_data.get("skip_conflict_check", False))
     if not is_no_teacher_session(ui_session_type):
+        teacher_id = _ensure_active_staff_member(school_id, teacher_id)
         teacher_lookup = _fetch_staff_lookup(school_id, [str(teacher_id)])
         teacher_name = (teacher_lookup.get(str(teacher_id)) or {}).get("full_name") or "Teacher"
         if not skip_conflict:
@@ -566,6 +655,42 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Teacher conflict: {teacher_name} is already assigned during this time",
                 )
+
+    if not skip_conflict and room_id:
+        room_conflicts = check_room_conflicts(
+            school_id,
+            str(room_id),
+            str(entry_data["day_of_week"]),
+            str(entry_data["start_time"]),
+            str(entry_data["end_time"]),
+        )
+        if room_conflicts:
+            room_name = (_fetch_room_lookup(school_id, [str(room_id)]).get(str(room_id)) or {}).get("name") or "Selected room"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Room conflict: {room_name} is already assigned during this time",
+            )
+
+    if not skip_conflict:
+        batch_conflicts = check_batch_conflicts(
+            school_id,
+            str(entry_data.get("class_name") or ""),
+            str(entry_data["day_of_week"]),
+            str(entry_data["start_time"]),
+            str(entry_data["end_time"]),
+        )
+        if batch_conflicts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Batch conflict: selected batch/class already has a timetable entry during this time",
+            )
+
+    subject_id = _resolve_subject_id_for_timetable(school_id, entry_data.get("class_name"), entry_data.get("subject"))
+    if not is_no_teacher_session(ui_session_type) and not subject_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Subject not found for the selected school and class.",
+        )
 
     metadata = {
         "subject": entry_data.get("subject"),
@@ -583,7 +708,7 @@ def create_timetable_entry(school_id: str, entry_data: dict[str, Any]) -> dict[s
         "end_time": entry_data.get("end_time"),
         "class_name": entry_data.get("class_name"),
         "section": None,
-        "subject_id": _resolve_subject_id_for_timetable(school_id, entry_data.get("class_name"), entry_data.get("subject")),
+        "subject_id": subject_id,
         "session_mode": entry_data.get("session_mode") or "offline",
         "session_type": normalize_session_type_for_db(ui_session_type),
         "online_link": entry_data.get("meeting_link") or entry_data.get("online_link"),
@@ -632,6 +757,8 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         next_teacher_id = _ensure_system_staff_member(school_id, next_session_type)["id"]
     elif not next_teacher_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Teacher is required")
+    else:
+        next_teacher_id = _ensure_active_staff_member(school_id, next_teacher_id)
 
     if not is_no_teacher_session(next_session_type):
         conflicts = check_teacher_conflicts(
@@ -650,6 +777,47 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
                 detail=f"Teacher conflict: {teacher_name} is already assigned during this time",
             )
 
+    if room_id:
+        room_conflicts = check_room_conflicts(
+            school_id,
+            str(room_id),
+            str(next_day),
+            str(next_start),
+            str(next_end),
+            exclude_entry_id=entry_id,
+        )
+        if room_conflicts:
+            room_name = (_fetch_room_lookup(school_id, [str(room_id)]).get(str(room_id)) or {}).get("name") or "Selected room"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Room conflict: {room_name} is already assigned during this time",
+            )
+
+    batch_conflicts = check_batch_conflicts(
+        school_id,
+        str(entry_data.get("class_name", existing.get("class_name")) or ""),
+        str(next_day),
+        str(next_start),
+        str(next_end),
+        exclude_entry_id=entry_id,
+    )
+    if batch_conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch conflict: selected batch/class already has a timetable entry during this time",
+        )
+
+    subject_id = _resolve_subject_id_for_timetable(
+        school_id,
+        entry_data.get("class_name", existing.get("class_name")),
+        entry_data.get("subject", existing.get("subject")),
+    )
+    if not is_no_teacher_session(next_session_type) and not subject_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Subject not found for the selected school and class.",
+        )
+
     metadata = {
         "subject": entry_data.get("subject", existing.get("subject")),
         "ui_session_type": next_session_type,
@@ -664,11 +832,7 @@ def update_timetable_entry(school_id: str, entry_id: str, entry_data: dict[str, 
         "start_time": next_start,
         "end_time": next_end,
         "class_name": entry_data.get("class_name", existing.get("class_name")),
-        "subject_id": _resolve_subject_id_for_timetable(
-            school_id,
-            entry_data.get("class_name", existing.get("class_name")),
-            entry_data.get("subject", existing.get("subject")),
-        ),
+        "subject_id": subject_id,
         "session_mode": entry_data.get("session_mode", existing.get("session_mode")),
         "session_type": normalize_session_type_for_db(next_session_type),
         "online_link": entry_data.get("meeting_link", entry_data.get("online_link", existing.get("meeting_link", existing.get("online_link")))),

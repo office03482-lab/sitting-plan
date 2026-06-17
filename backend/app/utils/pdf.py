@@ -215,7 +215,7 @@ def _batch_distribution(plan_data: dict, assignment_rows: list[tuple[str, list[d
     counts: dict[str, int] = {}
     for _, students in assignment_rows:
         for student in students:
-            batch_name = str(student.get("batch") or "").strip() or "Unspecified"
+            batch_name = str(student.get("batch_name") or student.get("batch") or "").strip() or "Unspecified"
             counts[batch_name] = counts.get(batch_name, 0) + 1
     return sorted(counts.items(), key=lambda item: (-item[1], item[0].lower()))
 
@@ -226,7 +226,7 @@ def _format_plan_type(value) -> str:
 
 
 def _format_student_name_cell(student: dict) -> str:
-    name = str(student.get("name") or "").strip()
+    name = str(student.get("full_name") or student.get("name") or "").strip()
     father_name = str(student.get("father_name") or "").strip()
     if name and father_name:
         return f"{safe_pdf_text(name)}<br/><font size='7.5'>Father: {safe_pdf_text(father_name)}</font>"

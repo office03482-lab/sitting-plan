@@ -1200,7 +1200,7 @@ function AttendanceManagementContent() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportReport = async (format: 'excel' | 'pdf') => {
+  const handleExportReport = async (format: 'excel' | 'pdf' | 'csv') => {
     try {
       const response = await apiService.exportAttendanceReport({
         report_type: reportFilters.report_type,
@@ -1211,7 +1211,8 @@ function AttendanceManagementContent() {
         date_from: reportFilters.date_from || undefined,
         date_to: reportFilters.date_to || undefined,
       });
-      downloadBlob(response.data, `attendance-${reportFilters.report_type}.${format === 'excel' ? 'xlsx' : 'pdf'}`);
+      const extension = format === 'excel' ? 'xlsx' : format;
+      downloadBlob(response.data, `attendance-${reportFilters.report_type}.${extension}`);
     } catch (error: any) {
       setAlert({ type: 'error', message: error?.response?.data?.detail || 'Report export nahi hua.' });
     }
@@ -2022,6 +2023,9 @@ function AttendanceManagementContent() {
                 <div className="flex flex-wrap gap-3">
                   <button onClick={handleRunReport} className="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800">
                     Run Report
+                  </button>
+                  <button onClick={() => handleExportReport('csv')} className="rounded-full bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700">
+                    Export CSV
                   </button>
                   <button onClick={() => handleExportReport('excel')} className="rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700">
                     Export Excel

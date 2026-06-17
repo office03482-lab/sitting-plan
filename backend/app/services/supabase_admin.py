@@ -39,7 +39,7 @@ def _build_supabase_admin_client(url: str, service_role_key: str) -> Client:
     return create_client(url, service_role_key)
 
 
-def get_supabase_admin_client() -> Client:
+def _resolve_supabase_admin_config() -> tuple[str, str]:
     url = (
         os.getenv("SUPABASE_URL")
         or os.getenv("VITE_SUPABASE_URL")
@@ -60,6 +60,16 @@ def get_supabase_admin_client() -> Client:
     if not service_role_key:
         raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required for Supabase persistence.")
 
+    return url, service_role_key
+
+
+def create_supabase_admin_client() -> Client:
+    url, service_role_key = _resolve_supabase_admin_config()
+    return create_client(url, service_role_key)
+
+
+def get_supabase_admin_client() -> Client:
+    url, service_role_key = _resolve_supabase_admin_config()
     return _build_supabase_admin_client(url, service_role_key)
 
 

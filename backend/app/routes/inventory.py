@@ -1,8 +1,9 @@
 """
 Inventory management routes
 """
+import csv
 from datetime import date, datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -93,7 +94,7 @@ router = APIRouter(
     tags=["inventory"],
 )
 
-WRITE_ROLES = {"admin", "store_manager"}
+WRITE_ROLES = {"admin", "store_manager", "school_admin", "platform_admin"}
 
 
 def normalize_batch_names(batch_names: Optional[List[str]]) -> List[str]:
@@ -171,6 +172,24 @@ def build_excel_report(report_type: str, rows: List[Dict[str, object]]) -> Bytes
     workbook.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def build_csv_report(rows: List[Dict[str, object]]) -> BytesIO:
+    text_buffer = StringIO()
+    if rows:
+        headers = list(rows[0].keys())
+        writer = csv.DictWriter(text_buffer, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({header: row.get(header, "") for header in headers})
+    else:
+        writer = csv.writer(text_buffer)
+        writer.writerow(["message"])
+        writer.writerow(["No records found"])
+
+    binary_buffer = BytesIO(text_buffer.getvalue().encode("utf-8"))
+    binary_buffer.seek(0)
+    return binary_buffer
 
 
 def build_pdf_report(report_type: str, rows: List[Dict[str, object]]) -> BytesIO:
@@ -936,7 +955,7 @@ def get_inventory_report(
 @router.get("/reports/export")
 def export_inventory_report(
     report_type: str = Query(...),
-    export_format: str = Query(..., pattern="^(excel|pdf)$"),
+    export_format: str = Query(..., pattern="^(excel|pdf|csv)$"),
     school_id: str = Depends(resolve_school_id_from_actor),
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
@@ -952,9 +971,18 @@ def export_inventory_report(
         material_id=material_id, student_id=student_id,
     )
 
+    suffix = fmt_date_iso()
+
+    if export_format == "csv":
+        buffer = build_csv_report(rows)
+        return StreamingResponse(
+            buffer,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="inventory-{report_type}-{suffix}.csv"'},
+        )
+
     if export_format == "excel":
         buffer = build_excel_report(report_type, rows)
-        suffix = fmt_date_iso()
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -962,7 +990,6 @@ def export_inventory_report(
         )
 
     buffer = build_pdf_report(report_type, rows)
-    suffix = fmt_date_iso()
     return StreamingResponse(
         buffer,
         media_type="application/pdf",

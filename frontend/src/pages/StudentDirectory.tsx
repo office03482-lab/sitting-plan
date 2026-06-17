@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Eye, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
+import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Batch, Student } from '@types';
 import {
@@ -18,12 +19,14 @@ const BULK_DELETE_STATUS_AUTO_HIDE_MS = 4000;
 
 const safeText = (value: unknown) => (value == null ? '' : String(value).trim());
 const sameText = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
-const getDirectoryStudentClassName = (student: Pick<Student, 'class_name' | 'batch'>) => {
+const getStudentFullName = (student: Pick<Student, 'full_name' | 'name'>) => safeText(student.full_name || student.name);
+const getStudentBatchLabel = (student: Pick<Student, 'batch_name' | 'batch'>) => safeText(student.batch_name || student.batch);
+const getDirectoryStudentClassName = (student: Pick<Student, 'class_name' | 'batch_name' | 'batch'>) => {
   const className = safeText(student.class_name);
   if (className) return className;
   return '';
 };
-const getStudentClassLabel = (student: Pick<Student, 'class_name' | 'section' | 'batch'>) =>
+const getStudentClassLabel = (student: Pick<Student, 'class_name' | 'section' | 'batch_name' | 'batch'>) =>
   [getDirectoryStudentClassName(student), safeText(student.section)].filter(Boolean).join(' | ');
 
 type StudentDetailsState = {
@@ -44,11 +47,14 @@ type BulkDeleteProgress = {
 const normalizeStudent = (student: any): Student => ({
   ...student,
   id: student?.id ?? '',
+  full_name: getStudentFullName(student),
+  name: getStudentFullName(student),
   roll_number: safeText(student?.roll_number || student?.rollNo || student?.roll_no),
-  name: safeText(student?.name),
   photoDataUrl: safeText(student?.photoDataUrl || student?.photo_data_url) || undefined,
   father_name: safeText(student?.father_name || student?.fatherName) || undefined,
-  batch: safeText(student?.batch),
+  batch_id: safeText(student?.batch_id) || undefined,
+  batch_name: getStudentBatchLabel(student) || undefined,
+  batch: getStudentBatchLabel(student),
   class_name: safeText(student?.class_name || student?.className) || undefined,
   section: safeText(student?.section) || undefined,
   academic_session: safeText(student?.academic_session || student?.academicSession) || undefined,
@@ -61,11 +67,11 @@ const normalizeStudent = (student: any): Student => ({
 function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student; className?: string }) {
   const photo = student.photoDataUrl;
   if (photo) {
-    return <img src={photo} alt={student.name} className={`${className} rounded-full object-cover`} />;
+    return <img src={photo} alt={getStudentFullName(student)} className={`${className} rounded-full object-cover`} />;
   }
   return (
     <div className={`${className} flex items-center justify-center rounded-full bg-slate-200 text-base font-bold text-slate-600`}>
-      {(student.name.trim()[0] || 'S').toUpperCase()}
+      {(getStudentFullName(student)[0] || 'S').toUpperCase()}
     </div>
   );
 }
@@ -73,6 +79,8 @@ function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student;
 export default function StudentDirectory() {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const user = useAuthStore((state) => state.user);
+  const currentSchoolId = user?.school_id || 1;
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, removeStudent, studentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
@@ -107,9 +115,9 @@ export default function StudentDirectory() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const response = await apiService.listStudents();
+      const response = await apiService.listStudents(currentSchoolId);
       const nextStudents = Array.isArray(response.data)
-        ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
+        ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.full_name || student.roll_number))
         : [];
       setStudents(nextStudents);
       return nextStudents;
@@ -123,7 +131,7 @@ export default function StudentDirectory() {
 
   const loadClassBatches = async () => {
     try {
-      const classResponse = await apiService.listBatches(1, undefined, 'class');
+      const classResponse = await apiService.listBatches(currentSchoolId, undefined, 'class');
       setClassBatches(Array.isArray(classResponse.data) ? classResponse.data : []);
     } catch {
       setClassBatches([]);
@@ -134,7 +142,7 @@ export default function StudentDirectory() {
     if (!canRunRequests) return;
     void loadStudents();
     void loadClassBatches();
-  }, [studentRefreshToken, canRunRequests]);
+  }, [studentRefreshToken, canRunRequests, currentSchoolId]);
 
   useEffect(() => {
     return () => {
@@ -161,7 +169,7 @@ export default function StudentDirectory() {
   };
 
   const batchOptions = useMemo(
-    () => Array.from(new Set(students.map((student) => safeText(student.batch)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    () => Array.from(new Set(students.map((student) => getStudentBatchLabel(student)).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [students],
   );
   const classOptions = useMemo(
@@ -179,8 +187,8 @@ export default function StudentDirectory() {
   const filteredStudents = useMemo(() => {
     const query = search.trim().toLowerCase();
     return students.filter((student) => {
-      const batchLabel = safeText(student.batch);
-      const name = safeText(student.name).toLowerCase();
+      const batchLabel = getStudentBatchLabel(student);
+      const name = getStudentFullName(student).toLowerCase();
       const rollNumber = safeText(student.roll_number).toLowerCase();
       const fatherName = safeText(student.father_name).toLowerCase();
       const email = safeText(student.email).toLowerCase();
@@ -234,7 +242,7 @@ export default function StudentDirectory() {
   };
 
   const handleDeleteStudent = async (student: Student) => {
-    if (!window.confirm(`${student.name} ko delete karna hai?`)) return;
+    if (!window.confirm(`${getStudentFullName(student)} ko delete karna hai?`)) return;
     try {
       await apiService.deleteStudent(student.id);
       removeStudent(student.id);
@@ -508,9 +516,9 @@ export default function StudentDirectory() {
                     <div className="flex min-w-0 items-start gap-3">
                       <StudentAvatar student={student} />
                       <div className="min-w-0">
-                        <p className="truncate text-lg font-bold text-slate-900">{student.name}</p>
+                        <p className="truncate text-lg font-bold text-slate-900">{getStudentFullName(student)}</p>
                         <p className="mt-1 text-sm text-slate-500">Roll No: {student.roll_number}</p>
-                        <p className="mt-1 text-sm text-slate-500">{student.batch}</p>
+                        <p className="mt-1 text-sm text-slate-500">{getStudentBatchLabel(student)}</p>
                         <p className="mt-1 text-xs font-semibold text-slate-500">{getStudentClassLabel(student) || 'Class not set'}</p>
                         <p className="mt-1 text-xs font-medium text-slate-400">{session || 'No session set'}</p>
                       </div>
@@ -567,12 +575,12 @@ export default function StudentDirectory() {
                     <div className="flex items-center gap-3">
                       <StudentAvatar student={student} className="h-11 w-11" />
                       <div>
-                        <p className="font-semibold text-slate-900">{student.name}</p>
+                        <p className="font-semibold text-slate-900">{getStudentFullName(student)}</p>
                         <p className="mt-1 text-xs text-slate-500">{student.is_active ? 'Active' : 'Inactive'}</p>
                       </div>
                     </div>
                     <span>{student.roll_number}</span>
-                    <span>{student.batch}</span>
+                    <span>{getStudentBatchLabel(student)}</span>
                     <span>{getStudentClassLabel(student) || '-'}</span>
                     <span>{student.academic_session || '-'}</span>
                     <div>
@@ -613,9 +621,9 @@ export default function StudentDirectory() {
                 <StudentAvatar student={viewingDetails.student} className="h-16 w-16" />
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Student Full Details</p>
-                  <h2 className="mt-2 text-2xl font-bold text-slate-900">{viewingDetails.student.name}</h2>
+                  <h2 className="mt-2 text-2xl font-bold text-slate-900">{getStudentFullName(viewingDetails.student)}</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Roll No: {viewingDetails.student.roll_number} | Batch: {viewingDetails.student.batch} | Class: {getStudentClassLabel(viewingDetails.student) || '-'}
+                    Roll No: {viewingDetails.student.roll_number} | Batch: {getStudentBatchLabel(viewingDetails.student)} | Class: {getStudentClassLabel(viewingDetails.student) || '-'}
                   </p>
                 </div>
               </div>
@@ -626,11 +634,11 @@ export default function StudentDirectory() {
 
             <div className="mt-6 grid max-h-[70vh] gap-5 overflow-y-auto pr-1 md:grid-cols-2">
               <DetailCard title="Basic Details">
-                <DetailItem label="Full Name" value={safeText(viewingDetails.localDetails?.fullName || viewingDetails.student.name)} />
+                <DetailItem label="Full Name" value={safeText(viewingDetails.localDetails?.fullName || getStudentFullName(viewingDetails.student))} />
                 <DetailItem label="Admission ID" value={safeText(viewingDetails.localDetails?.admissionId)} />
                 <DetailItem label="Roll Number" value={safeText(viewingDetails.localDetails?.rollNumber || viewingDetails.student.roll_number)} />
                 <DetailItem label="Academic Year" value={safeText(viewingDetails.localDetails?.academicYear || viewingDetails.student.academic_session)} />
-                <DetailItem label="Class / Batch" value={safeText(viewingDetails.localDetails?.managedBatch || viewingDetails.student.batch)} />
+                <DetailItem label="Class / Batch" value={safeText(viewingDetails.localDetails?.managedBatch || getStudentBatchLabel(viewingDetails.student))} />
                 <DetailItem label="Class Name" value={safeText(viewingDetails.localDetails?.className || viewingDetails.student.class_name)} />
                 <DetailItem label="Section" value={safeText(viewingDetails.localDetails?.section || viewingDetails.student.section)} />
                 <DetailItem label="Admission Date" value={safeText(viewingDetails.localDetails?.admissionDate)} />

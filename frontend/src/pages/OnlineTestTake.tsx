@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Flag, PlayCircle, Send } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -34,6 +34,7 @@ export default function OnlineTestTake() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [banner, setBanner] = useState('');
+  const autoSubmitTriggeredRef = useRef(false);
 
   useEffect(() => {
     if (!canRunRequests || !id) return;
@@ -53,6 +54,15 @@ export default function OnlineTestTake() {
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
   }, [attempt?.started_at, existingResult, test?.duration_minutes]);
+
+  useEffect(() => {
+    if (!attempt || existingResult || timeLeft === null || timeLeft > 0 || autoSubmitTriggeredRef.current) {
+      return;
+    }
+    autoSubmitTriggeredRef.current = true;
+    setBanner('Time is over. Your attempt is being auto-submitted.');
+    void submitAttempt();
+  }, [attempt, existingResult, timeLeft]);
 
   const currentQuestion = questions[currentIndex] || null;
 
@@ -124,6 +134,7 @@ export default function OnlineTestTake() {
       const response = await apiService.createOnlineTestAttempt({ test_id: id });
       setAttempt(response.data);
       setExistingResult(null);
+      autoSubmitTriggeredRef.current = false;
       setBanner('Attempt started. Answers are being saved question by question.');
     } catch (requestError) {
       setError(getRequestErrorMessage(requestError, 'Attempt start nahi ho paya.'));
@@ -187,6 +198,7 @@ export default function OnlineTestTake() {
       const response = await apiService.submitOnlineTestAttempt(attempt.id);
       navigate(`/online-tests/results/${response.data.id}`);
     } catch (requestError) {
+      autoSubmitTriggeredRef.current = false;
       setError(getRequestErrorMessage(requestError, 'Attempt submit nahi ho paya.'));
     } finally {
       setSubmitting(false);
@@ -248,6 +260,18 @@ export default function OnlineTestTake() {
             );
           })}
         </div>
+      );
+    }
+
+    if (currentQuestion.question_type === 'numeric') {
+      return (
+        <input
+          type="number"
+          value={textAnswer}
+          onChange={(event) => updateDraft(currentQuestion.id, { text: event.target.value })}
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-[#d58a17] focus:ring-2 focus:ring-[#f7d9a8]"
+          placeholder="Enter the numerical answer"
+        />
       );
     }
 

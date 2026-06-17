@@ -2591,7 +2591,10 @@ def save_staff_marking(
         )
 
     if not normalized_entries:
-        return {"message": "Staff attendance saved successfully"}
+        raise HTTPException(
+            status_code=422,
+            detail="No valid staff member IDs were provided for attendance save.",
+        )
 
     (
         get_supabase_admin_client()
@@ -2632,7 +2635,10 @@ def save_student_marking(
                 "school_id": str(school_id),
             },
         )
-        return {"message": "Student attendance saved successfully"}
+        raise HTTPException(
+            status_code=422,
+            detail="No valid student IDs were provided for attendance save.",
+        )
 
     students_response = (
         get_supabase_admin_client()
@@ -2713,7 +2719,10 @@ def save_student_marking(
         )
 
     if not payload_rows:
-        return {"message": "Student attendance saved successfully"}
+        raise HTTPException(
+            status_code=422,
+            detail="No valid student attendance rows matched the selected school.",
+        )
 
     unique_student_ids = sorted({str(row.get("student_id")) for row in payload_rows if row.get("student_id")})
     unique_subject_ids = sorted({str(row.get("subject_id")) for row in payload_rows if row.get("subject_id")})

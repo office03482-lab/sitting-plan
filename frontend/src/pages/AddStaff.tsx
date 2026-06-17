@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Upload, Camera, Plus, FileText, Trash2, ExternalLink, X } from 'lucide-react';
 import { apiService } from '@services/api';
+import { useAuthStore } from '@store/auth';
 import {
   findStaffDirectoryNameMatches,
   type StaffDirectoryRecord,
@@ -205,6 +206,7 @@ const toFormState = (record: StaffDirectoryRecord): StaffFormState => ({
 export default function AddStaff() {
   const navigate = useNavigate();
   const location = useLocation();
+  const currentSchoolId = useAuthStore((state) => state.user?.school_id || 1);
   const navigationState = location.state as { editingRecord?: StaffDirectoryRecord; staffType?: StaffType; returnStaffType?: StaffType } | null;
   const [formData, setFormData] = useState<StaffFormState>(initialForm);
   const [editingRecord, setEditingRecord] = useState<StaffDirectoryRecord | null>(null);
@@ -231,8 +233,8 @@ export default function AddStaff() {
 
   const loadLiveDirectoryRecords = async (): Promise<StaffDirectoryRecord[]> => {
     const [teachersRes, invigilatorsRes] = await Promise.all([
-      apiService.listTeachers(1, 0, 1000),
-      apiService.listInvigilators(1, undefined, 0, 1000),
+      apiService.listTeachers(currentSchoolId, 0, 1000),
+      apiService.listInvigilators(currentSchoolId, undefined, 0, 1000),
     ]);
 
     const teacherRecords = (teachersRes.data || []).map((teacher: any) => ({
@@ -552,7 +554,7 @@ export default function AddStaff() {
                 notes: formData.notes.trim() || undefined,
               },
             },
-          });
+          }, currentSchoolId);
         }
       } else {
         if (editingRecord?.backendId && editingRecord.backendType === 'non_teaching') {
@@ -650,7 +652,7 @@ export default function AddStaff() {
                 notes: formData.notes.trim() || undefined,
               },
             },
-          });
+          }, currentSchoolId);
         }
       }
 

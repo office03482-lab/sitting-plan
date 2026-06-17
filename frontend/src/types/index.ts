@@ -175,11 +175,13 @@ export interface AuthResponse {
 export interface Student {
   id: string | number;
   roll_number: string;
-  name: string;
-  full_name?: string;
+  full_name: string;
+  name?: string;
   photoDataUrl?: string;
   father_name?: string;
-  batch: string;
+  batch_id?: string;
+  batch_name?: string;
+  batch?: string;
   class_name?: string;
   section?: string;
   academic_session?: string;
@@ -1503,6 +1505,8 @@ export interface OnlineTestResult {
   percentage?: number | null;
   rank_in_batch?: number | null;
   rank_in_school?: number | null;
+  passed?: boolean | null;
+  pass_marks?: number | null;
   published_at?: string | null;
   metadata?: Record<string, unknown>;
   is_active: boolean;

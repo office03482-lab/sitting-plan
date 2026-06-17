@@ -300,11 +300,20 @@ class ApiService {
     test_id?: string | number;
     section_id?: string | number;
   } = {}) {
-    return this.api.get<OnlineTestQuestion[]>('/online-tests/questions', { params });
+    if (!params.test_id) {
+      throw new Error('test_id is required to list online test questions.');
+    }
+    return this.api.get<OnlineTestQuestion[]>(`/online-tests/tests/${params.test_id}/questions`, {
+      params: params.section_id ? { section_id: params.section_id } : undefined,
+    });
   }
 
   async createOnlineTestQuestion(data: Record<string, unknown>) {
-    return this.api.post<OnlineTestQuestion>('/online-tests/questions', data);
+    const testId = String(data.test_id || '').trim();
+    if (!testId) {
+      throw new Error('test_id is required to create an online test question.');
+    }
+    return this.api.post<OnlineTestQuestion>(`/online-tests/tests/${testId}/questions`, data);
   }
 
   async updateOnlineTestQuestion(questionId: string | number, data: Record<string, unknown>) {
@@ -335,7 +344,7 @@ class ApiService {
       is_marked_for_review?: boolean;
     }
   ) {
-    return this.api.post<OnlineTestAttempt>(`/online-tests/attempts/${attemptId}/responses`, data);
+    return this.api.post<OnlineTestAttempt>(`/online-tests/attempts/${attemptId}/save`, data);
   }
 
   async submitOnlineTestAttempt(attemptId: string | number) {
@@ -359,6 +368,18 @@ class ApiService {
     global_view?: boolean;
   } = {}) {
     return this.api.get<OnlineTestAnalytics>('/online-tests/results/analytics', { params });
+  }
+
+  async publishOnlineTest(testId: string | number) {
+    return this.api.post<OnlineTest>(`/online-tests/tests/${testId}/publish`);
+  }
+
+  async unpublishOnlineTest(testId: string | number) {
+    return this.api.post<OnlineTest>(`/online-tests/tests/${testId}/unpublish`);
+  }
+
+  async duplicateOnlineTest(testId: string | number) {
+    return this.api.post<OnlineTest>(`/online-tests/tests/${testId}/duplicate`);
   }
 
   async getStudentAnalytics(studentId: string | number) {
@@ -906,9 +927,13 @@ class ApiService {
     day_of_week: DayOfWeek;
     start_time: string;
     end_time: string;
+    room_id?: string | number;
+    class_name?: string;
     exclude_entry_id?: string | number;
-  }) {
-    return this.api.post('/timetable/check-conflict', data);
+  }, schoolId: string | number = 1) {
+    return this.api.post('/timetable/check-conflict', data, {
+      params: { school_id: schoolId },
+    });
   }
 
   async createTimetableEntry(entryData: Partial<TimetableEntry>, schoolId: string | number = 1) {
@@ -931,12 +956,16 @@ class ApiService {
     return this.api.get<TimetableEntry>(`/timetable/${entryId}`);
   }
 
-  async updateTimetableEntry(entryId: string | number, data: Partial<TimetableEntry>) {
-    return this.api.put<TimetableEntry>(`/timetable/${entryId}`, data);
+  async updateTimetableEntry(entryId: string | number, data: Partial<TimetableEntry>, schoolId: string | number = 1) {
+    return this.api.put<TimetableEntry>(`/timetable/${entryId}`, data, {
+      params: { school_id: schoolId },
+    });
   }
 
-  async deleteTimetableEntry(entryId: string | number) {
-    return this.api.delete(`/timetable/${entryId}`);
+  async deleteTimetableEntry(entryId: string | number, schoolId: string | number = 1) {
+    return this.api.delete(`/timetable/${entryId}`, {
+      params: { school_id: schoolId },
+    });
   }
 
   async deleteAllTimetableEntries(schoolId: string | number = 1, isAdmin: boolean = true) {
@@ -1331,7 +1360,7 @@ class ApiService {
 
   async exportAttendanceReport(params: {
     report_type: string;
-    export_format: 'excel' | 'pdf';
+    export_format: 'excel' | 'pdf' | 'csv';
     batch_names?: string;
     class_name?: string;
     section?: string;
@@ -1416,6 +1445,14 @@ class ApiService {
     return this.api.post(`/hostels/${hostelId}/rooms`, data, { params: { school_id: schoolId } });
   }
 
+  async updateHostelRoom(hostelId: string | number, roomId: string | number, data: Record<string, unknown>, schoolId: string | number = 1) {
+    return this.api.put(`/hostels/${hostelId}/rooms/${roomId}`, data, { params: { school_id: schoolId } });
+  }
+
+  async deleteHostelRoom(hostelId: string | number, roomId: string | number, schoolId: string | number = 1) {
+    return this.api.delete(`/hostels/${hostelId}/rooms/${roomId}`, { params: { school_id: schoolId } });
+  }
+
   async listStudentHostelRequests(schoolId: string | number = 1, status?: string) {
     return this.api.get('/students/hostel-requests', { params: { school_id: schoolId, status_filter: status } });
   }
@@ -1438,6 +1475,14 @@ class ApiService {
 
   async vacateStudentHostelAllocation(requestId: string | number, schoolId: string | number = 1) {
     return this.api.post(`/students/hostel-requests/${requestId}/vacate`, {}, { params: { school_id: schoolId } });
+  }
+
+  async getHostelReport(params?: Record<string, unknown>) {
+    return this.api.get('/hostels/reports/data', { params });
+  }
+
+  async exportHostelReport(params?: Record<string, unknown>) {
+    return this.api.get('/hostels/reports/export', { params, responseType: 'blob' });
   }
 
   async downloadStudentTemplate() {

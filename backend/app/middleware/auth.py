@@ -397,6 +397,12 @@ def _resolve_request_principal(
             detail="Authenticated user not found",
         )
 
+    # Extract role_key from JWT for local DB users
+    if not role_key:
+        role_key = str(payload.get("role_key") or "").strip().lower()
+    if role_key and not getattr(user, "role_key", None):
+        user.role_key = role_key
+
     actor_role = str(
         payload.get("role")
         or role_key

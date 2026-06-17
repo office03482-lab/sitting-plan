@@ -64,14 +64,14 @@ def validate_student_data(student_data: Dict) -> Tuple[bool, List[ValidationErro
     errors = []
     
     # Required fields
-    if not student_data.get('name'):
-        errors.append(ValidationError('name', 'Student name is required'))
+    if not (student_data.get('full_name') or student_data.get('name')):
+        errors.append(ValidationError('full_name', 'Student name is required'))
     
     if not student_data.get('roll_number'):
         errors.append(ValidationError('roll_number', 'Roll number is required'))
     
-    if not student_data.get('batch'):
-        errors.append(ValidationError('batch', 'Batch is required'))
+    if not (student_data.get('batch_id') or student_data.get('batch_name') or student_data.get('batch')):
+        errors.append(ValidationError('batch_id', 'Batch reference is required'))
     
     # Email validation (optional but if provided, should be valid)
     if student_data.get('email'):

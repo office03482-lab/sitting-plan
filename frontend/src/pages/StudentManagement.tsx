@@ -223,6 +223,48 @@ const toNullableString = (value: string) => {
   const trimmed = value.trim();
   return trimmed || null;
 };
+const getStudentFullName = (student: Pick<Student, 'full_name' | 'name'>) =>
+  String(student.full_name || student.name || '').trim();
+const getStudentBatchLabel = (student: Pick<Student, 'batch_name' | 'batch'>) =>
+  String(student.batch_name || student.batch || '').trim();
+const normalizeStudent = (student: any): Student => {
+  const fullName = String(student?.full_name ?? student?.name ?? '').trim();
+  const batchName = String(student?.batch_name ?? student?.batch ?? '').trim();
+  return {
+    ...student,
+    id: student?.id ?? '',
+    roll_number: String(student?.roll_number ?? student?.rollNo ?? student?.roll_no ?? '').trim(),
+    full_name: fullName,
+    name: fullName,
+    photoDataUrl: String(student?.photoDataUrl ?? student?.photo_data_url ?? '').trim() || undefined,
+    father_name: String(student?.father_name ?? student?.fatherName ?? '').trim() || undefined,
+    batch_id: student?.batch_id != null ? String(student.batch_id).trim() || undefined : undefined,
+    batch_name: batchName || undefined,
+    batch: batchName,
+    class_name: String(student?.class_name ?? student?.className ?? '').trim() || undefined,
+    section: String(student?.section ?? '').trim() || undefined,
+    academic_session: String(student?.academic_session ?? student?.academicSession ?? '').trim() || undefined,
+    email: String(student?.email ?? '').trim() || undefined,
+    phone: String(student?.phone ?? '').trim() || undefined,
+    special_needs: String(student?.special_needs ?? student?.specialNeeds ?? '').trim() || undefined,
+    boarding_type: String(student?.boarding_type ?? student?.boardingType ?? '').trim() || undefined,
+    preferred_hostel_id: student?.preferred_hostel_id != null ? String(student.preferred_hostel_id).trim() || undefined : undefined,
+    hostel_request_status: String(student?.hostel_request_status ?? '').trim() || undefined,
+    assigned_hostel_id: student?.assigned_hostel_id != null ? String(student.assigned_hostel_id).trim() || undefined : undefined,
+    assigned_hostel_name: String(student?.assigned_hostel_name ?? '').trim() || undefined,
+    assigned_room_id: student?.assigned_room_id != null ? String(student.assigned_room_id).trim() || undefined : undefined,
+    assigned_room_number: String(student?.assigned_room_number ?? '').trim() || undefined,
+    assigned_bed_label: String(student?.assigned_bed_label ?? '').trim() || undefined,
+    hostel_notes: String(student?.hostel_notes ?? '').trim() || undefined,
+    reference_name: String(student?.reference_name ?? '').trim() || undefined,
+    reference_number: String(student?.reference_number ?? '').trim() || undefined,
+    reference_remark: String(student?.reference_remark ?? '').trim() || undefined,
+    requires_near_exit: Boolean(student?.requires_near_exit),
+    requires_extra_time: Boolean(student?.requires_extra_time),
+    hostel_required: Boolean(student?.hostel_required),
+    is_active: Boolean(student?.is_active ?? student?.isActive ?? true),
+  };
+};
 const OPERATION_STATUS_AUTO_HIDE_MS = 4000;
 
 const calculateAgeAsOfToday = (dob: string) => {
@@ -443,7 +485,7 @@ export default function StudentManagement() {
     loadStudents();
     loadBatches();
     loadHostels();
-  }, [canRunRequests]);
+  }, [canRunRequests, currentSchoolId]);
 
   useEffect(() => {
     const state = location.state as
@@ -522,13 +564,14 @@ export default function StudentManagement() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const response = await apiService.listStudents();
-      setStudents(response.data);
-      const sessions = response.data
+      const response = await apiService.listStudents(currentSchoolId);
+      const normalizedStudents = Array.isArray(response.data) ? response.data.map(normalizeStudent) : [];
+      setStudents(normalizedStudents);
+      const sessions = normalizedStudents
         .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
         .filter(Boolean);
       setSessionOptions(Array.from(new Set([...DEFAULT_SESSION_OPTIONS, ...sessions])).sort((a, b) => a.localeCompare(b)));
-      return response.data;
+      return normalizedStudents;
     } catch (error) {
       console.error('Failed to load students:', error);
       return [];
@@ -539,7 +582,7 @@ export default function StudentManagement() {
 
   const loadHostels = async () => {
     try {
-      const response = await apiService.listHostels();
+      const response = await apiService.listHostels(currentSchoolId);
       setHostels(response.data);
     } catch (error) {
       console.error('Failed to load hostels:', error);
@@ -549,7 +592,7 @@ export default function StudentManagement() {
 
   const loadBatches = async () => {
     try {
-      const response = await apiService.listBatches();
+      const response = await apiService.listBatches(currentSchoolId);
       setBatches(response.data);
     } catch (error) {
       console.error('Failed to load batches:', error);
@@ -1016,9 +1059,10 @@ export default function StudentManagement() {
   const openEditModalWithDetails = (student: Student, details?: Partial<EduPayAdmissionSnapshot>) => {
     void loadBatches();
     setEditStudent(student);
-    const [parsedClassName = '', parsedSection = ''] = (student.batch || '').split('|').map((item) => item.trim());
-    const nameParts = student.name.trim().split(/\s+/);
-    const currentBatchName = details?.managedBatch || student.batch || '';
+    const currentBatchLabel = getStudentBatchLabel(student);
+    const [parsedClassName = '', parsedSection = ''] = currentBatchLabel.split('|').map((item) => item.trim());
+    const nameParts = getStudentFullName(student).split(/\s+/);
+    const currentBatchName = details?.managedBatch || currentBatchLabel || '';
     const matchedBatchRecord = batches.find(
       (batch) => batch.category !== 'class' && batch.name.trim().toLowerCase() === currentBatchName.trim().toLowerCase(),
     );
@@ -1221,6 +1265,9 @@ export default function StudentManagement() {
     try {
       const fullName = [studentForm.firstName, studentForm.middleName, studentForm.lastName].filter(Boolean).join(' ').trim();
       const batchName = studentForm.managedBatch.trim() || [studentForm.className, studentForm.section].filter(Boolean).join(' | ').trim() || studentForm.className.trim();
+      const matchedBatchRecord = batches.find(
+        (batch) => batch.category !== 'class' && batch.name.trim().toLowerCase() === batchName.trim().toLowerCase(),
+      );
       const buildAdmissionSnapshot = (): EduPayAdmissionSnapshot => ({
         admissionId: studentForm.admissionId.trim(),
         academicYear: studentForm.academicYear,
@@ -1303,7 +1350,8 @@ export default function StudentManagement() {
         full_name: fullName,
         roll_number: studentForm.rollNumber.trim(),
         father_name: toNullableString(studentForm.fatherName) as unknown as string | undefined,
-        batch: batchName,
+        batch_id: matchedBatchRecord?.id ? String(matchedBatchRecord.id) : undefined,
+        batch_name: batchName,
         class_name: toNullableString(studentForm.className) as unknown as string | undefined,
         section: toNullableString(studentForm.section) as unknown as string | undefined,
         academic_session: toNullableString(studentForm.academicYear) as unknown as string | undefined,
@@ -1327,8 +1375,8 @@ export default function StudentManagement() {
         return;
       }
 
-      if (!payload.full_name || !payload.roll_number || !payload.batch) {
-        alert('Name, roll number, aur batch required hai.');
+      if (!payload.full_name || !payload.roll_number || !payload.batch_id) {
+        alert('Name, roll number, aur valid batch required hai.');
         return;
       }
 
@@ -1383,14 +1431,14 @@ export default function StudentManagement() {
   };
 
   const filteredStudents = students.filter((student) => {
-    const matchesSearch = student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = getStudentFullName(student).toLowerCase().includes(searchTerm.toLowerCase()) ||
                           student.roll_number.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesBatch = !selectedBatch || student.batch === selectedBatch;
+    const matchesBatch = !selectedBatch || getStudentBatchLabel(student) === selectedBatch;
     return matchesSearch && matchesBatch;
   });
   const displayedStudents = filteredStudents;
 
-  const existingBatches = Array.from(new Set(students.map((s) => s.batch)));
+  const existingBatches = Array.from(new Set(students.map((s) => getStudentBatchLabel(s)).filter(Boolean)));
   const allBatchNames = sortBatchNames(
     Array.from(new Set([...batches.filter((batch) => batch.category !== 'class').map((b) => b.name), ...existingBatches]))
   );
@@ -1644,11 +1692,11 @@ export default function StudentManagement() {
                 <h3 className="text-sm font-semibold text-blue-900">Transfer Students To Another Batch</h3>
                 <p className="mt-1 text-sm text-blue-700">
                   Selected students: {selectedStudents.length}
-                  {selectedStudents.length > 0 ? ` (${selectedStudents.map((student) => student.name).join(', ')})` : ''}
+                  {selectedStudents.length > 0 ? ` (${selectedStudents.map((student) => getStudentFullName(student)).join(', ')})` : ''}
                 </p>
                 <p className="mt-1 text-sm text-blue-700">
                   {selectedBatch
-                    ? `Current batch "${selectedBatch}" has ${students.filter((student) => student.batch === selectedBatch).length} student(s).`
+                    ? `Current batch "${selectedBatch}" has ${students.filter((student) => getStudentBatchLabel(student) === selectedBatch).length} student(s).`
                     : 'Batch-wise transfer ke liye pehle source batch filter select karo.'}
                 </p>
               </div>
@@ -1743,7 +1791,7 @@ export default function StudentManagement() {
                             type="checkbox"
                             checked={selectedStudentIds.includes(student.id)}
                             onChange={() => toggleStudentSelection(student.id)}
-                            aria-label={`Select ${student.name}`}
+                            aria-label={`Select ${getStudentFullName(student)}`}
                           />
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -1753,14 +1801,14 @@ export default function StudentManagement() {
                           {student.roll_number}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                          <div className="text-sm font-medium text-gray-900">{getStudentFullName(student)}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {student.father_name || '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                            {student.batch}
+                            {getStudentBatchLabel(student)}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

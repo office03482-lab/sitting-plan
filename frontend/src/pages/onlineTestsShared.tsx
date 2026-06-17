@@ -177,6 +177,8 @@ export const questionDraftToPayload = (draft: QuestionDraft, testId: string) => 
   let answer_key: Record<string, unknown> = {};
   if (draft.question_type === 'multiple_choice') {
     answer_key = { correct_option_ids: resolvedOptionIds };
+  } else if (draft.question_type === 'numeric') {
+    answer_key = { expected_value: answerValues[0] || '' };
   } else if (draft.question_type === 'short_answer' || draft.question_type === 'long_answer') {
     answer_key = { accepted_values: answerValues };
   } else {

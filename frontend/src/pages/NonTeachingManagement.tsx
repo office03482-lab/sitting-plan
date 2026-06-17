@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock3, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useAuthStore } from '@store/auth';
 import type { Invigilator } from '@types';
 
 export default function NonTeachingManagement() {
   const navigate = useNavigate();
+  const currentSchoolId = useAuthStore((state) => state.user?.school_id || 1);
   const [staff, setStaff] = useState<Invigilator[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,8 +33,8 @@ export default function NonTeachingManagement() {
     try {
       setLoading(true);
       const [staffRes, settingsRes] = await Promise.all([
-        apiService.listInvigilators(1, undefined, 0, 500),
-        apiService.getAttendanceSettings(),
+        apiService.listInvigilators(currentSchoolId, undefined, 0, 500),
+        apiService.getAttendanceSettings(currentSchoolId),
       ]);
       setStaff(staffRes.data);
       setShiftForm({
@@ -50,7 +52,7 @@ export default function NonTeachingManagement() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [currentSchoolId]);
 
   const handleSaveShift = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -60,7 +62,7 @@ export default function NonTeachingManagement() {
         minimum_attendance_threshold: threshold,
         working_hours_start: shiftForm.working_hours_start,
         working_hours_end: shiftForm.working_hours_end,
-      });
+      }, currentSchoolId);
       setMessage('Non-teaching shift timings saved.');
       setTimeout(() => setMessage(''), 2500);
     } finally {
@@ -86,7 +88,7 @@ export default function NonTeachingManagement() {
     event.preventDefault();
     try {
       setSaving(true);
-      await apiService.createInvigilator(formData, 1);
+      await apiService.createInvigilator(formData, currentSchoolId);
       setMessage('Non-teaching staff added successfully.');
       clearForm();
       await loadData();

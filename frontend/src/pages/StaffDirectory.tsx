@@ -199,8 +199,8 @@ export default function StaffDirectory() {
   const loadRecords = async () => {
     try {
       const [teachersRes, invigilatorsRes] = await Promise.allSettled([
-        apiService.listTeachers(1, 0, 1000),
-        apiService.listInvigilators(1, undefined, 0, 1000),
+        apiService.listTeachers(currentSchoolId, 0, 1000),
+        apiService.listInvigilators(currentSchoolId, undefined, 0, 1000),
       ]);
 
       const teacherRows =
@@ -253,7 +253,7 @@ export default function StaffDirectory() {
   useEffect(() => {
     if (!canLoadStaffDirectory) return;
     void loadRecords();
-  }, [canLoadStaffDirectory]);
+  }, [canLoadStaffDirectory, currentSchoolId]);
 
   useEffect(() => {
     const state = location.state as { staffType?: 'all' | 'teaching' | 'non_teaching' } | undefined;
@@ -431,7 +431,7 @@ export default function StaffDirectory() {
                 primaryMobile: editForm.phone.trim() || undefined,
               },
             },
-          });
+          }, currentSchoolId);
           await apiService.deleteInvigilator(editingRecord.backendId);
         } else {
           await apiService.createInvigilator(
@@ -456,7 +456,7 @@ export default function StaffDirectory() {
                 },
               },
             },
-            1
+            currentSchoolId
           );
           await apiService.deleteTeacher(editingRecord.backendId);
         }

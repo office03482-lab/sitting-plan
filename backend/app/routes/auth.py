@@ -12,7 +12,7 @@ from sqlalchemy import func
 from app.database import get_db
 from app.models import User, UserRole
 from app.middleware.auth import get_authenticated_user, user_has_permission
-from app.services.supabase_admin import get_supabase_admin_client
+from app.services.supabase_admin import create_supabase_admin_client
 from app.services.auth_security import (
     assert_not_rate_limited,
     consume_otp,
@@ -349,8 +349,9 @@ def _managed_role_key_for_profile(profile_id: str) -> str:
     return f"managed_{sanitized[:24] or 'user'}"
 
 
-def _load_permission_id_map() -> dict[str, str]:
-    response = get_supabase_admin_client().table("permissions").select("id,permission_key").execute()
+def _load_permission_id_map(supabase=None) -> dict[str, str]:
+    supabase = supabase or create_supabase_admin_client()
+    response = supabase.table("permissions").select("id,permission_key").execute()
     result: dict[str, str] = {}
     for row in list(response.data or []):
         key = _normalize_supabase_text(row.get("permission_key")).lower()
@@ -360,12 +361,13 @@ def _load_permission_id_map() -> dict[str, str]:
     return result
 
 
-def _load_role_permissions_map(role_ids: list[str]) -> dict[str, list[str]]:
+def _load_role_permissions_map(role_ids: list[str], supabase=None) -> dict[str, list[str]]:
     ids = [item for item in role_ids if item]
     if not ids:
         return {}
+    supabase = supabase or create_supabase_admin_client()
     response = (
-        get_supabase_admin_client()
+        supabase
         .table("role_permissions")
         .select("role_id,permissions(permission_key)")
         .in_("role_id", ids)
@@ -387,9 +389,10 @@ def _load_role_permissions_map(role_ids: list[str]) -> dict[str, list[str]]:
     return result
 
 
-def _load_school_role_user_rows(school_id: str) -> list[dict[str, Any]]:
+def _load_school_role_user_rows(school_id: str, supabase=None) -> list[dict[str, Any]]:
+    supabase = supabase or create_supabase_admin_client()
     response = (
-        get_supabase_admin_client()
+        supabase
         .table("school_memberships")
         .select(
             """
@@ -472,8 +475,12 @@ def _serialize_supabase_role_user(
     )
 
 
-def _find_membership_or_404(school_id: str, profile_id: str) -> dict[str, Any]:
-    rows = [row for row in _load_school_role_user_rows(school_id) if _normalize_supabase_text(row.get("profile_id")) == profile_id]
+def _find_membership_or_404(school_id: str, profile_id: str, supabase=None) -> dict[str, Any]:
+    rows = [
+        row
+        for row in _load_school_role_user_rows(school_id, supabase)
+        if _normalize_supabase_text(row.get("profile_id")) == profile_id
+    ]
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
     return rows[0]
@@ -500,8 +507,9 @@ def _ensure_managed_role(
     legacy_role: str,
     user_type: str,
     permissions: list[str],
+    supabase=None,
 ) -> dict[str, Any]:
-    supabase = get_supabase_admin_client()
+    supabase = supabase or create_supabase_admin_client()
     role_key = _managed_role_key_for_profile(profile_id)
     role_name = f"{legacy_role.replace('_', ' ').title()} - {full_name or profile_id[:8]}"
     role_response = (
@@ -540,7 +548,7 @@ def _ensure_managed_role(
         role_id = _normalize_supabase_text(created_rows[0].get("id"))
 
     supabase.table("role_permissions").delete().eq("role_id", role_id).execute()
-    permission_map = _load_permission_id_map()
+    permission_map = _load_permission_id_map(supabase)
     permission_rows = [
         {"role_id": role_id, "permission_id": permission_map[permission_key]}
         for permission_key in normalize_permissions(permissions)
@@ -873,9 +881,10 @@ async def list_role_users(
     school_id: str = Depends(resolve_school_id_from_actor),
     _: User = Depends(require_user_management_access),
 ):
-    membership_rows = _load_school_role_user_rows(school_id)
+    supabase = create_supabase_admin_client()
+    membership_rows = _load_school_role_user_rows(school_id, supabase)
     role_ids = [_normalize_supabase_text(row.get("role_id")) for row in membership_rows]
-    permissions_by_role = _load_role_permissions_map(role_ids)
+    permissions_by_role = _load_role_permissions_map(role_ids, supabase)
     return [
         _serialize_supabase_role_user(row, permissions_by_role)
         for row in membership_rows
@@ -889,7 +898,7 @@ async def create_role_user(
     _: User = Depends(require_user_management_access),
 ):
     username = payload.username.strip().lower()
-    supabase = get_supabase_admin_client()
+    supabase = create_supabase_admin_client()
     if not username:
         raise HTTPException(status_code=400, detail="Username is required")
 
@@ -900,28 +909,25 @@ async def create_role_user(
         raise HTTPException(status_code=400, detail="At least one permission is required")
 
     email = (payload.email or f"{username}@local.app").strip().lower()
-    existing_email = supabase.table("profiles").select("id,email").ilike("email", email).limit(1).execute()
-    existing_username = supabase.table("profiles").select("id,metadata").execute()
-    username_taken = any(
-        _normalize_supabase_text((row.get("metadata") or {}).get("username")).lower() == username
-        for row in list(existing_username.data or [])
-        if isinstance(row.get("metadata"), dict)
-    )
-    if list(existing_email.data or []) or username_taken:
-        raise HTTPException(status_code=400, detail="Username or email already exists")
-
-    user_response = supabase.auth.admin.create_user(
-        {
-            "email": email,
-            "password": payload.password,
-            "email_confirm": True,
-            "user_metadata": {
-                "full_name": payload.full_name.strip(),
-                "display_name": username,
-                "username": username,
-            },
-        }
-    )
+    try:
+        user_response = supabase.auth.admin.create_user(
+            {
+                "email": email,
+                "password": payload.password,
+                "email_confirm": True,
+                "user_metadata": {
+                    "full_name": payload.full_name.strip(),
+                    "display_name": username,
+                    "username": username,
+                },
+            }
+        )
+    except Exception as exc:
+        message = str(exc).strip() or "Failed to create user account"
+        normalized_message = message.lower()
+        if "already" in normalized_message or "duplicate" in normalized_message:
+            raise HTTPException(status_code=400, detail="Username or email already exists") from exc
+        raise HTTPException(status_code=500, detail=message) from exc
     created_user = getattr(user_response, "user", None)
     profile_id = _normalize_supabase_text(getattr(created_user, "id", None))
     if not profile_id:
@@ -934,6 +940,7 @@ async def create_role_user(
         legacy_role=role_value,
         user_type=user_type,
         permissions=permissions,
+        supabase=supabase,
     )
     supabase.table("profiles").update(
         {
@@ -946,7 +953,7 @@ async def create_role_user(
             },
         }
     ).eq("id", profile_id).execute()
-    supabase.table("school_memberships").insert(
+    membership_insert = supabase.table("school_memberships").insert(
         {
             "school_id": school_id,
             "profile_id": profile_id,
@@ -957,10 +964,26 @@ async def create_role_user(
             "metadata": {"source": "access_control"},
         }
     ).execute()
-
-    membership = _find_membership_or_404(school_id, profile_id)
-    permissions_by_role = _load_role_permissions_map([_normalize_supabase_text(membership.get("role_id"))])
-    return _serialize_supabase_role_user(membership, permissions_by_role, plain_password=payload.password)
+    membership_rows = list(membership_insert.data or [])
+    membership_row = dict(membership_rows[0]) if membership_rows else {
+        "school_id": school_id,
+        "profile_id": profile_id,
+        "role_id": role_row["id"],
+        "status": "active",
+        "is_primary": False,
+        "is_active": True,
+    }
+    membership_row["profiles"] = {
+        "id": profile_id,
+        "email": email,
+        "full_name": payload.full_name.strip(),
+        "display_name": username,
+        "metadata": {"username": username, "user_type": user_type},
+        "is_active": True,
+    }
+    membership_row["roles"] = role_row
+    permissions_by_role = {role_row["id"]: permissions}
+    return _serialize_supabase_role_user(membership_row, permissions_by_role, plain_password=payload.password)
 
 
 @router.put("/users/{user_id}", response_model=UserRolePowerResponse)
@@ -970,8 +993,8 @@ async def update_role_user(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor_user: User = Depends(require_user_management_access),
 ):
-    supabase = get_supabase_admin_client()
-    membership_rows = _load_school_role_user_rows(school_id)
+    supabase = create_supabase_admin_client()
+    membership_rows = _load_school_role_user_rows(school_id, supabase)
     membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)
     if not membership:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1028,7 +1051,7 @@ async def update_role_user(
     permissions = (
         normalize_permissions(payload.permissions)
         if payload.permissions is not None
-        else _load_role_permissions_map([_normalize_supabase_text(membership.get("role_id"))]).get(_normalize_supabase_text(membership.get("role_id")), [])
+        else _load_role_permissions_map([_normalize_supabase_text(membership.get("role_id"))], supabase).get(_normalize_supabase_text(membership.get("role_id")), [])
     )
     role_row = _ensure_managed_role(
         school_id,
@@ -1037,6 +1060,7 @@ async def update_role_user(
         legacy_role=next_role,
         user_type=validate_user_type_input(str(metadata.get("user_type") or "non_teaching")),
         permissions=permissions,
+        supabase=supabase,
     )
     membership_update: dict[str, Any] = {"role_id": role_row["id"]}
     if payload.is_active is not None:
@@ -1044,10 +1068,19 @@ async def update_role_user(
         membership_update["status"] = "active" if payload.is_active else "suspended"
     supabase.table("school_memberships").update(membership_update).eq("id", membership["id"]).execute()
 
-    refreshed_membership = _find_membership_or_404(school_id, user_id)
-    permissions_by_role = _load_role_permissions_map([_normalize_supabase_text(refreshed_membership.get("role_id"))])
+    updated_membership = dict(membership)
+    updated_membership.update(membership_update)
+    updated_membership["profiles"] = {
+        **profile,
+        "id": user_id,
+        "full_name": payload.full_name.strip() if payload.full_name is not None else profile.get("full_name"),
+        "metadata": metadata,
+        "is_active": bool(payload.is_active) if payload.is_active is not None else bool(profile.get("is_active", True)),
+    }
+    updated_membership["roles"] = role_row
+    permissions_by_role = {role_row["id"]: permissions}
     return _serialize_supabase_role_user(
-        refreshed_membership,
+        updated_membership,
         permissions_by_role,
         plain_password=payload.password.strip() if payload.password else "",
     )
@@ -1059,8 +1092,8 @@ async def delete_role_user(
     school_id: str = Depends(resolve_school_id_from_actor),
     _: User = Depends(require_user_management_access),
 ):
-    supabase = get_supabase_admin_client()
-    membership_rows = _load_school_role_user_rows(school_id)
+    supabase = create_supabase_admin_client()
+    membership_rows = _load_school_role_user_rows(school_id, supabase)
     membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)
     if not membership:
         raise HTTPException(status_code=404, detail="User not found")

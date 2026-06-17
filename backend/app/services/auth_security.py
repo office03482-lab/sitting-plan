@@ -11,7 +11,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import AuthSecurityEvent, AuthThrottle, Token, User
+from app.models import AuthSecurityEvent, AuthThrottle, School, Token, User
 from app.utils.auth import (
     create_access_token,
     create_refresh_token,
@@ -300,15 +300,95 @@ def reset_failures(db: Session, *, action: str, email: str | None, request: Requ
         throttle.last_attempt_at = now
 
 
-def _token_claims_for_user(user: User) -> dict:
-    return {
+def _token_claims_for_user(user: User, db: Session | None = None) -> dict:
+    school_id: str | None = None
+    role_key: str | None = None
+    if db is not None:
+        try:
+            school = db.query(School).filter(School.admin_id == user.id).first()
+            if school is not None:
+                school_id = str(school.id)
+                # Resolve integer local school ID to Supabase UUID
+                if school_id and not _is_likely_uuid(school_id):
+                    try:
+                        from app.services.supabase_admin import get_supabase_admin_client
+                        supabase = get_supabase_admin_client()
+                        resp = supabase.table("schools").select("id").limit(1).execute()
+                        rows = list(resp.data or [])
+                        if rows:
+                            school_id = str(rows[0]["id"])
+                    except Exception:
+                        pass
+            # Resolve Supabase role_key from profile membership
+            if user.email:
+                try:
+                    from app.services.supabase_admin import get_supabase_admin_client
+                    supabase = get_supabase_admin_client()
+                    profile_resp = supabase.table("profiles").select("id").ilike("email", user.email).limit(1).execute()
+                    profiles = list(profile_resp.data or [])
+                    if profiles:
+                        profile_id = str(profiles[0]["id"])
+                        membership_resp = (
+                            supabase.table("school_memberships")
+                            .select("roles(role_key)")
+                            .eq("profile_id", profile_id)
+                            .eq("is_active", True)
+                            .eq("status", "active")
+                            .limit(1)
+                            .execute()
+                        )
+                        memberships = list(membership_resp.data or [])
+                        if memberships:
+                            role_data = memberships[0].get("roles")
+                            if isinstance(role_data, dict):
+                                role_key = str(role_data.get("role_key") or "")
+                except Exception:
+                    pass
+
+            # Fallback: if user is local school admin, resolve role_key from
+            # a platform_admin membership for the resolved school
+            if not role_key and school_id and _is_likely_uuid(school_id):
+                try:
+                    from app.services.supabase_admin import get_supabase_admin_client
+                    supabase = get_supabase_admin_client()
+                    pa_memberships = (
+                        supabase.table("school_memberships")
+                        .select("roles!inner(role_key)")
+                        .eq("school_id", school_id)
+                        .eq("is_active", True)
+                        .eq("status", "active")
+                        .eq("roles.role_key", "platform_admin")
+                        .limit(1)
+                        .execute()
+                    )
+                    memberships = list(pa_memberships.data or [])
+                    if memberships:
+                        role_key = "platform_admin"
+                except Exception:
+                    pass
+        except Exception:
+            school_id = None
+    claims: dict[str, Any] = {
         "sub": str(user.id),
         "email": user.email,
         "role": user.role.value if hasattr(user.role, "value") else str(user.role),
         "username": user.username,
         "full_name": user.full_name,
         "user_type": user.user_type or "non_teaching",
+        "school_id": school_id,
     }
+    if role_key:
+        claims["role_key"] = role_key
+    return claims
+
+
+def _is_likely_uuid(value: str) -> bool:
+    import uuid
+    try:
+        uuid.UUID(value)
+        return True
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def _decode_expiration(payload: dict, fallback: timedelta) -> datetime:
@@ -328,7 +408,7 @@ def issue_auth_tokens(
     previous_refresh_record: Token | None = None,
 ) -> AuthTokenBundle:
     capabilities = _get_schema_capabilities(db)
-    claims = _token_claims_for_user(user)
+    claims = _token_claims_for_user(user, db)
     refresh_family = previous_refresh_record.token_family if previous_refresh_record else uuid.uuid4().hex
 
     access_token = create_access_token(claims)

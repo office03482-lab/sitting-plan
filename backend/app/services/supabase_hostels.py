@@ -1,6 +1,7 @@
 """Supabase-native hostel repository using hostel schema."""
 from __future__ import annotations
 import re
+import time
 from typing import Any
 from fastapi import HTTPException
 from app.services.supabase_admin import get_supabase_admin_client
@@ -11,6 +12,21 @@ HOSTEL_SCHEMA = "hostel"
 
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _execute_with_retry(action, *, attempts: int = 3, delay_seconds: float = 0.35):
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(delay_seconds * attempt)
+    if last_error:
+        raise last_error
+    raise RuntimeError("Retry helper exhausted without result")
 
 
 def _serialize_hostel_room(row: dict[str, Any]) -> dict[str, Any]:
@@ -145,6 +161,36 @@ def get_hostel(school_id: str, hostel_id: str) -> dict[str, Any]:
     return _serialize_hostel(hostel, list(room_rows.data or []))
 
 
+def list_hostel_rooms(school_id: str, hostel_id: str) -> list[dict[str, Any]]:
+    client = get_supabase_admin_client()
+    hostel_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostels")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("id", hostel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not list(hostel_rows.data or []):
+        raise HTTPException(status_code=404, detail="Hostel not found")
+
+    room_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("hostel_id", hostel_id)
+        .eq("is_active", True)
+        .order("room_number")
+        .execute()
+    )
+    return [_serialize_hostel_room(row) for row in list(room_rows.data or [])]
+
+
 def create_hostel(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     client = get_supabase_admin_client()
     name = _normalize(payload.get("name"))
@@ -205,11 +251,12 @@ def create_hostel(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "school_id": school_id,
                 "hostel_id": hostel["id"],
                 "room_number": _normalize(r.get("room_number")),
-                "total_beds": 2,
+                "total_beds": max(int(r.get("total_beds") or 2), 1),
                 "occupied_beds": 0,
                 "is_active": True,
             }
             for r in rooms
+            if _normalize(r.get("room_number"))
         ]
     else:
         room_rows = []
@@ -366,7 +413,7 @@ def sync_room_occupancy(school_id: str, room_id: str) -> None:
     if not room_id:
         return
     client = get_supabase_admin_client()
-    count_response = (
+    count_response = _execute_with_retry(lambda: (
         client
         .schema(HOSTEL_SCHEMA)
         .table("hostel_allocations")
@@ -377,9 +424,16 @@ def sync_room_occupancy(school_id: str, room_id: str) -> None:
         .eq("is_active", True)
         .limit(0)
         .execute()
-    )
+    ))
     occupied_beds = count_response.count or 0
-    client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"occupied_beds": occupied_beds}).eq("school_id", school_id).eq("id", room_id).execute()
+    _execute_with_retry(
+        lambda: client.schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .update({"occupied_beds": occupied_beds})
+        .eq("school_id", school_id)
+        .eq("id", room_id)
+        .execute()
+    )
 
 
 def update_room(school_id: str, hostel_id: str, room_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -470,3 +524,178 @@ def delete_room(school_id: str, hostel_id: str, room_id: str) -> dict[str, str]:
 
     client.schema(HOSTEL_SCHEMA).table("hostel_rooms").update({"is_active": False}).eq("school_id", school_id).eq("id", room_id).execute()
     return {"message": "Room deleted successfully"}
+
+
+# ==================== Report Data Functions ====================
+
+
+def get_occupancy_report_data(school_id: str) -> list[dict[str, Any]]:
+    client = get_supabase_admin_client()
+    hostel_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostels")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("name")
+        .execute()
+    )
+    hostels = list(hostel_rows.data or [])
+    if not hostels:
+        return []
+
+    hostel_ids = [h["id"] for h in hostels]
+    room_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .in_("hostel_id", hostel_ids)
+        .execute()
+    )
+    rooms_by_hostel: dict[str, list[dict[str, Any]]] = {}
+    for r in list(room_rows.data or []):
+        rooms_by_hostel.setdefault(str(r["hostel_id"]), []).append(r)
+
+    rows: list[dict[str, Any]] = []
+    for hostel in hostels:
+        rooms = rooms_by_hostel.get(str(hostel["id"]), [])
+        active_rooms = [r for r in rooms if r.get("is_active")]
+        total_capacity = sum(int(r.get("total_beds") or 0) for r in active_rooms)
+        occupied_beds = sum(int(r.get("occupied_beds") or 0) for r in active_rooms)
+        available_beds = max(total_capacity - occupied_beds, 0)
+        rows.append({
+            "hostel_name": str(hostel.get("name") or "").strip(),
+            "gender_category": str(hostel.get("gender_category") or "").strip() or "N/A",
+            "total_rooms": len(active_rooms),
+            "total_capacity": total_capacity,
+            "occupied_beds": occupied_beds,
+            "available_beds": available_beds,
+            "occupancy_percentage": round((occupied_beds / total_capacity * 100), 2) if total_capacity else 0,
+            "hostel_head": str(hostel.get("hostel_head") or "").strip() or "N/A",
+            "warden_name": str(hostel.get("warden_name") or "").strip() or "N/A",
+        })
+    rows.append({
+        "hostel_name": "GRAND TOTAL",
+        "gender_category": "",
+        "total_rooms": sum(r["total_rooms"] for r in rows),
+        "total_capacity": sum(r["total_capacity"] for r in rows),
+        "occupied_beds": sum(r["occupied_beds"] for r in rows),
+        "available_beds": sum(r["available_beds"] for r in rows),
+        "occupancy_percentage": round((sum(r["occupied_beds"] for r in rows) / sum(r["total_capacity"] for r in rows) * 100), 2) if sum(r["total_capacity"] for r in rows) else 0,
+        "hostel_head": "",
+        "warden_name": "",
+    })
+    return rows
+
+
+def get_allocation_report_data(school_id: str) -> list[dict[str, Any]]:
+    client = get_supabase_admin_client()
+    allocation_rows = list(
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_allocations")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("allocation_status", "active")
+        .eq("is_active", True)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    if not allocation_rows:
+        return []
+
+    student_ids = list({str(a.get("student_id")) for a in allocation_rows if a.get("student_id")})
+    hostel_ids = list({str(a.get("hostel_id")) for a in allocation_rows if a.get("hostel_id")})
+    room_ids = list({str(a.get("hostel_room_id")) for a in allocation_rows if a.get("hostel_room_id")})
+
+    from app.services.supabase_students import get_students_by_ids
+    students_map = {str(s.get("id")): s for s in get_students_by_ids(school_id, student_ids)}
+
+    hostel_rows = list(
+        client.schema(HOSTEL_SCHEMA).table("hostels").select("*").eq("school_id", school_id)
+        .in_("id", hostel_ids).execute().data or []
+    )
+    hostels_map = {str(h["id"]): h for h in hostel_rows}
+
+    room_rows = list(
+        client.schema(HOSTEL_SCHEMA).table("hostel_rooms").select("*").eq("school_id", school_id)
+        .in_("id", room_ids).execute().data or []
+    )
+    rooms_map = {str(r["id"]): r for r in room_rows}
+
+    rows: list[dict[str, Any]] = []
+    for alloc in allocation_rows:
+        student = students_map.get(str(alloc.get("student_id")), {})
+        hostel = hostels_map.get(str(alloc.get("hostel_id")), {})
+        room = rooms_map.get(str(alloc.get("hostel_room_id")), {})
+        rows.append({
+            "student_name": str(student.get("full_name") or student.get("name") or "").strip(),
+            "roll_number": str(student.get("roll_number") or "").strip(),
+            "batch": str(student.get("batch_name") or student.get("batch") or "").strip(),
+            "hostel_name": str(hostel.get("name") or "").strip(),
+            "room_number": str(room.get("room_number") or "").strip(),
+            "bed_label": str(alloc.get("bed_label") or "").strip() or "N/A",
+            "hostel_head": str(hostel.get("hostel_head") or "").strip() or "N/A",
+            "warden_name": str(hostel.get("warden_name") or "").strip() or "N/A",
+            "allocated_at": str(alloc.get("created_at") or "")[:10] if alloc.get("created_at") else "",
+        })
+    rows.sort(key=lambda r: (r["hostel_name"], r["room_number"], r["student_name"]))
+    return rows
+
+
+def get_vacancy_report_data(school_id: str) -> list[dict[str, Any]]:
+    client = get_supabase_admin_client()
+    hostel_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostels")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("name")
+        .execute()
+    )
+    hostels = list(hostel_rows.data or [])
+    if not hostels:
+        return []
+
+    hostel_ids = [h["id"] for h in hostels]
+    room_rows = (
+        client
+        .schema(HOSTEL_SCHEMA)
+        .table("hostel_rooms")
+        .select("*")
+        .eq("school_id", school_id)
+        .in_("hostel_id", hostel_ids)
+        .order("room_number")
+        .execute()
+    )
+    rooms_by_hostel: dict[str, list[dict[str, Any]]] = {}
+    for r in list(room_rows.data or []):
+        rooms_by_hostel.setdefault(str(r["hostel_id"]), []).append(r)
+
+    rows: list[dict[str, Any]] = []
+    for hostel in hostels:
+        rooms = rooms_by_hostel.get(str(hostel["id"]), [])
+        for room in rooms:
+            if not room.get("is_active"):
+                continue
+            total = int(room.get("total_beds") or 0)
+            occupied = int(room.get("occupied_beds") or 0)
+            available = max(total - occupied, 0)
+            if available > 0:
+                rows.append({
+                    "hostel_name": str(hostel.get("name") or "").strip(),
+                    "gender_category": str(hostel.get("gender_category") or "").strip() or "N/A",
+                    "room_number": str(room.get("room_number") or "").strip(),
+                    "total_beds": total,
+                    "occupied_beds": occupied,
+                    "available_beds": available,
+                })
+    rows.sort(key=lambda r: (r["hostel_name"], r["room_number"]))
+    return rows
