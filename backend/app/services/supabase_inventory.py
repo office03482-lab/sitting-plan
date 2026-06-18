@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import logging
 import time
 from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_metrics import get_inventory_dashboard_summary_rpc
@@ -1292,33 +1295,39 @@ def _serialize_stock_in(entry: dict, supplier_name: str = "", material_name: str
 
 
 def list_stock_in(school_id: str, supplier_id: Optional[str] = None, material_id: Optional[str] = None) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    query = supabase.schema(s).table("stock_in_entries").select("*").eq("school_id", school_id)
-    if supplier_id:
-        query = query.eq("supplier_id", supplier_id)
-    if material_id:
-        query = query.eq("material_item_id", material_id)
-    resp = query.order("entry_date", desc=True).order("id", desc=True).execute()
-    rows = list(resp.data or [])
+    try:
+        supabase = _client()
+        s = _INVENTORY_SCHEMA
+        query = supabase.schema(s).table("stock_in_entries").select("*").eq("school_id", school_id)
+        if supplier_id:
+            query = query.eq("supplier_id", supplier_id)
+        if material_id:
+            query = query.eq("material_item_id", material_id)
+        resp = query.order("entry_date", desc=True).order("id", desc=True).execute()
+        rows = list(resp.data or [])
 
-    supplier_ids = {str(r.get("supplier_id")) for r in rows if r.get("supplier_id")}
-    material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
-    suppliers = {}
-    for sid in supplier_ids:
-        srow = _select_one("suppliers", school_id, sid)
-        if srow:
-            suppliers[sid] = srow.get("name", "")
-    materials = {}
-    for mid in material_ids:
-        mrow = _select_one("material_items", school_id, mid)
-        if mrow:
-            materials[mid] = mrow.get("name", "")
+        supplier_ids = {str(r.get("supplier_id")) for r in rows if r.get("supplier_id")}
+        material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
+        suppliers = {}
+        for sid in supplier_ids:
+            srow = _select_one("suppliers", school_id, sid)
+            if srow:
+                suppliers[sid] = srow.get("name", "")
+        materials = {}
+        for mid in material_ids:
+            mrow = _select_one("material_items", school_id, mid)
+            if mrow:
+                materials[mid] = mrow.get("name", "")
 
-    return [
-        _serialize_stock_in(r, suppliers.get(str(r.get("supplier_id")), ""), materials.get(str(r.get("material_item_id")), ""))
-        for r in rows
-    ]
+        return [
+            _serialize_stock_in(r, suppliers.get(str(r.get("supplier_id")), ""), materials.get(str(r.get("material_item_id")), ""))
+            for r in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("list_stock_in failed for school_id=%s supplier_id=%s material_id=%s", school_id, supplier_id, material_id)
+        raise HTTPException(status_code=500, detail=f"Failed to load stock-in entries: {exc}")
 
 
 def create_stock_in(school_id: str, payload: dict) -> dict:
@@ -1413,37 +1422,43 @@ def _serialize_stock_out(entry: dict, material_name: str = "", batch_name: str =
 
 
 def list_stock_out(school_id: str, batch_id: Optional[str] = None, material_id: Optional[str] = None) -> list[dict]:
-    supabase = _client()
-    s = _INVENTORY_SCHEMA
-    query = supabase.schema(s).table("stock_out_entries").select("*").eq("school_id", school_id)
-    if batch_id:
-        query = query.eq("batch_id", batch_id)
-    if material_id:
-        query = query.eq("material_item_id", material_id)
-    resp = query.order("entry_date", desc=True).order("id", desc=True).execute()
-    rows = list(resp.data or [])
+    try:
+        supabase = _client()
+        s = _INVENTORY_SCHEMA
+        query = supabase.schema(s).table("stock_out_entries").select("*").eq("school_id", school_id)
+        if batch_id:
+            query = query.eq("batch_id", batch_id)
+        if material_id:
+            query = query.eq("material_item_id", material_id)
+        resp = query.order("entry_date", desc=True).order("id", desc=True).execute()
+        rows = list(resp.data or [])
 
-    material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
-    batch_ids = {str(r.get("batch_id")) for r in rows if r.get("batch_id")}
-    materials = {}
-    for mid in material_ids:
-        mrow = _select_one("material_items", school_id, mid)
-        if mrow:
-            materials[mid] = mrow.get("name", "")
-    batches = {}
-    for bid in batch_ids:
-        brow = _select_batch(school_id, bid)
-        if brow:
-            batches[bid] = brow.get("name", "")
+        material_ids = {str(r.get("material_item_id")) for r in rows if r.get("material_item_id")}
+        batch_ids = {str(r.get("batch_id")) for r in rows if r.get("batch_id")}
+        materials = {}
+        for mid in material_ids:
+            mrow = _select_one("material_items", school_id, mid)
+            if mrow:
+                materials[mid] = mrow.get("name", "")
+        batches = {}
+        for bid in batch_ids:
+            brow = _select_batch(school_id, bid)
+            if brow:
+                batches[bid] = brow.get("name", "")
 
-    return [
-        _serialize_stock_out(
-            r,
-            materials.get(str(r.get("material_item_id")), ""),
-            batches.get(str(r.get("batch_id")), ""),
-        )
-        for r in rows
-    ]
+        return [
+            _serialize_stock_out(
+                r,
+                materials.get(str(r.get("material_item_id")), ""),
+                batches.get(str(r.get("batch_id")), ""),
+            )
+            for r in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("list_stock_out failed for school_id=%s batch_id=%s material_id=%s", school_id, batch_id, material_id)
+        raise HTTPException(status_code=500, detail=f"Failed to load stock-out entries: {exc}")
 
 
 def create_stock_out(school_id: str, payload: dict) -> dict:

@@ -1122,7 +1122,7 @@ class StockInCreate(BaseModel):
 class StockInResponse(BaseModel):
     id: str
     date: datetime
-    supplier_id: str
+    supplier_id: Optional[str] = None
     supplier_name: str
     material_id: str
     material_name: str

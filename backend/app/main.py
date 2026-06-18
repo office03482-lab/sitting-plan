@@ -115,13 +115,20 @@ async def root():
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     """Custom HTTP exception handler"""
+    origins = settings.cors_origins
+    origin = request.headers.get("origin", "")
+    allowed = origin if origin in origins else (origins[0] if origins else "*")
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
             "error": exc.detail,
             "status_code": exc.status_code,
-        }
+        },
+        headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Credentials": "true",
+        },
     )
 
 
@@ -145,7 +152,17 @@ async def unhandled_exception_handler(request, exc):
     }
     if settings.debug:
         content["detail"] = str(exc) or exc.__class__.__name__
-    return JSONResponse(status_code=500, content=content)
+    origins = settings.cors_origins
+    origin = request.headers.get("origin", "")
+    allowed = origin if origin in origins else (origins[0] if origins else "*")
+    return JSONResponse(
+        status_code=500,
+        content=content,
+        headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
 
 
 # Import routes after app creation
