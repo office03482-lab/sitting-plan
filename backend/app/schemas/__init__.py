@@ -1121,7 +1121,7 @@ class StockInCreate(BaseModel):
 
 class StockInResponse(BaseModel):
     id: str
-    date: datetime
+    date: date
     supplier_id: Optional[str] = None
     supplier_name: str
     material_id: str
@@ -1147,7 +1147,7 @@ class StockOutCreate(BaseModel):
 
 class StockOutResponse(BaseModel):
     id: str
-    date: datetime
+    date: date
     batch_id: Optional[str] = None
     batch_name: str
     material_id: str
@@ -1171,7 +1171,7 @@ class StudentIssueCreate(BaseModel):
 
 class StudentIssueResponse(BaseModel):
     id: str
-    date: datetime
+    date: date
     batch_id: Optional[str] = None
     batch_name: Optional[str] = None
     student_id: str
@@ -1197,7 +1197,7 @@ class InventoryDashboardResponse(BaseModel):
 class InventoryHistoryEntry(BaseModel):
     entry_id: str | int
     entry_kind: str
-    date: datetime
+    date: date
     material_id: str | int
     material_name: str
     quantity: int

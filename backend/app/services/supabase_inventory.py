@@ -1277,10 +1277,22 @@ def delete_material(school_id: str, material_id: str) -> dict:
 # ==================== Stock In ====================
 
 
+def _normalize_date(value: object) -> date | None:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value.split("T")[0])
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
 def _serialize_stock_in(entry: dict, supplier_name: str = "", material_name: str = "") -> dict:
+    raw_date = entry.get("entry_date") or entry.get("date")
     return {
         "id": entry.get("id"),
-        "date": entry.get("entry_date") or entry.get("date"),
+        "date": _normalize_date(raw_date) if raw_date else None,
         "supplier_id": entry.get("supplier_id"),
         "supplier_name": supplier_name,
         "material_id": entry.get("material_item_id") or entry.get("material_id"),
@@ -1406,9 +1418,10 @@ def delete_stock_in(school_id: str, entry_id: str) -> dict:
 
 
 def _serialize_stock_out(entry: dict, material_name: str = "", batch_name: str = "") -> dict:
+    raw_date = entry.get("entry_date") or entry.get("date")
     return {
         "id": entry.get("id"),
-        "date": entry.get("entry_date") or entry.get("date"),
+        "date": _normalize_date(raw_date) if raw_date else None,
         "batch_id": entry.get("batch_id"),
         "batch_name": batch_name or entry.get("batch_name") or "",
         "material_id": entry.get("material_item_id") or entry.get("material_id"),
@@ -1560,9 +1573,10 @@ def delete_stock_out(school_id: str, entry_id: str) -> dict:
 
 
 def _serialize_student_issue(entry: dict, material_name: str = "") -> dict:
+    raw_date = entry.get("issue_date") or entry.get("date") or entry.get("created_at")
     return {
         "id": entry.get("id"),
-        "date": entry.get("issue_date") or entry.get("date") or entry.get("created_at"),
+        "date": _normalize_date(raw_date) if raw_date else None,
         "batch_id": entry.get("batch_id"),
         "batch_name": entry.get("batch_name") or "",
         "student_id": entry.get("student_id"),
@@ -1793,10 +1807,11 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
     rows = list((supabase.schema(s).table("stock_in_entries").select("*").eq("material_item_id", material_id).eq("school_id", school_id).execute()).data or [])
     for entry in rows:
         supplier = _select_one("suppliers", school_id, str(entry.get("supplier_id", ""))) if entry.get("supplier_id") else None
+        raw_date = entry.get("entry_date") or entry.get("date")
         history.append({
             "entry_id": entry.get("id"),
             "entry_kind": "stock_in",
-            "date": entry.get("entry_date") or entry.get("date"),
+            "date": _normalize_date(raw_date) if raw_date else None,
             "material_id": material_id,
             "material_name": material_name,
             "quantity": int(entry.get("quantity_received") or 0),
@@ -1810,10 +1825,11 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
         batch_name = ""
         if entry.get("batch_id"):
             batch_name = (_select_batch(school_id, str(entry.get("batch_id"))) or {}).get("name", "")
+        raw_date = entry.get("entry_date") or entry.get("date")
         history.append({
             "entry_id": entry.get("id"),
             "entry_kind": "stock_out",
-            "date": entry.get("entry_date") or entry.get("date"),
+            "date": _normalize_date(raw_date) if raw_date else None,
             "material_id": material_id,
             "material_name": material_name,
             "quantity": int(entry.get("quantity_issued") or 0),
@@ -1827,10 +1843,11 @@ def get_material_history(school_id: str, material_id: str) -> list[dict]:
         student_name = entry.get("student_name") or ""
         batch_name = entry.get("batch_name") or ""
         counterparty = f"{student_name} ({batch_name or 'No Batch'})" if student_name else (batch_name or "")
+        raw_date = entry.get("issue_date") or entry.get("date")
         history.append({
             "entry_id": entry.get("id"),
             "entry_kind": "student_issue",
-            "date": entry.get("issue_date") or entry.get("date"),
+            "date": _normalize_date(raw_date) if raw_date else None,
             "material_id": material_id,
             "material_name": material_name,
             "quantity": int(entry.get("quantity_issued") or 0),
