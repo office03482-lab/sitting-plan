@@ -1395,6 +1395,10 @@ class ApiService {
     return this.api.get('/auth/users', { params: { school_id: schoolId } });
   }
 
+  async listPermissions() {
+    return this.api.get('/auth/permissions');
+  }
+
   async createRoleUser(data: Record<string, unknown>) {
     return this.api.post('/auth/users', data);
   }

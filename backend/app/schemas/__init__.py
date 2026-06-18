@@ -107,6 +107,17 @@ class UserRolePowerUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PermissionSectionInfo(BaseModel):
+    key: str
+    label: str
+
+
+class ModulePermissionInfo(BaseModel):
+    key: str
+    label: str
+    sections: List[PermissionSectionInfo]
+
+
 class UserRolePowerResponse(UserRolePowerBase):
     """Role user response schema"""
     id: str | int

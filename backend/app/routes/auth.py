@@ -28,6 +28,7 @@ from app.services.auth_security import (
 from app.schemas import (
     LoginResponse,
     LogoutRequest,
+    ModulePermissionInfo,
     PasswordLoginRequest,
     RefreshTokenRequest,
     SendOTPRequest,
@@ -62,8 +63,21 @@ def require_user_management_access(
     )
     raise HTTPException(status_code=403, detail="Only admin or access-control users can manage users")
 
-ALLOWED_USER_TYPES = {"teaching", "non_teaching"}
-ALLOWED_ROLE_VALUES = {item.value for item in UserRole}
+ALLOWED_USER_TYPES = {"teaching", "non_teaching", "student"}
+ROLE_ALIASES = {
+    "admin": "school_admin",
+}
+ALLOWED_ROLE_VALUES = {
+    "platform_admin",
+    "school_admin",
+    "teacher",
+    "staff",
+    "student",
+    "parent",
+    "store_manager",
+    "viewer",
+}
+ADMIN_ROLE_VALUES = {"platform_admin", "school_admin"}
 ALLOWED_PERMISSIONS = {
     "admin_office",
     "admin_office.seating_generation",
@@ -304,8 +318,12 @@ def decode_permissions(value: Optional[str]) -> List[str]:
     return normalize_permissions(value.split(","))
 
 
+def _make_permission_label(key: str) -> str:
+    return " ".join(word.capitalize() for word in key.split("_"))
+
+
 def validate_role_input(role: str) -> str:
-    normalized = (role or "").strip().lower()
+    normalized = ROLE_ALIASES.get((role or "").strip().lower(), (role or "").strip().lower())
     if normalized not in ALLOWED_ROLE_VALUES:
         raise HTTPException(status_code=400, detail="Unsupported role")
     return normalized
@@ -318,6 +336,15 @@ def validate_user_type_input(user_type: str) -> str:
     return normalized
 
 
+def coerce_user_type_for_role(role: str, user_type: str) -> str:
+    normalized_user_type = validate_user_type_input(user_type)
+    if role == "teacher":
+        return "teaching"
+    if role == "student":
+        return "student"
+    return normalized_user_type if normalized_user_type != "student" else "non_teaching"
+
+
 def _normalize_supabase_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -326,21 +353,32 @@ def _normalize_supabase_role_key(value: str) -> str:
     return (value or "").strip().lower()
 
 
-def _legacy_role_from_supabase_role(role_row: dict[str, Any] | None) -> str:
-    if not isinstance(role_row, dict):
-        return "viewer"
-    metadata = role_row.get("metadata")
-    if isinstance(metadata, dict):
-        legacy_role = _normalize_supabase_text(metadata.get("legacy_role")).lower()
-        if legacy_role in {"admin", "teacher", "store_manager", "viewer"}:
-            return legacy_role
-    role_key = _normalize_supabase_role_key(role_row.get("role_key") or "")
-    if role_key in {"platform_admin", "school_admin"}:
+def _legacy_role_for_selected_role(role_key: str) -> str:
+    if role_key in ADMIN_ROLE_VALUES:
         return "admin"
     if role_key == "teacher":
         return "teacher"
     if role_key == "store_manager":
         return "store_manager"
+    return "viewer"
+
+
+def _selected_role_from_supabase_role(role_row: dict[str, Any] | None) -> str:
+    if not isinstance(role_row, dict):
+        return "viewer"
+    metadata = role_row.get("metadata")
+    if isinstance(metadata, dict):
+        selected_role = _normalize_supabase_text(metadata.get("role_key")).lower()
+        if selected_role in ALLOWED_ROLE_VALUES:
+            return selected_role
+        legacy_role = _normalize_supabase_text(metadata.get("legacy_role")).lower()
+        if legacy_role == "admin":
+            return "school_admin"
+        if legacy_role in {"teacher", "store_manager", "viewer"}:
+            return legacy_role
+    role_key = _normalize_supabase_role_key(role_row.get("role_key") or "")
+    if role_key in ALLOWED_ROLE_VALUES:
+        return role_key
     return "viewer"
 
 
@@ -467,7 +505,7 @@ def _serialize_supabase_role_user(
         full_name=_normalize_supabase_text(profile.get("full_name")) or username,
         email=_normalize_supabase_text(profile.get("email")) or None,
         password=plain_password,
-        role=_legacy_role_from_supabase_role(role),
+        role=_selected_role_from_supabase_role(role),
         user_type=normalized_user_type,
         permissions=normalize_permissions(permissions_by_role.get(role_id, [])),
         is_active=bool(membership_row.get("is_active", True) and profile.get("is_active", True)),
@@ -494,7 +532,7 @@ def _count_active_admins(rows: list[dict[str, Any]]) -> int:
             role = role[0] if role else {}
         if not isinstance(role, dict):
             role = {}
-        if _legacy_role_from_supabase_role(role) == "admin" and bool(row.get("is_active", True)):
+        if _selected_role_from_supabase_role(role) in ADMIN_ROLE_VALUES and bool(row.get("is_active", True)):
             count += 1
     return count
 
@@ -504,14 +542,15 @@ def _ensure_managed_role(
     profile_id: str,
     *,
     full_name: str,
-    legacy_role: str,
+    selected_role: str,
     user_type: str,
     permissions: list[str],
     supabase=None,
 ) -> dict[str, Any]:
     supabase = supabase or create_supabase_admin_client()
     role_key = _managed_role_key_for_profile(profile_id)
-    role_name = f"{legacy_role.replace('_', ' ').title()} - {full_name or profile_id[:8]}"
+    legacy_role = _legacy_role_for_selected_role(selected_role)
+    role_name = f"{selected_role.replace('_', ' ').title()} - {full_name or profile_id[:8]}"
     role_response = (
         supabase.table("roles")
         .select("*")
@@ -530,6 +569,7 @@ def _ensure_managed_role(
         "is_system": False,
         "is_active": True,
         "metadata": {
+            "role_key": selected_role,
             "legacy_role": legacy_role,
             "user_type": user_type,
             "managed_by": "access_control",
@@ -903,7 +943,7 @@ async def create_role_user(
         raise HTTPException(status_code=400, detail="Username is required")
 
     role_value = validate_role_input(payload.role)
-    user_type = validate_user_type_input(payload.user_type)
+    user_type = coerce_user_type_for_role(role_value, payload.user_type)
     permissions = normalize_permissions(payload.permissions)
     if not permissions:
         raise HTTPException(status_code=400, detail="At least one permission is required")
@@ -937,7 +977,7 @@ async def create_role_user(
         school_id,
         profile_id,
         full_name=payload.full_name.strip(),
-        legacy_role=role_value,
+        selected_role=role_value,
         user_type=user_type,
         permissions=permissions,
         supabase=supabase,
@@ -1004,16 +1044,16 @@ async def update_role_user(
         role = role[0] if role else {}
     if not isinstance(role, dict):
         role = {}
-    current_legacy_role = _legacy_role_from_supabase_role(role)
-    next_role = validate_role_input(payload.role) if payload.role is not None else current_legacy_role
+    current_role = _selected_role_from_supabase_role(role)
+    next_role = validate_role_input(payload.role) if payload.role is not None else current_role
 
-    if current_legacy_role == "admin" and next_role != "admin":
+    if current_role in ADMIN_ROLE_VALUES and next_role not in ADMIN_ROLE_VALUES:
         if _count_active_admins(membership_rows) < 2:
             raise HTTPException(status_code=400, detail="At least one active admin user must remain")
         if _normalize_supabase_text(getattr(actor_user, "profile_id", None) or actor_user.id) == user_id:
             raise HTTPException(status_code=400, detail="You cannot remove your own admin role")
 
-    if payload.is_active is False and current_legacy_role == "admin":
+    if payload.is_active is False and current_role in ADMIN_ROLE_VALUES:
         if _count_active_admins(membership_rows) < 2:
             raise HTTPException(status_code=400, detail="At least one active admin user must remain")
         if _normalize_supabase_text(getattr(actor_user, "profile_id", None) or actor_user.id) == user_id:
@@ -1053,12 +1093,13 @@ async def update_role_user(
         if payload.permissions is not None
         else _load_role_permissions_map([_normalize_supabase_text(membership.get("role_id"))], supabase).get(_normalize_supabase_text(membership.get("role_id")), [])
     )
+    metadata["user_type"] = coerce_user_type_for_role(next_role, str(metadata.get("user_type") or "non_teaching"))
     role_row = _ensure_managed_role(
         school_id,
         user_id,
         full_name=(payload.full_name or profile.get("full_name") or username or "User").strip(),
-        legacy_role=next_role,
-        user_type=validate_user_type_input(str(metadata.get("user_type") or "non_teaching")),
+        selected_role=next_role,
+        user_type=metadata["user_type"],
         permissions=permissions,
         supabase=supabase,
     )
@@ -1102,11 +1143,39 @@ async def delete_role_user(
         role = role[0] if role else {}
     if not isinstance(role, dict):
         role = {}
-    if _legacy_role_from_supabase_role(role) == "admin" and _count_active_admins(membership_rows) < 2:
+    if _selected_role_from_supabase_role(role) in ADMIN_ROLE_VALUES and _count_active_admins(membership_rows) < 2:
         raise HTTPException(status_code=400, detail="At least one active admin user must remain")
 
     supabase.table("school_memberships").delete().eq("id", membership["id"]).execute()
     return {"message": "User deleted"}
+
+
+@router.get("/permissions", response_model=List[ModulePermissionInfo])
+async def list_permissions(
+    _: User = Depends(require_user_management_access),
+):
+    modules = []
+    for parent_key, children_keys in PERMISSION_CHILDREN.items():
+        sections = [
+            {"key": child_key, "label": _make_permission_label(child_key.split(".", 1)[1] if "." in child_key else child_key)}
+            for child_key in children_keys
+        ]
+        modules.append(ModulePermissionInfo(
+            key=parent_key,
+            label=_make_permission_label(parent_key),
+            sections=sections,
+        ))
+    standalone = sorted(
+        key for key in ALLOWED_PERMISSIONS
+        if "." not in key and key not in PERMISSION_CHILDREN
+    )
+    for key in standalone:
+        modules.append(ModulePermissionInfo(
+            key=key,
+            label=_make_permission_label(key),
+            sections=[],
+        ))
+    return modules
 
 
 @router.post("/refresh", response_model=LoginResponse)

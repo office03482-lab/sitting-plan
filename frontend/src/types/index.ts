@@ -5,7 +5,16 @@
  */
 
 // ==================== Common ====================
-export type UserRole = 'admin' | 'store_manager' | 'teacher' | 'staff' | 'student' | 'viewer';
+export type UserRole =
+  | 'admin'
+  | 'platform_admin'
+  | 'school_admin'
+  | 'teacher'
+  | 'staff'
+  | 'student'
+  | 'parent'
+  | 'store_manager'
+  | 'viewer';
 export type UserType = 'teaching' | 'non_teaching' | 'student';
 
 export interface ApiListMeta {

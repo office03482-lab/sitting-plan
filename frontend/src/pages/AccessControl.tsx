@@ -6,8 +6,16 @@ import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 import type { RolePowerUser } from '@types';
 
-type UserRole = 'admin' | 'store_manager' | 'teacher' | 'viewer';
-type UserType = 'teaching' | 'non_teaching';
+type UserRole =
+  | 'platform_admin'
+  | 'school_admin'
+  | 'teacher'
+  | 'staff'
+  | 'student'
+  | 'parent'
+  | 'store_manager'
+  | 'viewer';
+type UserType = 'teaching' | 'non_teaching' | 'student';
 
 type PowerModule = {
   key: string;
@@ -24,169 +32,46 @@ type UserFormState = {
   permissions: string[];
 };
 
-const PASSWORD_CACHE_KEY = 'role_power_plain_passwords';
-
-const POWER_MODULES: PowerModule[] = [
-  {
-    key: 'admin_office',
-    label: 'Admin Office',
-    sections: [
-      { key: 'admin_office.seating_generation', label: 'Seating Generation' },
-      { key: 'admin_office.seating_plans', label: 'Seating Plans' },
-      { key: 'admin_office.rooms', label: 'Rooms' },
-      { key: 'admin_office.batches', label: 'Batches' },
-      { key: 'admin_office.students', label: 'Students' },
-      { key: 'admin_office.hostels', label: 'Hostel Management' },
-      { key: 'admin_office.teachers', label: 'Teaching Management' },
-      { key: 'admin_office.invigilators', label: 'Invigilator Management' },
-      { key: 'admin_office.non_teaching', label: 'Non-Teaching Management' },
-      { key: 'admin_office.reports', label: 'Reports' },
-      { key: 'admin_office.access_control', label: 'Role & Access Control' },
-    ],
-  },
-  {
-    key: 'timetable',
-    label: 'Timetable',
-    sections: [
-      { key: 'timetable.view', label: 'View Timetable' },
-      { key: 'timetable.manage', label: 'Manage Timetable' },
-    ],
-  },
-  {
-    key: 'attendance',
-    label: 'Attendance',
-    sections: [
-      { key: 'attendance.overview', label: 'Overview' },
-      { key: 'attendance.student', label: 'Student Attendance' },
-      { key: 'attendance.staff', label: 'Staff Attendance' },
-      { key: 'attendance.leaves', label: 'Leave Management' },
-      { key: 'attendance.reports', label: 'Attendance Reports' },
-    ],
-  },
-  {
-    key: 'live_classes',
-    label: 'Live Classes',
-    sections: [
-      { key: 'live_classes.view', label: 'View Live Classes' },
-      { key: 'live_classes.manage', label: 'Manage Live Classes' },
-      { key: 'live_classes.join', label: 'Join Live Classes' },
-      { key: 'live_classes.attendance', label: 'Live Class Attendance' },
-      { key: 'live_classes.reports', label: 'Live Class Reports' },
-    ],
-  },
-  {
-    key: 'study_planner',
-    label: 'Study Planner',
-    sections: [
-      { key: 'study_planner.view', label: 'View Study Planner' },
-      { key: 'study_planner.goals', label: 'Manage Learning Goals' },
-      { key: 'study_planner.reports', label: 'Study Planner Reports' },
-    ],
-  },
-  {
-    key: 'ai_tutor',
-    label: 'AI Tutor',
-    sections: [
-      { key: 'ai_tutor.chat', label: 'Use AI Tutor' },
-      { key: 'ai_tutor.review', label: 'Review Tutor Conversations' },
-      { key: 'ai_tutor.manage', label: 'Manage Tutor Prompts' },
-    ],
-  },
-  {
-    key: 'doubt_solver',
-    label: 'AI Doubt Solver',
-    sections: [
-      { key: 'doubt_solver.solve', label: 'Solve Academic Doubts' },
-      { key: 'doubt_solver.review', label: 'Review Doubt History' },
-      { key: 'doubt_solver.manage', label: 'Manage Doubt Solver' },
-      { key: 'doubt_solver.escalate', label: 'Handle Teacher Escalations' },
-    ],
-  },
-  {
-    key: 'teacher_ai',
-    label: 'Teacher AI Assistant',
-    sections: [
-      { key: 'teacher_ai.generate', label: 'Generate Papers and Assignments' },
-      { key: 'teacher_ai.evaluate', label: 'Generate Evaluation and Remarks' },
-      { key: 'teacher_ai.reports', label: 'Generate Parent and Progress Reports' },
-    ],
-  },
-  {
-    key: 'parent_intelligence',
-    label: 'Parent Intelligence',
-    sections: [
-      { key: 'parent_intelligence.view', label: 'View Parent Intelligence' },
-      { key: 'parent_intelligence.alerts', label: 'Manage Parent Alerts' },
-      { key: 'parent_intelligence.communication', label: 'Parent Communication Actions' },
-      { key: 'parent_intelligence.reports', label: 'Parent Intelligence Reports' },
-    ],
-  },
-  {
-    key: 'inventory',
-    label: 'Inventory',
-    sections: [
-      { key: 'inventory.dashboard', label: 'Dashboard' },
-      { key: 'inventory.materials', label: 'Material Master' },
-      { key: 'inventory.suppliers', label: 'Suppliers' },
-      { key: 'inventory.stock_in', label: 'Stock In' },
-      { key: 'inventory.stock_out', label: 'Stock Out / Distribution' },
-      { key: 'inventory.reports', label: 'Inventory Reports' },
-    ],
-  },
-  {
-    key: 'edupay',
-    label: 'BRAIN OF HIMACHAL',
-    sections: [
-      { key: 'edupay.dashboard', label: 'Dashboard' },
-      { key: 'edupay.students', label: 'Student Management' },
-      { key: 'edupay.fees', label: 'Fee Structures' },
-      { key: 'edupay.payments', label: 'Payment Tracking' },
-      { key: 'edupay.parent_portal', label: 'Parent Portal' },
-      { key: 'edupay.commerce', label: 'Commerce and Orders' },
-      { key: 'edupay.subscriptions', label: 'Subscriptions' },
-      { key: 'edupay.revenue', label: 'Revenue Dashboard' },
-    ],
-  },
-  {
-    key: 'bi',
-    label: 'Enterprise BI',
-    sections: [
-      { key: 'bi.academic', label: 'Academic BI Dashboard' },
-      { key: 'bi.finance', label: 'Finance BI Dashboard' },
-      { key: 'bi.operations', label: 'Operations BI Dashboard' },
-      { key: 'bi.platform', label: 'Platform BI Dashboard' },
-      { key: 'bi.reports', label: 'BI Report Builder and Exports' },
-    ],
-  },
-  {
-    key: 'ai_agents',
-    label: 'AI Academic Operating System',
-    sections: [
-      { key: 'ai_agents.view', label: 'View AI Command Center' },
-      { key: 'ai_agents.run', label: 'Run AI Agents' },
-      { key: 'ai_agents.approve', label: 'Approve AI Recommendations' },
-      { key: 'ai_agents.reports', label: 'AI Operating Reports' },
-    ],
-  },
-  {
-    key: 'settings',
-    label: 'Settings',
-    sections: [],
-  },
+const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
+  { value: 'platform_admin', label: 'Platform Admin' },
+  { value: 'school_admin', label: 'School Admin' },
+  { value: 'teacher', label: 'Teacher' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'student', label: 'Student' },
+  { value: 'parent', label: 'Parent' },
+  { value: 'store_manager', label: 'Store Manager' },
+  { value: 'viewer', label: 'Viewer' },
 ];
 
-const POWER_LABELS: Record<string, string> = POWER_MODULES.reduce<Record<string, string>>((acc, module) => {
-  acc[module.key] = module.label;
-  module.sections.forEach((section) => {
-    acc[section.key] = `${module.label} / ${section.label}`;
-  });
-  return acc;
-}, {});
+const ROLE_LABELS: Record<UserRole, string> = ROLE_OPTIONS.reduce(
+  (acc, option) => ({ ...acc, [option.value]: option.label }),
+  {} as Record<UserRole, string>,
+);
 
-const getNormalizedPermissions = (values: string[]) => {
+const USER_TYPE_LABELS: Record<UserType, string> = {
+  teaching: 'Teaching',
+  non_teaching: 'Non-Teaching',
+  student: 'Student',
+};
+
+const deriveUserTypeFromRole = (role: UserRole): UserType => {
+  if (role === 'teacher') return 'teaching';
+  if (role === 'student') return 'student';
+  return 'non_teaching';
+};
+
+const PASSWORD_CACHE_KEY = 'role_power_plain_passwords';
+
+const makeModuleLabel = (key: string): string =>
+  key
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
+const getNormalizedPermissions = (values: string[], modules: PowerModule[]) => {
   const next = new Set(values);
 
-  POWER_MODULES.forEach((module) => {
+  modules.forEach((module) => {
     const sectionKeys = module.sections.map((section) => section.key);
     if (!sectionKeys.length) return;
     const selectedSectionCount = sectionKeys.filter((key) => next.has(key)).length;
@@ -203,7 +88,7 @@ const initialForm: UserFormState = {
   password: '',
   full_name: '',
   role: 'teacher',
-  user_type: 'teaching',
+  user_type: deriveUserTypeFromRole('teacher'),
   permissions: ['timetable'],
 };
 
@@ -259,11 +144,13 @@ function PermissionEditor({
   onChange,
   expandedModules,
   setExpandedModules,
+  modules,
 }: {
   permissions: string[];
   onChange: (permissions: string[]) => void;
   expandedModules: Record<string, boolean>;
   setExpandedModules: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  modules: PowerModule[];
 }) {
   const toggleModuleExpansion = (moduleKey: string) => {
     setExpandedModules((prev) => ({ ...prev, [moduleKey]: !prev[moduleKey] }));
@@ -274,14 +161,14 @@ function PermissionEditor({
     const sectionKeys = module.sections.map((item) => item.key);
 
     if (moduleSelected) {
-      onChange(getNormalizedPermissions(permissions.filter((item) => item !== module.key && !sectionKeys.includes(item))));
+      onChange(getNormalizedPermissions(permissions.filter((item) => item !== module.key && !sectionKeys.includes(item)), modules));
       return;
     }
 
     const next = new Set(permissions);
     next.add(module.key);
     sectionKeys.forEach((key) => next.add(key));
-    onChange(getNormalizedPermissions(Array.from(next)));
+    onChange(getNormalizedPermissions(Array.from(next), modules));
   };
 
   const toggleSectionPermission = (sectionKey: string) => {
@@ -292,14 +179,14 @@ function PermissionEditor({
     } else {
       next.add(sectionKey);
     }
-    onChange(getNormalizedPermissions(Array.from(next)));
+    onChange(getNormalizedPermissions(Array.from(next), modules));
   };
 
   return (
     <div className="rounded-2xl border border-slate-300 p-3">
       <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Assign Powers</p>
       <div className="mt-3 space-y-3">
-        {POWER_MODULES.map((module) => {
+        {modules.map((module) => {
           const moduleSelected = permissions.includes(module.key);
           const expanded = expandedModules[module.key] ?? false;
           return (
@@ -366,6 +253,18 @@ export default function AccessControl() {
     attendance: true,
   });
   const [passwordCache, setPasswordCache] = useState<Record<string, string>>(() => loadPasswordCache());
+  const [powerModules, setPowerModules] = useState<PowerModule[]>([]);
+
+  const buildLabelsMap = (modules: PowerModule[]): Record<string, string> => {
+    const map: Record<string, string> = {};
+    modules.forEach((mod) => {
+      map[mod.key] = mod.label;
+      mod.sections.forEach((sec) => {
+        map[sec.key] = `${mod.label} / ${sec.label}`;
+      });
+    });
+    return map;
+  };
 
   const syncPasswordCache = (fetchedUsers: RolePowerUser[]) => {
     const nextCache = { ...passwordCache };
@@ -407,9 +306,23 @@ export default function AccessControl() {
     }
   };
 
+  const loadPermissions = async () => {
+    if (!canRunRequests) return;
+    try {
+      const response = await apiService.listPermissions();
+      const modules = toArray<PowerModule>(response?.data);
+      if (modules.length) {
+        setPowerModules(modules);
+      }
+    } catch {
+      // non-critical
+    }
+  };
+
   useEffect(() => {
     if (!canRunRequests) return;
     void loadUsers();
+    void loadPermissions();
   }, [canRunRequests]);
 
   const handleCreateUser = async (event: FormEvent<HTMLFormElement>) => {
@@ -428,13 +341,14 @@ export default function AccessControl() {
   };
 
   const startEdit = (user: RolePowerUser) => {
+    const role = user.role as UserRole;
     setEditingUserId(user.id);
     setEditForm({
       username: user.username || '',
       password: passwordCache[(user.username || '').toLowerCase()] || '',
       full_name: user.full_name,
-      role: user.role as UserRole,
-      user_type: user.user_type as UserType,
+      role,
+      user_type: (user.user_type as UserType) || deriveUserTypeFromRole(role),
       permissions: normalizePermissions(user.permissions),
     });
   };
@@ -491,9 +405,10 @@ export default function AccessControl() {
   };
 
   const userPermissionLabels = useMemo(() => {
+    const labelsMap = buildLabelsMap(powerModules);
     return (values: unknown) =>
-      normalizePermissions(values).map((item) => POWER_LABELS[item] || item).join(', ') || 'none';
-  }, []);
+      normalizePermissions(values).map((item) => labelsMap[item] || makeModuleLabel(item)).join(', ') || 'none';
+  }, [powerModules]);
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -562,16 +477,21 @@ export default function AccessControl() {
                 >
                   <option value="teaching">Teaching</option>
                   <option value="non_teaching">Non-Teaching</option>
+                  <option value="student">Student</option>
                 </select>
                 <select
                   value={createForm.role}
-                  onChange={(event) => setCreateForm({ ...createForm, role: event.target.value as UserRole })}
+                  onChange={(event) => {
+                    const role = event.target.value as UserRole;
+                    setCreateForm({ ...createForm, role, user_type: deriveUserTypeFromRole(role) });
+                  }}
                   className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
                 >
-                  <option value="teacher">Teacher</option>
-                  <option value="viewer">Viewer</option>
-                  <option value="store_manager">Store Manager</option>
-                  <option value="admin">Admin</option>
+                  {ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -580,6 +500,7 @@ export default function AccessControl() {
                 onChange={(permissions) => setCreateForm({ ...createForm, permissions })}
                 expandedModules={expandedCreateModules}
                 setExpandedModules={setExpandedCreateModules}
+                modules={powerModules}
               />
 
               <button className="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800">
@@ -603,7 +524,7 @@ export default function AccessControl() {
                           <p className="font-semibold text-slate-900">{user.full_name} ({user.username})</p>
                           <p className="text-xs text-slate-600">user: {user.username || '-'} | password: {cachedPassword ? 'available in this browser session only' : 'not shown for security'}</p>
                           <p className="text-xs text-slate-600">
-                            {user.user_type} | role: {user.role}
+                            {USER_TYPE_LABELS[(user.user_type as UserType) || 'non_teaching'] || user.user_type} | role: {ROLE_LABELS[user.role as UserRole] || user.role}
                           </p>
                           <p className="mt-1 text-xs text-slate-500">
                             powers: {userPermissionLabels(user.permissions || [])}
@@ -665,16 +586,21 @@ export default function AccessControl() {
                           >
                             <option value="teaching">Teaching</option>
                             <option value="non_teaching">Non-Teaching</option>
+                            <option value="student">Student</option>
                           </select>
                           <select
                             value={editForm.role}
-                            onChange={(event) => setEditForm({ ...editForm, role: event.target.value as UserRole })}
+                            onChange={(event) => {
+                              const role = event.target.value as UserRole;
+                              setEditForm({ ...editForm, role, user_type: deriveUserTypeFromRole(role) });
+                            }}
                             className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
                           >
-                            <option value="teacher">Teacher</option>
-                            <option value="viewer">Viewer</option>
-                            <option value="store_manager">Store Manager</option>
-                            <option value="admin">Admin</option>
+                            {ROLE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
 
@@ -683,6 +609,7 @@ export default function AccessControl() {
                           onChange={(permissions) => setEditForm({ ...editForm, permissions })}
                           expandedModules={expandedEditModules}
                           setExpandedModules={setExpandedEditModules}
+                          modules={powerModules}
                         />
 
                         <div className="flex gap-2">
