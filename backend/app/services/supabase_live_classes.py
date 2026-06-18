@@ -39,7 +39,7 @@ def _scheduling_table(name: str):
 
 
 def _lms_table(name: str):
-    return _client().schema(LMS_SCHEMA).table(name)
+    return _public_table(f"lms_{name}")
 
 
 def _normalize(value: Any) -> str:

@@ -7,6 +7,7 @@ import logging
 import time
 from threading import Event, Lock
 from typing import Any, Callable, Dict, Optional
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import func
@@ -463,13 +464,18 @@ def build_actor_context(
             "auth_source": "",
         }
 
+    raw_profile_id = str(payload.get("profile_id") or "").strip()
+    try:
+        UUID(raw_profile_id)
+    except (TypeError, ValueError, AttributeError):
+        raw_profile_id = ""
     return {
         "role": str(payload.get("role") or "").strip().lower(),
         "name": str(payload.get("full_name") or payload.get("username") or payload.get("email") or "").strip(),
         "email": str(payload.get("email") or "").strip(),
         "username": str(payload.get("username") or "").strip(),
         "user_id": str(payload.get("sub") or "").strip(),
-        "profile_id": str(payload.get("profile_id") or payload.get("sub") or "").strip(),
+        "profile_id": raw_profile_id,
         "school_id": str(
             payload.get("school_id")
             or payload.get("school_uuid")

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str | None = None
     supabase_service_role_key: str | None = None
     use_supabase_native_services: bool | None = None
+    live_classes_enabled: bool = True
 
     # Security
     jwt_secret: str | None = None
@@ -119,7 +120,7 @@ class Settings(BaseSettings):
         "Content-Length",
     ]
 
-    @field_validator("debug", "reload", "use_supabase_native_services", mode="before")
+    @field_validator("debug", "reload", "use_supabase_native_services", "live_classes_enabled", mode="before")
     @classmethod
     def parse_bool_flags(cls, value):
         return _coerce_env_bool(value)

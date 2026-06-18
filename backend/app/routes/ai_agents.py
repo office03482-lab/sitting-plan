@@ -23,6 +23,7 @@ from app.services.supabase_ai_agents import (
 from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/ai-agents", tags=["AI Academic Operating System"])
+alias_router = APIRouter(prefix="/api/ai", tags=["AI Academic Operating System"])
 
 
 def _role_key(user: User) -> str:
@@ -65,6 +66,7 @@ def require_ai_agents_approve_user(
 
 
 @router.get("/dashboard", response_model=AiAgentDashboardResponse)
+@alias_router.get("/dashboard", response_model=AiAgentDashboardResponse, include_in_schema=False)
 async def api_get_ai_agents_dashboard(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -93,6 +95,7 @@ async def api_run_ai_agents(
 
 
 @router.get("/recommendations", response_model=list[AiAgentRecommendationResponse])
+@alias_router.get("/recommendations", response_model=list[AiAgentRecommendationResponse], include_in_schema=False)
 async def api_list_ai_agent_recommendations(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),

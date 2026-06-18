@@ -14,6 +14,8 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 ANALYTICS_CACHE_TTL_SECONDS = 60
 _ANALYTICS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SCHOOL_RANKING_CACHE_TTL_SECONDS = 300
+_SCHOOL_RANKING_CACHE: dict[str, tuple[float, list[tuple[str, float]]]] = {}
 
 
 def _client():
@@ -24,8 +26,12 @@ def _public_table(name: str):
     return _client().table(name)
 
 
-def _schema_table(schema: str, name: str):
-    return _client().schema(schema).table(name)
+def _online_test_table(name: str):
+    return _public_table(f"online_test_{name}")
+
+
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
 
 
 def _normalize(value: Any) -> str:
@@ -106,7 +112,7 @@ def _log_audit_entry(
 
 def _load_tests(*, school_id: str | None = None, test_ids: list[str] | None = None, batch_id: str | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "tests")
+        _online_test_table("tests")
         .select("id,school_id,title,subject_id,batch_id,created_by_profile_id,status,total_marks,starts_at,ends_at,created_at,metadata")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -122,7 +128,7 @@ def _load_tests(*, school_id: str | None = None, test_ids: list[str] | None = No
 
 def _load_results(*, school_id: str | None = None, test_id: str | None = None, student_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "test_results")
+        _online_test_table("test_results")
         .select("id,school_id,attempt_id,test_id,student_id,total_questions,attempted_questions,correct_answers,incorrect_answers,unanswered_questions,score_obtained,max_score,percentage,rank_in_batch,rank_in_school,published_at,created_at")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -138,7 +144,7 @@ def _load_results(*, school_id: str | None = None, test_id: str | None = None, s
 
 def _load_attempts(*, school_id: str | None = None, test_id: str | None = None, attempt_ids: list[str] | None = None, student_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "test_attempts")
+        _online_test_table("test_attempts")
         .select("id,school_id,test_id,student_id,status,time_spent_seconds,answered_questions_snapshot,started_at,submitted_at,created_at")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -156,7 +162,7 @@ def _load_attempts(*, school_id: str | None = None, test_id: str | None = None, 
 
 def _load_responses(*, school_id: str | None = None, attempt_ids: list[str] | None = None, test_id: str | None = None, student_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "test_responses")
+        _online_test_table("test_responses")
         .select("id,school_id,attempt_id,test_id,question_id,student_id,is_correct,marks_awarded,response_payload,created_at")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -174,7 +180,7 @@ def _load_responses(*, school_id: str | None = None, attempt_ids: list[str] | No
 
 def _load_questions(*, school_id: str | None = None, test_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "test_questions")
+        _online_test_table("test_questions")
         .select("id,school_id,test_id,section_id,prompt_text,difficulty_level,marks,metadata")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -188,7 +194,7 @@ def _load_questions(*, school_id: str | None = None, test_ids: list[str] | None 
 
 def _load_sections(*, school_id: str | None = None, section_ids: list[str] | None = None, test_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table("online_tests", "test_sections")
+        _online_test_table("test_sections")
         .select("id,school_id,test_id,title,metadata")
         .is_("deleted_at", "null")
         .eq("is_active", True)
@@ -281,7 +287,7 @@ def _get_student(school_id: str, student_id: str) -> dict[str, Any]:
 
 def _get_test(school_id: str, test_id: str) -> dict[str, Any]:
     rows = list(
-        _schema_table("online_tests", "tests")
+        _online_test_table("tests")
         .select("id,school_id,title,subject_id,batch_id,created_by_profile_id,status,total_marks,starts_at,ends_at,created_at,metadata")
         .eq("school_id", school_id)
         .eq("id", test_id)
@@ -380,7 +386,7 @@ def _replace_topic_performance_rows(
     topic_rows: list[dict[str, Any]],
     context: dict[str, Any],
 ) -> None:
-    scoped_query = _schema_table("analytics", "topic_performance").update(
+    scoped_query = _analytics_table("topic_performance").update(
         {"is_active": False, "deleted_at": _utc_now_iso()}
     ).eq("owner_type", owner_type).eq("owner_id", owner_id).is_("deleted_at", "null")
     if school_id:
@@ -419,7 +425,7 @@ def _replace_topic_performance_rows(
                 "is_active": True,
             }
         )
-    _schema_table("analytics", "topic_performance").insert(payload).execute()
+    _analytics_table("topic_performance").insert(payload).execute()
 
 
 def _upsert_student_performance_snapshot(
@@ -428,7 +434,7 @@ def _upsert_student_performance_snapshot(
     payload: dict[str, Any],
 ) -> None:
     rows = list(
-        _schema_table("analytics", "student_performance")
+        _analytics_table("student_performance")
         .select("id")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -452,16 +458,16 @@ def _upsert_student_performance_snapshot(
         "deleted_at": None,
     }
     if rows:
-        _schema_table("analytics", "student_performance").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
+        _analytics_table("student_performance").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
     else:
         data["school_id"] = school_id
         data["student_id"] = student_id
-        _schema_table("analytics", "student_performance").insert(data).execute()
+        _analytics_table("student_performance").insert(data).execute()
 
 
 def _upsert_test_analytics_snapshot(school_id: str, test_id: str, payload: dict[str, Any]) -> None:
     rows = list(
-        _schema_table("analytics", "test_analytics")
+        _analytics_table("test_analytics")
         .select("id")
         .eq("school_id", school_id)
         .eq("test_id", test_id)
@@ -482,16 +488,16 @@ def _upsert_test_analytics_snapshot(school_id: str, test_id: str, payload: dict[
         "deleted_at": None,
     }
     if rows:
-        _schema_table("analytics", "test_analytics").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
+        _analytics_table("test_analytics").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
     else:
         data["school_id"] = school_id
         data["test_id"] = test_id
-        _schema_table("analytics", "test_analytics").insert(data).execute()
+        _analytics_table("test_analytics").insert(data).execute()
 
 
 def _upsert_school_analytics_snapshot(scope_type: str, scope_id: str, school_id: str | None, payload: dict[str, Any]) -> None:
     query = (
-        _schema_table("analytics", "school_analytics")
+        _analytics_table("school_analytics")
         .select("id")
         .eq("scope_type", scope_type)
         .eq("scope_id", scope_id)
@@ -513,12 +519,12 @@ def _upsert_school_analytics_snapshot(scope_type: str, scope_id: str, school_id:
         "deleted_at": None,
     }
     if rows:
-        _schema_table("analytics", "school_analytics").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
+        _analytics_table("school_analytics").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
     else:
         data["scope_type"] = scope_type
         data["scope_id"] = scope_id
         data["school_id"] = school_id
-        _schema_table("analytics", "school_analytics").insert(data).execute()
+        _analytics_table("school_analytics").insert(data).execute()
 
 
 def _named_score_rows(
@@ -627,17 +633,22 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
     ]
     chapter_percentages.sort(key=lambda item: item["chapter_name"])
 
-    school_result_rows = _load_results(school_id=school_id)
-    student_scoreboard: dict[str, dict[str, float]] = defaultdict(lambda: {"score": 0.0, "max_score": 0.0})
-    for row in school_result_rows:
-        student_key = _normalize(row.get("student_id"))
-        student_scoreboard[student_key]["score"] += float(row.get("score_obtained") or 0)
-        student_scoreboard[student_key]["max_score"] += float(row.get("max_score") or 0)
-    ranking = [
-        (student_key, _safe_percentage(item["score"], item["max_score"]))
-        for student_key, item in student_scoreboard.items()
-    ]
-    ranking.sort(key=lambda item: item[1], reverse=True)
+    school_ranking_key = f"ranking:{school_id}"
+    cached_ranking = _SCHOOL_RANKING_CACHE.get(school_ranking_key)
+    if cached_ranking and time.time() - cached_ranking[0] < _SCHOOL_RANKING_CACHE_TTL_SECONDS:
+        ranking = cached_ranking[1]
+    else:
+        school_result_rows = _load_results(school_id=school_id)
+        student_scoreboard: dict[str, dict[str, float]] = defaultdict(lambda: {"score": 0.0, "max_score": 0.0})
+        for row in school_result_rows:
+            student_key = _normalize(row.get("student_id"))
+            student_scoreboard[student_key]["score"] += float(row.get("score_obtained") or 0)
+            student_scoreboard[student_key]["max_score"] += float(row.get("max_score") or 0)
+        ranking = sorted(
+            [(student_key, _safe_percentage(item["score"], item["max_score"])) for student_key, item in student_scoreboard.items()],
+            key=lambda item: item[1], reverse=True,
+        )
+        _SCHOOL_RANKING_CACHE[school_ranking_key] = (time.time(), ranking)
     rank = next((index for index, item in enumerate(ranking, start=1) if item[0] == student_id), None)
     below_count = len([item for item in ranking if item[1] < overall_percentage])
     percentile = round((below_count / len(ranking)) * 100, 2) if ranking else 0.0

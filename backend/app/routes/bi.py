@@ -66,6 +66,28 @@ async def api_bi_academic(
     return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
 
+@router.get("/attendance", response_model=AcademicBiResponse, include_in_schema=False)
+async def api_bi_attendance(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_bi_school_user),
+    period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
+):
+    del user
+    return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
+
+
+@router.get("/performance", response_model=AcademicBiResponse, include_in_schema=False)
+async def api_bi_performance(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_bi_school_user),
+    period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
+):
+    del user
+    return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
+
+
 @router.get("/finance", response_model=FinanceBiResponse)
 async def api_bi_finance(
     school_id: str = Depends(resolve_school_id_from_actor),

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_ai_tutor import (
+    _ai_table,
     _build_context_snapshot,
     _find_matching_assignments,
     _find_matching_lessons,
@@ -20,7 +21,6 @@ from app.services.supabase_ai_tutor import (
     _normalize_optional_uuid,
     _public_table,
     _resolve_student_context,
-    _schema_table,
 )
 from app.services.supabase_attendance import create_notification
 from app.services.supabase_online_tests import list_tests
@@ -283,7 +283,7 @@ def _persist_doubt_session(
     escalated_to_profile_id: str | None,
     metadata: dict[str, Any],
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "doubt_sessions").insert(
+    response = _ai_table("doubt_sessions").insert(
         {
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
@@ -323,7 +323,7 @@ def _persist_doubt_question(
     extracted_numericals: list[str],
     metadata: dict[str, Any],
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "doubt_questions").insert(
+    response = _ai_table("doubt_questions").insert(
         {
             "school_id": school_id,
             "session_id": _normalize_optional_uuid(session_id),
@@ -361,7 +361,7 @@ def _persist_doubt_solution(
     confidence_score: float,
     metadata: dict[str, Any],
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "doubt_solutions").insert(
+    response = _ai_table("doubt_solutions").insert(
         {
             "school_id": school_id,
             "session_id": _normalize_optional_uuid(session_id),
@@ -386,7 +386,7 @@ def _persist_doubt_solution(
 def _persist_doubt_recommendations(school_id: str, *, session_id: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     persisted: list[dict[str, Any]] = []
     for index, item in enumerate(rows, start=1):
-        response = _schema_table(AI_SCHEMA, "doubt_recommendations").insert(
+        response = _ai_table("doubt_recommendations").insert(
             {
                 "school_id": school_id,
                 "session_id": _normalize_optional_uuid(session_id),
@@ -415,7 +415,7 @@ def _history_rows(school_id: str, *, role_key: str, profile_id: str | None, user
         target_student_id=normalized_target_student_id,
     )
     query = (
-        _schema_table(AI_SCHEMA, "doubt_sessions")
+        _ai_table("doubt_sessions")
         .select("id,student_id,profile_id,input_type,source_language,detected_subject,detected_topic,confidence_score,escalation_status,teacher_resolution_notes,created_at")
         .eq("school_id", school_id)
         .is_("deleted_at", "null")
@@ -435,7 +435,7 @@ def _history_rows(school_id: str, *, role_key: str, profile_id: str | None, user
     solutions_by_session: dict[str, str | None] = {}
     if session_ids:
         solution_rows = list(
-            _schema_table(AI_SCHEMA, "doubt_solutions")
+            _ai_table("doubt_solutions")
             .select("session_id,final_answer")
             .eq("school_id", school_id)
             .in_("session_id", session_ids)
@@ -475,6 +475,34 @@ def _history_rows(school_id: str, *, role_key: str, profile_id: str | None, user
         }
         for row in sessions
     ]
+
+
+def get_doubt_solver_overview(
+    school_id: str,
+    *,
+    role_key: str,
+    profile_id: str | None,
+    user_email: str | None,
+    target_student_id: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    history = _history_rows(
+        school_id,
+        role_key=role_key,
+        profile_id=profile_id,
+        user_email=user_email,
+        target_student_id=target_student_id,
+        limit=limit,
+    )
+    pending_teacher_reviews = sum(1 for item in history if _normalize(item.get("escalation_status")) == "pending_teacher")
+    return {
+        "scope": "doubt_solver",
+        "school_id": school_id,
+        "total_history": len(history),
+        "pending_teacher_reviews": pending_teacher_reviews,
+        "recent_history": history,
+        "generated_at": _utc_now_iso(),
+    }
 
 
 def _solve_doubt(

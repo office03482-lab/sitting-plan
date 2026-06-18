@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time as _time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
@@ -12,8 +14,10 @@ from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_analytics import _get_student_by_profile_id
-from app.services.supabase_bi import refresh_school_warehouse
+from app.services.supabase_bi import _ensure_school_refresh
 from app.services.supabase_lms import _list_parent_linked_students
+
+logger = logging.getLogger("predictions.performance")
 
 WAREHOUSE_SCHEMA = "warehouse"
 ANALYTICS_SCHEMA = "analytics"
@@ -28,8 +32,16 @@ def _public_table(name: str):
     return _client().table(name)
 
 
+def _warehouse_table(name: str):
+    return _public_table(f"warehouse_{name}")
+
+
 def _schema_table(schema: str, name: str):
     return _client().schema(schema).table(name)
+
+
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
 
 
 def _normalize(value: Any) -> str:
@@ -106,7 +118,10 @@ def _month_key(value: Any) -> str:
 
 def _safe_list(schema: str | None, table: str, select: str = "*", **filters: Any) -> list[dict[str, Any]]:
     try:
-        query = (_schema_table(schema, table) if schema else _public_table(table)).select(select)
+        if schema == WAREHOUSE_SCHEMA:
+            query = _warehouse_table(table).select(select)
+        else:
+            query = (_schema_table(schema, table) if schema else _public_table(table)).select(select)
         for key, value in filters.items():
             if value is None:
                 continue
@@ -300,20 +315,23 @@ def _seed_model_registry(school_id: str) -> dict[str, dict[str, Any]]:
             "is_active": True,
         },
     ]
-    _upsert(ANALYTICS_SCHEMA, "model_registry", rows, on_conflict="school_id,model_key,version")
-    registry_rows = _safe_list(
-        ANALYTICS_SCHEMA,
-        "model_registry",
-        "id,school_id,model_key,model_name,model_scope,model_type,target_metric,version,status,confidence_notes,last_run_at,feature_sources,thresholds",
-        school_id=school_id,
-        is_active=True,
-    )
+    _analytics_table("model_registry").upsert(rows, on_conflict="school_id,model_key,version").execute()
+    registry_rows = [
+        dict(row) for row in list(
+            _analytics_table("model_registry")
+            .select("id,school_id,model_key,model_name,model_scope,model_type,target_metric,version,status,confidence_notes,last_run_at,feature_sources,thresholds")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .execute()
+            .data or []
+        )
+    ]
     return {str(row.get("model_key")): dict(row) for row in registry_rows if row.get("model_key")}
 
 
 def _load_students(school_id: str, student_ids: list[str] | None = None) -> list[dict[str, Any]]:
     query = (
-        _schema_table(WAREHOUSE_SCHEMA, "dim_student")
+        _warehouse_table("dim_student")
         .select("student_id,profile_id,full_name,class_name,section,batch_id,hostel_required")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -336,7 +354,7 @@ def _load_staff(school_id: str) -> list[dict[str, Any]]:
 def _load_fact_rows(school_id: str, table: str, select: str, *, days: int) -> list[dict[str, Any]]:
     start_date = (_today() - timedelta(days=max(days, 1) - 1)).isoformat()
     query = (
-        _schema_table(WAREHOUSE_SCHEMA, table)
+        _warehouse_table(table)
         .select(select)
         .eq("school_id", school_id)
         .gte("snapshot_date", start_date)
@@ -584,7 +602,8 @@ def get_student_predictions_dashboard(
     limit: int = 20,
     actor_profile_id: str | None = None,
 ) -> dict[str, Any]:
-    refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
+    _t0 = _time.time()
+    _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     registry = _seed_model_registry(school_id)
     scoped_ids = _resolve_student_scope(
         school_id,
@@ -646,8 +665,8 @@ def get_student_predictions_dashboard(
         prediction_rows.extend(student_prediction_rows)
         risk_rows.extend(student_risk_rows)
 
-    _upsert(ANALYTICS_SCHEMA, "predictions", prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date")
-    _upsert(ANALYTICS_SCHEMA, "risk_scores", risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type")
+    _analytics_table("predictions").upsert(prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date").execute()
+    _analytics_table("risk_scores").upsert(risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type").execute()
 
     early_warnings = [
         f"{item['student_name']} has {item['overall_risk_score']:.1f}% predicted academic risk with {item['overall_risk_level']} severity."
@@ -661,6 +680,8 @@ def get_student_predictions_dashboard(
         action="predictions.student.viewed",
         payload={"student_count": len(students_payload), "requested_student_id": requested_student_id},
     )
+    _elapsed = _time.time() - _t0
+    logger.info("PREDICTIONS student school=%s time=%.3fs", school_id, _elapsed)
     return {
         "scope": "student",
         "school_id": school_id,
@@ -677,7 +698,8 @@ def get_campus_predictions_dashboard(
     *,
     actor_profile_id: str | None = None,
 ) -> dict[str, Any]:
-    refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
+    _t0 = _time.time()
+    _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     registry = _seed_model_registry(school_id)
 
     student_facts = _load_fact_rows(school_id, "fact_students", "student_id,snapshot_date,hostel_required", days=365)
@@ -834,10 +856,12 @@ def get_campus_predictions_dashboard(
             }
         )
 
-    _upsert(ANALYTICS_SCHEMA, "predictions", prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date")
-    _upsert(ANALYTICS_SCHEMA, "risk_scores", risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type")
-    _upsert(ANALYTICS_SCHEMA, "forecasts", forecast_rows, on_conflict="school_id,scope_type,scope_key,forecast_type,period_key")
+    _analytics_table("predictions").upsert(prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date").execute()
+    _analytics_table("risk_scores").upsert(risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type").execute()
+    _analytics_table("forecasts").upsert(forecast_rows, on_conflict="school_id,scope_type,scope_key,forecast_type,period_key").execute()
     _log_audit_entry(school_id=school_id, profile_id=actor_profile_id, action="predictions.campus.viewed", payload={"forecast_count": len(forecast_rows)})
+    _elapsed = _time.time() - _t0
+    logger.info("PREDICTIONS campus school=%s time=%.3fs", school_id, _elapsed)
     return {
         "scope": "campus",
         "school_id": school_id,
@@ -856,7 +880,8 @@ def get_finance_predictions_dashboard(
     *,
     actor_profile_id: str | None = None,
 ) -> dict[str, Any]:
-    refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
+    _t0 = _time.time()
+    _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     registry = _seed_model_registry(school_id)
 
     finance_rows = _load_fact_rows(school_id, "fact_finance", "snapshot_date,metric_type,status,amount,quantity", days=365)
@@ -984,10 +1009,12 @@ def get_finance_predictions_dashboard(
             }
         )
 
-    _upsert(ANALYTICS_SCHEMA, "predictions", prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date")
-    _upsert(ANALYTICS_SCHEMA, "risk_scores", risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type")
-    _upsert(ANALYTICS_SCHEMA, "forecasts", forecast_rows, on_conflict="school_id,scope_type,scope_key,forecast_type,period_key")
+    _analytics_table("predictions").upsert(prediction_rows, on_conflict="school_id,prediction_type,subject_type,subject_key,predicted_for_date").execute()
+    _analytics_table("risk_scores").upsert(risk_rows, on_conflict="school_id,scope_type,scope_key,risk_type").execute()
+    _analytics_table("forecasts").upsert(forecast_rows, on_conflict="school_id,scope_type,scope_key,forecast_type,period_key").execute()
     _log_audit_entry(school_id=school_id, profile_id=actor_profile_id, action="predictions.finance.viewed", payload={"forecast_count": len(forecast_rows)})
+    _elapsed = _time.time() - _t0
+    logger.info("PREDICTIONS finance school=%s time=%.3fs", school_id, _elapsed)
     return {
         "scope": "finance",
         "school_id": school_id,

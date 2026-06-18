@@ -35,6 +35,10 @@ def _schema_table(schema: str, name: str):
     return _client().schema(schema).table(name)
 
 
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
+
+
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
@@ -182,7 +186,7 @@ def _load_recent_timetable_rows(school_id: str, student: dict[str, Any]) -> list
 def _load_study_plans(school_id: str, student_id: str, *, days: int = 30) -> list[dict[str, Any]]:
     start_date = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
     rows = list(
-        _schema_table(ANALYTICS_SCHEMA, "study_plans")
+        _analytics_table("study_plans")
         .select("scope,plan_date,completion_percentage,summary,generated_at")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -358,7 +362,7 @@ def _replace_parent_insights(
     insights: list[dict[str, Any]],
 ) -> None:
     (
-        _schema_table(ANALYTICS_SCHEMA, "parent_insights")
+        _analytics_table("parent_insights")
         .update({"is_active": False, "deleted_at": _utc_now_iso()})
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -386,7 +390,7 @@ def _replace_parent_insights(
                 "is_active": True,
             }
         )
-    _schema_table(ANALYTICS_SCHEMA, "parent_insights").insert(payload).execute()
+        _analytics_table("parent_insights").insert(payload).execute()
 
 
 def _upsert_student_risk_score(
@@ -397,7 +401,7 @@ def _upsert_student_risk_score(
     payload: dict[str, Any],
 ) -> None:
     rows = list(
-        _schema_table(ANALYTICS_SCHEMA, "student_risk_scores")
+        _analytics_table("student_risk_scores")
         .select("id")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -427,9 +431,9 @@ def _upsert_student_risk_score(
         "deleted_at": None,
     }
     if rows:
-        _schema_table(ANALYTICS_SCHEMA, "student_risk_scores").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
+        _analytics_table("student_risk_scores").update(data).eq("id", _normalize(rows[0].get("id"))).execute()
     else:
-        _schema_table(ANALYTICS_SCHEMA, "student_risk_scores").insert(
+        _analytics_table("student_risk_scores").insert(
             {"school_id": school_id, "student_id": student_id, **data}
         ).execute()
 
@@ -442,7 +446,7 @@ def _replace_parent_alerts(
     alerts: list[dict[str, Any]],
 ) -> None:
     (
-        _schema_table(ANALYTICS_SCHEMA, "parent_alerts")
+        _analytics_table("parent_alerts")
         .update({"is_active": False, "deleted_at": _utc_now_iso()})
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -472,7 +476,7 @@ def _replace_parent_alerts(
                 "is_active": True,
             }
         )
-    _schema_table(ANALYTICS_SCHEMA, "parent_alerts").insert(payload).execute()
+        _analytics_table("parent_alerts").insert(payload).execute()
 
 
 def _student_parent_payload(
@@ -824,7 +828,7 @@ def get_parent_alerts(school_id: str, *, profile_id: str | None, user_email: str
     children = [_student_parent_payload(school_id, student, parent_profile_id=profile_id) for student in linked_students]
     student_ids = [_normalize(child.get("student_id")) for child in children if _normalize(child.get("student_id"))]
     query = (
-        _schema_table(ANALYTICS_SCHEMA, "parent_alerts")
+        _analytics_table("parent_alerts")
         .select("*")
         .eq("school_id", school_id)
         .is_("deleted_at", "null")
@@ -867,7 +871,7 @@ def acknowledge_parent_alert(
 ) -> dict[str, Any]:
     del user_email
     rows = list(
-        _schema_table(ANALYTICS_SCHEMA, "parent_alerts")
+        _analytics_table("parent_alerts")
         .select("*")
         .eq("school_id", school_id)
         .eq("id", alert_id)
@@ -879,7 +883,7 @@ def acknowledge_parent_alert(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Parent alert not found")
-    _schema_table(ANALYTICS_SCHEMA, "parent_alerts").update(
+    _analytics_table("parent_alerts").update(
         {
             "status": "acknowledged",
             "acknowledged_at": _utc_now_iso(),

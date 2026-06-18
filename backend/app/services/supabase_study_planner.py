@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+import logging
+import threading
+import time as _time
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.config import settings
+
+logger = logging.getLogger("study_planner.performance")
+
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_analytics import (
     _get_student_by_profile_id,
-    get_batch_analytics,
     get_platform_analytics,
     get_school_analytics,
     get_student_analytics,
 )
-from app.services.supabase_lms import _list_parent_linked_students, get_progress_dashboard, list_assignments, list_courses
+from app.services.supabase_lms import _list_parent_linked_students, get_progress_dashboard, list_assignments
 from app.services.supabase_online_tests import list_results, list_tests
 
 MODULE_KEY = "study_planner"
@@ -29,6 +35,82 @@ SCHEDULING_SCHEMA = "scheduling"
 
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
+_plan_ttl: dict[str, tuple[float, dict[str, Any]]] = {}
+_LIVE_CLASSES_TABLE_AVAILABLE: bool | None = None
+_background_refresh_lock = threading.Lock()
+
+
+class _StageMetrics:
+    __slots__ = ("stages", "_current", "_t0", "_queries", "_rows")
+
+    def __init__(self) -> None:
+        self.stages: dict[str, dict[str, float]] = {}
+        self._current: str | None = None
+        self._t0: float = 0.0
+        self._queries: int = 0
+        self._rows: int = 0
+
+    def begin(self, name: str) -> None:
+        if self._current is not None:
+            self.end()
+        self._current = name
+        self._t0 = _time.time()
+
+    def end(self) -> None:
+        if self._current is None:
+            return
+        elapsed = (_time.time() - self._t0) * 1000
+        prev = self.stages.get(self._current, {"time_ms": 0.0, "queries": 0, "rows": 0})
+        prev["time_ms"] = round(prev["time_ms"] + elapsed, 1)
+        prev["queries"] += self._queries
+        prev["rows"] += self._rows
+        self.stages[self._current] = prev
+        logger.info("%s = %.0f ms (queries=%d rows=%d)", self._current, prev["time_ms"], self._queries, self._rows)
+        self._current = None
+        self._queries = 0
+        self._rows = 0
+
+    def count_query(self, rows: int = 0) -> None:
+        self._queries += 1
+        self._rows += rows
+
+    def flush_log(self) -> None:
+        for name, data in self.stages.items():
+            logger.info("STAGE %s time=%.0fms queries=%d rows=%d", name, data["time_ms"], data["queries"], data["rows"])
+
+    def largest(self) -> tuple[str, dict[str, float]]:
+        if not self.stages:
+            return ("none", {"time_ms": 0.0, "queries": 0, "rows": 0})
+        return max(self.stages.items(), key=lambda x: x[1]["time_ms"])
+
+
+def _plan_cache_key(school_id: str, student_id: str, scope: str) -> str:
+    return f"{school_id}:{student_id}:{scope}"
+
+
+def _get_cached_plan(school_id: str, student_id: str, scope: str, ttl_seconds: int = 21600) -> dict[str, Any] | None:
+    key = _plan_cache_key(school_id, student_id, scope)
+    entry = _plan_ttl.get(key)
+    if entry is None:
+        return None
+    cached_at, payload = entry
+    if _time.time() - cached_at < ttl_seconds:
+        return payload
+    return None
+
+
+def _get_cache_age(school_id: str, student_id: str, scope: str) -> float | None:
+    key = _plan_cache_key(school_id, student_id, scope)
+    entry = _plan_ttl.get(key)
+    if entry is None:
+        return None
+    return _time.time() - entry[0]
+
+
+def _set_cached_plan(school_id: str, student_id: str, scope: str, payload: dict[str, Any]) -> None:
+    key = _plan_cache_key(school_id, student_id, scope)
+    _plan_ttl[key] = (_time.time(), payload)
+
 
 def _client():
     return get_supabase_admin_client()
@@ -38,8 +120,16 @@ def _public_table(name: str):
     return _client().table(name)
 
 
+def _lms_table(name: str):
+    return _public_table(f"lms_{name}")
+
+
 def _schema_table(schema: str, name: str):
     return _client().schema(schema).table(name)
+
+
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
 
 
 def _normalize(value: Any) -> str:
@@ -98,6 +188,19 @@ def _safe_percentage(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
     return round((numerator / denominator) * 100, 2)
+
+
+def _live_classes_enabled() -> bool:
+    return bool(settings.live_classes_enabled)
+
+
+def _live_classes_available() -> bool:
+    return _live_classes_enabled() and _LIVE_CLASSES_TABLE_AVAILABLE is not False
+
+
+def _mark_live_classes_unavailable() -> None:
+    global _LIVE_CLASSES_TABLE_AVAILABLE
+    _LIVE_CLASSES_TABLE_AVAILABLE = False
 
 
 def _log_audit_entry(
@@ -164,24 +267,30 @@ def _load_student_attendance_rows(school_id: str, student_id: str, *, days: int 
 
 
 def _load_live_attendance_rows(school_id: str, student_id: str, *, days: int = 30) -> list[dict[str, Any]]:
+    if not _live_classes_available():
+        return []
     start_iso = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
-    rows = list(
-        _schema_table(ACADEMIC_SCHEMA, "live_class_attendance")
-        .select("session_id,join_timestamp,leave_timestamp,total_duration_seconds,attendance_percentage,attendance_status,metadata")
-        .eq("school_id", school_id)
-        .eq("student_id", student_id)
-        .is_("deleted_at", "null")
-        .gte("created_at", start_iso)
-        .execute()
-        .data
-        or []
-    )
+    try:
+        rows = list(
+            _schema_table(ACADEMIC_SCHEMA, "live_class_attendance")
+            .select("session_id,join_timestamp,leave_timestamp,total_duration_seconds,attendance_percentage,attendance_status,metadata")
+            .eq("school_id", school_id)
+            .eq("student_id", student_id)
+            .is_("deleted_at", "null")
+            .gte("created_at", start_iso)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        _mark_live_classes_unavailable()
+        return []
     return [dict(row) for row in rows]
 
 
 def _load_student_progress_rows(school_id: str, student_id: str) -> list[dict[str, Any]]:
     rows = list(
-        _schema_table(LMS_SCHEMA, "student_progress")
+        _lms_table("student_progress")
         .select("*")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -196,7 +305,7 @@ def _load_student_progress_rows(school_id: str, student_id: str) -> list[dict[st
 
 def _load_assignment_submissions(school_id: str, student_id: str) -> list[dict[str, Any]]:
     rows = list(
-        _schema_table(LMS_SCHEMA, "assignment_submissions")
+        _lms_table("assignment_submissions")
         .select("assignment_id,status,submitted_at,graded_at")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -226,21 +335,27 @@ def _load_timetable_rows(school_id: str, student: dict[str, Any], *, on_date: da
 
 
 def _load_recent_live_sessions(school_id: str, student: dict[str, Any]) -> list[dict[str, Any]]:
+    if not _live_classes_available():
+        return []
     timetable_ids = [_normalize(row.get("id")) for row in _load_timetable_rows(school_id, student)]
     if not timetable_ids:
         return []
-    rows = list(
-        _schema_table(ACADEMIC_SCHEMA, "live_class_sessions")
-        .select("*")
-        .eq("school_id", school_id)
-        .in_("timetable_entry_id", timetable_ids)
-        .is_("deleted_at", "null")
-        .order("session_date", desc=True)
-        .limit(12)
-        .execute()
-        .data
-        or []
-    )
+    try:
+        rows = list(
+            _schema_table(ACADEMIC_SCHEMA, "live_class_sessions")
+            .select("*")
+            .eq("school_id", school_id)
+            .in_("timetable_entry_id", timetable_ids)
+            .is_("deleted_at", "null")
+            .order("session_date", desc=True)
+            .limit(12)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        _mark_live_classes_unavailable()
+        return []
     return [dict(row) for row in rows]
 
 
@@ -354,7 +469,7 @@ def _persist_plan_snapshot(
     plan_payload: dict[str, Any],
 ) -> str:
     existing = list(
-        _schema_table(ANALYTICS_SCHEMA, "study_plans")
+        _analytics_table("study_plans")
         .select("id")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -385,15 +500,15 @@ def _persist_plan_snapshot(
     }
     if existing:
         plan_id = _normalize(existing[0].get("id"))
-        _schema_table(ANALYTICS_SCHEMA, "study_plans").update(row).eq("id", plan_id).execute()
+        _analytics_table("study_plans").update(row).eq("id", plan_id).execute()
     else:
-        response = _schema_table(ANALYTICS_SCHEMA, "study_plans").insert(row).execute()
+        response = _analytics_table("study_plans").insert(row).execute()
         rows = list(response.data or [])
         if not rows:
             raise HTTPException(status_code=500, detail="Failed to persist study plan snapshot")
         plan_id = _normalize(rows[0].get("id"))
 
-    _schema_table(ANALYTICS_SCHEMA, "study_tasks").update(
+    _analytics_table("study_tasks").update(
         {"is_active": False, "deleted_at": _utc_now_iso()}
     ).eq("plan_id", plan_id).is_("deleted_at", "null").execute()
 
@@ -422,7 +537,7 @@ def _persist_plan_snapshot(
             }
         )
     if task_payload:
-        _schema_table(ANALYTICS_SCHEMA, "study_tasks").insert(task_payload).execute()
+        _analytics_table("study_tasks").insert(task_payload).execute()
     return plan_id
 
 
@@ -436,7 +551,7 @@ def _replace_recommendations(
     items: list[dict[str, Any]],
 ) -> None:
     query = (
-        _schema_table(ANALYTICS_SCHEMA, "recommendations")
+        _analytics_table("recommendations")
         .update({"is_active": False, "deleted_at": _utc_now_iso()})
         .eq("school_id", school_id)
         .eq("role_key", role_key)
@@ -471,7 +586,7 @@ def _replace_recommendations(
                 "is_active": True,
             }
         )
-    _schema_table(ANALYTICS_SCHEMA, "recommendations").insert(payload).execute()
+    _analytics_table("recommendations").insert(payload).execute()
 
 
 def _build_student_plan_payload(
@@ -481,19 +596,38 @@ def _build_student_plan_payload(
     on_date: date,
     scope: str,
     actor_profile_id: str | None = None,
+    metrics: _StageMetrics | None = None,
 ) -> dict[str, Any]:
+    _t0 = _time.time()
     student_id = _normalize(student.get("id"))
+    cached = _get_cached_plan(school_id, student_id, scope)
+    if cached is not None:
+        return cached
+    if metrics is None:
+        metrics = _StageMetrics()
+
+    metrics.begin("PROFILE_LOAD")
     analytics = get_student_analytics(school_id, student_id, actor_profile_id=actor_profile_id)
+    metrics.count_query(rows=len(list(analytics.get("subject_percentages") or [])) + len(list(analytics.get("chapter_percentages") or [])))
+
+    metrics.begin("LMS_PROGRESS")
     progress_dashboard = get_progress_dashboard(school_id, student=student)
+    progress_rows = _load_student_progress_rows(school_id, student_id)
+    submission_rows = _load_assignment_submissions(school_id, student_id)
     assignments = list_assignments(school_id, student=student)
+    metrics.count_query(rows=len(progress_rows) + len(submission_rows) + len(assignments))
+
+    metrics.begin("ONLINE_TESTS")
     test_results = list_results(school_id, student_id=student_id, limit=20)
     available_tests = list_tests(school_id, student_batch_id=_normalize(student.get("batch_id")) or None, limit=8)
-    progress_rows = _load_student_progress_rows(school_id, student_id)
+    metrics.count_query(rows=len(test_results) + len(available_tests))
+
+    metrics.begin("ATTENDANCE")
     live_attendance_rows = _load_live_attendance_rows(school_id, student_id)
     attendance_rows = _load_student_attendance_rows(school_id, student_id)
-    submission_rows = _load_assignment_submissions(school_id, student_id)
     timetable_rows = _load_timetable_rows(school_id, student, on_date=on_date)
     recent_live_sessions = _load_recent_live_sessions(school_id, student)
+    metrics.count_query(rows=len(live_attendance_rows) + len(attendance_rows) + len(timetable_rows) + len(recent_live_sessions))
 
     weak_topics = list(analytics.get("weak_topics") or [])[:3]
     strong_topics = list(analytics.get("strong_topics") or [])[:3]
@@ -522,6 +656,7 @@ def _build_student_plan_payload(
         and any(_normalize(row.get("session_id")) == _normalize(session.get("id")) and _safe_float(row.get("attendance_percentage")) < 75 for row in live_attendance_rows)
     ]
 
+    metrics.begin("TASK_GENERATION")
     tasks: list[dict[str, Any]] = []
 
     for topic in weak_topics[:2]:
@@ -621,6 +756,7 @@ def _build_student_plan_payload(
     tasks = tasks[:5]
     total_estimated_minutes = sum(_safe_int(task.get("estimated_minutes")) for task in tasks)
 
+    metrics.begin("RISK_SCORE")
     attendance_present_days = len([row for row in attendance_rows if _normalize(row.get("status")).lower() == "present"])
     attendance_percentage = _safe_percentage(attendance_present_days, max(len(attendance_rows), 1))
     active_dates = _study_active_dates(progress_rows, test_results, live_attendance_rows, submission_rows)
@@ -633,6 +769,7 @@ def _build_student_plan_payload(
     level = _achievement_level(streak_count, completion_percentage)
     risk = _risk_level(attendance_percentage, completion_percentage, weak_topics)
 
+    metrics.begin("GOAL_GENERATION")
     milestones = [
         f"{len(tasks)} focused tasks generated for {_day_name(on_date).title()}",
         f"Current level: {level}",
@@ -643,6 +780,7 @@ def _build_student_plan_payload(
         "board_exams" if "board" in " ".join(weak_subjects).lower() else "custom_school_exams"
     )
 
+    metrics.begin("RECOMMENDATIONS")
     summary = {
         "student_id": student_id,
         "student_name": _normalize(student.get("full_name")) or "Student",
@@ -661,6 +799,7 @@ def _build_student_plan_payload(
         "expected_study_time_label": f"{total_estimated_minutes // 60}h {total_estimated_minutes % 60}m" if total_estimated_minutes >= 60 else f"{total_estimated_minutes}m",
     }
 
+    metrics.begin("STUDY_PLAN")
     payload = {
         "role": "student",
         "scope": scope,
@@ -680,12 +819,22 @@ def _build_student_plan_payload(
         "metadata": {
             "attendance_rows": len(attendance_rows),
             "live_attendance_rows": len(live_attendance_rows),
+            "live_classes_enabled": _live_classes_enabled(),
+            "live_classes_available": _live_classes_available(),
             "results_count": len(test_results),
             "available_tests": len(available_tests),
             "timetable_today_count": len(timetable_rows),
         },
         "generated_at": _utc_now_iso(),
     }
+    _set_cached_plan(school_id, student_id, scope, payload)
+    metrics.end()
+    largest_stage, largest_data = metrics.largest()
+    logger.info(
+        "BUILD_PLAN scope=%s student=%s time=%.3fs largest=%s largest_ms=%.0f queries=%d rows=%d",
+        scope, student_id, _time.time() - _t0,
+        largest_stage, largest_data["time_ms"], largest_data["queries"], largest_data["rows"],
+    )
     return payload
 
 
@@ -735,8 +884,14 @@ def _week_payload_from_today(today_payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _teacher_risk_dashboard(school_id: str, *, actor_profile_id: str | None = None) -> dict[str, Any]:
+    _t0 = _time.time()
+    teacher_cache_key = f"teacher_dash:{school_id}"
+    cached_entry = _plan_ttl.get(teacher_cache_key)
+    if cached_entry is not None and _time.time() - cached_entry[0] < 21600:
+        return cached_entry[1]
     students = _list_school_students(school_id)
-    student_payloads = [_build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=actor_profile_id) for student in students[:50]]
+    logger.warning("SCHOOL_WIDE_PROCESSING _teacher_risk_dashboard school=%s total_students=%d", school_id, len(students))
+    student_payloads = [_build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=actor_profile_id) for student in students[:20]]
     ranked = sorted(
         student_payloads,
         key=lambda item: (
@@ -789,16 +944,26 @@ def _teacher_risk_dashboard(school_id: str, *, actor_profile_id: str | None = No
         recommendation_scope="teacher",
         items=recommendation_items,
     )
-    return {
+    _elapsed = _time.time() - _t0
+    result = {
         "role": "teacher",
         "at_risk_students": at_risk_students,
         "low_engagement_students": low_engagement_students,
         "weak_topic_clusters": weak_topic_clusters,
         "generated_at": _utc_now_iso(),
     }
+    _plan_ttl[teacher_cache_key] = (_time.time(), result)
+    logger.info("TEACHER_DASHBOARD school=%s students=%d time=%.3fs", school_id, len(student_payloads), _elapsed)
+    return result
 
 
 def _parent_dashboard(school_id: str, linked_students: list[dict[str, Any]], *, actor_profile_id: str | None = None) -> dict[str, Any]:
+    _t0 = _time.time()
+    parent_student_ids = sorted([_normalize(s.get("id")) for s in linked_students if s.get("id")])
+    parent_cache_key = f"parent_dash:{school_id}:{','.join(parent_student_ids)}"
+    cached_entry = _plan_ttl.get(parent_cache_key)
+    if cached_entry is not None and _time.time() - cached_entry[0] < 21600:
+        return cached_entry[1]
     plans = [_build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=actor_profile_id) for student in linked_students]
     child_summaries = []
     for item in plans:
@@ -833,12 +998,29 @@ def _parent_dashboard(school_id: str, linked_students: list[dict[str, Any]], *, 
         recommendation_scope="parent",
         items=recommendation_items,
     )
-    return {
+    _elapsed = _time.time() - _t0
+    result = {
         "role": "parent",
         "children": child_summaries,
         "plans": plans,
         "generated_at": _utc_now_iso(),
     }
+    _plan_ttl[parent_cache_key] = (_time.time(), result)
+    logger.info("PARENT_DASHBOARD school=%s children=%d time=%.3fs", school_id, len(linked_students), _elapsed)
+    return result
+
+
+def _background_refresh_plan(school_id: str, student_id: str, scope: str, student: dict[str, Any], actor_profile_id: str | None) -> None:
+    """Rebuild plan in background and update cache."""
+    if not _background_refresh_lock.acquire(blocking=False):
+        return
+    try:
+        age = _get_cache_age(school_id, student_id, scope)
+        if age is not None and age < 1800:
+            return
+        _build_student_plan_payload(school_id, student, on_date=_today_local(), scope=scope, actor_profile_id=actor_profile_id)
+    finally:
+        _background_refresh_lock.release()
 
 
 def get_today_planner(
@@ -848,39 +1030,59 @@ def get_today_planner(
     profile_id: str | None,
     user_email: str | None = None,
 ) -> dict[str, Any]:
+    _t0 = _time.time()
     normalized_role = _normalize(role_key).lower()
     if normalized_role == "student":
         if not profile_id:
             raise HTTPException(status_code=403, detail="Student profile context is missing")
         student = _get_student_by_profile_id(school_id, profile_id)
-        payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
-        _persist_plan_snapshot(school_id, _normalize(student.get("id")), profile_id, "today", _today_local(), payload)
-        _replace_recommendations(
-            school_id,
-            role_key="student",
-            profile_id=profile_id,
-            student_id=_normalize(student.get("id")),
-            recommendation_scope="student",
-            items=[
-                {
-                    "recommendation_type": task.get("task_type"),
-                    "title": task.get("title"),
-                    "summary": task.get("description"),
-                    "payload": task,
-                    "score": 100 - (_safe_int(task.get("priority")) * 10),
-                    "metadata": {"group": "today_plan"},
-                }
-                for task in list(payload.get("tasks") or [])[:5]
-            ],
-        )
-        _log_audit_entry(school_id=school_id, profile_id=profile_id, action="study_planner.today.generated", payload={"student_id": student.get("id")})
+        student_id = _normalize(student.get("id"))
+        cached = _get_cached_plan(school_id, student_id, "today")
+        if cached is None:
+            payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
+            _persist_plan_snapshot(school_id, student_id, profile_id, "today", _today_local(), payload)
+            _replace_recommendations(
+                school_id,
+                role_key="student",
+                profile_id=profile_id,
+                student_id=student_id,
+                recommendation_scope="student",
+                items=[
+                    {
+                        "recommendation_type": task.get("task_type"),
+                        "title": task.get("title"),
+                        "summary": task.get("description"),
+                        "payload": task,
+                        "score": 100 - (_safe_int(task.get("priority")) * 10),
+                        "metadata": {"group": "today_plan"},
+                    }
+                    for task in list(payload.get("tasks") or [])[:5]
+                ],
+            )
+            _log_audit_entry(school_id=school_id, profile_id=profile_id, action="study_planner.today.generated", payload={"student_id": student_id})
+        else:
+            payload = cached
+            threading.Thread(
+                target=_background_refresh_plan,
+                args=(school_id, student_id, "today", student, profile_id),
+                daemon=True,
+            ).start()
+        _elapsed = _time.time() - _t0
+        logger.info("TODAY role=%s school=%s time=%.3fs cached=%s", normalized_role, school_id, _elapsed, cached is not None)
         return payload
     if normalized_role == "parent":
         linked_students = _list_parent_linked_students(school_id, profile_id, user_email)
-        return _parent_dashboard(school_id, linked_students, actor_profile_id=profile_id)
+        logger.warning("SCHOOL_WIDE_PROCESSING role=parent students=%d school=%s", len(linked_students), school_id)
+        result = _parent_dashboard(school_id, linked_students, actor_profile_id=profile_id)
+        _elapsed = _time.time() - _t0
+        logger.info("TODAY role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
+        return result
     if normalized_role in {"teacher", "school_admin", "platform_admin", "admin"}:
+        logger.warning("SCHOOL_WIDE_PROCESSING role=%s school=%s", normalized_role, school_id)
         dashboard = _teacher_risk_dashboard(school_id, actor_profile_id=profile_id)
         _log_audit_entry(school_id=school_id, profile_id=profile_id, action="study_planner.teacher_today.generated", payload={"role": normalized_role})
+        _elapsed = _time.time() - _t0
+        logger.info("TODAY role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
         return dashboard
     raise HTTPException(status_code=403, detail="Unsupported role for study planner")
 
@@ -892,51 +1094,69 @@ def get_week_planner(
     profile_id: str | None,
     user_email: str | None = None,
 ) -> dict[str, Any]:
+    _t0 = _time.time()
     normalized_role = _normalize(role_key).lower()
     if normalized_role == "student":
         student = _get_student_by_profile_id(school_id, profile_id or "")
-        today_payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
-        week_payload = _week_payload_from_today(today_payload)
-        tomorrow_payload = dict(week_payload.get("tomorrow_plan") or {})
-        _persist_plan_snapshot(school_id, _normalize(student.get("id")), profile_id, "today", _today_local(), today_payload)
-        _persist_plan_snapshot(school_id, _normalize(student.get("id")), profile_id, "tomorrow", _today_local() + timedelta(days=1), tomorrow_payload)
-        _persist_plan_snapshot(
-            school_id,
-            _normalize(student.get("id")),
-            profile_id,
-            "week",
-            _today_local(),
-            {
-                **today_payload,
-                "scope": "week",
-                "tasks": list(today_payload.get("tasks") or []),
-                "summary": _normalize_json_object(week_payload.get("weekly_plan")),
-                "total_estimated_minutes": _safe_int(today_payload.get("total_estimated_minutes")) * 5,
-            },
-        )
-        _persist_plan_snapshot(
-            school_id,
-            _normalize(student.get("id")),
-            profile_id,
-            "month",
-            _today_local(),
-            {
-                **today_payload,
-                "scope": "month",
-                "tasks": list(today_payload.get("tasks") or []),
-                "summary": _normalize_json_object(week_payload.get("monthly_plan")),
-                "total_estimated_minutes": _safe_int(today_payload.get("total_estimated_minutes")) * 20,
-            },
-        )
+        student_id = _normalize(student.get("id"))
+        cached = _get_cached_plan(school_id, student_id, "today")
+        if cached is None:
+            today_payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
+            week_payload = _week_payload_from_today(today_payload)
+            tomorrow_payload = dict(week_payload.get("tomorrow_plan") or {})
+            _persist_plan_snapshot(school_id, student_id, profile_id, "today", _today_local(), today_payload)
+            _persist_plan_snapshot(school_id, student_id, profile_id, "tomorrow", _today_local() + timedelta(days=1), tomorrow_payload)
+            _persist_plan_snapshot(
+                school_id,
+                student_id,
+                profile_id,
+                "week",
+                _today_local(),
+                {
+                    **today_payload,
+                    "scope": "week",
+                    "tasks": list(today_payload.get("tasks") or []),
+                    "summary": _normalize_json_object(week_payload.get("weekly_plan")),
+                    "total_estimated_minutes": _safe_int(today_payload.get("total_estimated_minutes")) * 5,
+                },
+            )
+            _persist_plan_snapshot(
+                school_id,
+                student_id,
+                profile_id,
+                "month",
+                _today_local(),
+                {
+                    **today_payload,
+                    "scope": "month",
+                    "tasks": list(today_payload.get("tasks") or []),
+                    "summary": _normalize_json_object(week_payload.get("monthly_plan")),
+                    "total_estimated_minutes": _safe_int(today_payload.get("total_estimated_minutes")) * 20,
+                },
+            )
+        else:
+            today_payload = cached
+            week_payload = _week_payload_from_today(today_payload)
+            threading.Thread(
+                target=_background_refresh_plan,
+                args=(school_id, student_id, "today", student, profile_id),
+                daemon=True,
+            ).start()
+        _elapsed = _time.time() - _t0
+        logger.info("WEEK role=%s school=%s time=%.3fs cached=%s", normalized_role, school_id, _elapsed, cached is not None)
         return week_payload
     if normalized_role == "parent":
         linked_students = _list_parent_linked_students(school_id, profile_id, user_email)
+        logger.warning("SCHOOL_WIDE_PROCESSING role=parent students=%d school=%s", len(linked_students), school_id)
         child_payloads = []
         for student in linked_students:
             today_payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
             child_payloads.append(_week_payload_from_today(today_payload))
+        _elapsed = _time.time() - _t0
+        logger.info("WEEK role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
         return {"role": "parent", "children": child_payloads, "generated_at": _utc_now_iso()}
     if normalized_role in {"teacher", "school_admin", "platform_admin", "admin"}:
+        logger.warning("SCHOOL_WIDE_PROCESSING role=%s school=%s", normalized_role, school_id)
         teacher_payload = _teacher_risk_dashboard(school_id, actor_profile_id=profile_id)
         teacher_payload["weekly_plan"] = {
             "cluster_focus": [item.get("topic_name") for item in list(teacher_payload.get("weak_topic_clusters") or [])[:3]],
@@ -946,6 +1166,8 @@ def get_week_planner(
             "school_snapshot": get_school_analytics(school_id, actor_profile_id=profile_id),
             "platform_snapshot": get_platform_analytics(actor_profile_id=profile_id) if normalized_role == "platform_admin" else None,
         }
+        _elapsed = _time.time() - _t0
+        logger.info("WEEK role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
         return teacher_payload
     raise HTTPException(status_code=403, detail="Unsupported role for study planner")
 
@@ -957,28 +1179,51 @@ def get_study_recommendations(
     profile_id: str | None,
     user_email: str | None = None,
 ) -> dict[str, Any]:
+    _t0 = _time.time()
     normalized_role = _normalize(role_key).lower()
     if normalized_role == "student":
         student = _get_student_by_profile_id(school_id, profile_id or "")
-        today_payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
-        items = [
-            {
-                "recommendation_type": task.get("task_type"),
-                "title": task.get("title"),
-                "summary": task.get("description"),
-                "score": 100 - (_safe_int(task.get("priority")) * 10),
-                "payload": task,
-            }
-            for task in list(today_payload.get("tasks") or [])
-        ]
-        _replace_recommendations(
-            school_id,
-            role_key="student",
-            profile_id=profile_id,
-            student_id=_normalize(student.get("id")),
-            recommendation_scope="student",
-            items=items,
-        )
+        student_id = _normalize(student.get("id"))
+        cached = _get_cached_plan(school_id, student_id, "today")
+        if cached is None:
+            today_payload = _build_student_plan_payload(school_id, student, on_date=_today_local(), scope="today", actor_profile_id=profile_id)
+            items = [
+                {
+                    "recommendation_type": task.get("task_type"),
+                    "title": task.get("title"),
+                    "summary": task.get("description"),
+                    "score": 100 - (_safe_int(task.get("priority")) * 10),
+                    "payload": task,
+                }
+                for task in list(today_payload.get("tasks") or [])
+            ]
+            _replace_recommendations(
+                school_id,
+                role_key="student",
+                profile_id=profile_id,
+                student_id=student_id,
+                recommendation_scope="student",
+                items=items,
+            )
+        else:
+            today_payload = cached
+            items = [
+                {
+                    "recommendation_type": task.get("task_type"),
+                    "title": task.get("title"),
+                    "summary": task.get("description"),
+                    "score": 100 - (_safe_int(task.get("priority")) * 10),
+                    "payload": task,
+                }
+                for task in list(today_payload.get("tasks") or [])
+            ]
+            threading.Thread(
+                target=_background_refresh_plan,
+                args=(school_id, student_id, "today", student, profile_id),
+                daemon=True,
+            ).start()
+        _elapsed = _time.time() - _t0
+        logger.info("RECOMMENDATIONS role=%s school=%s time=%.3fs cached=%s", normalized_role, school_id, _elapsed, cached is not None)
         return {
             "role": "student",
             "weak_topics": list(_normalize_json_object(today_payload.get("summary")).get("weak_topics") or []),
@@ -988,13 +1233,21 @@ def get_study_recommendations(
             "generated_at": _utc_now_iso(),
         }
     if normalized_role == "parent":
-        return _parent_dashboard(school_id, _list_parent_linked_students(school_id, profile_id, user_email), actor_profile_id=profile_id)
+        linked_students = _list_parent_linked_students(school_id, profile_id, user_email)
+        logger.warning("SCHOOL_WIDE_PROCESSING role=parent students=%d school=%s", len(linked_students), school_id)
+        result = _parent_dashboard(school_id, linked_students, actor_profile_id=profile_id)
+        _elapsed = _time.time() - _t0
+        logger.info("RECOMMENDATIONS role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
+        return result
     if normalized_role in {"teacher", "school_admin", "platform_admin", "admin"}:
+        logger.warning("SCHOOL_WIDE_PROCESSING role=%s school=%s", normalized_role, school_id)
         dashboard = _teacher_risk_dashboard(school_id, actor_profile_id=profile_id)
         if normalized_role in {"school_admin", "platform_admin", "admin"}:
             dashboard["school_view"] = get_school_analytics(school_id, actor_profile_id=profile_id)
         if normalized_role == "platform_admin":
             dashboard["platform_view"] = get_platform_analytics(actor_profile_id=profile_id)
+        _elapsed = _time.time() - _t0
+        logger.info("RECOMMENDATIONS role=%s school=%s time=%.3fs", normalized_role, school_id, _elapsed)
         return dashboard
     raise HTTPException(status_code=403, detail="Unsupported role for study planner")
 
@@ -1043,7 +1296,7 @@ def create_learning_goal(
         "metadata": _normalize_json_object(payload.get("metadata")),
         "is_active": True,
     }
-    response = _schema_table(ANALYTICS_SCHEMA, "learning_goals").insert(insert_payload).execute()
+    response = _analytics_table("learning_goals").insert(insert_payload).execute()
     rows = list(response.data or [])
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to create learning goal")

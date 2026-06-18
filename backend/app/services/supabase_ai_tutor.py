@@ -34,6 +34,18 @@ def _public_table(name: str):
     return _client().table(name)
 
 
+def _ai_table(name: str):
+    return _public_table(f"ai_{name}")
+
+
+def _lms_table(name: str):
+    return _public_table(f"lms_{name}")
+
+
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
+
+
 def _schema_table(schema: str, name: str):
     return _client().schema(schema).table(name)
 
@@ -202,7 +214,7 @@ def _find_matching_recordings(school_id: str, topic: str) -> list[dict[str, Any]
 
 def _find_matching_recommendations(school_id: str, student_id: str | None, topic: str) -> list[dict[str, Any]]:
     query = (
-        _schema_table(ANALYTICS_SCHEMA, "recommendations")
+        _analytics_table("recommendations")
         .select("id,recommendation_type,title,summary,payload,score,generated_at")
         .eq("school_id", school_id)
         .is_("deleted_at", "null")
@@ -226,7 +238,7 @@ def _find_matching_study_plan(school_id: str, student_id: str | None, topic: str
     if not student_id:
         return []
     rows = list(
-        _schema_table(ANALYTICS_SCHEMA, "study_plans")
+        _analytics_table("study_plans")
         .select("id,scope,plan_date,summary,metadata,generated_at")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
@@ -553,7 +565,7 @@ def _persist_context(
     context_snapshot: dict[str, Any],
     metadata: dict[str, Any] | None = None,
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "ai_learning_context").insert(
+    response = _ai_table("ai_learning_context").insert(
         {
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
@@ -586,7 +598,7 @@ def _persist_recommendation(
     priority: int,
     payload: dict[str, Any],
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "ai_recommendations").insert(
+    response = _ai_table("ai_recommendations").insert(
         {
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
@@ -623,7 +635,7 @@ def _persist_conversation(
     response_payload: dict[str, Any],
     teacher_prompt: str | None,
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "ai_conversations").insert(
+    response = _ai_table("ai_conversations").insert(
         {
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
@@ -686,7 +698,7 @@ def list_ai_conversations(
         target_student_id=normalized_target_student_id,
     )
     query = (
-        _schema_table(AI_SCHEMA, "ai_conversations")
+        _ai_table("ai_conversations")
         .select("id,school_id,student_id,profile_id,role_key,mode,topic,user_prompt,response_text,teacher_prompt,attachments,metadata,created_at")
         .eq("school_id", school_id)
         .is_("deleted_at", "null")

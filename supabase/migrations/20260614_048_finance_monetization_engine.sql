@@ -283,7 +283,7 @@ for select to authenticated
 using (
   public.is_platform_admin()
   or public.is_school_admin(school_id)
-  or profile_id = public.current_profile_id()
+  or referrer_profile_id = public.current_profile_id()
   or referred_profile_id = public.current_profile_id()
 );
 

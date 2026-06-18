@@ -29,6 +29,10 @@ def _public_table(name: str):
     return _client().table(name)
 
 
+def _ai_table(name: str):
+    return _public_table(f"ai_{name}")
+
+
 def _schema_table(schema: str, name: str):
     return _client().schema(schema).table(name)
 
@@ -100,6 +104,9 @@ def _log_audit_entry(
 
 def _upsert(schema: str, table: str, rows: list[dict[str, Any]], *, on_conflict: str) -> None:
     if not rows:
+        return
+    if schema == AI_SCHEMA:
+        _ai_table(table).upsert(rows, on_conflict=on_conflict).execute()
         return
     _schema_table(schema, table).upsert(rows, on_conflict=on_conflict).execute()
 
@@ -226,7 +233,7 @@ def _seed_agent_registry(school_id: str) -> dict[str, dict[str, Any]]:
     ]
     _upsert(AI_SCHEMA, "agent_registry", rows, on_conflict="school_id,agent_key")
     registry_rows = (
-        _schema_table(AI_SCHEMA, "agent_registry")
+        _ai_table("agent_registry")
         .select("id,school_id,agent_key,agent_name,domain_key,description,target_roles,source_modules,approval_scope,orchestration_mode,metadata")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -247,7 +254,7 @@ def _create_job(
     summary: dict[str, Any] | None = None,
 ) -> str:
     response = (
-        _schema_table(AI_SCHEMA, "agent_jobs")
+        _ai_table("agent_jobs")
         .insert(
             {
                 "school_id": school_id,
@@ -274,8 +281,8 @@ def _create_job(
 
 def _deactivate_agent_records(school_id: str, agent_key: str) -> None:
     try:
-        _schema_table(AI_SCHEMA, "agent_recommendations").update({"is_active": False}).eq("school_id", school_id).eq("agent_key", agent_key).eq("is_active", True).execute()
-        _schema_table(AI_SCHEMA, "agent_actions").update({"is_active": False, "execution_status": "cancelled"}).eq("school_id", school_id).eq("agent_key", agent_key).eq("is_active", True).execute()
+        _ai_table("agent_recommendations").update({"is_active": False}).eq("school_id", school_id).eq("agent_key", agent_key).eq("is_active", True).execute()
+        _ai_table("agent_actions").update({"is_active": False, "execution_status": "cancelled"}).eq("school_id", school_id).eq("agent_key", agent_key).eq("is_active", True).execute()
     except Exception:
         return
 
@@ -582,7 +589,7 @@ def run_ai_agent_jobs(
         if not recommendation_rows:
             continue
         inserted_recommendations = (
-            _schema_table(AI_SCHEMA, "agent_recommendations")
+            _ai_table("agent_recommendations")
             .insert(recommendation_rows)
             .execute()
             .data
@@ -620,7 +627,7 @@ def run_ai_agent_jobs(
                     )
                 )
         if action_rows:
-            inserted_actions = _schema_table(AI_SCHEMA, "agent_actions").insert(action_rows).execute().data or []
+            inserted_actions = _ai_table("agent_actions").insert(action_rows).execute().data or []
             created_actions += len(inserted_actions)
 
     _log_audit_entry(
@@ -645,7 +652,7 @@ def list_ai_agent_recommendations(
     agent_key: str | None = None,
 ) -> list[dict[str, Any]]:
     query = (
-        _schema_table(AI_SCHEMA, "agent_recommendations")
+        _ai_table("agent_recommendations")
         .select("*")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -658,7 +665,7 @@ def list_ai_agent_recommendations(
         query = query.eq("agent_key", _normalize(agent_key))
     rows = [dict(row) for row in list(query.execute().data or [])]
     action_rows = (
-        _schema_table(AI_SCHEMA, "agent_actions")
+        _ai_table("agent_actions")
         .select("*")
         .eq("school_id", school_id)
         .eq("is_active", True)
@@ -695,7 +702,7 @@ def approve_ai_agent_recommendation(
     notes: str | None = None,
 ) -> dict[str, Any]:
     rows = (
-        _schema_table(AI_SCHEMA, "agent_recommendations")
+        _ai_table("agent_recommendations")
         .select("*")
         .eq("school_id", school_id)
         .eq("id", recommendation_id)
@@ -716,7 +723,7 @@ def approve_ai_agent_recommendation(
         raise HTTPException(status_code=400, detail="Decision must be approved or rejected")
 
     updated_recommendation = (
-        _schema_table(AI_SCHEMA, "agent_recommendations")
+        _ai_table("agent_recommendations")
         .update(
             {
                 "approval_status": normalized_decision,
@@ -737,7 +744,7 @@ def approve_ai_agent_recommendation(
         "notes": notes,
         "execution_status": "ready_for_manual_execution" if normalized_decision == "approved" else "cancelled",
     }
-    _schema_table(AI_SCHEMA, "agent_actions").update(action_updates).eq("recommendation_id", recommendation_id).execute()
+    _ai_table("agent_actions").update(action_updates).eq("recommendation_id", recommendation_id).execute()
     _log_audit_entry(
         school_id=school_id,
         profile_id=approver_profile_id,
@@ -746,7 +753,7 @@ def approve_ai_agent_recommendation(
     )
     updated = dict(updated_recommendation[0]) if updated_recommendation else recommendation
     updated["actions"] = (
-        _schema_table(AI_SCHEMA, "agent_actions")
+        _ai_table("agent_actions")
         .select("*")
         .eq("recommendation_id", recommendation_id)
         .eq("is_active", True)

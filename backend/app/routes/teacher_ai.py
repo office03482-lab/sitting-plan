@@ -23,9 +23,11 @@ from app.services.supabase_teacher_ai import (
     generate_lesson_plan,
     generate_question_paper,
     generate_report_comments,
+    get_teacher_ai_overview,
 )
 
 router = APIRouter(prefix="/api/teacher-ai", tags=["Teacher AI"])
+alias_router = APIRouter(prefix="/api/ai", tags=["Teacher AI"])
 
 
 def _role_key(user: User) -> str:
@@ -106,4 +108,17 @@ async def api_teacher_ai_report_comments(
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
+    )
+
+
+@alias_router.get("/teacher-assistant", include_in_schema=False)
+async def api_teacher_ai_overview(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_teacher_ai_user),
+):
+    del user
+    return get_teacher_ai_overview(
+        school_id,
+        profile_id=str(actor.get("profile_id") or "").strip() or None,
     )

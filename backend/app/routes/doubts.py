@@ -11,9 +11,10 @@ from app.models import User, UserRole
 from app.schemas import DoubtHistoryResponse, DoubtInputBase, DoubtSolverResponse
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
-from app.services.supabase_doubt_solver import list_doubt_history, solve_image_doubt, solve_pdf_doubt, solve_text_doubt
+from app.services.supabase_doubt_solver import get_doubt_solver_overview, list_doubt_history, solve_image_doubt, solve_pdf_doubt, solve_text_doubt
 
 router = APIRouter(prefix="/api/doubts", tags=["AI Doubt Solver"])
+alias_router = APIRouter(prefix="/api/ai", tags=["AI Doubt Solver"])
 
 
 def _role_key(user: User) -> str:
@@ -98,6 +99,24 @@ async def api_doubt_history(
     limit: int = Query(default=25, ge=1, le=100),
 ):
     return list_doubt_history(
+        school_id,
+        role_key=_role_key(user),
+        profile_id=str(actor.get("profile_id") or "").strip() or None,
+        user_email=getattr(user, "email", None),
+        target_student_id=target_student_id,
+        limit=limit,
+    )
+
+
+@alias_router.get("/doubt-solver", include_in_schema=False)
+async def api_doubt_solver_overview(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_doubt_solver_user),
+    target_student_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    return get_doubt_solver_overview(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,

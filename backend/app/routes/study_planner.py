@@ -17,6 +17,7 @@ from app.services.supabase_study_planner import (
 )
 
 router = APIRouter(prefix="/api/study-planner", tags=["Study Planner"])
+alias_router = APIRouter(prefix="/api/ai", tags=["Study Planner"])
 
 
 def _role_key(user: User) -> str:
@@ -59,6 +60,8 @@ def require_study_planner_goals_user(
 
 
 @router.get("/today")
+@router.get("/dashboard", include_in_schema=False)
+@alias_router.get("/dashboard", include_in_schema=False)
 async def api_get_today_planner(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -73,6 +76,7 @@ async def api_get_today_planner(
 
 
 @router.get("/week")
+@alias_router.get("/study-plan", include_in_schema=False)
 async def api_get_week_planner(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -87,6 +91,7 @@ async def api_get_week_planner(
 
 
 @router.get("/recommendations")
+@router.get("/tasks", include_in_schema=False)
 async def api_get_study_recommendations(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),

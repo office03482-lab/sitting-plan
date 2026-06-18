@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_ai_tutor import (
+    _ai_table,
     _find_matching_assignments,
     _find_matching_lessons,
     _find_matching_recordings,
@@ -17,7 +18,6 @@ from app.services.supabase_ai_tutor import (
     _normalize_json_object,
     _normalize_optional_uuid,
     _public_table,
-    _schema_table,
 )
 from app.services.supabase_analytics import get_batch_analytics, get_school_analytics, get_student_analytics, get_test_analytics
 from app.services.supabase_attendance import create_notification
@@ -128,7 +128,7 @@ def _question_bank(school_id: str, *, subject_id: str | None, batch_id: str | No
     if not test_ids:
         return []
     query = (
-        _schema_table("online_tests", "test_questions")
+        _public_table("online_test_test_questions")
         .select("id,test_id,section_id,prompt_text,question_type,difficulty_level,marks,metadata")
         .eq("school_id", school_id)
         .is_("deleted_at", "null")
@@ -200,7 +200,7 @@ def _persist_job(
     result_payload: dict[str, Any],
     metadata: dict[str, Any],
 ) -> str:
-    response = _schema_table(AI_SCHEMA, "teacher_assistant_jobs").insert(
+    response = _ai_table("teacher_assistant_jobs").insert(
         {
             "school_id": school_id,
             "profile_id": _normalize_optional_uuid(profile_id),
@@ -231,7 +231,7 @@ def _persist_generated_paper(
     subject_id: str | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    response = _schema_table(AI_SCHEMA, "generated_papers").insert(
+    response = _ai_table("generated_papers").insert(
         {
             "school_id": school_id,
             "job_id": _normalize_optional_uuid(job_id),
@@ -261,7 +261,7 @@ def _persist_generated_assignment(
     subject_id: str | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    response = _schema_table(AI_SCHEMA, "generated_assignments").insert(
+    response = _ai_table("generated_assignments").insert(
         {
             "school_id": school_id,
             "job_id": _normalize_optional_uuid(job_id),
@@ -291,7 +291,7 @@ def _persist_generated_report(
     payload: dict[str, Any],
     analytics_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    response = _schema_table(AI_SCHEMA, "generated_reports").insert(
+    response = _ai_table("generated_reports").insert(
         {
             "school_id": school_id,
             "job_id": _normalize_optional_uuid(job_id),
@@ -319,6 +319,37 @@ def _question_template(question_type: str, difficulty: str, marks: float, prompt
         "marks": marks,
         "prompt": prompt,
         "source": source,
+    }
+
+
+def get_teacher_ai_overview(
+    school_id: str,
+    *,
+    profile_id: str | None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    jobs = list(
+        _ai_table("teacher_assistant_jobs")
+        .select("id,profile_id,job_type,title,status,target_batch_id,target_subject_id,created_at")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .order("created_at", desc=True)
+        .limit(max(1, min(limit, 50)))
+        .execute()
+        .data
+        or []
+    )
+    if profile_id:
+        jobs = [dict(row) for row in jobs if _normalize(row.get("profile_id")) in {"", _normalize(profile_id)} or row.get("profile_id") is None]
+    else:
+        jobs = [dict(row) for row in jobs]
+    return {
+        "scope": "teacher_assistant",
+        "school_id": school_id,
+        "total_jobs": len(jobs),
+        "job_types": sorted({(_normalize(item.get("job_type")) or "general") for item in jobs}),
+        "recent_jobs": jobs,
+        "generated_at": _utc_now_iso(),
     }
 
 

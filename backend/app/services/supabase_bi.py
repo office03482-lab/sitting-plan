@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
@@ -10,6 +12,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
+
+logger = logging.getLogger("bi.performance")
 
 WAREHOUSE_SCHEMA = "warehouse"
 LMS_SCHEMA = "lms"
@@ -22,6 +26,11 @@ INVENTORY_SCHEMA = "inventory"
 REPORTING_SCHEMA = "reporting"
 MODULE_KEY = "bi"
 _WAREHOUSE_TTL = timedelta(hours=6)
+_EXPOSED_SCHEMAS = frozenset({"public", "inventory", "academic", "attendance", "exam", "finance", "hostel", "reporting", "scheduling", "workflow"})
+_school_last_refresh: dict[str, datetime] = {}
+_platform_last_refresh: datetime | None = None
+_bad_query_cache: set[tuple[str | None, str]] = set()
+_dim_date_refreshed_today: bool = False
 
 
 def _client():
@@ -30,6 +39,18 @@ def _client():
 
 def _public_table(name: str):
     return _client().table(name)
+
+
+def _warehouse_table(name: str):
+    return _public_table(f"warehouse_{name}")
+
+
+def _online_test_table(name: str):
+    return _public_table(f"online_test_{name}")
+
+
+def _lms_table(name: str):
+    return _public_table(f"lms_{name}")
 
 
 def _schema_table(schema: str, name: str):
@@ -70,33 +91,67 @@ def _iso_date(value: Any) -> str:
 
 
 def _safe_list(schema: str | None, table: str, select: str = "*", **filters: Any) -> list[dict[str, Any]]:
+    cache_key = (schema, table)
+    if cache_key in _bad_query_cache:
+        return []
+    if schema and schema not in _EXPOSED_SCHEMAS and schema != WAREHOUSE_SCHEMA and schema != TESTS_SCHEMA:
+        _bad_query_cache.add(cache_key)
+        return []
+    start = time.perf_counter()
     try:
-        query = (_schema_table(schema, table) if schema else _public_table(table)).select(select)
+        if schema == WAREHOUSE_SCHEMA:
+            query = _warehouse_table(table).select(select)
+        elif schema == LMS_SCHEMA:
+            query = _lms_table(table).select(select)
+        elif schema == TESTS_SCHEMA:
+            query = _online_test_table(table).select(select)
+        else:
+            query = (_schema_table(schema, table) if schema else _public_table(table)).select(select)
         for key, value in filters.items():
             if value is None:
                 continue
             query = query.eq(key, value)
-        return [dict(row) for row in list(query.execute().data or [])]
+        data = list(query.execute().data or [])
+        elapsed = time.perf_counter() - start
+        logger.info("query  schema=%s table=%s rows=%d time=%.3fs", schema, table, len(data), elapsed)
+        return [dict(row) for row in data]
     except Exception:
+        elapsed = time.perf_counter() - start
+        if elapsed > 0.5:
+            _bad_query_cache.add(cache_key)
+            logger.info("query  schema=%s table=%s CACHED_BAD time=%.3fs", schema, table, elapsed)
+        else:
+            logger.warning("query  schema=%s table=%s ERROR time=%.3fs", schema, table, elapsed)
         return []
 
 
 def _delete_snapshot_rows(schema: str, table: str, *, school_id: str | None = None, snapshot_date: str | None = None) -> None:
+    start = time.perf_counter()
     try:
-        query = _schema_table(schema, table).delete()
+        query = _warehouse_table(table).delete() if schema == WAREHOUSE_SCHEMA else _schema_table(schema, table).delete()
         if school_id is not None:
             query = query.eq("school_id", school_id)
         if snapshot_date is not None:
             query = query.eq("snapshot_date", snapshot_date)
         query.execute()
+        elapsed = time.perf_counter() - start
+        logger.info("delete  schema=%s table=%s time=%.3fs", schema, table, elapsed)
     except Exception:
+        elapsed = time.perf_counter() - start
+        logger.warning("delete  schema=%s table=%s ERROR time=%.3fs", schema, table, elapsed)
         return
 
 
 def _upsert(schema: str, table: str, rows: list[dict[str, Any]], *, on_conflict: str) -> None:
     if not rows:
         return
-    _schema_table(schema, table).upsert(rows, on_conflict=on_conflict).execute()
+    start = time.perf_counter()
+    if schema == WAREHOUSE_SCHEMA:
+        _warehouse_table(table).upsert(rows, on_conflict=on_conflict).execute()
+    else:
+        _schema_table(schema, table).upsert(rows, on_conflict=on_conflict).execute()
+    elapsed = time.perf_counter() - start
+    logger.info("upsert  schema=%s table=%s rows=%d time=%.3fs", schema, table, len(rows), elapsed)
 
 
 def _log_audit_entry(*, school_id: str | None, profile_id: str | None, action: str, payload: dict[str, Any] | None = None) -> None:
@@ -115,6 +170,9 @@ def _log_audit_entry(*, school_id: str | None, profile_id: str | None, action: s
 
 
 def _refresh_dim_date() -> None:
+    global _dim_date_refreshed_today
+    if _dim_date_refreshed_today:
+        return
     today = _today()
     start = today - timedelta(days=730)
     rows: list[dict[str, Any]] = []
@@ -134,6 +192,7 @@ def _refresh_dim_date() -> None:
             }
         )
     _upsert(WAREHOUSE_SCHEMA, "dim_date", rows, on_conflict="date_key")
+    _dim_date_refreshed_today = True
 
 
 def _refresh_school_dimension(school_id: str) -> None:
@@ -644,6 +703,7 @@ def _refresh_fact_students(
 
 
 def refresh_school_warehouse(school_id: str, *, actor_profile_id: str | None = None) -> dict[str, Any]:
+    start = time.perf_counter()
     _refresh_dim_date()
     _refresh_school_dimension(school_id)
     students = _refresh_student_dimension(school_id)
@@ -670,10 +730,13 @@ def refresh_school_warehouse(school_id: str, *, actor_profile_id: str | None = N
             "operations": len(operations_rows),
         },
     )
+    elapsed = time.perf_counter() - start
+    logger.info("REFRESH refresh_school_warehouse time=%.3fs", elapsed)
     return {"school_id": school_id, "snapshot_date": _today().isoformat()}
 
 
 def refresh_platform_warehouse(*, actor_profile_id: str | None = None) -> dict[str, Any]:
+    start = time.perf_counter()
     _refresh_dim_date()
     snapshot_date = _today().isoformat()
     rows = _refresh_fact_platform_usage(snapshot_date)
@@ -683,36 +746,36 @@ def refresh_platform_warehouse(*, actor_profile_id: str | None = None) -> dict[s
         action="bi.warehouse.refresh_platform",
         payload={"rows": len(rows), "snapshot_date": snapshot_date},
     )
+    elapsed = time.perf_counter() - start
+    logger.info("REFRESH refresh_platform_warehouse time=%.3fs", elapsed)
     return {"snapshot_date": snapshot_date, "rows": len(rows)}
 
 
 def _latest_snapshot_rows(table: str, *, school_id: str | None = None) -> list[dict[str, Any]]:
-    query = _schema_table(WAREHOUSE_SCHEMA, table).select("*").order("snapshot_date", desc=True).limit(400)
+    start = time.perf_counter()
+    query = _warehouse_table(table).select("*").order("snapshot_date", desc=True).limit(400)
     if school_id is not None:
         query = query.eq("school_id", school_id)
-    return [dict(row) for row in list(query.execute().data or [])]
+    data = list(query.execute().data or [])
+    elapsed = time.perf_counter() - start
+    logger.info("latest  table=warehouse_%s rows=%d time=%.3fs", table, len(data), elapsed)
+    return [dict(row) for row in data]
 
 
 def _ensure_school_refresh(school_id: str, *, actor_profile_id: str | None = None) -> None:
-    latest_rows = _latest_snapshot_rows("fact_students", school_id=school_id)
-    if not latest_rows:
-        refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
+    last_refresh = _school_last_refresh.get(school_id)
+    if last_refresh and _utc_now() - last_refresh < _WAREHOUSE_TTL:
         return
-    latest = _iso_date(latest_rows[0].get("snapshot_date"))
-    latest_dt = datetime.fromisoformat(f"{latest}T00:00:00+00:00")
-    if _utc_now() - latest_dt >= _WAREHOUSE_TTL:
-        refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
+    _school_last_refresh[school_id] = _utc_now()
+    refresh_school_warehouse(school_id, actor_profile_id=actor_profile_id)
 
 
 def _ensure_platform_refresh(*, actor_profile_id: str | None = None) -> None:
-    latest_rows = _latest_snapshot_rows("fact_platform_usage")
-    if not latest_rows:
-        refresh_platform_warehouse(actor_profile_id=actor_profile_id)
+    global _platform_last_refresh
+    if _platform_last_refresh and _utc_now() - _platform_last_refresh < _WAREHOUSE_TTL:
         return
-    latest = _iso_date(latest_rows[0].get("snapshot_date"))
-    latest_dt = datetime.fromisoformat(f"{latest}T00:00:00+00:00")
-    if _utc_now() - latest_dt >= _WAREHOUSE_TTL:
-        refresh_platform_warehouse(actor_profile_id=actor_profile_id)
+    _platform_last_refresh = _utc_now()
+    refresh_platform_warehouse(actor_profile_id=actor_profile_id)
 
 
 def _bucket_key(snapshot_date: str, period: str) -> str:
@@ -734,6 +797,7 @@ def _aggregate_rows(rows: list[dict[str, Any]], *, value_key: str, period: str) 
 
 
 def get_academic_dashboard(school_id: str, *, period: str = "monthly", actor_profile_id: str | None = None) -> dict[str, Any]:
+    total_start = time.perf_counter()
     _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     attendance = _latest_snapshot_rows("fact_attendance", school_id=school_id)
     tests = _latest_snapshot_rows("fact_tests", school_id=school_id)
@@ -744,7 +808,7 @@ def get_academic_dashboard(school_id: str, *, period: str = "monthly", actor_pro
         metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
         for topic in list(metadata.get("weak_topics") or []):
             weak_topics[_normalize(topic)] += 1
-    return {
+    result = {
         "scope": "school",
         "school_id": school_id,
         "period": period,
@@ -755,9 +819,13 @@ def get_academic_dashboard(school_id: str, *, period: str = "monthly", actor_pro
         "student_count": len({row.get("student_id") for row in student_rows if row.get("student_id")}),
         "generated_at": _utc_now().isoformat(),
     }
+    total_elapsed = time.perf_counter() - total_start
+    logger.info("ENDPOINT get_academic_dashboard time=%.3fs", total_elapsed)
+    return result
 
 
 def get_finance_dashboard(school_id: str, *, period: str = "monthly", actor_profile_id: str | None = None) -> dict[str, Any]:
+    total_start = time.perf_counter()
     _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     rows = _latest_snapshot_rows("fact_finance", school_id=school_id)
     subscriptions = [row for row in rows if _normalize(row.get("metric_type")) == "subscription"]
@@ -768,7 +836,7 @@ def get_finance_dashboard(school_id: str, *, period: str = "monthly", actor_prof
     school = _safe_list(WAREHOUSE_SCHEMA, "dim_school", school_id=school_id)
     campus_name = (school[0].get("campus_name") if school else None) or "Main Campus"
     campus_revenue[campus_name] = sum(_to_float(row.get("amount")) for row in orders)
-    return {
+    result = {
         "scope": "school",
         "school_id": school_id,
         "period": period,
@@ -779,12 +847,16 @@ def get_finance_dashboard(school_id: str, *, period: str = "monthly", actor_prof
         "campus_revenue": [{"campus_name": key, "revenue": round(value, 2)} for key, value in campus_revenue.items()],
         "generated_at": _utc_now().isoformat(),
     }
+    total_elapsed = time.perf_counter() - total_start
+    logger.info("ENDPOINT get_finance_dashboard time=%.3fs", total_elapsed)
+    return result
 
 
 def get_operations_dashboard(school_id: str, *, period: str = "monthly", actor_profile_id: str | None = None) -> dict[str, Any]:
+    total_start = time.perf_counter()
     _ensure_school_refresh(school_id, actor_profile_id=actor_profile_id)
     rows = _latest_snapshot_rows("fact_operations", school_id=school_id)
-    return {
+    result = {
         "scope": "school",
         "school_id": school_id,
         "period": period,
@@ -794,14 +866,18 @@ def get_operations_dashboard(school_id: str, *, period: str = "monthly", actor_p
         "operations_trends": _aggregate_rows(rows, value_key="metric_value", period=period),
         "generated_at": _utc_now().isoformat(),
     }
+    total_elapsed = time.perf_counter() - total_start
+    logger.info("ENDPOINT get_operations_dashboard time=%.3fs", total_elapsed)
+    return result
 
 
 def get_platform_dashboard(*, period: str = "monthly", actor_profile_id: str | None = None) -> dict[str, Any]:
+    total_start = time.perf_counter()
     _ensure_platform_refresh(actor_profile_id=actor_profile_id)
     rows = _latest_snapshot_rows("fact_platform_usage")
     platform_rows = [row for row in rows if _normalize(row.get("scope_key")) == "platform"]
     school_rows = [row for row in rows if _normalize(row.get("scope_key")).startswith("school:")]
-    return {
+    result = {
         "scope": "platform",
         "period": period,
         "tenant_growth": next((_to_int(row.get("quantity")) for row in platform_rows if row.get("metric_key") == "tenant_growth"), 0),
@@ -812,14 +888,21 @@ def get_platform_dashboard(*, period: str = "monthly", actor_profile_id: str | N
         "trends": _aggregate_rows(rows, value_key="quantity", period=period),
         "generated_at": _utc_now().isoformat(),
     }
+    total_elapsed = time.perf_counter() - total_start
+    logger.info("ENDPOINT get_platform_dashboard time=%.3fs", total_elapsed)
+    return result
 
 
 def list_saved_reports(school_id: str | None, *, actor_profile_id: str | None = None, include_platform: bool = False) -> list[dict[str, Any]]:
-    query = _schema_table(WAREHOUSE_SCHEMA, "report_definitions").select("*").order("created_at", desc=True)
+    start = time.perf_counter()
+    query = _warehouse_table("report_definitions").select("*").order("created_at", desc=True)
     if school_id and not include_platform:
         query = query.eq("school_id", school_id)
     rows = [dict(row) for row in list(query.execute().data or [])]
-    return [row for row in rows if include_platform or _normalize(row.get("school_id")) == school_id or _normalize(row.get("created_by_profile_id")) == _normalize(actor_profile_id)]
+    result = [row for row in rows if include_platform or _normalize(row.get("school_id")) == school_id or _normalize(row.get("created_by_profile_id")) == _normalize(actor_profile_id)]
+    elapsed = time.perf_counter() - start
+    logger.info("ENDPOINT list_saved_reports time=%.3fs rows=%d", elapsed, len(result))
+    return result
 
 
 def create_saved_report(
@@ -843,13 +926,13 @@ def create_saved_report(
         "export_format": export_format,
         "metadata": {},
     }
-    response = _schema_table(WAREHOUSE_SCHEMA, "report_definitions").insert(payload).execute()
+    response = _warehouse_table("report_definitions").insert(payload).execute()
     rows = [dict(row) for row in list(response.data or [])]
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to save report definition")
     saved = rows[0]
     if cadence:
-        _schema_table(WAREHOUSE_SCHEMA, "report_schedules").insert(
+        _warehouse_table("report_schedules").insert(
             {
                 "school_id": school_id,
                 "report_definition_id": saved.get("id"),

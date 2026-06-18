@@ -137,7 +137,7 @@ class ApiService {
   constructor() {
     this.api = axios.create({
       baseURL: runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || "/api",
-      timeout: 45000,
+      timeout: 120000,
     });
 
     this.api.interceptors.request.use((config) => {

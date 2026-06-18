@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
@@ -26,6 +27,28 @@ def _public_table(name: str):
 
 def _finance_table(name: str):
     return _client().schema(FINANCE_SCHEMA).table(name)
+
+
+def _is_missing_finance_table_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "PGRST205" in message or "schema cache" in message or "Could not find the table 'finance." in message
+
+
+@lru_cache(maxsize=1)
+def _ensure_monetization_tables_available() -> None:
+    try:
+        _finance_table("products").select("id").limit(1).execute()
+        _finance_table("subscriptions").select("id").limit(1).execute()
+    except Exception as exc:  # pragma: no cover - depends on external Supabase state
+        if _is_missing_finance_table_error(exc):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Monetization module is not deployed in Supabase. "
+                    "Apply supabase/migrations/20260614_048_finance_monetization_engine.sql."
+                ),
+            ) from exc
+        raise
 
 
 def _normalize(value: Any) -> str:
@@ -237,6 +260,7 @@ def _product_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_seed_catalog_for_school(school_id: str, profile_id: str | None = None) -> list[dict[str, Any]]:
+    _ensure_monetization_tables_available()
     existing = list(
         _finance_table("products")
         .select("*")
@@ -301,6 +325,7 @@ def create_seed_catalog_for_school(school_id: str, profile_id: str | None = None
 
 
 def list_subscriptions(school_id: str, *, profile_id: str | None = None, include_school_scope: bool = False) -> list[dict[str, Any]]:
+    _ensure_monetization_tables_available()
     query = _finance_table("subscriptions").select("*")
     query = _school_scope_filter(query, school_id)
     if profile_id and not include_school_scope:
@@ -331,6 +356,7 @@ def list_subscriptions(school_id: str, *, profile_id: str | None = None, include
 
 
 def apply_coupon(school_id: str | None, *, code: str, order_amount: Any) -> dict[str, Any]:
+    _ensure_monetization_tables_available()
     coupon = _coupon_by_code(school_id, code)
     if not coupon:
         raise HTTPException(status_code=404, detail="Coupon not found")
@@ -360,6 +386,7 @@ def create_order(
     credits_to_redeem: Any = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    _ensure_monetization_tables_available()
     if not items:
         raise HTTPException(status_code=400, detail="At least one order item is required")
     adapter = _provider_adapter(provider_key)
@@ -469,6 +496,7 @@ def verify_order(
     signature: str | None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    _ensure_monetization_tables_available()
     adapter = _provider_adapter(provider_key)
     rows = list(_finance_table("orders").select("*").eq("id", order_id).limit(1).execute().data or [])
     if not rows:
@@ -543,6 +571,7 @@ def verify_order(
 
 
 def revenue_dashboard(school_id: str | None) -> dict[str, Any]:
+    _ensure_monetization_tables_available()
     if school_id:
         create_seed_catalog_for_school(school_id)
     products = list(_school_scope_filter(_finance_table("products").select("*"), school_id).eq("is_active", True).execute().data or [])

@@ -283,6 +283,10 @@ app.include_router(
     study_planner.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
 )
+app.include_router(
+    study_planner.alias_router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
+)
 
 app.include_router(
     parent_portal.router,
@@ -298,9 +302,17 @@ app.include_router(
     doubts.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("doubt_solver"))],
 )
+app.include_router(
+    doubts.alias_router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("doubt_solver"))],
+)
 
 app.include_router(
     teacher_ai.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("teacher_ai"))],
+)
+app.include_router(
+    teacher_ai.alias_router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("teacher_ai"))],
 )
 
@@ -321,6 +333,10 @@ app.include_router(
 
 app.include_router(
     ai_agents.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
+)
+app.include_router(
+    ai_agents.alias_router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
 )
 
