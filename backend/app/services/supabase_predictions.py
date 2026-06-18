@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_text
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_analytics import _get_student_by_profile_id
 from app.services.supabase_bi import _ensure_school_refresh
@@ -90,6 +91,20 @@ def _safe_int(value: Any) -> int:
 
 def _clamp(value: float, minimum: float = 0.0, maximum: float = 100.0) -> float:
     return round(max(minimum, min(maximum, value)), 2)
+
+
+def _ai_prediction_explanation(headline: str, factors: list[str], fallback: str) -> str:
+    try:
+        text = generate_text(
+            "You are the Aspire ERP Predictive Intelligence engine. "
+            "Write one concise operational explanation grounded in the supplied headline and factors.\n"
+            f"Headline: {headline}\n"
+            f"Factors: {factors[:4]}\n"
+            f"Fallback: {fallback}"
+        )
+        return _normalize(text) or fallback
+    except AIProviderError:
+        return fallback
 
 
 def _risk_level(score: float) -> str:
@@ -476,6 +491,8 @@ def _build_student_prediction(
         model = registry.get(model_key, {})
         level = _risk_level(score)
         recommendation_set = actions[:2] if level in {"high", "critical"} else actions[:1]
+        headline = f"{student.get('full_name') or 'Student'}: {prediction_type.replace('_', ' ').title()}"
+        explanation = _ai_prediction_explanation(headline, factors, message)
         row = {
             "school_id": school_id,
             "subject_type": "student",
@@ -488,8 +505,8 @@ def _build_student_prediction(
             "confidence_score": confidence,
             "horizon_days": 30,
             "predicted_for_date": (_today() + timedelta(days=30)).isoformat(),
-            "headline": f"{student.get('full_name') or 'Student'}: {prediction_type.replace('_', ' ').title()}",
-            "explanation": message,
+            "headline": headline,
+            "explanation": explanation,
             "recommended_actions": recommendation_set,
             "warnings": factors[:3],
             "feature_snapshot": {
@@ -766,6 +783,8 @@ def get_campus_predictions_dashboard(
             "recommended_actions": ["Review hostel room turnover and vacancy pipeline.", "Prepare allocation buffer for the next intake window."],
         },
     ]
+    for item in risk_items:
+        item["explanation"] = _ai_prediction_explanation(item["headline"], item["recommended_actions"], item["explanation"])
 
     prediction_rows = [
         {
@@ -919,6 +938,8 @@ def get_finance_predictions_dashboard(
             "recommended_actions": ["Review expiring subscriptions and renewals.", "Push targeted offers for paid courses and test series."],
         },
     ]
+    for item in risk_overview:
+        item["explanation"] = _ai_prediction_explanation(item["headline"], item["recommended_actions"], item["explanation"])
 
     prediction_rows = [
         {

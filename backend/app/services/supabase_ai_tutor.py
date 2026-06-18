@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_json
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_analytics import _get_student_by_profile_id, get_student_analytics
 from app.services.supabase_lms import (
@@ -485,13 +486,42 @@ def _explanation_sections(topic: str, context: dict[str, Any]) -> dict[str, Any]
     if recording:
         key_points.append(f"Recommended live class recording: {_normalize(recording.get('title'))}")
 
-    return {
+    fallback = {
         "explanation": explanation,
         "key_points": key_points,
         "examples": examples,
         "revision_plan": revision_plan,
         "challenge_questions": challenge_questions,
     }
+    prompt = (
+        "You are the Aspire ERP AI Tutor. Return strict JSON with keys "
+        "explanation, key_points, examples, revision_plan, challenge_questions. "
+        "Keep the explanation concise, grounded in the supplied student context, and exam-friendly.\n"
+        f"Topic: {topic}\n"
+        f"Difficulty band: {_normalize(context.get('difficulty_band'))}\n"
+        f"Class level: {_normalize(context.get('class_level'))}\n"
+        f"Weak topics: {list(context.get('weak_topic_history') or [])[:4]}\n"
+        f"Strong topics: {list(context.get('strong_topic_history') or [])[:4]}\n"
+        f"Attendance summary: {context.get('attendance_summary')}\n"
+        f"Analytics summary: {context.get('analytics_summary')}\n"
+        f"Recommended lesson titles: {[item.get('lesson_title') for item in list(context.get('recommended_lessons') or [])[:3]]}\n"
+        f"Use this grounded fallback as the baseline and improve only the phrasing:\n{fallback}"
+    )
+    try:
+        generated = generate_json(prompt)
+    except AIProviderError:
+        return fallback
+
+    merged = dict(fallback)
+    if _normalize(generated.get("explanation")):
+        merged["explanation"] = _normalize(generated.get("explanation"))
+    for key in ("key_points", "examples", "revision_plan", "challenge_questions"):
+        values = generated.get(key)
+        if isinstance(values, list):
+            cleaned = [_normalize(item) for item in values if _normalize(item)]
+            if cleaned:
+                merged[key] = cleaned
+    return merged
 
 
 def _practice_payload(topic: str, context: dict[str, Any]) -> dict[str, Any]:

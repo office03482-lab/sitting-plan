@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_json
 from app.services.supabase_ai_tutor import (
     _ai_table,
     _find_matching_assignments,
@@ -50,6 +51,14 @@ def _safe_float(value: Any, fallback: float = 0.0) -> float:
         return float(value or fallback)
     except (TypeError, ValueError):
         return fallback
+
+
+def _generate_json_or_fallback(prompt: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    try:
+        generated = generate_json(prompt)
+    except AIProviderError:
+        return fallback
+    return generated if isinstance(generated, dict) else fallback
 
 
 def _role_scope(role_key: str) -> str:
@@ -426,6 +435,44 @@ def generate_question_paper(school_id: str, *, role_key: str, profile_id: str | 
             "class_name": batch.get("class_name"),
         },
     }
+    ai_payload = _generate_json_or_fallback(
+        (
+            "You are the Aspire ERP Teacher AI. Return strict JSON with keys questions and instructions. "
+            "questions must be a list of objects with question_type, difficulty, marks, prompt, source. "
+            "Keep every question aligned to the grounded topic, batch, subject, and difficulty.\n"
+            f"Batch: {batch}\n"
+            f"Subject: {subject}\n"
+            f"Topic: {selected_topic}\n"
+            f"Paper type: {paper_type}\n"
+            f"Question count: {question_count}\n"
+            f"Difficulty: {difficulty}\n"
+            f"Grounded fallback payload: {result_payload}"
+        ),
+        result_payload,
+    )
+    ai_questions = ai_payload.get("questions")
+    if isinstance(ai_questions, list):
+        normalized_questions = []
+        for item in ai_questions[:question_count]:
+            if not isinstance(item, dict):
+                continue
+            prompt_text = _normalize(item.get("prompt"))
+            if not prompt_text:
+                continue
+            normalized_questions.append(
+                _question_template(
+                    _normalize(item.get("question_type")) or "subjective",
+                    _normalize(item.get("difficulty")) or difficulty,
+                    _safe_float(item.get("marks"), 1.0),
+                    prompt_text,
+                    _normalize(item.get("source")) or "gemini",
+                )
+            )
+        if normalized_questions:
+            result_payload["questions"] = normalized_questions
+            result_payload["total_marks"] = round(sum(_safe_float(item.get("marks")) for item in normalized_questions), 2)
+    if _normalize(ai_payload.get("instructions")):
+        result_payload["instructions"] = _normalize(ai_payload.get("instructions"))
     context_snapshot = {
         "batch": batch,
         "subject": subject,
@@ -504,6 +551,42 @@ def generate_assignment(school_id: str, *, role_key: str, profile_id: str | None
             "topic": selected_topic,
         },
     }
+    ai_payload = _generate_json_or_fallback(
+        (
+            "You are the Aspire ERP Teacher AI. Return strict JSON with keys tasks and instructions. "
+            "tasks must be a list of objects with task_no, task_type, difficulty_level, prompt, expected_outcome.\n"
+            f"Batch: {batch}\n"
+            f"Subject: {subject}\n"
+            f"Topic: {selected_topic}\n"
+            f"Assignment type: {assignment_type}\n"
+            f"Task count: {task_count}\n"
+            f"Difficulty: {difficulty}\n"
+            f"Grounded fallback payload: {result_payload}"
+        ),
+        result_payload,
+    )
+    ai_tasks = ai_payload.get("tasks")
+    if isinstance(ai_tasks, list):
+        normalized_tasks = []
+        for index, item in enumerate(ai_tasks[:task_count], start=1):
+            if not isinstance(item, dict):
+                continue
+            prompt_text = _normalize(item.get("prompt"))
+            if not prompt_text:
+                continue
+            normalized_tasks.append(
+                {
+                    "task_no": _safe_int(item.get("task_no"), index),
+                    "task_type": _normalize(item.get("task_type")) or assignment_type,
+                    "difficulty_level": _normalize(item.get("difficulty_level")) or difficulty,
+                    "prompt": prompt_text,
+                    "expected_outcome": _normalize(item.get("expected_outcome")) or "Accurate concept application with neat working.",
+                }
+            )
+        if normalized_tasks:
+            result_payload["tasks"] = normalized_tasks
+    if _normalize(ai_payload.get("instructions")):
+        result_payload["instructions"] = _normalize(ai_payload.get("instructions"))
     context_snapshot = {
         "batch": batch,
         "subject": subject,
@@ -570,6 +653,50 @@ def generate_lesson_plan(school_id: str, *, role_key: str, profile_id: str | Non
         ],
         "generated_at": _utc_now_iso(),
     }
+    ai_payload = _generate_json_or_fallback(
+        (
+            "You are the Aspire ERP Teacher AI. Return strict JSON with keys schedule and teaching_goals. "
+            "schedule must be a list of objects with day_of_week, start_time, end_time, subject, class_name, chapter, objective, activity. "
+            "Keep the plan aligned to the timetable slots and topic.\n"
+            f"Topic: {topic}\n"
+            f"Plan scope: {plan_scope}\n"
+            f"Timetable rows: {slots}\n"
+            f"Lesson hits: {lessons}\n"
+            f"Holiday notes: {holiday_notes}\n"
+            f"Grounded fallback payload: {result_payload}"
+        ),
+        result_payload,
+    )
+    ai_schedule = ai_payload.get("schedule")
+    if isinstance(ai_schedule, list):
+        normalized_schedule = []
+        for item in ai_schedule[: len(plan_rows) or 1]:
+            if not isinstance(item, dict):
+                continue
+            chapter = _normalize(item.get("chapter"))
+            objective = _normalize(item.get("objective"))
+            activity = _normalize(item.get("activity"))
+            if not chapter or not objective or not activity:
+                continue
+            normalized_schedule.append(
+                {
+                    "day_of_week": item.get("day_of_week"),
+                    "start_time": item.get("start_time"),
+                    "end_time": item.get("end_time"),
+                    "subject": item.get("subject"),
+                    "class_name": item.get("class_name"),
+                    "chapter": chapter,
+                    "objective": objective,
+                    "activity": activity,
+                }
+            )
+        if normalized_schedule:
+            result_payload["schedule"] = normalized_schedule
+    ai_goals = ai_payload.get("teaching_goals")
+    if isinstance(ai_goals, list):
+        cleaned_goals = [_normalize(item) for item in ai_goals if _normalize(item)]
+        if cleaned_goals:
+            result_payload["teaching_goals"] = cleaned_goals
     context_snapshot = {
         "teacher_id": teacher_id,
         "class_name": class_name,
@@ -668,6 +795,26 @@ def generate_report_comments(school_id: str, *, role_key: str, profile_id: str |
         "teacher_note": _normalize(payload.get("teacher_note")) or "",
         "generated_at": _utc_now_iso(),
     }
+    ai_payload = _generate_json_or_fallback(
+        (
+            "You are the Aspire ERP Teacher AI. Return strict JSON with keys summary, remarks, improvement_suggestions. "
+            "Use professional school-report language, keep it specific, and stay grounded in the supplied analytics.\n"
+            f"Student: {student}\n"
+            f"Analytics snapshot: {result_payload['analytics_snapshot']}\n"
+            f"Score payload: {result_payload['score_payload']}\n"
+            f"Grounded fallback payload: {result_payload}"
+        ),
+        result_payload,
+    )
+    if _normalize(ai_payload.get("summary")):
+        result_payload["summary"] = _normalize(ai_payload.get("summary"))
+    if _normalize(ai_payload.get("remarks")):
+        result_payload["remarks"] = _normalize(ai_payload.get("remarks"))
+    ai_improvement = ai_payload.get("improvement_suggestions")
+    if isinstance(ai_improvement, list):
+        cleaned = [_normalize(item) for item in ai_improvement if _normalize(item)]
+        if cleaned:
+            result_payload["improvement_suggestions"] = cleaned
     job_id = _persist_job(
         school_id,
         profile_id=profile_id,

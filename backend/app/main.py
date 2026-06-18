@@ -166,10 +166,11 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes, study_planner, parent_portal, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes, study_planner, parent_portal, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_provider
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
+app.include_router(ai_provider.router)
 app.include_router(
     batches.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("admin_office.batches"))],

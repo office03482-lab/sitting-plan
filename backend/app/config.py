@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     use_supabase_native_services: bool | None = None
     live_classes_enabled: bool = True
 
+    # AI
+    ai_provider: str = "gemini"
+    gemini_api_key: str | None = None
+
     # Security
     jwt_secret: str | None = None
     jwt_algorithm: str = "HS256"

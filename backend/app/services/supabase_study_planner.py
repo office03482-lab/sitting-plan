@@ -13,6 +13,7 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from app.config import settings
+from app.services.ai_provider import AIProviderError, generate_text
 
 logger = logging.getLogger("study_planner.performance")
 
@@ -188,6 +189,14 @@ def _safe_percentage(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
     return round((numerator / denominator) * 100, 2)
+
+
+def _ai_summary_text(prompt: str, fallback: str) -> str:
+    try:
+        text = generate_text(prompt)
+        return _normalize(text) or fallback
+    except AIProviderError:
+        return fallback
 
 
 def _live_classes_enabled() -> bool:
@@ -827,6 +836,15 @@ def _build_student_plan_payload(
         },
         "generated_at": _utc_now_iso(),
     }
+    payload["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Study Planner coach. Write a concise study-coach note in 2 sentences. "
+            "Ground it in the supplied student planner summary and tasks.\n"
+            f"Summary: {summary}\n"
+            f"Top tasks: {tasks[:3]}"
+        ),
+        f"Focus on {', '.join(weak_topics[:2]) or 'today study tasks'} and protect the current streak with consistent revision.",
+    )
     _set_cached_plan(school_id, student_id, scope, payload)
     metrics.end()
     largest_stage, largest_data = metrics.largest()
@@ -952,6 +970,14 @@ def _teacher_risk_dashboard(school_id: str, *, actor_profile_id: str | None = No
         "weak_topic_clusters": weak_topic_clusters,
         "generated_at": _utc_now_iso(),
     }
+    result["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Study Planner for teachers. Write a short operational summary for a teacher dashboard.\n"
+            f"At-risk students: {at_risk_students[:3]}\n"
+            f"Weak-topic clusters: {weak_topic_clusters[:3]}"
+        ),
+        "Prioritize low-engagement learners first and schedule revision around the most repeated weak-topic clusters.",
+    )
     _plan_ttl[teacher_cache_key] = (_time.time(), result)
     logger.info("TEACHER_DASHBOARD school=%s students=%d time=%.3fs", school_id, len(student_payloads), _elapsed)
     return result
@@ -1005,6 +1031,13 @@ def _parent_dashboard(school_id: str, linked_students: list[dict[str, Any]], *, 
         "plans": plans,
         "generated_at": _utc_now_iso(),
     }
+    result["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP parent study-planner assistant. Write a short summary for a parent dashboard.\n"
+            f"Children summaries: {child_summaries[:3]}"
+        ),
+        "Review each child's weak topics and daily completion rhythm to keep study consistency stable this week.",
+    )
     _plan_ttl[parent_cache_key] = (_time.time(), result)
     logger.info("PARENT_DASHBOARD school=%s children=%d time=%.3fs", school_id, len(linked_students), _elapsed)
     return result

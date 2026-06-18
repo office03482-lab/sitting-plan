@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_text
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_analytics import get_student_analytics
 from app.services.supabase_hostel_requests import list_hostel_requests
@@ -91,6 +92,14 @@ def _safe_percentage(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
     return round((numerator / denominator) * 100, 2)
+
+
+def _ai_summary_text(prompt: str, fallback: str) -> str:
+    try:
+        text = generate_text(prompt)
+        return _normalize(text) or fallback
+    except AIProviderError:
+        return fallback
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -753,6 +762,15 @@ def get_parent_dashboard(school_id: str, *, profile_id: str | None, user_email: 
         "children": children,
         "generated_at": _utc_now_iso(),
     }
+    payload["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Parent Intelligence assistant. Write a short family-facing summary in 2 sentences.\n"
+            f"Overall health: {overall_health}\n"
+            f"Risk level: {overall_risk}\n"
+            f"Children snapshot: {[{'student_name': item.get('student_name'), 'risk_level': item.get('risk_level'), 'weak_topics': item.get('weak_topics')} for item in children[:3]]}"
+        ),
+        "Keep a close eye on attendance, weak topics, and the current risk pattern across linked students this week.",
+    )
     _log_audit_entry(
         school_id=school_id,
         profile_id=profile_id,
@@ -791,6 +809,13 @@ def get_parent_insights(school_id: str, *, profile_id: str | None, user_email: s
         ],
         "generated_at": _utc_now_iso(),
     }
+    payload["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Parent Intelligence assistant. Write a concise insight summary for parents.\n"
+            f"Insights: {items[:5]}"
+        ),
+        "Use these insights to guide the next revision cycle and teacher follow-up conversation.",
+    )
     _log_audit_entry(school_id=school_id, profile_id=profile_id, action="parent_intelligence.insights.generated")
     return payload
 
@@ -819,6 +844,13 @@ def get_parent_risk_scores(school_id: str, *, profile_id: str | None, user_email
         ],
         "generated_at": _utc_now_iso(),
     }
+    payload["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Parent Intelligence assistant. Write a concise risk summary for parents.\n"
+            f"Risk payload: {payload['children'][:3]}"
+        ),
+        "The current risk view points to attendance, performance, and engagement as the main areas to monitor.",
+    )
     _log_audit_entry(school_id=school_id, profile_id=profile_id, action="parent_intelligence.risk.generated")
     return payload
 
@@ -858,6 +890,13 @@ def get_parent_alerts(school_id: str, *, profile_id: str | None, user_email: str
             }
         )
     payload = {"role": "parent", "alerts": alerts, "generated_at": _utc_now_iso()}
+    payload["ai_summary"] = _ai_summary_text(
+        (
+            "You are the Aspire ERP Parent Intelligence assistant. Write a short summary of the latest parent alerts.\n"
+            f"Alerts: {alerts[:5]}"
+        ),
+        "Review the latest alerts in priority order and coordinate the next parent-teacher action where needed.",
+    )
     _log_audit_entry(school_id=school_id, profile_id=profile_id, action="parent_intelligence.alerts.generated")
     return payload
 

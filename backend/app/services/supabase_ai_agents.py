@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_text
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_bi import get_academic_dashboard, get_finance_dashboard, get_operations_dashboard
 from app.services.supabase_predictions import (
@@ -79,6 +80,20 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _ai_summary_text(title: str, rationale: dict[str, Any], fallback: str) -> str:
+    try:
+        text = generate_text(
+            "You are the Aspire ERP AI Command Center. Write one concise executive summary sentence "
+            "grounded in the supplied recommendation title and rationale.\n"
+            f"Title: {title}\n"
+            f"Rationale: {rationale}\n"
+            f"Fallback: {fallback}"
+        )
+        return _normalize(text) or fallback
+    except AIProviderError:
+        return fallback
 
 
 def _log_audit_entry(
@@ -539,6 +554,13 @@ def _agent_recommendation_blueprints(
                 "target_scope": "school",
             }
         )
+    for items in blueprints.values():
+        for item in items:
+            item["summary"] = _ai_summary_text(
+                str(item.get("title") or "AI recommendation"),
+                _normalize_json_object(item.get("rationale")),
+                str(item.get("summary") or ""),
+            )
     return blueprints
 
 
