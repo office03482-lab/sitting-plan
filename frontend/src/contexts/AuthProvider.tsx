@@ -9,7 +9,9 @@ import {
 } from 'react';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
+import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSION_STORAGE_KEY } from '@services/api';
 import { supabase } from '@/lib/supabase';
+import { runtimeConfig } from '@/lib/runtimeConfig';
 import type { User, UserRole, UserType } from '@types';
 import { useAuthStore } from '@store/auth';
 
@@ -41,8 +43,9 @@ type AuthContextValue = {
   user: User | null;
   session: Session | null;
   authError: string | null;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (identifier: string, password: string, options?: { forceTakeover?: boolean }) => Promise<void>;
   signOut: () => Promise<void>;
+  reloadUserProfile: () => Promise<void>;
   getDefaultRoute: (user?: User | null) => string;
   hasRole: (roles: UserRole | UserRole[]) => boolean;
   hasPermission: (permissions: string | string[]) => boolean;
@@ -65,6 +68,8 @@ const AUTH_STORAGE_KEYS = [
   'user',
   'sitting-plan-auth',
 ] as const;
+
+const ACTIVE_SESSION_HEARTBEAT_MS = 60_000;
 
 const createReadySignal = (): ReadySignal => {
   let resolvePromise!: () => void;
@@ -118,6 +123,26 @@ function clearPersistedAuthArtifacts() {
     window.localStorage.removeItem(key);
     window.sessionStorage.removeItem(key);
   }
+  window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+}
+
+function generateActiveSessionKey() {
+  return `sess-${Math.random().toString(36).slice(2, 12)}-${Date.now().toString(36)}`;
+}
+
+function getBrowserLabel() {
+  if (typeof navigator === 'undefined') return 'Browser';
+  const userAgent = navigator.userAgent;
+  if (userAgent.includes('Edg/')) return 'Microsoft Edge';
+  if (userAgent.includes('Chrome/')) return 'Google Chrome';
+  if (userAgent.includes('Firefox/')) return 'Mozilla Firefox';
+  if (userAgent.includes('Safari/') && !userAgent.includes('Chrome/')) return 'Safari';
+  return 'Browser';
+}
+
+function getDeviceLabel() {
+  if (typeof navigator === 'undefined') return 'Unknown device';
+  return `${navigator.platform || 'Web'} device`;
 }
 
 function redirectToLogin() {
@@ -149,6 +174,10 @@ async function diagnoseSupabaseConnectivityError() {
 
 async function normalizeAuthError(error: unknown): Promise<Error> {
   if (error instanceof Error) {
+    const authError = error as Error & { code?: string; conflict?: { message?: string } };
+    if (authError.code === 'session_limit_exceeded') {
+      return authError;
+    }
     if (error.message === 'Failed to fetch') {
       const diagnostics = await diagnoseSupabaseConnectivityError();
       if (!diagnostics.reachable) {
@@ -184,9 +213,12 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
 
 function getDefaultRouteForUser(user?: User | null) {
   if (!user) return '/login';
+  if (user.role_key === 'school_admin' || user.role_key === 'platform_admin') return '/school-ai-assistant';
   if (user.role === 'admin') return '/';
-  if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent-intelligence';
-  if (user.permissions?.includes('doubt_solver.solve')) return '/doubts';
+  if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
+  if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
+  if (user.role === 'student' && (user.permissions?.includes('doubt_solver.solve') || user.permissions?.includes('study_planner.view'))) return '/ai-study-assistant';
+  if (user.permissions?.includes('doubt_solver.solve')) return '/ai-study-assistant';
   if (user.role === 'store_manager') return '/inventory';
   if (user.role === 'teacher') return user.permissions?.includes('attendance') ? '/attendance-management' : '/timetable';
   if (user.role === 'staff') {
@@ -194,7 +226,7 @@ function getDefaultRouteForUser(user?: User | null) {
     if (user.permissions?.includes('attendance')) return '/attendance-management';
     return '/';
   }
-  if (user.role === 'student') return '/attendance-management';
+  if (user.role === 'student') return '/ai-study-assistant';
   if (user.permissions?.includes('attendance')) return '/attendance-management';
   if (user.permissions?.includes('timetable') || user.permissions?.includes('timetable.view')) return '/timetable';
   if (user.permissions?.includes('edupay')) return '/edupay';
@@ -235,7 +267,8 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
       full_name,
       display_name,
       is_active,
-      default_school_id
+      default_school_id,
+      metadata
     `)
     .eq('id', userId)
     .single();
@@ -296,6 +329,7 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
     default_school_id: profile.default_school_id,
     is_active: Boolean(profile.is_active),
     username: profile.display_name || profile.email || session.user.email || undefined,
+    must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
   };
 }
 
@@ -320,6 +354,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const currentSessionFingerprintRef = useRef<string | null>(null);
   const tokenRefreshDebounceRef = useRef<number | null>(null);
   const authSubscriptionAttachedRef = useRef(false);
+  const sessionRegistrationFingerprintRef = useRef<string | null>(null);
 
   useEffect(() => {
     storeUserRef.current = storeUser;
@@ -332,6 +367,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     currentSessionFingerprintRef.current = getSessionFingerprint(session);
   }, [session]);
+
+  const ensurePortalSessionRegistered = async (
+    accessToken: string,
+    options?: { forceTakeover?: boolean },
+  ) => {
+    const sessionKey = getStoredActiveSessionKey() || generateActiveSessionKey();
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionKey);
+    }
+    await fetch(`${runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || '/api'}/account-security/sessions/register`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Device-Id': getStoredDeviceId(),
+      },
+      body: JSON.stringify({
+        session_key: sessionKey,
+        device_id: getStoredDeviceId(),
+        device_name: getDeviceLabel(),
+        browser: getBrowserLabel(),
+        force_takeover: Boolean(options?.forceTakeover),
+      }),
+    }).then(async (response) => {
+      if (response.ok) {
+        return response.json().catch(() => ({}));
+      }
+      const payload = await response.json().catch(() => ({}));
+      const detail = payload?.detail;
+      if (detail?.code === 'session_limit_exceeded') {
+        const error = new Error(detail.message || 'Existing session detected') as Error & {
+          code?: string;
+          conflict?: unknown;
+        };
+        error.code = 'session_limit_exceeded';
+        error.conflict = detail;
+        throw error;
+      }
+      throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
+    });
+    return sessionKey;
+  };
+
+  const reloadUserProfile = async () => {
+    if (!session) return;
+    const appUser = await buildAppUserFromSession(session);
+    hydrate({
+      token: session.access_token,
+      refreshToken: session.refresh_token,
+      user: appUser,
+    });
+  };
 
   useEffect(() => {
     setAuthLifecycle({
@@ -632,29 +719,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: storeUser,
       session,
       authError,
-      async signIn(email: string, password: string) {
+      async signIn(identifier: string, password: string, options?: { forceTakeover?: boolean }) {
         setLoading(true);
         setAuthStatus('INITIALIZING');
         AuthInitializationRegistry.reset('INITIALIZING');
         setAuthError(null);
         try {
-          const { error } = await supabase.auth.signInWithPassword({
-            email,
+          const trimmedIdentifier = identifier.trim();
+          const resolvedLogin = await apiService.resolveLoginIdentifier(trimmedIdentifier);
+          const loginEmail = String(resolvedLogin.data?.email || trimmedIdentifier).trim();
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: loginEmail,
             password,
           });
 
           if (error) {
             throw error;
           }
-        } catch (error) {
+          if (!data.session?.access_token) {
+            throw new Error('Authenticated session not returned by Supabase.');
+          }
+          await ensurePortalSessionRegistered(data.session.access_token, {
+            forceTakeover: options?.forceTakeover,
+          });
+        } catch (error: any) {
+          if (error?.code === 'session_limit_exceeded') {
+            try {
+              await supabase.auth.signOut();
+            } catch {
+              // ignore sign-out cleanup failure
+            }
+            setLoading(false);
+            setAuthStatus('UNAUTHENTICATED');
+            AuthInitializationRegistry.fail(error, 'UNAUTHENTICATED');
+            throw await normalizeAuthError(error);
+          }
+          console.warn('Session registration failed (non-fatal during sign-in):', error);
           setLoading(false);
-          setAuthStatus('UNAUTHENTICATED');
-          AuthInitializationRegistry.fail(error, 'UNAUTHENTICATED');
-          throw await normalizeAuthError(error);
         }
       },
       async signOut() {
         try {
+          const sessionKey = getStoredActiveSessionKey();
+          if (sessionKey) {
+            try {
+              await apiService.logoutCurrentSecuritySession(sessionKey);
+            } catch {
+              // Session may already be gone; continue local sign-out.
+            }
+          }
           await supabase.auth.signOut();
         } finally {
           clearPersistedAuthArtifacts();
@@ -666,6 +779,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           redirectToLogin();
         }
       },
+      reloadUserProfile,
       getDefaultRoute: getDefaultRouteForUser,
       hasRole(roles) {
         if (!storeUser?.role) return false;
@@ -706,6 +820,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [authError, authStatus, initialized, loading, logoutStore, session, storeUser],
   );
+
+  useEffect(() => {
+    if (!session?.access_token || !storeUser?.id || authStatus !== 'AUTHENTICATED') {
+      sessionRegistrationFingerprintRef.current = null;
+      return;
+    }
+
+    const fingerprint = `${storeUser.id}:${session.access_token.slice(0, 12)}`;
+    if (sessionRegistrationFingerprintRef.current === fingerprint) {
+      return;
+    }
+    sessionRegistrationFingerprintRef.current = fingerprint;
+
+    void ensurePortalSessionRegistered(session.access_token).catch(async (error: any) => {
+      const detail = error?.conflict;
+      if (error?.code === 'session_limit_exceeded') {
+        setAuthError(
+          typeof detail?.message === 'string'
+            ? detail.message
+            : 'Existing session detected. Please sign in again and choose Continue Here.',
+        );
+        return;
+      }
+      console.warn('Session registration failed (non-fatal):', error);
+    });
+  }, [authStatus, logoutStore, session, storeUser?.id]);
+
+  useEffect(() => {
+    if (authStatus !== 'AUTHENTICATED' || !storeUser?.id) {
+      return;
+    }
+    const sessionKey = getStoredActiveSessionKey();
+    if (!sessionKey) return;
+    const intervalId = window.setInterval(() => {
+      void apiService.heartbeatSecuritySession(sessionKey).catch(() => {
+        // Ignore transient heartbeat failures; middleware validation will enforce revocations.
+      });
+    }, ACTIVE_SESSION_HEARTBEAT_MS);
+    return () => window.clearInterval(intervalId);
+  }, [authStatus, storeUser?.id]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

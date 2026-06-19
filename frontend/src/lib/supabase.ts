@@ -8,7 +8,17 @@ if (!runtimeConfig.supabaseUrl || !runtimeConfig.supabaseAnonKey) {
   console.warn('[Supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. Falling back to placeholder config.');
 }
 
-export const supabase = createClient(
-  runtimeConfig.supabaseUrl || fallbackSupabaseUrl,
-  runtimeConfig.supabaseAnonKey || fallbackSupabaseAnonKey
-)
+const resolvedSupabaseUrl = runtimeConfig.supabaseUrl || fallbackSupabaseUrl
+const resolvedSupabaseAnonKey = runtimeConfig.supabaseAnonKey || fallbackSupabaseAnonKey
+
+export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey)
+
+export function createIsolatedSupabaseClient() {
+  return createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  })
+}

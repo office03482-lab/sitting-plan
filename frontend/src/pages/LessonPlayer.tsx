@@ -107,13 +107,17 @@ export default function LessonPlayer() {
           <div className="space-y-4">
             {lesson.video_url ? (
               <div className="overflow-hidden rounded-2xl border border-slate-200">
-                <iframe
-                  src={lesson.video_url}
-                  title={lesson.title}
-                  className="aspect-video w-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
+                {/\.(mp4|webm|mov|m4v)(\?|$)/i.test(lesson.video_url) ? (
+                  <video src={lesson.video_url} controls className="aspect-video w-full bg-black" />
+                ) : (
+                  <iframe
+                    src={lesson.video_url}
+                    title={lesson.title}
+                    className="aspect-video w-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                )}
               </div>
             ) : null}
             {lesson.content_text ? (
@@ -134,10 +138,13 @@ export default function LessonPlayer() {
                       </div>
                       {resource.resource_url ? (
                         <a href={resource.resource_url} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                          Open
+                          {resource.is_downloadable ? 'Download' : 'Open'}
                         </a>
                       ) : null}
                     </div>
+                    {String(resource.metadata?.preview_image_url || '') ? (
+                      <img src={String(resource.metadata?.preview_image_url)} alt={resource.title} className="mt-3 max-h-40 rounded-xl border border-slate-200 object-contain" />
+                    ) : null}
                     {resource.text_content ? <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{resource.text_content}</p> : null}
                   </div>
                 ))}

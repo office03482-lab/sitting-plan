@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -27,6 +27,15 @@ type OnlineTestEditorProps = {
   testId?: string;
 };
 
+const aiInitialState = {
+  subject: '',
+  chapter: '',
+  topic: '',
+  difficulty: 'medium',
+  question_count: '10',
+  duration_minutes: '60',
+};
+
 export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps) {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
@@ -40,8 +49,14 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
   const [existingQuestions, setExistingQuestions] = useState<OnlineTestQuestion[]>([]);
   const [loading, setLoading] = useState(mode === 'edit');
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [uploadingAssetKey, setUploadingAssetKey] = useState('');
+  const [assetUploadProgress, setAssetUploadProgress] = useState<Record<string, number>>({});
   const [pageError, setPageError] = useState('');
   const [banner, setBanner] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string } | null>(null);
+  const [questionBankCount, setQuestionBankCount] = useState(0);
+  const [aiForm, setAiForm] = useState(aiInitialState);
 
   useEffect(() => {
     if (!canRunRequests) return;
@@ -58,10 +73,16 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
 
   const loadBatches = async () => {
     try {
-      const response = await apiService.listBatches(1, true, 'batch');
-      setBatches(response.data || []);
+      const [batchResponse, questionBankResponse] = await Promise.all([
+        apiService.listBatches(1, true, 'batch'),
+        apiService.listOnlineTestQuestionBank({ limit: 200 }),
+      ]);
+      setBatches(batchResponse.data || []);
+      const count = Number((questionBankResponse.data || []).length || 0);
+      setQuestionBankCount(count);
     } catch {
       setBatches([]);
+      setQuestionBankCount(0);
     }
   };
 
@@ -177,6 +198,102 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
       setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Online test save nahi ho paya.') });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleImportWorkbook = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      setImporting(true);
+      const response = await apiService.importOnlineTestQuestionBank(file);
+      setQuestionBankCount((current) => current + Number(response.data.created_count || 0));
+      setBanner({ type: 'success', message: `${response.data.created_count || 0} questions imported into question bank.` });
+    } catch (error) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Question bank import nahi ho paya.') });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleGenerateAiTest = async () => {
+    if (!aiForm.subject.trim() || !aiForm.chapter.trim() || !aiForm.topic.trim()) {
+      setBanner({ type: 'error', message: 'Subject, chapter aur topic required hain for AI generator.' });
+      return;
+    }
+    try {
+      setGenerating(true);
+      const response = await apiService.generateOnlineAiTest({
+        ...aiForm,
+        question_count: Number(aiForm.question_count || 10),
+        duration_minutes: Number(aiForm.duration_minutes || 60),
+        title: form.title || `${aiForm.subject} - ${aiForm.topic}`,
+        batch_id: form.batch_id || undefined,
+      });
+      if (!response.data.success || !response.data.test) {
+        setBanner({ type: 'warning', message: response.data.message || 'AI service temporarily unavailable' });
+        return;
+      }
+      navigate(`/online-tests/edit/${response.data.test.id}`, {
+        state: {
+          banner: {
+            type: 'success',
+            message: 'AI generated draft test created successfully. Review questions and publish when ready.',
+          },
+        },
+      });
+    } catch (error) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'AI test generate nahi ho paya.') });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const trackAssetProgress = (key: string) => (progressEvent: { loaded?: number; total?: number }) => {
+    const total = Number(progressEvent.total || 0);
+    const loaded = Number(progressEvent.loaded || 0);
+    if (!total) return;
+    setAssetUploadProgress((current) => ({ ...current, [key]: Math.round((loaded / total) * 100) }));
+  };
+
+  const handleQuestionImageUpload = async (index: number, file: File) => {
+    const key = `question-image-${index}`;
+    try {
+      setUploadingAssetKey(key);
+      const response = await apiService.uploadImage(file, {
+        purpose: 'online_test_question',
+        onUploadProgress: trackAssetProgress(key),
+      });
+      updateQuestion(index, 'question_image_url', response.data.url);
+      setBanner({ type: 'success', message: 'Question image uploaded successfully.' });
+    } catch (error) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Question image upload nahi hua.') });
+    } finally {
+      setUploadingAssetKey('');
+    }
+  };
+
+  const handleOptionImageUpload = async (questionIndex: number, optionIndex: number, file: File) => {
+    const key = `option-image-${questionIndex}-${optionIndex}`;
+    try {
+      setUploadingAssetKey(key);
+      const response = await apiService.uploadImage(file, {
+        purpose: 'online_test_option',
+        onUploadProgress: trackAssetProgress(key),
+      });
+      const lines = questionDrafts[questionIndex]?.option_lines.split('\n') || [];
+      while (lines.length <= optionIndex) {
+        lines.push('');
+      }
+      const currentLine = lines[optionIndex]?.split('|')[0]?.trim() || `Option ${String.fromCharCode(65 + optionIndex)}`;
+      lines[optionIndex] = `${currentLine} | ${response.data.url}`;
+      updateQuestion(questionIndex, 'option_lines', lines.join('\n'));
+      setBanner({ type: 'success', message: `Option ${String.fromCharCode(65 + optionIndex)} image uploaded successfully.` });
+    } catch (error) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Option image upload nahi hua.') });
+    } finally {
+      setUploadingAssetKey('');
     }
   };
 
@@ -416,6 +533,20 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                       />
                     </div>
                     <div className="grid gap-4">
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div>
+                          <label className={onlineTestLabelClass}>Subject</label>
+                          <input value={question.subject} onChange={(event) => updateQuestion(index, 'subject', event.target.value)} className={onlineTestInputClass} placeholder="Physics" />
+                        </div>
+                        <div>
+                          <label className={onlineTestLabelClass}>Chapter</label>
+                          <input value={question.chapter} onChange={(event) => updateQuestion(index, 'chapter', event.target.value)} className={onlineTestInputClass} placeholder="Laws of Motion" />
+                        </div>
+                        <div>
+                          <label className={onlineTestLabelClass}>Topic</label>
+                          <input value={question.topic} onChange={(event) => updateQuestion(index, 'topic', event.target.value)} className={onlineTestInputClass} placeholder="Newton's Laws" />
+                        </div>
+                      </div>
                       <div className="grid gap-4 md:grid-cols-2">
                         <div>
                           <label className={onlineTestLabelClass}>Question Type</label>
@@ -479,6 +610,24 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                           />
                         </div>
                       </div>
+
+                      <div>
+                        <label className={onlineTestLabelClass}>Question Image URL</label>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
+                            className="block w-full text-sm"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              event.target.value = '';
+                              if (file) void handleQuestionImageUpload(index, file);
+                            }}
+                          />
+                          {question.question_image_url ? <img src={question.question_image_url} alt="Question" className="mt-3 max-h-40 rounded-lg border border-slate-200 object-contain" /> : null}
+                          {uploadingAssetKey === `question-image-${index}` ? <p className="mt-2 text-xs text-slate-500">Uploading... {assetUploadProgress[`question-image-${index}`] || 0}%</p> : null}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -489,8 +638,26 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                         value={question.option_lines}
                         onChange={(event) => updateQuestion(index, 'option_lines', event.target.value)}
                         className={`${onlineTestInputClass} min-h-[120px]`}
-                        placeholder={'One option per line\n9.8 m/s^2\n10.2 m/s^2\n12 m/s^2'}
+                        placeholder={'One option per line\nOption text | https://image-url\n9.8 m/s^2\n10.2 m/s^2'}
                       />
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {[0, 1, 2, 3].map((optionIndex) => (
+                          <label key={`option-upload-${index}-${optionIndex}`} className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700">
+                            Upload image for Option {String.fromCharCode(65 + optionIndex)}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
+                              className="mt-2 block w-full text-sm"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                event.target.value = '';
+                                if (file) void handleOptionImageUpload(index, optionIndex, file);
+                              }}
+                            />
+                            {uploadingAssetKey === `option-image-${index}-${optionIndex}` ? <span className="mt-2 block text-xs text-slate-500">Uploading... {assetUploadProgress[`option-image-${index}-${optionIndex}`] || 0}%</span> : null}
+                          </label>
+                        ))}
+                      </div>
                     </div>
                     <div>
                       <label className={onlineTestLabelClass}>Correct Answer / Accepted Values</label>
@@ -542,6 +709,46 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                 <span>Existing questions</span>
                 <span className="font-semibold text-slate-900">{existingQuestions.length}</span>
               </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Question bank</span>
+                <span className="font-semibold text-slate-900">{questionBankCount}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className={`${onlineTestCardClass} p-5`}>
+            <h2 className="text-lg font-semibold text-slate-900">Excel Bulk Import</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Upload `.xlsx` with columns: Question, Option A-D, Correct Answer, Difficulty, Topic, Chapter.
+            </p>
+            <label className="mt-4 inline-flex w-full cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <input type="file" accept=".xlsx" className="hidden" onChange={handleImportWorkbook} />
+              {importing ? 'Importing...' : 'Import Questions From Excel'}
+            </label>
+          </section>
+
+          <section className={`${onlineTestCardClass} p-5`}>
+            <h2 className="text-lg font-semibold text-slate-900">AI Test Generator</h2>
+            <div className="mt-4 space-y-3">
+              <input value={aiForm.subject} onChange={(event) => setAiForm((current) => ({ ...current, subject: event.target.value }))} className={onlineTestInputClass} placeholder="Subject" />
+              <input value={aiForm.chapter} onChange={(event) => setAiForm((current) => ({ ...current, chapter: event.target.value }))} className={onlineTestInputClass} placeholder="Chapter" />
+              <input value={aiForm.topic} onChange={(event) => setAiForm((current) => ({ ...current, topic: event.target.value }))} className={onlineTestInputClass} placeholder="Topic" />
+              <div className="grid gap-3 md:grid-cols-2">
+                <select value={aiForm.difficulty} onChange={(event) => setAiForm((current) => ({ ...current, difficulty: event.target.value }))} className={onlineTestInputClass}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+                <input type="number" min="1" max="50" value={aiForm.question_count} onChange={(event) => setAiForm((current) => ({ ...current, question_count: event.target.value }))} className={onlineTestInputClass} placeholder="Question count" />
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleGenerateAiTest()}
+                disabled={generating}
+                className="inline-flex w-full items-center justify-center rounded-lg bg-[#0f766e] px-4 py-3 text-sm font-semibold text-white hover:bg-[#0b5d57] disabled:opacity-70"
+              >
+                {generating ? 'Generating...' : 'Generate Complete Test'}
+              </button>
             </div>
           </section>
 

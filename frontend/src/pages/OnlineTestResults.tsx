@@ -20,7 +20,7 @@ export default function OnlineTestResults() {
   const { id = '' } = useParams();
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const canViewAnalytics = user?.role === 'admin';
+  const canViewAnalytics = user?.role === 'admin' || user?.role === 'teacher';
 
   const [result, setResult] = useState<OnlineTestResult | null>(null);
   const [test, setTest] = useState<OnlineTest | null>(null);
@@ -170,6 +170,41 @@ export default function OnlineTestResults() {
                 <p className="mt-2 text-lg font-bold text-slate-900">{value}</p>
               </div>
             ))}
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Question Wise Analysis</p>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                {analytics.question_wise_analysis?.slice(0, 4).map((item, index) => (
+                  <div key={String((item as Record<string, unknown>).question_id || index)}>
+                    <p className="font-medium text-slate-900">{String((item as Record<string, unknown>).prompt_text || 'Question')}</p>
+                    <p>{String((item as Record<string, unknown>).correct_rate || 0)}% correct</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Difficulty Wise Analysis</p>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                {analytics.difficulty_wise_analysis?.slice(0, 4).map((item, index) => (
+                  <div key={String((item as Record<string, unknown>).difficulty_level || index)} className="flex items-center justify-between gap-3">
+                    <span className="capitalize">{String((item as Record<string, unknown>).difficulty_level || 'medium')}</span>
+                    <span className="font-semibold">{String((item as Record<string, unknown>).correct_rate || 0)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Student Ranking</p>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                {analytics.student_ranking?.slice(0, 5).map((item, index) => (
+                  <div key={String((item as Record<string, unknown>).student_id || index)} className="flex items-center justify-between gap-3">
+                    <span>{String((item as Record<string, unknown>).student_name || 'Student')}</span>
+                    <span className="font-semibold">{String((item as Record<string, unknown>).percentage || 0)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
       ) : null}

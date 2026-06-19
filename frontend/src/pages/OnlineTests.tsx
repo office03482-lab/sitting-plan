@@ -21,7 +21,7 @@ export default function OnlineTests() {
   const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = user?.role_key === 'platform_admin';
   const canManage = isTeacher || isAdmin;
-  const canViewAnalytics = isAdmin;
+  const canViewAnalytics = isAdmin || isTeacher;
   const canViewStudentDashboard = isStudent;
   const canViewTeacherDashboard = isTeacher;
   const canViewSchoolDashboard = isAdmin && !isPlatformAdmin;
@@ -321,6 +321,43 @@ export default function OnlineTests() {
               </div>
             ))}
           </div>
+          {analytics.question_wise_analysis?.length ? (
+            <div className="mt-4 grid gap-4 xl:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Question Wise Analysis</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  {analytics.question_wise_analysis.slice(0, 4).map((item, index) => (
+                    <div key={String((item as Record<string, unknown>).question_id || index)}>
+                      <p className="font-medium text-slate-900">{String((item as Record<string, unknown>).prompt_text || 'Question')}</p>
+                      <p>{String((item as Record<string, unknown>).correct_rate || 0)}% correct</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Difficulty Wise Analysis</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  {analytics.difficulty_wise_analysis.slice(0, 4).map((item, index) => (
+                    <div key={String((item as Record<string, unknown>).difficulty_level || index)} className="flex items-center justify-between gap-3">
+                      <span className="capitalize">{String((item as Record<string, unknown>).difficulty_level || 'medium')}</span>
+                      <span className="font-semibold">{String((item as Record<string, unknown>).correct_rate || 0)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Student Ranking</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  {analytics.student_ranking.slice(0, 4).map((item, index) => (
+                    <div key={String((item as Record<string, unknown>).student_id || index)} className="flex items-center justify-between gap-3">
+                      <span>{String((item as Record<string, unknown>).student_name || 'Student')}</span>
+                      <span className="font-semibold">{String((item as Record<string, unknown>).percentage || 0)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -530,14 +567,24 @@ export default function OnlineTests() {
               : 'First test create karke question bank aur student attempts flow start karo.'}
           </p>
           {canManage ? (
-            <button
-              type="button"
-              onClick={() => navigate('/online-tests/create')}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#1e3a8a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1b3277]"
-            >
-              <Plus className="h-4 w-4" />
-              Create Your First Test
-            </button>
+            <div className="mt-4 flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/online-tests/create')}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#1e3a8a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1b3277]"
+              >
+                <Plus className="h-4 w-4" />
+                Create First Test
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/online-tests/create')}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ClipboardList className="h-4 w-4" />
+                Open Question Bank Tools
+              </button>
+            </div>
           ) : null}
         </section>
       ) : (

@@ -220,6 +220,7 @@ export default function OnlineTestTake() {
           {(currentQuestion.option_items || []).map((option) => {
             const optionId = String(option.id || '');
             const label = String(option.label || option.value || optionId);
+            const imageUrl = String(option.image_url || '');
             const checked = selectedOptionIds.includes(optionId);
             return (
               <label key={optionId} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
@@ -233,7 +234,10 @@ export default function OnlineTestTake() {
                     updateDraft(currentQuestion.id, { selected_option_ids: next });
                   }}
                 />
-                <span>{label}</span>
+                <div>
+                  <span>{label}</span>
+                  {imageUrl ? <img src={imageUrl} alt={label} className="mt-2 max-h-28 rounded-lg border border-slate-200 object-contain" /> : null}
+                </div>
               </label>
             );
           })}
@@ -247,6 +251,7 @@ export default function OnlineTestTake() {
           {(currentQuestion.option_items || []).map((option) => {
             const optionId = String(option.id || '');
             const label = String(option.label || option.value || optionId);
+            const imageUrl = String(option.image_url || '');
             return (
               <label key={optionId} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                 <input
@@ -255,7 +260,10 @@ export default function OnlineTestTake() {
                   checked={selectedOptionId === optionId}
                   onChange={() => updateDraft(currentQuestion.id, { selected_option_id: optionId })}
                 />
-                <span>{label}</span>
+                <div>
+                  <span>{label}</span>
+                  {imageUrl ? <img src={imageUrl} alt={label} className="mt-2 max-h-28 rounded-lg border border-slate-200 object-contain" /> : null}
+                </div>
               </label>
             );
           })}
@@ -427,6 +435,13 @@ export default function OnlineTestTake() {
                   Question {currentIndex + 1} of {questions.length}
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-slate-900">{currentQuestion?.prompt_text}</h2>
+                {String(currentQuestion?.metadata?.question_image_url || '') ? (
+                  <img
+                    src={String(currentQuestion?.metadata?.question_image_url)}
+                    alt="Question reference"
+                    className="mt-3 max-h-56 rounded-xl border border-slate-200 object-contain"
+                  />
+                ) : null}
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                 Marks {currentQuestion?.marks} | Negative {currentQuestion?.negative_marks}

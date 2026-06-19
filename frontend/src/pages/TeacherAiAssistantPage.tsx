@@ -3,8 +3,11 @@ import { BookOpen, ClipboardList, FileSpreadsheet, MessagesSquare, Sparkles, Use
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
+import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type {
+  BatchAnalytics,
+  SchoolAnalytics,
   TeacherAiAssignmentResponse,
   TeacherAiLessonPlanResponse,
   TeacherAiQuestionPaperResponse,
@@ -13,9 +16,10 @@ import type {
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
 
-type AssistantTab = 'paper' | 'assignment' | 'lesson' | 'report';
+type AssistantTab = 'paper' | 'assignment' | 'lesson' | 'report' | 'analysis';
 
 export default function TeacherAiAssistantPage() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<AssistantTab>('paper');
   const [topic, setTopic] = useState('');
   const [batchId, setBatchId] = useState('');
@@ -36,6 +40,8 @@ export default function TeacherAiAssistantPage() {
   const [assignmentResult, setAssignmentResult] = useState<TeacherAiAssignmentResponse | null>(null);
   const [lessonResult, setLessonResult] = useState<TeacherAiLessonPlanResponse | null>(null);
   const [reportResult, setReportResult] = useState<TeacherAiReportCommentsResponse | null>(null);
+  const [batchAnalysis, setBatchAnalysis] = useState<BatchAnalytics | null>(null);
+  const [schoolAnalysis, setSchoolAnalysis] = useState<SchoolAnalytics | null>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -73,7 +79,7 @@ export default function TeacherAiAssistantPage() {
           plan_scope: planScope,
         });
         setLessonResult(response.data);
-      } else {
+      } else if (tab === 'report') {
         const response = await apiService.generateTeacherReportComments({
           title: title.trim() || undefined,
           prompt: prompt.trim() || undefined,
@@ -83,6 +89,18 @@ export default function TeacherAiAssistantPage() {
           teacher_note: teacherNote.trim() || undefined,
         });
         setReportResult(response.data);
+      } else {
+        setBatchAnalysis(null);
+        setSchoolAnalysis(null);
+        if (batchId.trim()) {
+          const response = await apiService.getBatchAnalytics(batchId.trim());
+          setBatchAnalysis(response.data);
+        } else if (user?.school_id) {
+          const response = await apiService.getSchoolAnalytics(user.school_id);
+          setSchoolAnalysis(response.data);
+        } else {
+          throw new Error('School context missing for weak student analysis.');
+        }
       }
     } catch (requestError) {
       setError(getRequestErrorMessage(requestError, 'Teacher AI response generate nahi hua.'));
@@ -121,6 +139,7 @@ export default function TeacherAiAssistantPage() {
                 ['assignment', 'Assignment'],
                 ['lesson', 'Lesson'],
                 ['report', 'Report'],
+                ['analysis', 'Weak Students'],
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
@@ -139,8 +158,14 @@ export default function TeacherAiAssistantPage() {
 
             {tab !== 'report' ? (
               <div className="grid gap-3 md:grid-cols-2">
-                <input value={batchId} onChange={(event) => setBatchId(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder={tab === 'lesson' ? 'Class name for timetable matching' : 'Batch UUID'} />
-                <input value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder="Subject UUID" />
+                <input value={batchId} onChange={(event) => setBatchId(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder={tab === 'lesson' ? 'Class name for timetable matching' : tab === 'analysis' ? 'Batch UUID for weak student analysis' : 'Batch UUID'} />
+                {tab !== 'analysis' ? (
+                  <input value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder="Subject UUID" />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    Batch UUID dene par weak students, weak topics, and intervention suggestions batch-wise milenge. Empty chhodne par school-level trend snapshot load hoga.
+                  </div>
+                )}
               </div>
             ) : null}
 
@@ -203,7 +228,8 @@ export default function TeacherAiAssistantPage() {
           {!loading && tab === 'assignment' && assignmentResult ? <AssignmentView result={assignmentResult} /> : null}
           {!loading && tab === 'lesson' && lessonResult ? <LessonView result={lessonResult} /> : null}
           {!loading && tab === 'report' && reportResult ? <ReportView result={reportResult} /> : null}
-          {!loading && ((tab === 'paper' && !paperResult) || (tab === 'assignment' && !assignmentResult) || (tab === 'lesson' && !lessonResult) || (tab === 'report' && !reportResult)) ? (
+          {!loading && tab === 'analysis' && (batchAnalysis || schoolAnalysis) ? <AnalysisView batchAnalysis={batchAnalysis} schoolAnalysis={schoolAnalysis} /> : null}
+          {!loading && ((tab === 'paper' && !paperResult) || (tab === 'assignment' && !assignmentResult) || (tab === 'lesson' && !lessonResult) || (tab === 'report' && !reportResult) || (tab === 'analysis' && !batchAnalysis && !schoolAnalysis)) ? (
             <div className="space-y-4 text-sm text-slate-600">
               <p>Supported teacher workflows:</p>
               <ul className="space-y-2">
@@ -211,6 +237,7 @@ export default function TeacherAiAssistantPage() {
                 <li>Homework, worksheet, revision sheet, practice set generation</li>
                 <li>Daily, weekly, monthly lesson planning from timetable</li>
                 <li>Student report comments and parent communication summaries</li>
+                <li>Weak student analysis with batch-level intervention suggestions</li>
               </ul>
             </div>
           ) : null}
@@ -261,6 +288,38 @@ function ReportView({ result }: { result: TeacherAiReportCommentsResponse }) {
       <Block title="AI Signals" items={Object.entries(result.score_payload).map(([key, value]) => `${key}: ${String(value)}`)} />
     </div>
   );
+}
+
+function AnalysisView({
+  batchAnalysis,
+  schoolAnalysis,
+}: {
+  batchAnalysis: BatchAnalytics | null;
+  schoolAnalysis: SchoolAnalytics | null;
+}) {
+  if (batchAnalysis) {
+    return (
+      <div className="space-y-5">
+        <Header title={`${batchAnalysis.batch_name} Weak Student Analysis`} subtitle={`${batchAnalysis.active_students} active students | ${batchAnalysis.overall_percentage.toFixed(1)}% overall`} icon={Users} />
+        <Block title="Weak Students" items={batchAnalysis.weak_students.map((student) => `${student.student_name} | ${student.percentage.toFixed(1)}% | Rank ${student.rank}`)} />
+        <Block title="Weak Topics" items={batchAnalysis.weak_topics} />
+        <Block title="Intervention Suggestions" items={batchAnalysis.suggestions} />
+      </div>
+    );
+  }
+
+  if (schoolAnalysis) {
+    return (
+      <div className="space-y-5">
+        <Header title="School-Level Trend Snapshot" subtitle={`${schoolAnalysis.active_students} active students | ${schoolAnalysis.average_percentage.toFixed(1)}% average`} icon={Users} />
+        <Block title="Teacher Performance" items={schoolAnalysis.teacher_wise_performance.map((item) => `${item.name}: ${item.average_percentage.toFixed(1)}% across ${item.tests_count} tests`)} />
+        <Block title="Subject Trends" items={schoolAnalysis.subject_wise_trends.map((item) => `${item.name}: ${item.average_percentage.toFixed(1)}% across ${item.tests_count} tests`)} />
+        <Block title="Monthly Progress" items={schoolAnalysis.monthly_progress.map((item) => `${item.period}: ${item.average_percentage.toFixed(1)}% average across ${item.tests_count} tests`)} />
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function Header({ title, subtitle, icon: Icon }: { title: string; subtitle: string; icon: typeof Sparkles }) {

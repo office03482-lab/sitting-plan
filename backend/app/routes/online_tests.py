@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
 from app.models import User, UserRole
 from app.schemas import (
     OnlineTestAnalyticsResponse,
+    OnlineTestAiGenerateRequest,
+    OnlineTestAiGenerateResponse,
     OnlineTestAttemptCreate,
     OnlineTestAttemptResponse,
     OnlineTestAttemptResponseUpsert,
     OnlineTestCreate,
+    OnlineTestQuestionBankCreate,
+    OnlineTestQuestionBankResponse,
     OnlineTestQuestionCreate,
     OnlineTestQuestionResponse,
     OnlineTestQuestionUpdate,
@@ -22,18 +27,23 @@ from app.schemas import (
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_online_tests import (
+    AIProviderError,
     close_test,
+    create_question_bank_item,
     create_question,
     create_test,
     delete_question,
     delete_test,
     duplicate_test,
+    generate_ai_test,
     get_result,
     get_attempt,
     get_results_analytics,
     get_test,
     get_test_for_student,
+    import_question_bank_workbook,
     list_attempts,
+    list_question_bank,
     list_questions,
     list_questions_for_student,
     list_results,
@@ -114,9 +124,9 @@ def require_reports_user(
     _: User = Depends(require_permissions("online_tests.reports")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
-    if _is_school_admin_user(user) or is_platform_admin_user(user):
+    if _is_teacher_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user):
         return user
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only school administrators can view online test analytics")
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only teachers or administrators can view online test analytics")
 
 
 @router.get("/tests", response_model=list[OnlineTestResponse])
@@ -237,6 +247,71 @@ async def api_create_test_question(
     return create_question(school_id, data, actor.get("profile_id"))
 
 
+@router.get("/question-bank", response_model=list[OnlineTestQuestionBankResponse])
+async def api_list_question_bank(
+    subject: str | None = Query(default=None),
+    chapter: str | None = Query(default=None),
+    topic: str | None = Query(default=None),
+    difficulty_level: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=300),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    return list_question_bank(
+        school_id,
+        subject=subject,
+        chapter=chapter,
+        topic=topic,
+        difficulty_level=difficulty_level,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.post("/question-bank", response_model=OnlineTestQuestionBankResponse)
+async def api_create_question_bank(
+    payload: OnlineTestQuestionBankCreate,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    return create_question_bank_item(school_id, actor.get("profile_id"), payload.model_dump(exclude_none=True))
+
+
+@router.post("/question-bank/import")
+async def api_import_question_bank(
+    file: UploadFile = File(...),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported for question bank import")
+    file_bytes = await file.read()
+    return import_question_bank_workbook(school_id, actor.get("profile_id"), file_bytes)
+
+
+@router.post("/ai-generate", response_model=OnlineTestAiGenerateResponse)
+async def api_generate_ai_test(
+    payload: OnlineTestAiGenerateRequest,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_manage_user),
+):
+    del user
+    try:
+        return generate_ai_test(school_id, actor.get("profile_id"), payload.model_dump(exclude_none=True))
+    except AIProviderError:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "message": "AI service temporarily unavailable", "questions": []},
+        )
+
+
 @router.put("/questions/{question_id}", response_model=OnlineTestQuestionResponse)
 async def api_update_question(
     question_id: str,
@@ -324,12 +399,19 @@ async def api_create_attempt(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
+    x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
 ):
     del user
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
-    return start_attempt(school_id, payload.test_id, profile_id)
+    return start_attempt(
+        school_id,
+        payload.test_id,
+        profile_id,
+        {"test_id": payload.test_id, "session_key": x_active_session, "device_id": x_device_id},
+    )
 
 
 @router.get("/attempts", response_model=list[OnlineTestAttemptResponse])
@@ -380,12 +462,15 @@ async def api_save_attempt(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
+    x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
 ):
     del user
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
-    return save_attempt(school_id, attempt_id, profile_id, payload.model_dump())
+    data = payload.model_dump()
+    data["session_key"] = x_active_session
+    return save_attempt(school_id, attempt_id, profile_id, data)
 
 
 @router.post("/attempts/{attempt_id}/submit", response_model=OnlineTestResultResponse)
@@ -394,12 +479,13 @@ async def api_submit_attempt(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
+    x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
 ):
     del user
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
-    return submit_attempt(school_id, attempt_id, profile_id)
+    return submit_attempt(school_id, attempt_id, profile_id, x_active_session)
 
 
 @router.get("/results/analytics", response_model=OnlineTestAnalyticsResponse)

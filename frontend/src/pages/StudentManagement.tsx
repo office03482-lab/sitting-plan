@@ -5,7 +5,16 @@ import { useAppStore } from '@store/app';
 import { useAuthStore } from '@store/auth';
 import { apiService } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
-import type { Student, StudentImportResponse, Batch, Hostel } from '@types';
+import type {
+  Student,
+  StudentImportResponse,
+  Batch,
+  Hostel,
+  ParentGuardianLink,
+  ParentLinkImportResult,
+  PortalAccessStatus,
+  BulkPortalCredentialRow,
+} from '@types';
 import { looksLikeAcademicBatchName } from '@utils/academicBatches';
 import {
   readEduPayAdmissionRequests,
@@ -343,6 +352,13 @@ const formatProgressMetric = (value: number, unit: StudentOperationProgress['uni
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 };
 
+const formatPortalDate = (value?: string | null) => {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
 function StudentOperationStatusCard({ progress }: { progress: StudentOperationProgress | null }) {
   if (!progress) return null;
 
@@ -437,6 +453,30 @@ export default function StudentManagement() {
   const [transferringBatch, setTransferringBatch] = useState(false);
   const [sendHostelRequestOnSubmit, setSendHostelRequestOnSubmit] = useState(false);
   const [sendToEduPayOnSubmit, setSendToEduPayOnSubmit] = useState(false);
+  const [studentParents, setStudentParents] = useState<ParentGuardianLink[]>([]);
+  const [availableParents, setAvailableParents] = useState<ParentGuardianLink[]>([]);
+  const [parentDirectoryLoading, setParentDirectoryLoading] = useState(false);
+  const [selectedParentId, setSelectedParentId] = useState('');
+  const [parentForm, setParentForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    relation_type: 'parent',
+    address: '',
+    is_primary: true,
+    create_login: true,
+  });
+  const [parentActionLoading, setParentActionLoading] = useState(false);
+  const [latestParentCredential, setLatestParentCredential] = useState<{ email: string; temporary_password: string } | null>(null);
+  const [parentImportFile, setParentImportFile] = useState<File | null>(null);
+  const [parentImporting, setParentImporting] = useState(false);
+  const [parentImportResult, setParentImportResult] = useState<ParentLinkImportResult | null>(null);
+  const [studentPortalAccess, setStudentPortalAccess] = useState<PortalAccessStatus | null>(null);
+  const [studentPortalLoading, setStudentPortalLoading] = useState(false);
+  const [studentPortalActionLoading, setStudentPortalActionLoading] = useState(false);
+  const [studentPortalCredentials, setStudentPortalCredentials] = useState<BulkPortalCredentialRow[]>([]);
+  const [parentPortalMap, setParentPortalMap] = useState<Record<string, PortalAccessStatus>>({});
+  const [parentPortalLoadingMap, setParentPortalLoadingMap] = useState<Record<string, boolean>>({});
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
@@ -458,6 +498,7 @@ export default function StudentManagement() {
   const importSectionRef = useRef<HTMLDivElement | null>(null);
   const directorySectionRef = useRef<HTMLDivElement | null>(null);
   const studentImportInputRef = useRef<HTMLInputElement | null>(null);
+  const parentImportInputRef = useRef<HTMLInputElement | null>(null);
   const skipNextAddAutoOpenRef = useRef(false);
   const operationProgressTimerRef = useRef<number | null>(null);
   const isDedicatedAddView = location.hash === '#add';
@@ -596,6 +637,253 @@ export default function StudentManagement() {
       setBatches(response.data);
     } catch (error) {
       console.error('Failed to load batches:', error);
+    }
+  };
+
+  const loadParentDirectory = async (search?: string) => {
+    try {
+      setParentDirectoryLoading(true);
+      const response = await apiService.listParentDirectory({ search, limit: 200 });
+      setAvailableParents(response.data || []);
+    } catch (error) {
+      console.error('Failed to load parent directory:', error);
+      setAvailableParents([]);
+    } finally {
+      setParentDirectoryLoading(false);
+    }
+  };
+
+  const loadStudentParents = async (studentId: string | number) => {
+    try {
+      const response = await apiService.listStudentParents(studentId);
+      const links = response.data || [];
+      setStudentParents(links);
+      if (links.length) {
+        void loadParentPortalAccessForLinks(links);
+      } else {
+        setParentPortalMap({});
+      }
+    } catch (error) {
+      console.error('Failed to load linked parents:', error);
+      setStudentParents([]);
+      setParentPortalMap({});
+    }
+  };
+
+  const loadStudentPortalAccess = async (studentId: string | number) => {
+    try {
+      setStudentPortalLoading(true);
+      const response = await apiService.getStudentPortalAccess(studentId);
+      setStudentPortalAccess(response.data);
+    } catch (error) {
+      console.error('Failed to load student portal access:', error);
+      setStudentPortalAccess(null);
+    } finally {
+      setStudentPortalLoading(false);
+    }
+  };
+
+  const loadParentPortalAccessForLinks = async (links: ParentGuardianLink[]) => {
+    const guardianIds = links
+      .map((parent) => String(parent.guardian_id || parent.id || '').trim())
+      .filter(Boolean);
+    if (!guardianIds.length) {
+      setParentPortalMap({});
+      return;
+    }
+    setParentPortalLoadingMap(
+      guardianIds.reduce<Record<string, boolean>>((accumulator, guardianId) => {
+        accumulator[guardianId] = true;
+        return accumulator;
+      }, {}),
+    );
+    try {
+      const entries = await Promise.all(
+        guardianIds.map(async (guardianId) => {
+          try {
+            const response = await apiService.getParentPortalAccess(guardianId);
+            return [guardianId, response.data] as const;
+          } catch (error) {
+            console.error('Failed to load parent portal access:', guardianId, error);
+            return [guardianId, null] as const;
+          }
+        }),
+      );
+      setParentPortalMap(
+        entries.reduce<Record<string, PortalAccessStatus>>((accumulator, [guardianId, access]) => {
+          if (access) {
+            accumulator[guardianId] = access;
+          }
+          return accumulator;
+        }, {}),
+      );
+    } finally {
+      setParentPortalLoadingMap({});
+    }
+  };
+
+  const downloadPortalCredentialsWorkbook = async (rows: BulkPortalCredentialRow[]) => {
+    if (!rows.length) {
+      setMessage('No credentials available to export.');
+      return;
+    }
+    const response = await apiService.exportPortalCredentials(rows as unknown as Array<Record<string, unknown>>);
+    const blob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'portal-credentials.xlsx';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleStudentPortalAction = async (
+    action: 'create' | 'reset' | 'enable' | 'disable' | 'force_logout',
+  ) => {
+    if (!editStudent) return;
+    try {
+      setStudentPortalActionLoading(true);
+      if (action === 'create') {
+        const response = await apiService.createStudentPortalLogin(editStudent.id);
+        setStudentPortalAccess(response.data);
+        const temporaryPassword = String(response.data.temporary_password || '').trim();
+        setStudentPortalCredentials(
+          temporaryPassword
+            ? [
+                {
+                  student_name: getStudentFullName(editStudent),
+                  roll_number: String(editStudent.roll_number || ''),
+                  username: response.data.username || String(editStudent.roll_number || ''),
+                  login_email: response.data.login_email,
+                  temporary_password: temporaryPassword,
+                },
+              ]
+            : [],
+        );
+        setMessage('Student portal login created successfully.');
+      } else if (action === 'reset') {
+        const response = await apiService.resetStudentPortalPassword(editStudent.id);
+        setStudentPortalAccess(response.data);
+        const temporaryPassword = String(response.data.temporary_password || '').trim();
+        setStudentPortalCredentials(
+          temporaryPassword
+            ? [
+                {
+                  student_name: getStudentFullName(editStudent),
+                  roll_number: String(editStudent.roll_number || ''),
+                  username: response.data.username || String(editStudent.roll_number || ''),
+                  login_email: response.data.login_email,
+                  temporary_password: temporaryPassword,
+                },
+              ]
+            : [],
+        );
+        setMessage('Student password reset completed.');
+      } else if (action === 'enable') {
+        await apiService.enableStudentPortalLogin(editStudent.id);
+        await loadStudentPortalAccess(editStudent.id);
+        setMessage('Student portal login enabled.');
+      } else if (action === 'disable') {
+        await apiService.disableStudentPortalLogin(editStudent.id);
+        await loadStudentPortalAccess(editStudent.id);
+        setMessage('Student portal login disabled.');
+      } else if (action === 'force_logout') {
+        await apiService.forceLogoutStudentPortal(editStudent.id);
+        await loadStudentPortalAccess(editStudent.id);
+        setMessage('Student was logged out from all active devices.');
+      }
+    } catch (error: any) {
+      console.error('Failed to process student portal action:', error);
+      setMessage(error?.response?.data?.detail || 'Student portal action failed.');
+    } finally {
+      setStudentPortalActionLoading(false);
+    }
+  };
+
+  const handleParentPortalAction = async (
+    guardianId: string,
+    action: 'create' | 'reset' | 'enable' | 'disable' | 'force_logout',
+  ) => {
+    try {
+      setParentActionLoading(true);
+      if (action === 'create') {
+        const response = await apiService.createParentPortalLogin(guardianId);
+        setParentPortalMap((current) => ({ ...current, [guardianId]: response.data }));
+        setLatestParentCredential(
+          response.data.temporary_password
+            ? {
+                email: response.data.login_email || response.data.username || '',
+                temporary_password: response.data.temporary_password,
+              }
+            : null,
+        );
+        setMessage('Parent portal login created.');
+      } else if (action === 'reset') {
+        const response = await apiService.resetParentPortalPassword(guardianId);
+        setParentPortalMap((current) => ({ ...current, [guardianId]: response.data }));
+        setLatestParentCredential(
+          response.data.temporary_password
+            ? {
+                email: response.data.login_email || response.data.username || '',
+                temporary_password: response.data.temporary_password,
+              }
+            : null,
+        );
+        setMessage('Parent password reset completed.');
+      } else if (action === 'enable') {
+        await apiService.enableParentPortalLogin(guardianId);
+        await loadParentPortalAccessForLinks(studentParents);
+        setMessage('Parent portal login enabled.');
+      } else if (action === 'disable') {
+        await apiService.disableParentPortalLogin(guardianId);
+        await loadParentPortalAccessForLinks(studentParents);
+        setMessage('Parent portal login disabled.');
+      } else if (action === 'force_logout') {
+        await apiService.forceLogoutParentPortal(guardianId);
+        await loadParentPortalAccessForLinks(studentParents);
+        setMessage('Parent was logged out from all devices.');
+      }
+    } catch (error: any) {
+      console.error('Failed to process parent portal action:', error);
+      setMessage(error?.response?.data?.detail || 'Parent portal action failed.');
+    } finally {
+      setParentActionLoading(false);
+    }
+  };
+
+  const handleBulkGeneratePortalAccounts = async (scope: 'selected' | 'batch' | 'school') => {
+    try {
+      const payload: { student_ids?: Array<string | number>; batch_id?: string | number } = {};
+      if (scope === 'selected') {
+        if (!selectedStudentIds.length) {
+          setMessage('Select at least one student first.');
+          return;
+        }
+        payload.student_ids = selectedStudentIds;
+      }
+      if (scope === 'batch') {
+        if (!selectedBatch) {
+          setMessage('Choose a source batch first.');
+          return;
+        }
+        const matchedBatch = batches.find((batch) => batch.name === selectedBatch);
+        if (!matchedBatch?.id) {
+          setMessage('Selected batch could not be resolved to a managed batch record.');
+          return;
+        }
+        payload.batch_id = matchedBatch.id;
+      }
+      setStudentPortalActionLoading(true);
+      const response = await apiService.bulkGenerateStudentPortalAccounts(payload);
+      setStudentPortalCredentials(response.data.credentials || []);
+      setMessage(`Generated ${response.data.count} student portal account(s).`);
+    } catch (error: any) {
+      console.error('Failed to bulk generate student portal accounts:', error);
+      setMessage(error?.response?.data?.detail || 'Bulk portal generation failed.');
+    } finally {
+      setStudentPortalActionLoading(false);
     }
   };
 
@@ -1035,9 +1323,16 @@ export default function StudentManagement() {
 
   const openAddModal = () => {
     void loadBatches();
+    void loadParentDirectory();
     setEditStudent(null);
     setSendHostelRequestOnSubmit(false);
     setSendToEduPayOnSubmit(false);
+    setStudentParents([]);
+    setStudentPortalAccess(null);
+    setParentPortalMap({});
+    setStudentPortalCredentials([]);
+    setSelectedParentId('');
+    setLatestParentCredential(null);
     resetStudentForm();
     setShowModal(true);
   };
@@ -1046,6 +1341,12 @@ export default function StudentManagement() {
     setShowModal(false);
     setSendHostelRequestOnSubmit(false);
     setSendToEduPayOnSubmit(false);
+    setStudentParents([]);
+    setStudentPortalAccess(null);
+    setParentPortalMap({});
+    setStudentPortalCredentials([]);
+    setSelectedParentId('');
+    setLatestParentCredential(null);
     resetStudentForm();
     if (isDedicatedAddView) {
       navigate('/students/directory');
@@ -1058,6 +1359,9 @@ export default function StudentManagement() {
 
   const openEditModalWithDetails = (student: Student, details?: Partial<EduPayAdmissionSnapshot>) => {
     void loadBatches();
+    void loadParentDirectory();
+    void loadStudentParents(student.id);
+    void loadStudentPortalAccess(student.id);
     setEditStudent(student);
     const currentBatchLabel = getStudentBatchLabel(student);
     const [parsedClassName = '', parsedSection = ''] = currentBatchLabel.split('|').map((item) => item.trim());
@@ -1145,6 +1449,8 @@ export default function StudentManagement() {
     setStudentPhotoPreviewUrl(savedPhoto);
     setStudentPhotoDataUrl(savedPhoto);
     setStudentDocuments([]);
+    setSelectedParentId('');
+    setLatestParentCredential(null);
     setShowModal(true);
   };
 
@@ -1174,6 +1480,137 @@ export default function StudentManagement() {
     } catch (error: any) {
       console.error('Failed to delete student:', error);
       setMessage(error?.response?.data?.detail || 'Failed to delete student');
+    }
+  };
+
+  const handleParentImportFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      setMessage('Please select a valid parent import Excel file (.xlsx)');
+      setParentImportFile(null);
+      event.target.value = '';
+      return;
+    }
+    setParentImportFile(file);
+    setParentImportResult(null);
+  };
+
+  const handleImportParents = async () => {
+    if (!parentImportFile) return;
+    try {
+      setParentImporting(true);
+      const response = await apiService.importParentLinks(parentImportFile);
+      setParentImportResult(response.data);
+      setMessage(
+        `Parent import completed. Created ${response.data.created_count} accounts, linked ${response.data.linked_count}, skipped ${response.data.skipped_count}.`
+      );
+      await loadParentDirectory();
+    } catch (error: any) {
+      console.error('Failed to import parent links:', error);
+      setMessage(error?.response?.data?.detail || 'Failed to import parent links');
+    } finally {
+      setParentImporting(false);
+    }
+  };
+
+  const handleLinkExistingParent = async () => {
+    if (!editStudent || !selectedParentId) {
+      setMessage('Select a parent to link first.');
+      return;
+    }
+    try {
+      setParentActionLoading(true);
+      const response = await apiService.createOrLinkStudentParent(editStudent.id, {
+        guardian_id: selectedParentId,
+        is_primary: parentForm.is_primary,
+        can_receive_notifications: true,
+        create_login: true,
+      });
+      setLatestParentCredential(
+        response.data.temporary_password
+          ? {
+              email: response.data.email || '',
+              temporary_password: response.data.temporary_password,
+            }
+          : null,
+      );
+      await loadStudentParents(editStudent.id);
+      await loadParentDirectory();
+      setSelectedParentId('');
+      setMessage('Existing parent linked successfully.');
+    } catch (error: any) {
+      console.error('Failed to link existing parent:', error);
+      setMessage(error?.response?.data?.detail || 'Failed to link existing parent');
+    } finally {
+      setParentActionLoading(false);
+    }
+  };
+
+  const handleCreateAndLinkParent = async () => {
+    if (!editStudent) {
+      setMessage('Save the student first, then create and link a parent.');
+      return;
+    }
+    if (!parentForm.full_name.trim()) {
+      setMessage('Parent name is required.');
+      return;
+    }
+    try {
+      setParentActionLoading(true);
+      const response = await apiService.createOrLinkStudentParent(editStudent.id, {
+        full_name: parentForm.full_name.trim(),
+        email: parentForm.email.trim() || undefined,
+        phone: parentForm.phone.trim() || undefined,
+        relation_type: parentForm.relation_type,
+        address: parentForm.address.trim() || undefined,
+        is_primary: parentForm.is_primary,
+        can_receive_notifications: true,
+        create_login: parentForm.create_login,
+      });
+      setLatestParentCredential(
+        response.data.temporary_password
+          ? {
+              email: response.data.email || '',
+              temporary_password: response.data.temporary_password,
+            }
+          : null,
+      );
+      await loadStudentParents(editStudent.id);
+      await loadParentDirectory();
+      setParentForm({
+        full_name: '',
+        email: '',
+        phone: '',
+        relation_type: 'parent',
+        address: '',
+        is_primary: false,
+        create_login: true,
+      });
+      setMessage('Parent account created and linked successfully.');
+    } catch (error: any) {
+      console.error('Failed to create and link parent:', error);
+      setMessage(error?.response?.data?.detail || 'Failed to create and link parent');
+    } finally {
+      setParentActionLoading(false);
+    }
+  };
+
+  const handleUnlinkParent = async (guardianId: string) => {
+    if (!editStudent) return;
+    if (!confirm('Unlink this parent from the student?')) return;
+    try {
+      setParentActionLoading(true);
+      await apiService.unlinkStudentParent(editStudent.id, guardianId);
+      await loadStudentParents(editStudent.id);
+      await loadParentDirectory();
+      setLatestParentCredential(null);
+      setMessage('Parent unlinked successfully.');
+    } catch (error: any) {
+      console.error('Failed to unlink parent:', error);
+      setMessage(error?.response?.data?.detail || 'Failed to unlink parent');
+    } finally {
+      setParentActionLoading(false);
     }
   };
 
@@ -1623,6 +2060,130 @@ export default function StudentManagement() {
             )}
           </div>
         )}
+
+        <div className="mb-8 rounded-lg border border-violet-200 bg-violet-50 p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-violet-900">Bulk Parent Import</h3>
+              <p className="mt-1 text-sm text-violet-700">
+                Excel columns: Student Name, Student Roll No, Parent Name, Parent Email, Parent Phone. System parent account, profile, and student link auto-create karega.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                ref={parentImportInputRef}
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                onChange={handleParentImportFileSelect}
+              />
+              <button
+                type="button"
+                onClick={() => parentImportInputRef.current?.click()}
+                className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100"
+              >
+                Choose Parent Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleImportParents}
+                disabled={!parentImportFile || parentImporting}
+                className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-60"
+              >
+                {parentImporting ? 'Importing...' : 'Import Parent Links'}
+              </button>
+            </div>
+          </div>
+          {parentImportFile ? (
+            <p className="mt-3 text-sm text-violet-700">Selected file: {parentImportFile.name}</p>
+          ) : null}
+          {parentImportResult ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg bg-white p-4">
+                <div className="text-2xl font-bold text-violet-700">{parentImportResult.created_count}</div>
+                <div className="text-sm text-slate-600">Accounts Created</div>
+              </div>
+              <div className="rounded-lg bg-white p-4">
+                <div className="text-2xl font-bold text-violet-700">{parentImportResult.linked_count}</div>
+                <div className="text-sm text-slate-600">Links Created</div>
+              </div>
+              <div className="rounded-lg bg-white p-4">
+                <div className="text-2xl font-bold text-violet-700">{parentImportResult.skipped_count}</div>
+                <div className="text-sm text-slate-600">Skipped</div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mb-8 rounded-lg border border-emerald-200 bg-emerald-50 p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-emerald-900">Student Portal Access</h3>
+              <p className="mt-1 max-w-3xl text-sm text-emerald-700">
+                Generate secure logins using roll numbers as usernames, export temporary passwords for distribution, and manage entire batches or the full school in one pass.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void handleBulkGeneratePortalAccounts('selected')}
+                disabled={!selectedStudentIds.length || studentPortalActionLoading}
+                className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+              >
+                Generate For Selected ({selectedStudentIds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleBulkGeneratePortalAccounts('batch')}
+                disabled={!selectedBatch || studentPortalActionLoading}
+                className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+              >
+                Generate For Batch
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleBulkGeneratePortalAccounts('school')}
+                disabled={studentPortalActionLoading}
+                className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+              >
+                Generate For School
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadPortalCredentialsWorkbook(studentPortalCredentials)}
+                disabled={!studentPortalCredentials.length}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              >
+                <Download className="mr-2 inline h-4 w-4" />
+                Export Credentials
+              </button>
+            </div>
+          </div>
+          {studentPortalCredentials.length ? (
+            <div className="mt-4 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+              <table className="min-w-full divide-y divide-emerald-100 text-sm">
+                <thead className="bg-emerald-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold text-emerald-900">Student</th>
+                    <th className="px-4 py-3 text-left font-semibold text-emerald-900">Roll Number</th>
+                    <th className="px-4 py-3 text-left font-semibold text-emerald-900">Username</th>
+                    <th className="px-4 py-3 text-left font-semibold text-emerald-900">Temporary Password</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-emerald-50">
+                  {studentPortalCredentials.slice(0, 10).map((row) => (
+                    <tr key={`${row.roll_number}-${row.username}`}>
+                      <td className="px-4 py-3 text-slate-700">{row.student_name}</td>
+                      <td className="px-4 py-3 text-slate-700">{row.roll_number}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{row.username}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{row.temporary_password}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
 
         {/* Student List */}
         <div ref={directorySectionRef} className="bg-white rounded-lg shadow-md p-6">
@@ -2266,6 +2827,288 @@ export default function StudentManagement() {
                       </StudentField>
                     </div>
                   </div>
+                </StudentSection>
+
+                <StudentSection title="Parent Account & Student Linking">
+                  {editStudent ? (
+                    <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-blue-950">Student Portal Access</p>
+                          <p className="mt-1 text-xs text-blue-700">
+                            Username, password reset, force logout, and first-login password policy are controlled here.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleStudentPortalAction(studentPortalAccess?.profile_linked ? 'reset' : 'create')}
+                            disabled={studentPortalActionLoading || studentPortalLoading}
+                            className="rounded-md bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+                          >
+                            {studentPortalAccess?.profile_linked ? 'Reset Password' : 'Create Login'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleStudentPortalAction(studentPortalAccess?.is_enabled ? 'disable' : 'enable')}
+                            disabled={studentPortalActionLoading || studentPortalLoading || !studentPortalAccess?.profile_linked}
+                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            {studentPortalAccess?.is_enabled ? 'Disable Account' : 'Enable Account'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleStudentPortalAction('force_logout')}
+                            disabled={studentPortalActionLoading || studentPortalLoading || !studentPortalAccess?.profile_linked}
+                            className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                          >
+                            Force Logout
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void loadStudentPortalAccess(editStudent.id)}
+                            disabled={studentPortalLoading}
+                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            Refresh
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Portal Status</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {studentPortalLoading ? 'Loading...' : studentPortalAccess?.portal_status || 'Not created'}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Username</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{studentPortalAccess?.username || studentForm.rollNumber || 'Pending roll number'}</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Last Login</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatPortalDate(studentPortalAccess?.last_login)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Active Sessions</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{studentPortalAccess?.active_sessions ?? 0}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Account Created</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{formatPortalDate(studentPortalAccess?.account_created_date)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Password Change Required</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">{studentPortalAccess?.must_change_password ? 'Yes' : 'No'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {editStudent ? (
+                    <div className="space-y-5">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Linked Parents</p>
+                            <p className="mt-1 text-xs text-slate-500">These parent accounts can open the parent dashboard, attendance, progress, assignments, tests, and AI assistant.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void loadStudentParents(editStudent.id)}
+                            disabled={parentActionLoading}
+                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Refresh Links
+                          </button>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {studentParents.length ? studentParents.map((parent) => (
+                            <div key={parent.guardian_id || parent.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{parent.full_name}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {parent.relation_type} | {parent.email || 'No email'} | {parent.phone || 'No phone'}
+                                    {parent.is_primary ? ' | Primary' : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleUnlinkParent(String(parent.guardian_id || parent.id))}
+                                  disabled={parentActionLoading}
+                                  className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  Unlink
+                                </button>
+                              </div>
+                              <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto]">
+                                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                  <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Portal Status</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                                      {parentPortalLoadingMap[String(parent.guardian_id || parent.id)]
+                                        ? 'Loading...'
+                                        : parentPortalMap[String(parent.guardian_id || parent.id)]?.portal_status || 'Not created'}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Username</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                                      {parentPortalMap[String(parent.guardian_id || parent.id)]?.username || 'Pending'}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Last Login</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                                      {formatPortalDate(parentPortalMap[String(parent.guardian_id || parent.id)]?.last_login)}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Active Sessions</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                                      {parentPortalMap[String(parent.guardian_id || parent.id)]?.active_sessions ?? 0}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleParentPortalAction(String(parent.guardian_id || parent.id), parentPortalMap[String(parent.guardian_id || parent.id)]?.profile_linked ? 'reset' : 'create')}
+                                    disabled={parentActionLoading}
+                                    className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                                  >
+                                    {parentPortalMap[String(parent.guardian_id || parent.id)]?.profile_linked ? 'Reset Password' : 'Create Login'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleParentPortalAction(String(parent.guardian_id || parent.id), parentPortalMap[String(parent.guardian_id || parent.id)]?.is_enabled ? 'disable' : 'enable')}
+                                    disabled={parentActionLoading || !parentPortalMap[String(parent.guardian_id || parent.id)]?.profile_linked}
+                                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                                  >
+                                    {parentPortalMap[String(parent.guardian_id || parent.id)]?.is_enabled ? 'Disable Login' : 'Enable Login'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleParentPortalAction(String(parent.guardian_id || parent.id), 'force_logout')}
+                                    disabled={parentActionLoading || !parentPortalMap[String(parent.guardian_id || parent.id)]?.profile_linked}
+                                    className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                                  >
+                                    Force Logout
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )) : (
+                            <p className="text-sm text-slate-500">No linked parents yet.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {latestParentCredential ? (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                          Parent login created. Email: <span className="font-semibold">{latestParentCredential.email || 'parent.local account'}</span> | Temporary password: <span className="font-semibold">{latestParentCredential.temporary_password}</span>
+                        </div>
+                      ) : null}
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-lg border border-slate-200 bg-white p-4">
+                          <p className="text-sm font-semibold text-slate-900">Link Existing Parent</p>
+                          <div className="mt-3 space-y-3">
+                            <select
+                              value={selectedParentId}
+                              onChange={(e) => setSelectedParentId(e.target.value)}
+                              className={studentInputClass}
+                              disabled={parentDirectoryLoading}
+                            >
+                              <option value="">{parentDirectoryLoading ? 'Loading parents...' : 'Select existing parent'}</option>
+                              {availableParents.map((parent) => (
+                                <option key={parent.id} value={parent.id}>
+                                  {parent.full_name} | {parent.email || parent.phone || 'No contact'}
+                                </option>
+                              ))}
+                            </select>
+                            <label className="flex items-center gap-2 text-sm text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={parentForm.is_primary}
+                                onChange={(e) => setParentForm((current) => ({ ...current, is_primary: e.target.checked }))}
+                              />
+                              Mark as primary parent
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => void handleLinkExistingParent()}
+                              disabled={!selectedParentId || parentActionLoading}
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              Link Selected Parent
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-slate-200 bg-white p-4">
+                          <p className="text-sm font-semibold text-slate-900">Create Parent & Link Student</p>
+                          <div className="mt-3 grid gap-3">
+                            <input
+                              value={parentForm.full_name}
+                              onChange={(e) => setParentForm((current) => ({ ...current, full_name: e.target.value }))}
+                              className={studentInputClass}
+                              placeholder="Parent full name"
+                            />
+                            <input
+                              value={parentForm.email}
+                              onChange={(e) => setParentForm((current) => ({ ...current, email: e.target.value }))}
+                              className={studentInputClass}
+                              placeholder="Parent email"
+                            />
+                            <input
+                              value={parentForm.phone}
+                              onChange={(e) => setParentForm((current) => ({ ...current, phone: e.target.value }))}
+                              className={studentInputClass}
+                              placeholder="Parent phone"
+                            />
+                            <input
+                              value={parentForm.address}
+                              onChange={(e) => setParentForm((current) => ({ ...current, address: e.target.value }))}
+                              className={studentInputClass}
+                              placeholder="Parent address"
+                            />
+                            <select
+                              value={parentForm.relation_type}
+                              onChange={(e) => setParentForm((current) => ({ ...current, relation_type: e.target.value }))}
+                              className={studentInputClass}
+                            >
+                              <option value="parent">Parent</option>
+                              <option value="father">Father</option>
+                              <option value="mother">Mother</option>
+                              <option value="guardian">Guardian</option>
+                              <option value="sponsor">Sponsor</option>
+                            </select>
+                            <label className="flex items-center gap-2 text-sm text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={parentForm.create_login}
+                                onChange={(e) => setParentForm((current) => ({ ...current, create_login: e.target.checked }))}
+                              />
+                              Create login account now
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => void handleCreateAndLinkParent()}
+                              disabled={parentActionLoading || !parentForm.full_name.trim()}
+                              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              Create Parent & Link
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">Student record save hone ke baad yahan parent account create ya link kar sakte ho.</p>
+                  )}
                 </StudentSection>
 
                 <StudentSection title="Emergency Contact Details">

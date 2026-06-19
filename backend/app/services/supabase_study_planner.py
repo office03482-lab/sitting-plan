@@ -839,7 +839,8 @@ def _build_student_plan_payload(
     payload["ai_summary"] = _ai_summary_text(
         (
             "You are the Aspire ERP Study Planner coach. Write a concise study-coach note in 2 sentences. "
-            "Ground it in the supplied student planner summary and tasks.\n"
+            "Ground it in the supplied student planner summary and tasks. "
+            "Use attendance, online tests, LMS progress, and assignments when available. Avoid generic advice.\n"
             f"Summary: {summary}\n"
             f"Top tasks: {tasks[:3]}"
         ),

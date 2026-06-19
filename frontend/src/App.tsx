@@ -16,13 +16,12 @@ import AttendanceManagement from '@pages/AttendanceManagement';
 import BatchManagement from '@pages/BatchManagement';
 import Dashboard from '@pages/Dashboard';
 import FeeManagement from '@pages/FeeManagement';
+import ForcePasswordChange from '@pages/ForcePasswordChange';
 import HostelManagement from '@pages/HostelManagement';
 import InventoryManagement from '@pages/InventoryManagement';
 import InvigilatorManagement from '@pages/InvigilatorManagement';
 import CommercePage from '@pages/CommercePage';
 import BusinessIntelligencePage from '@pages/BusinessIntelligencePage';
-import PredictiveIntelligencePage from '@pages/PredictiveIntelligencePage';
-import AiAcademicOperatingSystemPage from '@pages/AiAcademicOperatingSystemPage';
 import LmsAssignments from '@pages/LmsAssignments';
 import LiveClasses from '@pages/LiveClasses';
 import Login from '@pages/Login';
@@ -31,10 +30,17 @@ import OnlineTestEdit from '@pages/OnlineTestEdit';
 import OnlineTestResults from '@pages/OnlineTestResults';
 import OnlineTestTake from '@pages/OnlineTestTake';
 import OnlineTests from '@pages/OnlineTests';
-import AiTutorPage from '@pages/AiTutorPage';
-import AiDoubtSolverPage from '@pages/AiDoubtSolverPage';
+import AiStudyAssistantPage from '@pages/AiStudyAssistantPage';
+import SchoolAiAssistantPage from '@pages/SchoolAiAssistantPage';
 import TeacherAiAssistantPage from '@pages/TeacherAiAssistantPage';
 import ParentIntelligencePortal from '@pages/ParentIntelligencePortal';
+import ParentDashboard from '@pages/ParentDashboard';
+import ParentAcademicProgress from '@pages/ParentAcademicProgress';
+import ParentAttendance from '@pages/ParentAttendance';
+import ParentTestResults from '@pages/ParentTestResults';
+import ParentAssignments from '@pages/ParentAssignments';
+import ParentAlerts from '@pages/ParentAlerts';
+import ParentAiAssistant from '@pages/ParentAiAssistant';
 import CourseDetail from '@pages/CourseDetail';
 import Courses from '@pages/Courses';
 import LessonPlayer from '@pages/LessonPlayer';
@@ -44,11 +50,11 @@ import RoomConfiguration from '@pages/RoomConfiguration';
 import SeatingGeneration from '@pages/SeatingGeneration';
 import SeatingPlanManagement from '@pages/SeatingPlanManagement';
 import Settings from '@pages/Settings';
+import SecuritySessionsPage from '@pages/SecuritySessionsPage';
 import StaffBulkUpload from '@pages/StaffBulkUpload';
 import StaffDirectory from '@pages/StaffDirectory';
 import StudentDirectory from '@pages/StudentDirectory';
 import StudentManagement from '@pages/StudentManagement';
-import StudyPlanner from '@pages/StudyPlanner';
 import TeacherManagement from '@pages/TeacherManagement';
 import TimetableManagement from '@pages/TimetableManagement';
 import PlatformDashboard from '@pages/PlatformDashboard';
@@ -60,6 +66,10 @@ function AppShell() {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (user.must_change_password) {
+    return <Navigate to="/force-password-change" replace />;
   }
 
   return (
@@ -219,21 +229,15 @@ function AppShell() {
           }
         />
         <Route
-          path="/predictions"
+          path="/school-ai-assistant"
           element={
-            <ProtectedRoute requiredPermissions={['predictions.student', 'predictions.campus', 'predictions.finance', 'predictions.manage', 'edupay.parent_portal']}>
-              <PredictiveIntelligencePage />
+            <ProtectedRoute requiredPermissions={['ai_agents.view', 'predictions.campus', 'predictions.finance', 'predictions.manage', 'bi.academic']}>
+              <SchoolAiAssistantPage />
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/ai-command-center"
-          element={
-            <ProtectedRoute requiredPermissions={['ai_agents.view', 'ai_agents.run', 'ai_agents.approve', 'ai_agents.reports']}>
-              <AiAcademicOperatingSystemPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/predictions" element={<Navigate to="/school-ai-assistant" replace />} />
+        <Route path="/ai-command-center" element={<Navigate to="/school-ai-assistant" replace />} />
         <Route
           path="/courses"
           element={
@@ -323,29 +327,16 @@ function AppShell() {
           }
         />
         <Route
-          path="/study-planner"
+          path="/ai-study-assistant"
           element={
-            <ProtectedRoute requiredPermissions={['study_planner.view', 'study_planner.goals', 'study_planner.reports', 'edupay.parent_portal']}>
-              <StudyPlanner />
+            <ProtectedRoute requiredPermissions={['study_planner.view', 'study_planner.goals', 'ai_tutor.chat', 'doubt_solver.solve', 'lms.progress']}>
+              <AiStudyAssistantPage />
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/ai-tutor"
-          element={
-            <ProtectedRoute requiredPermissions={['ai_tutor.chat', 'ai_tutor.review', 'ai_tutor.manage']}>
-              <AiTutorPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/doubts"
-          element={
-            <ProtectedRoute requiredPermissions={['doubt_solver.solve', 'doubt_solver.review', 'doubt_solver.manage', 'doubt_solver.escalate']}>
-              <AiDoubtSolverPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/study-planner" element={<Navigate to="/ai-study-assistant" replace />} />
+        <Route path="/ai-tutor" element={<Navigate to="/ai-study-assistant" replace />} />
+        <Route path="/doubts" element={<Navigate to="/ai-study-assistant" replace />} />
         <Route
           path="/teacher-ai"
           element={
@@ -387,6 +378,14 @@ function AppShell() {
           }
         />
         <Route
+          path="/admin/security-sessions"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.access_control']}>
+              <SecuritySessionsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/platform/dashboard"
           element={
             <PlatformAdminRoute>
@@ -410,6 +409,71 @@ function AppShell() {
             </PlatformAdminRoute>
           }
         />
+        {/* Parent Portal Routes */}
+        <Route
+          path="/parent"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/dashboard"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/attendance"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentAttendance />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/progress"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentAcademicProgress />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/assignments"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentAssignments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/tests"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentTestResults />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/alerts"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentAlerts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parent/ai"
+          element={
+            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+              <ParentAiAssistant />
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
@@ -426,7 +490,15 @@ export function App() {
           <Route
             path="/login"
             element={
-              initialized && !loading && user ? <Navigate to={getDefaultRoute(user)} replace /> : <Login />
+              initialized && !loading && user ? <Navigate to={user.must_change_password ? '/force-password-change' : getDefaultRoute(user)} replace /> : <Login />
+            }
+          />
+          <Route
+            path="/force-password-change"
+            element={
+              <ProtectedRoute>
+                <ForcePasswordChange />
+              </ProtectedRoute>
             }
           />
           <Route

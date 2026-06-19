@@ -65,6 +65,7 @@ export interface User {
   school_id?: string;
   membership_id?: string;
   default_school_id?: string | null;
+  must_change_password?: boolean;
 }
 
 export interface RolePowerUser {
@@ -79,6 +80,96 @@ export interface RolePowerUser {
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ParentGuardianLink {
+  id: string;
+  school_id: string;
+  profile_id?: string | null;
+  guardian_code?: string | null;
+  full_name: string;
+  relation_type: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  is_active: boolean;
+  linked_student_count?: number;
+  has_login?: boolean;
+  temporary_password?: string | null;
+  link_id?: string;
+  student_id?: string;
+  guardian_id?: string;
+  is_primary?: boolean;
+  can_receive_notifications?: boolean;
+  linked_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ParentLinkImportResult {
+  created_count: number;
+  linked_count: number;
+  skipped_count: number;
+  errors: Array<Record<string, unknown>>;
+  credentials: Array<{
+    student_roll_no: string;
+    parent_name: string;
+    email: string;
+    temporary_password: string;
+  }>;
+}
+
+export interface PortalAccessStatus {
+  entity_type: string;
+  entity_id: string;
+  portal_status: 'active' | 'disabled' | 'not_created' | string;
+  username: string;
+  login_email?: string;
+  last_login?: string | null;
+  last_activity?: string | null;
+  profile_linked: boolean;
+  profile_id?: string | null;
+  account_created_date?: string | null;
+  must_change_password?: boolean;
+  force_password_change?: boolean;
+  last_password_reset_at?: string | null;
+  active_sessions: number;
+  role_key?: string;
+  entity_label?: string;
+  is_enabled?: boolean;
+  temporary_password?: string | null;
+  relation_type?: string;
+}
+
+export interface BulkPortalCredentialRow {
+  student_name: string;
+  roll_number: string;
+  username: string;
+  login_email?: string;
+  temporary_password: string;
+}
+
+export interface BulkPortalGenerationResult {
+  count: number;
+  credentials: BulkPortalCredentialRow[];
+}
+
+export interface ActiveSessionRecord {
+  id: string;
+  profile_id: string;
+  username: string;
+  full_name: string;
+  email?: string | null;
+  role_key: string;
+  device_id: string;
+  device_name?: string | null;
+  browser?: string | null;
+  ip_address?: string | null;
+  login_time?: string | null;
+  last_activity?: string | null;
+  status: string;
+  session_key: string;
+  is_active: boolean;
 }
 
 export interface BulkActionRequest {
@@ -556,6 +647,15 @@ export interface LiveClassRecording {
   is_active: boolean;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface StorageUploadResponse {
+  url: string;
+  file_name: string;
+  size: number;
+  bucket?: string;
+  storage_path?: string;
+  content_type?: string;
 }
 
 export interface StudyTask {
@@ -1457,6 +1557,26 @@ export interface OnlineTestQuestion {
   updated_at?: string | null;
 }
 
+export interface OnlineTestQuestionBankItem {
+  id: string;
+  school_id: string;
+  subject?: string | null;
+  chapter?: string | null;
+  topic?: string | null;
+  question_type: string;
+  difficulty_level: string;
+  prompt_text: string;
+  option_items: Array<Record<string, unknown>>;
+  answer_key: Record<string, unknown>;
+  explanation?: string | null;
+  marks: number;
+  negative_marks: number;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface OnlineTestResponseEntry {
   id: string;
   school_id: string;
@@ -1536,6 +1656,9 @@ export interface OnlineTestAnalytics {
   highest_score: number;
   lowest_score: number;
   published_results: number;
+  question_wise_analysis: Array<Record<string, unknown>>;
+  difficulty_wise_analysis: Array<Record<string, unknown>>;
+  student_ranking: Array<Record<string, unknown>>;
 }
 
 export interface AnalyticsSubjectPerformance {
@@ -1765,6 +1888,7 @@ export interface LmsAssignmentSubmission {
   student_id: string;
   submission_text?: string | null;
   attachment_url?: string | null;
+  submission_files?: Array<Record<string, unknown>>;
   status: string;
   score_awarded?: number | null;
   feedback?: string | null;
@@ -1788,6 +1912,8 @@ export interface LmsAssignment {
   due_at?: string | null;
   max_score: number;
   status: string;
+  batch_assignment_ids: string[];
+  reference_files: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
   is_active: boolean;
   submission?: LmsAssignmentSubmission | null;
@@ -1824,10 +1950,93 @@ export interface LmsAiInsights {
   revision_suggestions: string[];
 }
 
+export interface LmsDashboardCourseSummary {
+  course_id: string;
+  course_title: string;
+  progress_percentage: number;
+  videos_watched: number;
+  videos_remaining: number;
+  assignments_submitted: number;
+  assignments_total: number;
+  last_activity?: string | null;
+}
+
+export interface LmsDashboardAssignmentStatus {
+  pending: number;
+  submitted: number;
+  graded: number;
+  returned: number;
+}
+
+export interface LmsDashboardTestSummary {
+  tests_taken: number;
+  average_score: number;
+  highest_score: number;
+}
+
+export interface LmsDashboardUpcomingTest {
+  test_id: string;
+  title: string;
+  subject_name?: string | null;
+  topic?: string | null;
+  starts_at?: string | null;
+}
+
+export interface LmsDashboardTopicAnalysis {
+  weak: string[];
+  medium: string[];
+  strong: string[];
+}
+
+export interface LmsRevisionTrackerItem {
+  id?: string | null;
+  school_id: string;
+  student_id: string;
+  topic_key: string;
+  topic_name: string;
+  chapter_name?: string | null;
+  subject_name?: string | null;
+  course_id?: string | null;
+  course_title?: string | null;
+  status: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LmsStudentSuccessDashboard {
+  student_id: string;
+  student_name: string;
+  overall_learning_score: number;
+  attendance_percentage: number;
+  course_summaries: LmsDashboardCourseSummary[];
+  assignment_status: LmsDashboardAssignmentStatus;
+  test_summary: LmsDashboardTestSummary;
+  upcoming_tests: LmsDashboardUpcomingTest[];
+  topic_analysis: LmsDashboardTopicAnalysis;
+  revision_tracker: LmsRevisionTrackerItem[];
+  today_tasks: string[];
+}
+
+export interface LmsParentChildOverview {
+  student_id: string;
+  student_name: string;
+  overall_learning_score: number;
+  attendance_percentage: number;
+  assignments_pending: number;
+  assignments_submitted: number;
+  assignments_graded: number;
+  upcoming_tests_count: number;
+  last_activity?: string | null;
+}
+
 export interface LmsProgressDashboard {
+  viewer_mode: string;
   progress_items: LmsProgressItem[];
   enrolled_courses: LmsCourse[];
   ai_insights: LmsAiInsights;
+  student_dashboard?: LmsStudentSuccessDashboard | null;
+  child_dashboards: LmsParentChildOverview[];
 }
 
 export interface AiTutorPracticeQuestion {
@@ -2004,6 +2213,15 @@ export interface TeacherAiReportCommentsResponse {
   score_payload: Record<string, unknown>;
   analytics_snapshot: Record<string, unknown>;
   teacher_note?: string | null;
+  generated_at?: string | null;
+}
+
+export interface SchoolAiAssistantResponse {
+  question: string;
+  answer: string;
+  attendance_insights: string[];
+  performance_insights: string[];
+  risk_alerts: string[];
   generated_at?: string | null;
 }
 
@@ -2285,6 +2503,220 @@ export interface AiAgentDashboard {
   critical_alerts: AiAgentRecommendation[];
   pending_approvals: AiAgentRecommendation[];
   agent_cards: AiAgentCard[];
+}
+
+// ==================== Parent Portal ====================
+
+export interface ParentPortalChild {
+  student_id: string;
+  student_name: string;
+  class_name: string;
+  section: string;
+  roll_number: string;
+}
+
+export interface ParentPortalFeeStatus {
+  total_fee: number;
+  paid_amount: number;
+  due_amount: number;
+  status: string;
+  due_date: string | null;
+  payment_percentage: number;
+}
+
+export interface ParentPortalUpcomingTest {
+  id: string;
+  title: string;
+  subject: string;
+  starts_at: string;
+  duration_minutes: number;
+  total_marks: number;
+}
+
+export interface ParentPortalTestResult {
+  title: string;
+  score: number;
+  total: number;
+  percentage: number;
+  rank: number;
+}
+
+export interface ParentPortalChildDashboard {
+  student_id: string;
+  student_name: string;
+  class_name: string;
+  section: string;
+  attendance_percentage: number;
+  present_days: number;
+  absent_days: number;
+  total_days: number;
+  learning_score: number;
+  pending_assignments: number;
+  submitted_assignments: number;
+  upcoming_tests: ParentPortalUpcomingTest[];
+  latest_test_result: ParentPortalTestResult | null;
+  fee_status: ParentPortalFeeStatus;
+}
+
+export interface ParentPortalDashboardResponse {
+  children: ParentPortalChildDashboard[];
+  children_count: number;
+}
+
+export interface ParentPortalCourseProgress {
+  course_name: string;
+  watch_percentage: number;
+  completed_lessons: number;
+  total_lessons: number;
+}
+
+export interface ParentPortalAssignmentCompletion {
+  total: number;
+  completed: number;
+  graded: number;
+  completion_percentage: number;
+}
+
+export interface ParentPortalRevisionTracker {
+  total_revisions: number;
+  completed_revisions: number;
+}
+
+export interface ParentPortalAcademicChild {
+  student_id: string;
+  student_name: string;
+  course_progress: {
+    overall_percentage: number;
+    courses: ParentPortalCourseProgress[];
+    total_courses: number;
+  };
+  assignment_completion: ParentPortalAssignmentCompletion;
+  revision_tracker: ParentPortalRevisionTracker;
+  weak_topics: string[];
+  strong_topics: string[];
+}
+
+export interface ParentPortalAcademicResponse {
+  children: ParentPortalAcademicChild[];
+}
+
+export interface ParentPortalAttendanceOverall {
+  total_days: number;
+  present_days: number;
+  absent_days: number;
+  attendance_percentage: number;
+}
+
+export interface ParentPortalMonthlyAttendance {
+  month: string;
+  total_days: number;
+  present_days: number;
+  absent_days: number;
+  attendance_percentage: number;
+}
+
+export interface ParentPortalAttendanceTrend {
+  monthly_percentages: number[];
+  trend: string;
+}
+
+export interface ParentPortalAttendanceChild {
+  student_id: string;
+  student_name: string;
+  overall: ParentPortalAttendanceOverall;
+  current_month: ParentPortalAttendanceOverall;
+  monthly_breakdown: ParentPortalMonthlyAttendance[];
+  trend: ParentPortalAttendanceTrend;
+}
+
+export interface ParentPortalAttendanceResponse {
+  children: ParentPortalAttendanceChild[];
+}
+
+export interface ParentPortalTestItem {
+  id: string;
+  title: string;
+  subject: string;
+  score: number;
+  total_marks: number;
+  percentage: number;
+  rank: number;
+  completed_at: string;
+}
+
+export interface ParentPortalTestChild {
+  student_id: string;
+  student_name: string;
+  recent_tests: ParentPortalTestItem[];
+  average_percentage: number;
+  best_rank: number | null;
+  total_tests: number;
+  improvement_trend: string;
+  percentage_history: number[];
+}
+
+export interface ParentPortalTestResponse {
+  children: ParentPortalTestChild[];
+}
+
+export interface ParentPortalAssignmentItem {
+  id: string;
+  title: string;
+  course_name: string;
+  due_date: string;
+  status: string;
+  grade: number | null;
+  max_grade: number | null;
+  submitted_at: string;
+}
+
+export interface ParentPortalAssignmentSummary {
+  pending: number;
+  submitted: number;
+  graded: number;
+  late: number;
+  total: number;
+}
+
+export interface ParentPortalAssignmentChild {
+  student_id: string;
+  student_name: string;
+  summary: ParentPortalAssignmentSummary;
+  assignments: ParentPortalAssignmentItem[];
+}
+
+export interface ParentPortalAssignmentResponse {
+  children: ParentPortalAssignmentChild[];
+}
+
+export interface ParentPortalAlertItem {
+  type: string;
+  severity: string;
+  title: string;
+  message: string;
+  value: number | string;
+}
+
+export interface ParentPortalAlertChild {
+  student_id: string;
+  student_name: string;
+  alerts: ParentPortalAlertItem[];
+  total_alerts: number;
+}
+
+export interface ParentPortalAlertResponse {
+  children: ParentPortalAlertChild[];
+}
+
+export interface ParentPortalAiResponse {
+  answer: string;
+  context_students: { student_id: string; student_name: string }[];
+}
+
+export interface ParentPortalRecommendation {
+  student_id: string;
+  student_name: string;
+  recommendations: string[];
 }
 
 // ==================== UI State ====================

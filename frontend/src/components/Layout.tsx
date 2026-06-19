@@ -66,6 +66,10 @@ export default function Layout({ children }: LayoutProps) {
   const { signOut } = useAuth();
   const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = user?.role_key === 'platform_admin';
+  const roleKey = String(user?.role_key || '').toLowerCase();
+  const isStudentAiUser = roleKey === 'student' || user?.role === 'student';
+  const isTeacherAiUser = roleKey === 'teacher' || user?.role === 'teacher';
+  const isSchoolAiUser = isAdmin || roleKey === 'school_admin' || roleKey === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
 
   const canAccess = (permission?: string, roles?: UserRole[]) => {
@@ -81,6 +85,23 @@ export default function Layout({ children }: LayoutProps) {
       icon: LayoutDashboard,
       iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%)',
       path: '/',
+    },
+    {
+      key: 'parent-portal',
+      name: 'Parent Portal',
+      icon: LayoutDashboard,
+      iconBackground: 'linear-gradient(180deg, #e0e7ff 0%, #6366f1 100%)',
+      permission: 'edupay.parent_portal',
+      roles: ['parent', 'admin'],
+      children: [
+        { name: 'Dashboard', path: '/parent/dashboard', permission: 'parent_intelligence.view' },
+        { name: 'Attendance', path: '/parent/attendance', permission: 'parent_intelligence.view' },
+        { name: 'Progress', path: '/parent/progress', permission: 'parent_intelligence.view' },
+        { name: 'Assignments', path: '/parent/assignments', permission: 'parent_intelligence.view' },
+        { name: 'Tests', path: '/parent/tests', permission: 'parent_intelligence.view' },
+        { name: 'Fees', path: '/edupay', permission: 'edupay.parent_portal' },
+        { name: 'Parent AI Assistant', path: '/parent/ai', permission: 'parent_intelligence.view' },
+      ],
     },
     {
       key: 'platform-admin',
@@ -101,8 +122,6 @@ export default function Layout({ children }: LayoutProps) {
       iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #0f766e 100%)',
       children: [
         { name: 'BI Dashboard', path: '/bi', permission: 'bi.academic' },
-        { name: 'Predictive AI', path: '/predictions', permission: 'predictions.student' },
-        { name: 'AI Command Center', path: '/ai-command-center', permission: 'ai_agents.view' },
       ],
     },
     {
@@ -202,53 +221,20 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      key: 'study-planner',
-      name: 'Study Planner',
-      icon: BookOpen,
-      iconBackground: 'linear-gradient(180deg, #dbeafe 0%, #2563eb 100%)',
-      roles: ['admin', 'teacher', 'student', 'viewer'],
-      children: [
-        { name: 'AI Planner', path: '/study-planner', roles: ['admin', 'teacher', 'student', 'viewer'] },
-      ],
-    },
-    {
-      key: 'ai-tutor',
-      name: 'AI Tutor',
+      key: 'ai-assistants',
+      name: 'AI Assistants',
       icon: Sparkles,
-      iconBackground: 'linear-gradient(180deg, #fde68a 0%, #f59e0b 100%)',
-      roles: ['admin', 'teacher', 'student'],
+      iconBackground: 'linear-gradient(180deg, #e0f2fe 0%, #0284c7 100%)',
       children: [
-        { name: 'Tutor Workspace', path: '/ai-tutor', permission: 'ai_tutor.chat', roles: ['admin', 'teacher', 'student'] },
-      ],
-    },
-    {
-      key: 'doubt-solver',
-      name: 'AI Doubts',
-      icon: Search,
-      iconBackground: 'linear-gradient(180deg, #fed7aa 0%, #ea580c 100%)',
-      roles: ['admin', 'teacher', 'student'],
-      children: [
-        { name: 'Doubt Solver', path: '/doubts', permission: 'doubt_solver.solve', roles: ['admin', 'teacher', 'student'] },
-      ],
-    },
-    {
-      key: 'teacher-ai',
-      name: 'Teacher Copilot',
-      icon: Sparkles,
-      iconBackground: 'linear-gradient(180deg, #bbf7d0 0%, #15803d 100%)',
-      roles: ['admin', 'teacher'],
-      children: [
-        { name: 'Teacher Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate', roles: ['admin', 'teacher'] },
-      ],
-    },
-    {
-      key: 'parent-intelligence',
-      name: 'Parent Intelligence',
-      icon: Bus,
-      iconBackground: 'linear-gradient(180deg, #dbeafe 0%, #1d4ed8 100%)',
-      roles: ['admin', 'viewer'],
-      children: [
-        { name: 'Parent Dashboard', path: '/parent-intelligence', permission: 'parent_intelligence.view', roles: ['admin', 'viewer'] },
+        ...(isStudentAiUser
+          ? [{ name: 'AI Study Assistant', path: '/ai-study-assistant', permission: 'study_planner.view' }]
+          : []),
+        ...(isTeacherAiUser
+          ? [{ name: 'Teacher AI Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate' }]
+          : []),
+        ...(isSchoolAiUser
+          ? [{ name: 'School AI Assistant', path: '/school-ai-assistant', permission: 'ai_agents.view' }]
+          : []),
       ],
     },
     {
@@ -328,6 +314,7 @@ export default function Layout({ children }: LayoutProps) {
       permission: 'admin_office.access_control',
       children: [
         { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
+        { name: 'Security & Sessions', path: '/admin/security-sessions', permission: 'admin_office.access_control' },
       ],
     },
   ];

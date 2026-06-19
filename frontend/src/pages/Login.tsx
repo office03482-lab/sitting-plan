@@ -6,23 +6,28 @@ import { useAuth } from '@/contexts/AuthProvider';
 
 export default function Login() {
   const { signIn, user, authError, getDefaultRoute } = useAuth();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionConflict, setSessionConflict] = useState<any | null>(null);
 
   if (user) return <Navigate to={getDefaultRoute(user)} replace />;
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitLogin = async (options?: { forceTakeover?: boolean }) => {
     setLoading(true);
     setError(null);
+    setSessionConflict(null);
     try {
-      await signIn(email, password);
+      await signIn(identifier, password, options);
     } catch (requestError: any) {
+      if (requestError?.code === 'session_limit_exceeded') {
+        setSessionConflict(requestError?.conflict || null);
+      }
       setError(
-        requestError?.response?.data?.detail ||
+        requestError?.conflict?.message ||
+          requestError?.response?.data?.detail ||
           requestError?.message ||
           requestError?.error_description ||
           'Login failed',
@@ -30,6 +35,11 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await submitLogin();
   };
 
   return (
@@ -55,15 +65,15 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="flex flex-1 flex-col">
             <div className="mb-4">
               <label className="mb-1.5 block text-[12px] font-extrabold tracking-[0.3px] text-[#1a2d4a]">
-                Email
+                Email or Username
               </label>
               <div className="flex items-center rounded-[10px] border-[1.5px] border-[#d0e8f5] bg-white px-3 transition focus-within:border-sky-600 focus-within:shadow-[0_0_0_3px_rgba(26,144,217,0.1)]">
                 <Mail className="mr-2 h-[18px] w-[18px] flex-shrink-0 text-[#90bdd8]" />
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="Enter your email"
+                  type="text"
+                  value={identifier}
+                  onChange={(event) => setIdentifier(event.target.value)}
+                  placeholder="Enter your email or username"
                   className="flex-1 bg-transparent py-[11px] text-[13px] text-slate-700 outline-none placeholder:text-[#b8cfe0]"
                 />
               </div>
@@ -94,6 +104,25 @@ export default function Login() {
             </div>
 
             {error ? <p className="mb-4 text-sm font-semibold text-rose-500">{error}</p> : null}
+            {sessionConflict ? (
+              <div className="mb-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                <p className="font-semibold">Existing session detected.</p>
+                <p className="mt-1">
+                  {sessionConflict?.current_session?.device_name || 'Another device'} | {sessionConflict?.current_session?.browser || 'Browser'}
+                </p>
+                <p className="mt-1 text-xs text-orange-700">
+                  Last activity: {sessionConflict?.current_session?.last_activity || 'Recently active'}
+                </p>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void submitLogin({ forceTakeover: true })}
+                  className="mt-3 rounded-full bg-orange-600 px-4 py-2 text-xs font-bold text-white hover:bg-orange-700 disabled:opacity-60"
+                >
+                  Continue Here
+                </button>
+              </div>
+            ) : null}
             {!error && authError ? <p className="mb-4 text-sm font-semibold text-amber-700">{authError}</p> : null}
             {error || authError ? (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">

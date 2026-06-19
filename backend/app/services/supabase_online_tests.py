@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from openpyxl import load_workbook
 
+from app.services.ai_provider import AIProviderError, generate_json
 from app.services.supabase_admin import get_supabase_admin_client
 
 ONLINE_TESTS_SCHEMA = "online_tests"
@@ -24,6 +27,10 @@ def _table(name: str):
     # non-exposed private schema).  Requires applying the
     # 20260614_055_online_tests_public_views.sql migration first.
     return _client().table(f"{_ONLINE_TESTS_PUBLIC_PREFIX}{name}")
+
+
+def _question_bank_table():
+    return _client().table("online_test_question_bank")
 
 
 def _normalize(value: Any) -> str:
@@ -136,6 +143,28 @@ def _serialize_question(row: dict[str, Any]) -> dict[str, Any]:
         "section_id": _normalize(row.get("section_id")),
         "question_code": row.get("question_code"),
         "display_order": int(row.get("display_order") or 1),
+        "question_type": _normalize(row.get("question_type")) or "single_choice",
+        "difficulty_level": _normalize(row.get("difficulty_level")) or "medium",
+        "prompt_text": _normalize(row.get("prompt_text")),
+        "option_items": list(row.get("option_items") or []),
+        "answer_key": _normalize_json_object(row.get("answer_key")),
+        "explanation": row.get("explanation"),
+        "marks": float(row.get("marks") or 0),
+        "negative_marks": float(row.get("negative_marks") or 0),
+        "metadata": _normalize_json_object(row.get("metadata")),
+        "is_active": bool(row.get("is_active", True)),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _serialize_question_bank_item(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": _normalize(row.get("id")),
+        "school_id": _normalize(row.get("school_id")),
+        "subject": row.get("subject"),
+        "chapter": row.get("chapter"),
+        "topic": row.get("topic"),
         "question_type": _normalize(row.get("question_type")) or "single_choice",
         "difficulty_level": _normalize(row.get("difficulty_level")) or "medium",
         "prompt_text": _normalize(row.get("prompt_text")),
@@ -438,7 +467,7 @@ def _student_rows_by_ids(school_id: str, student_ids: list[str]) -> dict[str, di
     rows = list(
         _client()
         .table("students")
-        .select("id, batch_id")
+        .select("id, batch_id, full_name")
         .eq("school_id", school_id)
         .in_("id", cleaned_ids)
         .execute()
@@ -580,6 +609,237 @@ def _assert_student_can_access_test(student: dict[str, Any], test: dict[str, Any
     student_batch_id = _normalize(student.get("batch_id"))
     if test_batch_id and student_batch_id and test_batch_id != student_batch_id:
         raise HTTPException(status_code=403, detail="This test is not assigned to the student's batch")
+
+
+def _normalize_option_items(raw_options: list[dict[str, Any]] | list[str]) -> list[dict[str, Any]]:
+    option_items: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_options, start=1):
+        if isinstance(item, dict):
+            label = _normalize(item.get("label") or item.get("text") or item.get("value") or item.get("id"))
+            option_id = _normalize(item.get("id")) or f"option_{index}"
+            option_payload = {"id": option_id, "label": label or option_id, "value": label or option_id}
+            image_url = _normalize(item.get("image_url"))
+            if image_url:
+                option_payload["image_url"] = image_url
+            option_items.append(option_payload)
+        else:
+            label = _normalize(item)
+            if label:
+                option_items.append({"id": f"option_{index}", "label": label, "value": label})
+    return option_items
+
+
+def _question_bank_row_to_question_payload(row: dict[str, Any], test_id: str, section_id: str, display_order: int) -> dict[str, Any]:
+    return {
+        "test_id": test_id,
+        "section_id": section_id,
+        "display_order": display_order,
+        "question_type": _normalize(row.get("question_type")) or "single_choice",
+        "difficulty_level": _normalize(row.get("difficulty_level")) or "medium",
+        "prompt_text": _normalize(row.get("prompt_text")),
+        "option_items": _normalize_option_items(list(row.get("option_items") or [])),
+        "answer_key": _normalize_json_object(row.get("answer_key")),
+        "explanation": row.get("explanation"),
+        "marks": float(row.get("marks") or 1),
+        "negative_marks": float(row.get("negative_marks") or 0),
+        "metadata": _normalize_json_object(row.get("metadata")),
+    }
+
+
+def _question_bank_import_row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
+    question = _normalize(row.get("Question"))
+    if not question:
+        raise HTTPException(status_code=400, detail="Question column is required for every imported row")
+    options = []
+    for key in ("Option A", "Option B", "Option C", "Option D"):
+        value = _normalize(row.get(key))
+        if value:
+            options.append(value)
+    correct_answer = _normalize(row.get("Correct Answer"))
+    difficulty = _normalize(row.get("Difficulty")).lower() or "medium"
+    prompt_image_url = _normalize(row.get("Question Image URL"))
+    option_image_map = {
+        "option_1": _normalize(row.get("Option A Image URL")),
+        "option_2": _normalize(row.get("Option B Image URL")),
+        "option_3": _normalize(row.get("Option C Image URL")),
+        "option_4": _normalize(row.get("Option D Image URL")),
+    }
+    option_items = _normalize_option_items(options)
+    for option in option_items:
+        image_url = option_image_map.get(_normalize(option.get("id")))
+        if image_url:
+            option["image_url"] = image_url
+    matched = next(
+        (
+            item["id"]
+            for item in option_items
+            if _normalize(item.get("label")).lower() == correct_answer.lower()
+            or _normalize(item.get("id")).lower() == correct_answer.lower()
+        ),
+        None,
+    )
+    if option_items:
+        answer_key = {"correct_option_id": matched or correct_answer}
+        question_type = "single_choice"
+    else:
+        answer_key = {"accepted_values": [correct_answer]} if correct_answer else {}
+        question_type = "short_answer"
+    return {
+        "subject": _normalize(row.get("Subject")) or None,
+        "chapter": _normalize(row.get("Chapter")) or None,
+        "topic": _normalize(row.get("Topic")) or None,
+        "question_type": question_type,
+        "difficulty_level": difficulty if difficulty in {"easy", "medium", "hard"} else "medium",
+        "prompt_text": question,
+        "option_items": option_items,
+        "answer_key": answer_key,
+        "explanation": _normalize(row.get("Explanation")) or None,
+        "marks": float(row.get("Marks") or 1),
+        "negative_marks": float(row.get("Negative Marks") or 0),
+        "metadata": {
+            "source": "excel_import",
+            "question_image_url": prompt_image_url or None,
+        },
+    }
+
+
+def list_question_bank(
+    school_id: str,
+    *,
+    subject: str | None = None,
+    chapter: str | None = None,
+    topic: str | None = None,
+    difficulty_level: str | None = None,
+    skip: int = 0,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    query = _question_bank_table().select("*").eq("school_id", school_id).is_("deleted_at", "null").eq("is_active", True)
+    if subject:
+        query = query.eq("subject", subject)
+    if chapter:
+        query = query.eq("chapter", chapter)
+    if topic:
+        query = query.eq("topic", topic)
+    if difficulty_level:
+        query = query.eq("difficulty_level", difficulty_level)
+    rows = list(query.order("created_at", desc=True).range(max(skip, 0), max(skip, 0) + max(limit, 1) - 1).execute().data or [])
+    return [_serialize_question_bank_item(dict(row)) for row in rows]
+
+
+def create_question_bank_item(school_id: str, profile_id: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    prompt_text = _normalize(payload.get("prompt_text"))
+    if not prompt_text:
+        raise HTTPException(status_code=400, detail="prompt_text is required")
+    response = _question_bank_table().insert(
+        {
+            "school_id": school_id,
+            "created_by_profile_id": _normalize_optional_uuid(profile_id),
+            "updated_by_profile_id": _normalize_optional_uuid(profile_id),
+            "subject": _normalize(payload.get("subject")) or None,
+            "chapter": _normalize(payload.get("chapter")) or None,
+            "topic": _normalize(payload.get("topic")) or None,
+            "question_type": _normalize(payload.get("question_type")) or "single_choice",
+            "difficulty_level": _normalize(payload.get("difficulty_level")) or "medium",
+            "prompt_text": prompt_text,
+            "option_items": _normalize_option_items(list(payload.get("option_items") or [])),
+            "answer_key": _normalize_json_object(payload.get("answer_key")),
+            "explanation": payload.get("explanation"),
+            "marks": float(payload.get("marks") or 1),
+            "negative_marks": float(payload.get("negative_marks") or 0),
+            "metadata": _normalize_json_object(payload.get("metadata")),
+            "is_active": True,
+        }
+    ).execute()
+    rows = list(response.data or [])
+    if not rows:
+        raise HTTPException(status_code=500, detail="Question bank create returned no row")
+    return _serialize_question_bank_item(dict(rows[0]))
+
+
+def import_question_bank_workbook(school_id: str, profile_id: str | None, file_bytes: bytes) -> dict[str, Any]:
+    workbook = load_workbook(filename=BytesIO(file_bytes), data_only=True)
+    sheet = workbook.active
+    headers = [str(cell.value or "").strip() for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+    required_headers = {"Question", "Correct Answer", "Difficulty", "Topic", "Chapter"}
+    missing = sorted(required_headers - set(headers))
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
+
+    created_items: list[dict[str, Any]] = []
+    for row_index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        if not any(value not in (None, "") for value in values):
+            continue
+        row = {headers[index]: values[index] for index in range(len(headers))}
+        try:
+            created_items.append(create_question_bank_item(school_id, profile_id, _question_bank_import_row_to_payload(row)))
+        except HTTPException as exc:
+            raise HTTPException(status_code=400, detail=f"Row {row_index}: {exc.detail}") from exc
+    return {"created_count": len(created_items), "items": created_items}
+
+
+def generate_ai_test(school_id: str, profile_id: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    question_count = max(1, min(int(payload.get("question_count") or 10), 50))
+    generated = generate_json(
+        "Generate a valid JSON object for an online coaching test with keys title, description, instructions, questions. "
+        "Each question must include prompt_text, question_type, difficulty_level, option_items, answer_key, explanation, marks, negative_marks, metadata. "
+        f"Subject: {_normalize(payload.get('subject'))}. "
+        f"Chapter: {_normalize(payload.get('chapter'))}. "
+        f"Topic: {_normalize(payload.get('topic'))}. "
+        f"Difficulty: {_normalize(payload.get('difficulty')) or 'medium'}. "
+        f"Question count: {question_count}. "
+        "Use single_choice by default. Return only JSON."
+    )
+    questions = list(generated.get("questions") or [])
+    if not questions:
+        raise AIProviderError("AI service temporarily unavailable")
+
+    created_test = create_test(
+        school_id,
+        profile_id,
+        {
+            "title": _normalize(payload.get("title")) or _normalize(generated.get("title")) or f"{_normalize(payload.get('topic'))} AI Test",
+            "description": generated.get("description") or f"AI generated test for {_normalize(payload.get('subject'))}",
+            "instructions": generated.get("instructions") or "Attempt all questions carefully.",
+            "batch_id": _normalize(payload.get("batch_id")) or None,
+            "status": "draft",
+            "duration_minutes": int(payload.get("duration_minutes") or 60),
+            "total_marks": round(sum(float(item.get("marks") or payload.get("marks_per_question") or 1) for item in questions), 2),
+            "metadata": {
+                "source": "ai_generator",
+                "subject": _normalize(payload.get("subject")),
+                "chapter": _normalize(payload.get("chapter")),
+                "topic": _normalize(payload.get("topic")),
+                "difficulty": _normalize(payload.get("difficulty")) or "medium",
+            },
+        },
+    )
+    section_id = _normalize((created_test.get("sections") or [{}])[0].get("id"))
+    created_questions: list[dict[str, Any]] = []
+    for index, item in enumerate(questions, start=1):
+        prompt_text = _normalize(item.get("prompt_text"))
+        if not prompt_text:
+            continue
+        created_questions.append(
+            create_question(
+                school_id,
+                {
+                    "test_id": created_test.get("id"),
+                    "section_id": section_id,
+                    "display_order": index,
+                    "question_type": _normalize(item.get("question_type")) or "single_choice",
+                    "difficulty_level": _normalize(item.get("difficulty_level")) or _normalize(payload.get("difficulty")) or "medium",
+                    "prompt_text": prompt_text,
+                    "option_items": _normalize_option_items(list(item.get("option_items") or [])),
+                    "answer_key": _normalize_json_object(item.get("answer_key")),
+                    "explanation": item.get("explanation"),
+                    "marks": float(item.get("marks") or payload.get("marks_per_question") or 1),
+                    "negative_marks": float(item.get("negative_marks") or payload.get("negative_marks") or 0),
+                    "metadata": _normalize_json_object(item.get("metadata")),
+                },
+                profile_id,
+            )
+        )
+    return {"success": True, "test": get_test(school_id, _normalize(created_test.get("id"))), "questions": created_questions}
 
 
 def list_tests(
@@ -1130,11 +1390,16 @@ def get_attempt(school_id: str, attempt_id: str) -> dict[str, Any]:
     return _serialize_attempt(row, responses)
 
 
-def start_attempt(school_id: str, test_id: str, profile_id: str) -> dict[str, Any]:
-    return create_attempt(school_id, profile_id, {"test_id": test_id})
+def start_attempt(school_id: str, test_id: str, profile_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    next_payload = {"test_id": test_id}
+    if isinstance(payload, dict):
+        next_payload.update(payload)
+    return create_attempt(school_id, profile_id, next_payload)
 
 
 def create_attempt(school_id: str, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.supabase_account_security import start_test_session
+
     student = _get_student_by_profile_id(school_id, profile_id)
     test_id = _normalize(payload.get("test_id"))
     if not test_id:
@@ -1156,6 +1421,16 @@ def create_attempt(school_id: str, profile_id: str, payload: dict[str, Any]) -> 
         or []
     )
     if existing_in_progress:
+        start_test_session(
+            school_id=school_id,
+            test_id=test_id,
+            attempt_id=_normalize(existing_in_progress[0].get("id")),
+            student_id=_normalize(student.get("id")),
+            profile_id=profile_id,
+            session_key=_normalize(payload.get("session_key")) or None,
+            device_id=_normalize(payload.get("device_id")) or None,
+            mode=_normalize(payload.get("session_mode")) or "terminate_previous",
+        )
         return get_attempt(school_id, _normalize(existing_in_progress[0].get("id")))
 
     existing_attempts = list(
@@ -1193,6 +1468,16 @@ def create_attempt(school_id: str, profile_id: str, payload: dict[str, Any]) -> 
     if not rows:
         raise HTTPException(status_code=500, detail="Attempt start returned no row")
     created = dict(rows[0])
+    start_test_session(
+        school_id=school_id,
+        test_id=test_id,
+        attempt_id=_normalize(created.get("id")),
+        student_id=_normalize(student.get("id")),
+        profile_id=profile_id,
+        session_key=_normalize(payload.get("session_key")) or None,
+        device_id=_normalize(payload.get("device_id")) or None,
+        mode=_normalize(payload.get("session_mode")) or "terminate_previous",
+    )
     _log_audit_entry(
         school_id=school_id,
         profile_id=profile_id,
@@ -1204,6 +1489,8 @@ def create_attempt(school_id: str, profile_id: str, payload: dict[str, Any]) -> 
 
 
 def save_attempt(school_id: str, attempt_id: str, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.supabase_account_security import touch_test_session
+
     attempt = _get_attempt_row(school_id, attempt_id)
     student = _get_student_by_profile_id(school_id, profile_id)
     if _normalize(attempt.get("student_id")) != _normalize(student.get("id")):
@@ -1269,10 +1556,18 @@ def save_attempt(school_id: str, attempt_id: str, profile_id: str, payload: dict
         entity_id=attempt_id,
         payload={"question_id": question_id, "response_saved": True},
     )
+    touch_test_session(
+        school_id,
+        _normalize(attempt.get("test_id")),
+        _normalize(student.get("id")),
+        _normalize(payload.get("session_key")) or None,
+    )
     return get_attempt(school_id, attempt_id)
 
 
-def submit_attempt(school_id: str, attempt_id: str, profile_id: str) -> dict[str, Any]:
+def submit_attempt(school_id: str, attempt_id: str, profile_id: str, session_key: str | None = None) -> dict[str, Any]:
+    from app.services.supabase_account_security import end_test_session
+
     attempt = _get_attempt_row(school_id, attempt_id)
     student = _get_student_by_profile_id(school_id, profile_id)
     test = _get_test_row(school_id, _normalize(attempt.get("test_id")))
@@ -1384,6 +1679,13 @@ def submit_attempt(school_id: str, attempt_id: str, profile_id: str) -> dict[str
         entity_id=attempt_id,
         payload={"test_id": _normalize(attempt.get("test_id")), "result_id": result.get("id")},
     )
+    end_test_session(
+        school_id,
+        _normalize(attempt.get("test_id")),
+        _normalize(student.get("id")),
+        _normalize(session_key) or None,
+        reason="completed",
+    )
     return result
 
 
@@ -1432,6 +1734,84 @@ def get_results_analytics(school_id: str | None, *, test_id: str | None = None, 
     result_rows = [dict(row) for row in list(results_query.execute().data or [])]
     percentages = [float(row.get("percentage") or 0) for row in result_rows]
     scores = [float(row.get("score_obtained") or 0) for row in result_rows]
+    question_wise_analysis: list[dict[str, Any]] = []
+    difficulty_wise_analysis: list[dict[str, Any]] = []
+    student_ranking: list[dict[str, Any]] = []
+
+    if school_id and test_id:
+        question_rows = _question_rows_for_test(school_id, test_id)
+        question_map = {_normalize(item.get("id")): item for item in question_rows}
+        response_rows = [
+            dict(row)
+            for row in list(
+                _table("test_responses")
+                .select("question_id,is_correct,marks_awarded")
+                .eq("school_id", school_id)
+                .eq("test_id", test_id)
+                .is_("deleted_at", "null")
+                .execute()
+                .data
+                or []
+            )
+        ]
+        question_stats: dict[str, dict[str, Any]] = {}
+        difficulty_stats: dict[str, dict[str, Any]] = {}
+        for response in response_rows:
+            question_id = _normalize(response.get("question_id"))
+            question = question_map.get(question_id)
+            if not question:
+                continue
+            stats = question_stats.setdefault(
+                question_id,
+                {
+                    "question_id": question_id,
+                    "prompt_text": _normalize(question.get("prompt_text")),
+                    "difficulty_level": _normalize(question.get("difficulty_level")) or "medium",
+                    "attempts": 0,
+                    "correct": 0,
+                    "incorrect": 0,
+                    "average_marks": 0.0,
+                },
+            )
+            stats["attempts"] += 1
+            if response.get("is_correct") is True:
+                stats["correct"] += 1
+            elif response.get("is_correct") is False:
+                stats["incorrect"] += 1
+            stats["average_marks"] += float(response.get("marks_awarded") or 0)
+        for stats in question_stats.values():
+            attempts = max(int(stats["attempts"]), 1)
+            stats["average_marks"] = round(float(stats["average_marks"]) / attempts, 2)
+            stats["correct_rate"] = round((int(stats["correct"]) / attempts) * 100, 2)
+            question_wise_analysis.append(stats)
+            difficulty_bucket = difficulty_stats.setdefault(
+                str(stats["difficulty_level"]),
+                {"difficulty_level": str(stats["difficulty_level"]), "questions": 0, "attempts": 0, "correct": 0},
+            )
+            difficulty_bucket["questions"] += 1
+            difficulty_bucket["attempts"] += attempts
+            difficulty_bucket["correct"] += int(stats["correct"])
+        for stats in difficulty_stats.values():
+            attempts = max(int(stats["attempts"]), 1)
+            stats["correct_rate"] = round((int(stats["correct"]) / attempts) * 100, 2)
+            difficulty_wise_analysis.append(stats)
+
+        ranked_results = sorted(result_rows, key=lambda row: (float(row.get("percentage") or 0), float(row.get("score_obtained") or 0)), reverse=True)
+        student_ids = [_normalize(row.get("student_id")) for row in ranked_results]
+        student_map = _student_rows_by_ids(school_id, student_ids)
+        for index, row in enumerate(ranked_results[:20], start=1):
+            student = student_map.get(_normalize(row.get("student_id")), {})
+            student_ranking.append(
+                {
+                    "rank": index,
+                    "student_id": _normalize(row.get("student_id")),
+                    "student_name": _normalize(student.get("full_name")) or f"Student {_normalize(row.get('student_id'))[:8]}",
+                    "batch_id": _normalize(student.get("batch_id")) or None,
+                    "percentage": round(float(row.get("percentage") or 0), 2),
+                    "score_obtained": round(float(row.get("score_obtained") or 0), 2),
+                    "max_score": round(float(row.get("max_score") or 0), 2),
+                }
+            )
     return {
         "scope": "global" if global_scope else "school",
         "school_id": school_id,
@@ -1447,4 +1827,7 @@ def get_results_analytics(school_id: str | None, *, test_id: str | None = None, 
         "highest_score": round(max(scores), 2) if scores else 0.0,
         "lowest_score": round(min(scores), 2) if scores else 0.0,
         "published_results": len([row for row in result_rows if row.get("published_at")]),
+        "question_wise_analysis": question_wise_analysis,
+        "difficulty_wise_analysis": difficulty_wise_analysis,
+        "student_ranking": student_ranking,
     }

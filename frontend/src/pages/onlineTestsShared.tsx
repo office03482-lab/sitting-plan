@@ -9,7 +9,11 @@ export type QuestionDraft = {
   id?: string;
   section_id?: string;
   question_code: string;
+  subject: string;
+  chapter: string;
+  topic: string;
   prompt_text: string;
+  question_image_url: string;
   question_type: string;
   difficulty_level: string;
   option_lines: string;
@@ -43,7 +47,11 @@ export type TestFormState = {
 
 export const createEmptyQuestionDraft = (displayOrder = 1): QuestionDraft => ({
   question_code: '',
+  subject: '',
+  chapter: '',
+  topic: '',
   prompt_text: '',
+  question_image_url: '',
   question_type: 'single_choice',
   difficulty_level: 'medium',
   option_lines: '',
@@ -112,11 +120,19 @@ export const mapQuestionToDraft = (question: OnlineTestQuestion): QuestionDraft 
   id: question.id,
   section_id: question.section_id,
   question_code: question.question_code || '',
+  subject: String(question.metadata?.subject || ''),
+  chapter: String(question.metadata?.chapter || ''),
+  topic: String(question.metadata?.topic || ''),
   prompt_text: question.prompt_text,
+  question_image_url: String(question.metadata?.question_image_url || ''),
   question_type: question.question_type,
   difficulty_level: question.difficulty_level,
   option_lines: (question.option_items || [])
-    .map((item) => questionOptionLabel(item))
+    .map((item) => {
+      const label = questionOptionLabel(item);
+      const imageUrl = normalizeLine((item as Record<string, unknown>).image_url);
+      return imageUrl ? `${label} | ${imageUrl}` : label;
+    })
     .filter(Boolean)
     .join('\n'),
   answer_lines: mapCorrectAnswersToLines(question.answer_key || {}),
@@ -152,11 +168,18 @@ const linesToOptions = (lines: string) =>
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((label, index) => ({
-      id: `option_${index + 1}`,
-      label,
-      value: label,
-    }));
+    .map((line, index) => {
+      const [labelPart, imagePart] = line.split('|').map((item) => item.trim());
+      const optionItem: Record<string, unknown> = {
+        id: `option_${index + 1}`,
+        label: labelPart,
+        value: labelPart,
+      };
+      if (imagePart) {
+        optionItem.image_url = imagePart;
+      }
+      return optionItem;
+    });
 
 export const questionDraftToPayload = (draft: QuestionDraft, testId: string) => {
   const optionItems = linesToOptions(draft.option_lines);
@@ -168,7 +191,9 @@ export const questionDraftToPayload = (draft: QuestionDraft, testId: string) => 
   const resolvedOptionIds = answerValues
     .map((answer) => {
       const matched = optionItems.find(
-        (item) => item.id.toLowerCase() === answer.toLowerCase() || item.label.toLowerCase() === answer.toLowerCase(),
+        (item) =>
+          String(item.id || '').toLowerCase() === answer.toLowerCase() ||
+          String(item.label || '').toLowerCase() === answer.toLowerCase(),
       );
       return matched?.id || answer;
     })
@@ -198,6 +223,12 @@ export const questionDraftToPayload = (draft: QuestionDraft, testId: string) => 
     explanation: draft.explanation.trim() || undefined,
     marks: Number(draft.marks || 1),
     negative_marks: Number(draft.negative_marks || 0),
+    metadata: {
+      subject: draft.subject.trim() || undefined,
+      chapter: draft.chapter.trim() || undefined,
+      topic: draft.topic.trim() || undefined,
+      question_image_url: draft.question_image_url.trim() || undefined,
+    },
   };
 };
 

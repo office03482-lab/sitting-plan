@@ -16,9 +16,11 @@ export default function LmsAssignments() {
   const [assignments, setAssignments] = useState<LmsAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState('');
+  const [uploadingKey, setUploadingKey] = useState('');
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [error, setError] = useState('');
   const [banner, setBanner] = useState('');
-  const [drafts, setDrafts] = useState<Record<string, { submission_text: string; attachment_url: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { submission_text: string; attachment_url: string; submission_files: Array<{ title: string; url: string; file_type: string }> }>>({});
 
   useEffect(() => {
     if (!canRunRequests) return;
@@ -48,6 +50,45 @@ export default function LmsAssignments() {
       setError(getRequestErrorMessage(requestError, 'Assignment submit nahi hua.'));
     } finally {
       setSavingId('');
+    }
+  };
+
+  const trackProgress = (key: string) => (progressEvent: { loaded?: number; total?: number }) => {
+    const total = Number(progressEvent.total || 0);
+    const loaded = Number(progressEvent.loaded || 0);
+    if (!total) return;
+    setUploadProgress((current) => ({ ...current, [key]: Math.round((loaded / total) * 100) }));
+  };
+
+  const handleUploadSubmissionFile = async (assignmentId: string, index: number, file: File) => {
+    const key = `${assignmentId}-${index}`;
+    try {
+      setUploadingKey(key);
+      const response = await apiService.uploadAssignmentFile(file, {
+        submission: true,
+        onUploadProgress: trackProgress(key),
+      });
+      setDrafts((current) => {
+        const nextFiles = [...(current[assignmentId]?.submission_files || [])];
+        nextFiles[index] = {
+          ...(nextFiles[index] || { title: file.name, file_type: 'pdf', url: '' }),
+          title: nextFiles[index]?.title || file.name,
+          url: response.data.url,
+        };
+        return {
+          ...current,
+          [assignmentId]: {
+            submission_text: current[assignmentId]?.submission_text || '',
+            attachment_url: current[assignmentId]?.attachment_url || '',
+            submission_files: nextFiles,
+          },
+        };
+      });
+      setBanner('Submission file uploaded successfully.');
+    } catch (requestError) {
+      setError(getRequestErrorMessage(requestError, 'Submission file upload nahi hua.'));
+    } finally {
+      setUploadingKey('');
     }
   };
 
@@ -91,6 +132,15 @@ export default function LmsAssignments() {
                   Open Brief
                 </a>
               ) : null}
+              {assignment.reference_files?.length ? (
+                <div className="mt-4 space-y-2">
+                  {assignment.reference_files.map((file, index) => (
+                    <a key={`${assignment.id}-reference-${index}`} href={String(file.url || '#')} target="_blank" rel="noreferrer" className="block rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      {String(file.title || 'Reference file')} ({String(file.file_type || 'file')})
+                    </a>
+                  ))}
+                </div>
+              ) : null}
 
               {isStudent ? (
                 <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -103,21 +153,114 @@ export default function LmsAssignments() {
                     onChange={(e) =>
                       setDrafts((current) => ({
                         ...current,
-                        [assignment.id]: { submission_text: e.target.value, attachment_url: current[assignment.id]?.attachment_url || assignment.submission?.attachment_url || '' },
+                        [assignment.id]: {
+                          submission_text: e.target.value,
+                          attachment_url: current[assignment.id]?.attachment_url || assignment.submission?.attachment_url || '',
+                          submission_files: current[assignment.id]?.submission_files || [],
+                        },
                       }))
                     }
                   />
-                  <input
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-                    placeholder="Attachment URL"
-                    value={drafts[assignment.id]?.attachment_url || assignment.submission?.attachment_url || ''}
-                    onChange={(e) =>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <label className="block text-sm font-semibold text-slate-700">Upload Main Submission File</label>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.zip,image/png,image/jpeg,image/webp"
+                      className="mt-2 block w-full text-sm"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        void handleUploadSubmissionFile(assignment.id, 0, file);
+                      }}
+                    />
+                    {drafts[assignment.id]?.submission_files?.[0]?.url || assignment.submission?.attachment_url ? (
+                      <a href={String(drafts[assignment.id]?.submission_files?.[0]?.url || assignment.submission?.attachment_url)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-blue-700 hover:text-blue-900">
+                        Preview uploaded submission
+                      </a>
+                    ) : null}
+                    {uploadingKey === `${assignment.id}-0` ? <p className="mt-2 text-xs text-slate-500">Uploading... {uploadProgress[`${assignment.id}-0`] || 0}%</p> : null}
+                  </div>
+                  {((drafts[assignment.id]?.submission_files || assignment.submission?.submission_files || []) as Array<Record<string, unknown>>).slice(1).map((file, loopIndex) => {
+                    const index = loopIndex + 1;
+                    return (
+                    <div key={`${assignment.id}-submission-file-${index}`} className="grid gap-2 md:grid-cols-3">
+                      <input
+                        className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                        placeholder="File title"
+                        value={String(file.title || '')}
+                        onChange={(e) =>
+                          setDrafts((current) => {
+                            const nextFiles = [...(current[assignment.id]?.submission_files || [{ title: '', url: '', file_type: 'pdf' }])];
+                            nextFiles[index] = { ...nextFiles[index], title: e.target.value };
+                            return {
+                              ...current,
+                              [assignment.id]: {
+                                submission_text: current[assignment.id]?.submission_text || assignment.submission?.submission_text || '',
+                                attachment_url: current[assignment.id]?.attachment_url || assignment.submission?.attachment_url || '',
+                                submission_files: nextFiles,
+                              },
+                            };
+                          })
+                        }
+                      />
+                      <select
+                        className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+                        value={String(file.file_type || 'pdf')}
+                        onChange={(e) =>
+                          setDrafts((current) => {
+                            const nextFiles = [...(current[assignment.id]?.submission_files || [{ title: '', url: '', file_type: 'pdf' }])];
+                            nextFiles[index] = { ...nextFiles[index], file_type: e.target.value };
+                            return {
+                              ...current,
+                              [assignment.id]: {
+                                submission_text: current[assignment.id]?.submission_text || assignment.submission?.submission_text || '',
+                                attachment_url: current[assignment.id]?.attachment_url || assignment.submission?.attachment_url || '',
+                                submission_files: nextFiles,
+                              },
+                            };
+                          })
+                        }
+                      >
+                        <option value="pdf">PDF</option>
+                        <option value="docx">DOCX</option>
+                        <option value="zip">ZIP</option>
+                        <option value="link">Link</option>
+                      </select>
+                      <div className="rounded-xl border border-slate-200 bg-white p-3">
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.zip,image/png,image/jpeg,image/webp"
+                          className="block w-full text-sm"
+                          onChange={(e) => {
+                            const nextFile = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!nextFile) return;
+                            void handleUploadSubmissionFile(assignment.id, index, nextFile);
+                          }}
+                        />
+                        {String(file.url || '') ? <a href={String(file.url || '')} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-blue-700 hover:text-blue-900">Preview file</a> : null}
+                        {uploadingKey === `${assignment.id}-${index}` ? <p className="mt-2 text-xs text-slate-500">Uploading... {uploadProgress[`${assignment.id}-${index}`] || 0}%</p> : null}
+                      </div>
+                    </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() =>
                       setDrafts((current) => ({
                         ...current,
-                        [assignment.id]: { submission_text: current[assignment.id]?.submission_text || assignment.submission?.submission_text || '', attachment_url: e.target.value },
+                        [assignment.id]: {
+                          submission_text: current[assignment.id]?.submission_text || assignment.submission?.submission_text || '',
+                          attachment_url: current[assignment.id]?.attachment_url || assignment.submission?.attachment_url || '',
+                          submission_files: [...(current[assignment.id]?.submission_files || []), { title: '', url: '', file_type: 'pdf' }],
+                        },
                       }))
                     }
-                  />
+                    className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-white"
+                  >
+                    Add Submission File
+                  </button>
                   <button onClick={() => void handleSubmit(assignment.id)} disabled={savingId === assignment.id} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70">
                     {savingId === assignment.id ? 'Submitting...' : assignment.submission ? 'Update Submission' : 'Submit Assignment'}
                   </button>

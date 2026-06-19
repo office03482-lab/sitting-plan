@@ -25,6 +25,8 @@ from app.schemas import (
     LmsProgressDashboardResponse,
     LmsProgressResponse,
     LmsProgressUpdate,
+    LmsRevisionTrackerResponse,
+    LmsRevisionTrackerUpsert,
 )
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
@@ -44,12 +46,15 @@ from app.services.supabase_lms import (
     get_course,
     get_lesson,
     get_progress_dashboard,
+    get_student_success_dashboard,
     grade_submission,
     list_assignments,
+    list_revision_tracker,
     list_courses,
     list_lessons,
     list_modules,
     submit_assignment,
+    upsert_revision_tracker,
     update_assignment,
     update_course,
     update_lesson,
@@ -287,16 +292,16 @@ async def api_get_progress(
 ):
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
-        return get_progress_dashboard(school_id, student=student)
+        return get_student_success_dashboard(school_id, student=student)
     if _is_parent_portal_user(user):
         linked_students = _list_parent_linked_students(school_id, str(actor.get("profile_id") or "").strip(), getattr(user, "email", None))
         if child_student_id:
             linked_students = [item for item in linked_students if str(item.get("id") or "").strip() == child_student_id]
-        return get_progress_dashboard(school_id, parent_students=linked_students)
+        return get_student_success_dashboard(school_id, parent_students=linked_students)
     if child_student_id:
         student = _get_student(school_id, child_student_id)
-        return get_progress_dashboard(school_id, student=student)
-    return get_progress_dashboard(school_id, parent_students=[])
+        return get_student_success_dashboard(school_id, student=student)
+    return get_student_success_dashboard(school_id, parent_students=[])
 
 
 @router.post("/progress", response_model=LmsProgressResponse)
@@ -310,6 +315,42 @@ async def api_update_progress(
         raise HTTPException(status_code=403, detail="Only students can update lesson progress")
     student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
     return update_progress(school_id, student, payload.model_dump(exclude_none=True))
+
+
+@router.get("/revision-tracker", response_model=list[LmsRevisionTrackerResponse])
+async def api_list_revision_tracker(
+    child_student_id: str | None = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_lms_progress_user),
+):
+    if _is_student_user(user):
+        student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
+        return list_revision_tracker(school_id, str(student.get("id") or "").strip())
+    if _is_parent_portal_user(user):
+        linked_students = _list_parent_linked_students(school_id, str(actor.get("profile_id") or "").strip(), getattr(user, "email", None))
+        if child_student_id:
+            linked_students = [item for item in linked_students if str(item.get("id") or "").strip() == child_student_id]
+        if not linked_students:
+            return []
+        return list_revision_tracker(school_id, str(linked_students[0].get("id") or "").strip())
+    if child_student_id:
+        student = _get_student(school_id, child_student_id)
+        return list_revision_tracker(school_id, str(student.get("id") or "").strip())
+    return []
+
+
+@router.post("/revision-tracker", response_model=LmsRevisionTrackerResponse)
+async def api_upsert_revision_tracker(
+    payload: LmsRevisionTrackerUpsert,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_lms_progress_user),
+):
+    if not _is_student_user(user):
+        raise HTTPException(status_code=403, detail="Only students can update revision tracker status")
+    student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
+    return upsert_revision_tracker(school_id, student, actor.get("profile_id"), payload.model_dump(exclude_none=True))
 
 
 @router.get("/assignments", response_model=list[LmsAssignmentResponse])

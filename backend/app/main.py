@@ -166,7 +166,7 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes, study_planner, parent_portal, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_provider
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, online_tests, analytics, lms, live_classes, study_planner, parent_portal, parent_links, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_assistants, ai_provider, uploads, account_security
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -298,6 +298,11 @@ app.include_router(
 )
 
 app.include_router(
+    uploads.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("lms", "online_tests", "live_classes"))],
+)
+
+app.include_router(
     study_planner.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
 )
@@ -310,6 +315,11 @@ app.include_router(
     parent_portal.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("parent_intelligence", "edupay.parent_portal"))],
 )
+app.include_router(
+    parent_links.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("admin_office.students", "admin_office.access_control"))],
+)
+app.include_router(account_security.router)
 
 app.include_router(
     ai_tutor.router,
@@ -356,6 +366,10 @@ app.include_router(
 app.include_router(
     ai_agents.alias_router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
+)
+app.include_router(
+    ai_assistants.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents", "predictions", "bi"))],
 )
 
 app.include_router(

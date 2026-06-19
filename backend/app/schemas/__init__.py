@@ -2200,6 +2200,64 @@ class OnlineTestAnalyticsResponse(BaseModel):
     highest_score: float = 0
     lowest_score: float = 0
     published_results: int = 0
+    question_wise_analysis: List[Dict[str, Any]] = Field(default_factory=list)
+    difficulty_wise_analysis: List[Dict[str, Any]] = Field(default_factory=list)
+    student_ranking: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class OnlineTestQuestionBankCreate(BaseModel):
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    topic: Optional[str] = None
+    question_type: str = "single_choice"
+    difficulty_level: str = "medium"
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float = 1
+    negative_marks: float = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OnlineTestQuestionBankResponse(BaseModel):
+    id: str
+    school_id: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    topic: Optional[str] = None
+    question_type: str
+    difficulty_level: str
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float
+    negative_marks: float
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OnlineTestAiGenerateRequest(BaseModel):
+    title: Optional[str] = None
+    batch_id: Optional[str] = None
+    subject: str
+    chapter: str
+    topic: str
+    difficulty: str = "medium"
+    question_count: int = 10
+    duration_minutes: int = 60
+    marks_per_question: float = 1
+    negative_marks: float = 0
+
+
+class OnlineTestAiGenerateResponse(BaseModel):
+    success: bool = True
+    test: Optional[OnlineTestResponse] = None
+    questions: List[OnlineTestQuestionResponse] = Field(default_factory=list)
+    message: Optional[str] = None
 
 
 class AnalyticsSubjectPerformanceResponse(BaseModel):
@@ -2801,6 +2859,19 @@ class TeacherAiReportCommentsResponse(BaseModel):
     generated_at: Optional[datetime] = None
 
 
+class SchoolAiAssistantQueryRequest(BaseModel):
+    question: str
+
+
+class SchoolAiAssistantResponse(BaseModel):
+    question: str
+    answer: str
+    attendance_insights: List[str] = Field(default_factory=list)
+    performance_insights: List[str] = Field(default_factory=list)
+    risk_alerts: List[str] = Field(default_factory=list)
+    generated_at: Optional[datetime] = None
+
+
 class AiTutorResponse(BaseModel):
     mode: str
     topic: str
@@ -3022,6 +3093,8 @@ class LmsAssignmentBase(BaseModel):
     due_at: Optional[datetime] = None
     max_score: float = 100
     status: str = "draft"
+    batch_assignment_ids: List[str] = Field(default_factory=list)
+    reference_files: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -3038,6 +3111,8 @@ class LmsAssignmentUpdate(BaseModel):
     due_at: Optional[datetime] = None
     max_score: Optional[float] = None
     status: Optional[str] = None
+    batch_assignment_ids: Optional[List[str]] = None
+    reference_files: Optional[List[Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
 
@@ -3045,6 +3120,7 @@ class LmsAssignmentUpdate(BaseModel):
 class LmsAssignmentSubmissionCreate(BaseModel):
     submission_text: Optional[str] = None
     attachment_url: Optional[str] = None
+    submission_files: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -3061,6 +3137,7 @@ class LmsAssignmentSubmissionResponse(BaseModel):
     student_id: str
     submission_text: Optional[str] = None
     attachment_url: Optional[str] = None
+    submission_files: List[Dict[str, Any]] = Field(default_factory=list)
     status: str
     score_awarded: Optional[float] = None
     feedback: Optional[str] = None
@@ -3084,6 +3161,8 @@ class LmsAssignmentResponse(BaseModel):
     due_at: Optional[datetime] = None
     max_score: float
     status: str
+    batch_assignment_ids: List[str] = Field(default_factory=list)
+    reference_files: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool
     submission: Optional[LmsAssignmentSubmissionResponse] = None
@@ -3131,10 +3210,101 @@ class LmsAiInsightsResponse(BaseModel):
     revision_suggestions: List[str] = Field(default_factory=list)
 
 
+class LmsDashboardCourseSummaryResponse(BaseModel):
+    course_id: str
+    course_title: str
+    progress_percentage: float = 0
+    videos_watched: int = 0
+    videos_remaining: int = 0
+    assignments_submitted: int = 0
+    assignments_total: int = 0
+    last_activity: Optional[datetime] = None
+
+
+class LmsDashboardAssignmentStatusResponse(BaseModel):
+    pending: int = 0
+    submitted: int = 0
+    graded: int = 0
+    returned: int = 0
+
+
+class LmsDashboardTestSummaryResponse(BaseModel):
+    tests_taken: int = 0
+    average_score: float = 0
+    highest_score: float = 0
+
+
+class LmsDashboardUpcomingTestResponse(BaseModel):
+    test_id: str
+    title: str
+    subject_name: Optional[str] = None
+    topic: Optional[str] = None
+    starts_at: Optional[datetime] = None
+
+
+class LmsDashboardTopicAnalysisResponse(BaseModel):
+    weak: List[str] = Field(default_factory=list)
+    medium: List[str] = Field(default_factory=list)
+    strong: List[str] = Field(default_factory=list)
+
+
+class LmsRevisionTrackerBase(BaseModel):
+    topic_key: str
+    topic_name: str
+    chapter_name: Optional[str] = None
+    subject_name: Optional[str] = None
+    course_id: Optional[str] = None
+    course_title: Optional[str] = None
+    status: str = "not_started"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LmsRevisionTrackerUpsert(LmsRevisionTrackerBase):
+    pass
+
+
+class LmsRevisionTrackerResponse(LmsRevisionTrackerBase):
+    id: Optional[str] = None
+    school_id: str
+    student_id: str
+    updated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class LmsStudentSuccessDashboardResponse(BaseModel):
+    student_id: str
+    student_name: str
+    overall_learning_score: float = 0
+    attendance_percentage: float = 0
+    course_summaries: List[LmsDashboardCourseSummaryResponse] = Field(default_factory=list)
+    assignment_status: LmsDashboardAssignmentStatusResponse = Field(default_factory=LmsDashboardAssignmentStatusResponse)
+    test_summary: LmsDashboardTestSummaryResponse = Field(default_factory=LmsDashboardTestSummaryResponse)
+    upcoming_tests: List[LmsDashboardUpcomingTestResponse] = Field(default_factory=list)
+    topic_analysis: LmsDashboardTopicAnalysisResponse = Field(default_factory=LmsDashboardTopicAnalysisResponse)
+    revision_tracker: List[LmsRevisionTrackerResponse] = Field(default_factory=list)
+    today_tasks: List[str] = Field(default_factory=list)
+
+
+class LmsParentChildOverviewResponse(BaseModel):
+    student_id: str
+    student_name: str
+    overall_learning_score: float = 0
+    attendance_percentage: float = 0
+    assignments_pending: int = 0
+    assignments_submitted: int = 0
+    assignments_graded: int = 0
+    upcoming_tests_count: int = 0
+    last_activity: Optional[datetime] = None
+
+
 class LmsProgressDashboardResponse(BaseModel):
+    viewer_mode: str = "student"
     progress_items: List[LmsProgressResponse] = Field(default_factory=list)
     enrolled_courses: List[LmsCourseResponse] = Field(default_factory=list)
     ai_insights: LmsAiInsightsResponse = Field(default_factory=LmsAiInsightsResponse)
+    student_dashboard: Optional[LmsStudentSuccessDashboardResponse] = None
+    child_dashboards: List[LmsParentChildOverviewResponse] = Field(default_factory=list)
+
 
 
 class BiTrendPoint(BaseModel):

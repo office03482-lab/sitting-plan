@@ -765,6 +765,7 @@ def get_parent_dashboard(school_id: str, *, profile_id: str | None, user_email: 
     payload["ai_summary"] = _ai_summary_text(
         (
             "You are the Aspire ERP Parent Intelligence assistant. Write a short family-facing summary in 2 sentences.\n"
+            "Use attendance, tests, LMS progress, assignments, and live-class engagement where present. Avoid generic parenting advice.\n"
             f"Overall health: {overall_health}\n"
             f"Risk level: {overall_risk}\n"
             f"Children snapshot: {[{'student_name': item.get('student_name'), 'risk_level': item.get('risk_level'), 'weak_topics': item.get('weak_topics')} for item in children[:3]]}"
@@ -812,6 +813,7 @@ def get_parent_insights(school_id: str, *, profile_id: str | None, user_email: s
     payload["ai_summary"] = _ai_summary_text(
         (
             "You are the Aspire ERP Parent Intelligence assistant. Write a concise insight summary for parents.\n"
+            "Use attendance, tests, LMS progress, assignments, and live-class engagement where present. Avoid generic parenting advice.\n"
             f"Insights: {items[:5]}"
         ),
         "Use these insights to guide the next revision cycle and teacher follow-up conversation.",
@@ -847,6 +849,7 @@ def get_parent_risk_scores(school_id: str, *, profile_id: str | None, user_email
     payload["ai_summary"] = _ai_summary_text(
         (
             "You are the Aspire ERP Parent Intelligence assistant. Write a concise risk summary for parents.\n"
+            "Use attendance, tests, LMS progress, assignments, and live-class engagement where present. Avoid generic parenting advice.\n"
             f"Risk payload: {payload['children'][:3]}"
         ),
         "The current risk view points to attendance, performance, and engagement as the main areas to monitor.",
@@ -893,6 +896,7 @@ def get_parent_alerts(school_id: str, *, profile_id: str | None, user_email: str
     payload["ai_summary"] = _ai_summary_text(
         (
             "You are the Aspire ERP Parent Intelligence assistant. Write a short summary of the latest parent alerts.\n"
+            "Use attendance, tests, LMS progress, assignments, and live-class engagement where present. Avoid generic parenting advice.\n"
             f"Alerts: {alerts[:5]}"
         ),
         "Review the latest alerts in priority order and coordinate the next parent-teacher action where needed.",

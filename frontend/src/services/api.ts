@@ -4,7 +4,8 @@ import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
-  BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
+  ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
+  BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
   TeacherAiAssignmentResponse, TeacherAiLessonPlanResponse, TeacherAiQuestionPaperResponse, TeacherAiReportCommentsResponse,
@@ -101,6 +102,32 @@ function readStoredAuthUser(): any | null {
   }
 }
 
+export const ACTIVE_SESSION_STORAGE_KEY = 'active_session_key';
+export const ACTIVE_DEVICE_STORAGE_KEY = 'active_device_id';
+
+export function getStoredActiveSessionKey(): string | null {
+  try {
+    const value = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+    return value ? value.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getStoredDeviceId(): string {
+  try {
+    const existing = localStorage.getItem(ACTIVE_DEVICE_STORAGE_KEY);
+    if (existing && existing.trim()) {
+      return existing.trim();
+    }
+    const next = `device-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+    localStorage.setItem(ACTIVE_DEVICE_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return `device-${Date.now().toString(36)}`;
+  }
+}
+
 function resolveStoredSchoolId(user: any): string | null {
   const candidate = String(
     user?.school_id
@@ -159,6 +186,11 @@ class ApiService {
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
+      const activeSessionKey = getStoredActiveSessionKey();
+      if (activeSessionKey) {
+        headers['X-Active-Session'] = activeSessionKey;
+      }
+      headers['X-Device-Id'] = getStoredDeviceId();
       normalizeRequestSchoolId(params, resolvedSchoolId, Boolean(token));
 
       // Ensure multipart uploads do not send a JSON content type header.
@@ -179,6 +211,23 @@ class ApiService {
       });
 
       return config;
+    });
+  }
+
+  private uploadWithProgress(
+    url: string,
+    file: File,
+    options: {
+      params?: Record<string, unknown>;
+      onUploadProgress?: (progressEvent: any) => void;
+    } = {},
+  ) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.api.post<StorageUploadResponse>(url, formData, {
+      params: options.params,
+      timeout: 180000,
+      onUploadProgress: options.onUploadProgress,
     });
   }
 
@@ -249,6 +298,145 @@ class ApiService {
     });
   }
 
+  async listParentDirectory(params: { search?: string; limit?: number } = {}) {
+    return this.api.get<ParentGuardianLink[]>('/parent-links/guardians', { params });
+  }
+
+  async listStudentParents(studentId: string | number) {
+    return this.api.get<ParentGuardianLink[]>(`/parent-links/students/${studentId}`);
+  }
+
+  async createOrLinkStudentParent(
+    studentId: string | number,
+    data: {
+      guardian_id?: string;
+      full_name?: string;
+      email?: string;
+      phone?: string;
+      relation_type?: string;
+      address?: string;
+      is_primary?: boolean;
+      can_receive_notifications?: boolean;
+      create_login?: boolean;
+      password?: string;
+    },
+  ) {
+    return this.api.post<ParentGuardianLink>(`/parent-links/students/${studentId}`, data);
+  }
+
+  async unlinkStudentParent(studentId: string | number, guardianId: string | number) {
+    return this.api.delete<{ message: string; student_id: string; guardian_id: string }>(`/parent-links/students/${studentId}/${guardianId}`);
+  }
+
+  async importParentLinks(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.api.post<ParentLinkImportResult>('/parent-links/import', formData, {
+      timeout: 180000,
+    });
+  }
+
+  async getStudentPortalAccess(studentId: string | number) {
+    return this.api.get<PortalAccessStatus>(`/account-security/students/${studentId}`);
+  }
+
+  async createStudentPortalLogin(studentId: string | number) {
+    return this.api.post<PortalAccessStatus>(`/account-security/students/${studentId}/create-login`);
+  }
+
+  async resetStudentPortalPassword(studentId: string | number) {
+    return this.api.post<PortalAccessStatus>(`/account-security/students/${studentId}/reset-password`);
+  }
+
+  async disableStudentPortalLogin(studentId: string | number) {
+    return this.api.post(`/account-security/students/${studentId}/disable`);
+  }
+
+  async enableStudentPortalLogin(studentId: string | number) {
+    return this.api.post(`/account-security/students/${studentId}/enable`);
+  }
+
+  async forceLogoutStudentPortal(studentId: string | number) {
+    return this.api.post(`/account-security/students/${studentId}/force-logout`);
+  }
+
+  async bulkGenerateStudentPortalAccounts(data: { student_ids?: Array<string | number>; batch_id?: string | number } = {}) {
+    return this.api.post<BulkPortalGenerationResult>('/account-security/students/bulk-generate', data);
+  }
+
+  async exportPortalCredentials(rows: Array<Record<string, unknown>>) {
+    return this.api.post('/account-security/credentials/export', { rows }, {
+      responseType: 'blob',
+      timeout: 120000,
+    });
+  }
+
+  async getParentPortalAccess(guardianId: string | number) {
+    return this.api.get<PortalAccessStatus>(`/account-security/parents/${guardianId}`);
+  }
+
+  async createParentPortalLogin(guardianId: string | number) {
+    return this.api.post<PortalAccessStatus>(`/account-security/parents/${guardianId}/create-login`);
+  }
+
+  async resetParentPortalPassword(guardianId: string | number) {
+    return this.api.post<PortalAccessStatus>(`/account-security/parents/${guardianId}/reset-password`);
+  }
+
+  async disableParentPortalLogin(guardianId: string | number) {
+    return this.api.post(`/account-security/parents/${guardianId}/disable`);
+  }
+
+  async enableParentPortalLogin(guardianId: string | number) {
+    return this.api.post(`/account-security/parents/${guardianId}/enable`);
+  }
+
+  async forceLogoutParentPortal(guardianId: string | number) {
+    return this.api.post(`/account-security/parents/${guardianId}/force-logout`);
+  }
+
+  async resetStaffPortalPassword(staffMemberId: string | number, roleKey = 'teacher') {
+    return this.api.post(`/account-security/staff/${staffMemberId}/reset-password`, null, {
+      params: { role_key: roleKey },
+    });
+  }
+
+  async listSecuritySessions() {
+    return this.api.get<ActiveSessionRecord[]>('/account-security/sessions');
+  }
+
+  async registerSecuritySession(data: { session_key: string; device_id: string; device_name?: string; browser?: string; force_takeover?: boolean }) {
+    return this.api.post<{ status: string; session_id?: string; limit?: number }>('/account-security/sessions/register', data);
+  }
+
+  async heartbeatSecuritySession(sessionKey: string) {
+    return this.api.post('/account-security/sessions/heartbeat', { session_key: sessionKey });
+  }
+
+  async logoutCurrentSecuritySession(sessionKey: string) {
+    return this.api.post('/account-security/sessions/logout-current', { session_key: sessionKey });
+  }
+
+  async logoutAllProfileSessions(profileId: string) {
+    return this.api.post(`/account-security/sessions/${profileId}/logout-all`);
+  }
+
+  async disableProfileAccount(profileId: string) {
+    return this.api.post(`/account-security/profiles/${profileId}/disable`);
+  }
+
+  async enableProfileAccount(profileId: string) {
+    return this.api.post(`/account-security/profiles/${profileId}/enable`);
+  }
+
+  async completeForcedPasswordChange() {
+    return this.api.post('/account-security/password/change-complete');
+  }
+
+  async resolveLoginIdentifier(identifier: string) {
+    return this.api.get<{ email: string }>('/account-security/resolve-login', { params: { identifier } });
+  }
+
   async createBulkActionRequest(data: {
     module_name: string;
     action_type: string;
@@ -314,6 +502,67 @@ class ApiService {
       throw new Error('test_id is required to create an online test question.');
     }
     return this.api.post<OnlineTestQuestion>(`/online-tests/tests/${testId}/questions`, data);
+  }
+
+  async listOnlineTestQuestionBank(params: {
+    subject?: string;
+    chapter?: string;
+    topic?: string;
+    difficulty_level?: string;
+    skip?: number;
+    limit?: number;
+  } = {}) {
+    return this.api.get<OnlineTestQuestionBankItem[]>('/online-tests/question-bank', { params });
+  }
+
+  async createOnlineTestQuestionBankItem(data: Record<string, unknown>) {
+    return this.api.post<OnlineTestQuestionBankItem>('/online-tests/question-bank', data);
+  }
+
+  async importOnlineTestQuestionBank(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.api.post<{ created_count: number; items: OnlineTestQuestionBankItem[] }>(
+      '/online-tests/question-bank/import',
+      formData,
+      { timeout: 180000 },
+    );
+  }
+
+  async generateOnlineAiTest(data: Record<string, unknown>) {
+    return this.api.post<{ success: boolean; message?: string; test?: OnlineTest; questions?: OnlineTestQuestion[] }>(
+      '/online-tests/ai-generate',
+      data,
+      { timeout: 120000 },
+    );
+  }
+
+  async uploadVideo(file: File, options: { purpose?: string; onUploadProgress?: (progressEvent: any) => void } = {}) {
+    return this.uploadWithProgress('/uploads/video', file, {
+      params: options.purpose ? { purpose: options.purpose } : undefined,
+      onUploadProgress: options.onUploadProgress,
+    });
+  }
+
+  async uploadDocument(file: File, options: { purpose?: string; onUploadProgress?: (progressEvent: any) => void } = {}) {
+    return this.uploadWithProgress('/uploads/document', file, {
+      params: options.purpose ? { purpose: options.purpose } : undefined,
+      onUploadProgress: options.onUploadProgress,
+    });
+  }
+
+  async uploadImage(file: File, options: { purpose?: string; onUploadProgress?: (progressEvent: any) => void } = {}) {
+    return this.uploadWithProgress('/uploads/image', file, {
+      params: options.purpose ? { purpose: options.purpose } : undefined,
+      onUploadProgress: options.onUploadProgress,
+    });
+  }
+
+  async uploadAssignmentFile(file: File, options: { submission?: boolean; onUploadProgress?: (progressEvent: any) => void } = {}) {
+    return this.uploadWithProgress('/uploads/assignment', file, {
+      params: options.submission ? { submission: true } : undefined,
+      onUploadProgress: options.onUploadProgress,
+    });
   }
 
   async updateOnlineTestQuestion(questionId: string | number, data: Record<string, unknown>) {
@@ -553,6 +802,10 @@ class ApiService {
     return this.api.post<TeacherAiReportCommentsResponse>('/teacher-ai/report-comments', data);
   }
 
+  async askSchoolAiAssistant(data: { question: string }) {
+    return this.api.post<import('@types').SchoolAiAssistantResponse>('/ai-assistants/school/query', data);
+  }
+
   async createStudyPlannerGoal(data: {
     target_student_id?: string | null;
     goal_type: string;
@@ -643,6 +896,23 @@ class ApiService {
     return this.api.post<LmsProgressItem>('/lms/progress', data);
   }
 
+  async listLmsRevisionTracker(params: { child_student_id?: string | number } = {}) {
+    return this.api.get<import('@types').LmsRevisionTrackerItem[]>('/lms/revision-tracker', { params });
+  }
+
+  async updateLmsRevisionTracker(data: {
+    topic_key?: string;
+    topic_name: string;
+    chapter_name?: string | null;
+    subject_name?: string | null;
+    course_id?: string | number | null;
+    course_title?: string | null;
+    status: 'not_started' | 'in_progress' | 'completed';
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.api.post<import('@types').LmsRevisionTrackerItem>('/lms/revision-tracker', data);
+  }
+
   async listLmsAssignments(params: { course_id?: string | number } = {}) {
     return this.api.get<LmsAssignment[]>('/lms/assignments', { params });
   }
@@ -663,7 +933,10 @@ class ApiService {
     return this.api.delete(`/lms/assignments/${assignmentId}`);
   }
 
-  async submitLmsAssignment(assignmentId: string | number, data: { submission_text?: string; attachment_url?: string; metadata?: Record<string, unknown> } = {}) {
+  async submitLmsAssignment(
+    assignmentId: string | number,
+    data: { submission_text?: string; attachment_url?: string; submission_files?: Array<Record<string, unknown>>; metadata?: Record<string, unknown> } = {},
+  ) {
     return this.api.post<LmsAssignmentSubmission>(`/lms/assignments/${assignmentId}/submit`, data);
   }
 
@@ -1745,6 +2018,56 @@ class ApiService {
 
   async exportInventoryReport(params?: Record<string, unknown>) {
     return this.api.get('/inventory/reports/export', { params, responseType: 'blob' });
+  }
+
+  // ─── Parent Portal ─────────────────────────────────────────────────
+
+  async getParentPortalChildren() {
+    return this.api.get<import('@types').ParentPortalChild[]>('/parent/children');
+  }
+
+  async getParentPortalDashboard() {
+    return this.api.get<import('@types').ParentPortalDashboardResponse>('/parent/dashboard');
+  }
+
+  async getParentPortalAcademicProgress(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalAcademicResponse>('/parent/academic-progress', {
+      params: studentId ? { student_id: studentId } : {},
+    });
+  }
+
+  async getParentPortalAttendance(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalAttendanceResponse>('/parent/attendance', {
+      params: studentId ? { student_id: studentId } : {},
+    });
+  }
+
+  async getParentPortalTestResults(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalTestResponse>('/parent/test-results', {
+      params: studentId ? { student_id: studentId } : {},
+    });
+  }
+
+  async getParentPortalAssignments(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalAssignmentResponse>('/parent/assignments', {
+      params: studentId ? { student_id: studentId } : {},
+    });
+  }
+
+  async getParentPortalAlerts(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalAlertResponse>('/parent/alerts', {
+      params: studentId ? { student_id: studentId } : {},
+    });
+  }
+
+  async askParentPortalAi(data: { question: string; student_id?: string; history?: { role: string; content: string }[] }) {
+    return this.api.post<import('@types').ParentPortalAiResponse>('/parent/ai/ask', data);
+  }
+
+  async getParentPortalRecommendations(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalRecommendation[]>('/parent/ai/recommendations', {
+      params: studentId ? { student_id: studentId } : {},
+    });
   }
 }
 

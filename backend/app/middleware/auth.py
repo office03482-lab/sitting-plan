@@ -623,6 +623,16 @@ def get_authenticated_user(
             detail="Authenticated user is inactive",
         )
 
+    try:
+        from app.services.supabase_account_security import validate_active_session
+
+        profile_id = str(getattr(user, "profile_id", None) or getattr(user, "id", "") or "")
+        validate_active_session(profile_id, request.headers.get("X-Active-Session"))
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     return user
 
 
@@ -633,7 +643,7 @@ def build_authenticated_actor_context(user: User) -> Dict[str, str]:
         "email": (user.email or "").strip(),
         "username": (user.username or "").strip(),
         "user_id": str(user.id),
-        "profile_id": str(user.id),
+        "profile_id": str(getattr(user, "profile_id", None) or user.id),
         "school_id": "",
         "auth_source": "jwt",
     }

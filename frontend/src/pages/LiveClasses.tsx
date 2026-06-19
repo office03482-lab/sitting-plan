@@ -36,6 +36,8 @@ type RecordingForm = {
   recording_url: string;
   notes_url: string;
   duration_seconds: string;
+  recording_file_name?: string;
+  notes_file_name?: string;
 };
 
 const initialCreateForm: CreateSessionForm = {
@@ -104,6 +106,8 @@ export default function LiveClasses() {
   const [statusFilter, setStatusFilter] = useState('');
   const [createForm, setCreateForm] = useState<CreateSessionForm>(initialCreateForm);
   const [recordingForms, setRecordingForms] = useState<Record<string, RecordingForm>>({});
+  const [uploadingAssetKey, setUploadingAssetKey] = useState('');
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
 
   const visibleSessions = useMemo(() => {
     if (!statusFilter) return sessions;
@@ -234,6 +238,39 @@ export default function LiveClasses() {
       setBanner({ type: 'error', message: getRequestErrorMessage(requestError, 'Recording upload nahi ho paayi.') });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const trackUploadProgress = (key: string) => (progressEvent: { loaded?: number; total?: number }) => {
+    const total = Number(progressEvent.total || 0);
+    const loaded = Number(progressEvent.loaded || 0);
+    if (!total) return;
+    setUploadProgress((current) => ({ ...current, [key]: Math.round((loaded / total) * 100) }));
+  };
+
+  const handleRecordingAssetUpload = async (sessionId: string, kind: 'recording' | 'notes', file: File) => {
+    const key = `${sessionId}-${kind}`;
+    try {
+      setUploadingAssetKey(key);
+      if (kind === 'recording') {
+        const response = await apiService.uploadVideo(file, {
+          purpose: 'live_class_recording',
+          onUploadProgress: trackUploadProgress(key),
+        });
+        updateRecordingForm(sessionId, { recording_url: response.data.url, recording_file_name: response.data.file_name });
+        setBanner({ type: 'success', message: 'Recording uploaded successfully.' });
+      } else {
+        const response = await apiService.uploadDocument(file, {
+          purpose: 'notes',
+          onUploadProgress: trackUploadProgress(key),
+        });
+        updateRecordingForm(sessionId, { notes_url: response.data.url, notes_file_name: response.data.file_name });
+        setBanner({ type: 'success', message: 'Notes uploaded successfully.' });
+      }
+    } catch (requestError) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(requestError, 'File upload nahi ho payi.') });
+    } finally {
+      setUploadingAssetKey('');
     }
   };
 
@@ -602,20 +639,36 @@ export default function LiveClasses() {
                         onChange={(event) => updateRecordingForm(sessionItem.id, { title: event.target.value })}
                         className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
                       />
-                      <input
-                        type="url"
-                        placeholder="Recording URL"
-                        value={recordingForm.recording_url}
-                        onChange={(event) => updateRecordingForm(sessionItem.id, { recording_url: event.target.value })}
-                        className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-                      />
-                      <input
-                        type="url"
-                        placeholder="Notes URL"
-                        value={recordingForm.notes_url}
-                        onChange={(event) => updateRecordingForm(sessionItem.id, { notes_url: event.target.value })}
-                        className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-                      />
+                      <div className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm">
+                        <label className="block text-sm font-semibold text-slate-700">Upload Recording</label>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v"
+                          className="mt-2 block w-full text-sm"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            event.target.value = '';
+                            if (file) void handleRecordingAssetUpload(sessionItem.id, 'recording', file);
+                          }}
+                        />
+                        {recordingForm.recording_url ? <a href={recordingForm.recording_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-violet-700 hover:text-violet-900">Preview recording</a> : null}
+                        {uploadingAssetKey === `${sessionItem.id}-recording` ? <p className="mt-2 text-xs text-slate-500">Uploading... {uploadProgress[`${sessionItem.id}-recording`] || 0}%</p> : null}
+                      </div>
+                      <div className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm">
+                        <label className="block text-sm font-semibold text-slate-700">Upload Notes</label>
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                          className="mt-2 block w-full text-sm"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            event.target.value = '';
+                            if (file) void handleRecordingAssetUpload(sessionItem.id, 'notes', file);
+                          }}
+                        />
+                        {recordingForm.notes_url ? <a href={recordingForm.notes_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-violet-700 hover:text-violet-900">Preview notes</a> : null}
+                        {uploadingAssetKey === `${sessionItem.id}-notes` ? <p className="mt-2 text-xs text-slate-500">Uploading... {uploadProgress[`${sessionItem.id}-notes`] || 0}%</p> : null}
+                      </div>
                       <input
                         type="number"
                         placeholder="Duration in seconds"

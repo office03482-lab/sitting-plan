@@ -496,7 +496,9 @@ def _explanation_sections(topic: str, context: dict[str, Any]) -> dict[str, Any]
     prompt = (
         "You are the Aspire ERP AI Tutor. Return strict JSON with keys "
         "explanation, key_points, examples, revision_plan, challenge_questions. "
-        "Keep the explanation concise, grounded in the supplied student context, and exam-friendly.\n"
+        "Keep the explanation concise, grounded in the supplied student context, and exam-friendly. "
+        "Use attendance, online tests, LMS progress, and assignments whenever they are present. "
+        "Do not give generic motivational filler or textbook-only summaries.\n"
         f"Topic: {topic}\n"
         f"Difficulty band: {_normalize(context.get('difficulty_band'))}\n"
         f"Class level: {_normalize(context.get('class_level'))}\n"

@@ -86,7 +86,8 @@ def _ai_summary_text(title: str, rationale: dict[str, Any], fallback: str) -> st
     try:
         text = generate_text(
             "You are the Aspire ERP AI Command Center. Write one concise executive summary sentence "
-            "grounded in the supplied recommendation title and rationale.\n"
+            "grounded in the supplied recommendation title and rationale. "
+            "Prioritize attendance, performance, LMS progress, assignments, and risk signals over generic management language.\n"
             f"Title: {title}\n"
             f"Rationale: {rationale}\n"
             f"Fallback: {fallback}"

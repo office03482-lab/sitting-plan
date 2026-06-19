@@ -28,6 +28,14 @@ def _table(name: str):
     return _public_table(f"lms_{name}")
 
 
+def _analytics_table(name: str):
+    return _public_table(f"analytics_{name}")
+
+
+def _attendance_table(name: str):
+    return _client().schema("attendance").table(name)
+
+
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
 
@@ -71,6 +79,12 @@ def _normalize_json_list(value: Any) -> list[Any]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_percentage(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round((numerator / denominator) * 100, 2)
 
 
 def _log_audit_entry(
@@ -177,6 +191,10 @@ def _serialize_course(
 
 
 def _serialize_submission(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = _deserialize_json_column(row.get("metadata"))
+    submission_files = metadata.get("submission_files")
+    if not isinstance(submission_files, list):
+        submission_files = []
     return {
         "id": _normalize(row.get("id")),
         "school_id": _normalize(row.get("school_id")),
@@ -184,12 +202,13 @@ def _serialize_submission(row: dict[str, Any]) -> dict[str, Any]:
         "student_id": _normalize(row.get("student_id")),
         "submission_text": row.get("submission_text"),
         "attachment_url": row.get("attachment_url"),
+        "submission_files": submission_files,
         "status": _normalize(row.get("status")) or "draft",
         "score_awarded": float(row.get("score_awarded")) if row.get("score_awarded") is not None else None,
         "feedback": row.get("feedback"),
         "submitted_at": row.get("submitted_at"),
         "graded_at": row.get("graded_at"),
-        "metadata": _deserialize_json_column(row.get("metadata")),
+        "metadata": metadata,
         "is_active": bool(row.get("is_active", True)),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -197,6 +216,13 @@ def _serialize_submission(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _serialize_assignment(row: dict[str, Any], submission: dict[str, Any] | None = None, submission_count: int = 0) -> dict[str, Any]:
+    metadata = _deserialize_json_column(row.get("metadata"))
+    reference_files = metadata.get("reference_files")
+    if not isinstance(reference_files, list):
+        reference_files = []
+    batch_assignment_ids = metadata.get("batch_assignment_ids")
+    if not isinstance(batch_assignment_ids, list):
+        batch_assignment_ids = []
     return {
         "id": _normalize(row.get("id")),
         "school_id": _normalize(row.get("school_id")),
@@ -209,7 +235,9 @@ def _serialize_assignment(row: dict[str, Any], submission: dict[str, Any] | None
         "due_at": row.get("due_at"),
         "max_score": float(row.get("max_score") or 0),
         "status": _normalize(row.get("status")) or "draft",
-        "metadata": _deserialize_json_column(row.get("metadata")),
+        "batch_assignment_ids": batch_assignment_ids,
+        "reference_files": reference_files,
+        "metadata": metadata,
         "is_active": bool(row.get("is_active", True)),
         "submission": submission,
         "submission_count": int(submission_count),
@@ -239,6 +267,133 @@ def _serialize_progress(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+
+
+def _merge_metadata(base: dict[str, Any] | None, updates: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(base or {})
+    for key, value in (updates or {}).items():
+        payload[key] = value
+    return payload
+
+
+def _topic_key(*parts: Any) -> str:
+    cleaned = [str(part or "").strip().lower() for part in parts if str(part or "").strip()]
+    return "::".join(cleaned)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _serialize_revision_tracker(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = _deserialize_json_column(row.get("metadata"))
+    return {
+        "id": _normalize(row.get("id")) or None,
+        "school_id": _normalize(row.get("school_id")),
+        "student_id": _normalize(row.get("student_id")),
+        "topic_key": _normalize(row.get("topic_key")),
+        "topic_name": _normalize(row.get("topic_name")),
+        "chapter_name": row.get("chapter_name"),
+        "subject_name": row.get("subject_name"),
+        "course_id": _normalize(row.get("course_id")) or None,
+        "course_title": row.get("course_title"),
+        "status": _normalize(row.get("status")) or "not_started",
+        "metadata": metadata,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def list_revision_tracker(school_id: str, student_id: str) -> list[dict[str, Any]]:
+    rows = list(
+        _table("student_revision_tracker")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("student_id", student_id)
+        .is_("deleted_at", "null")
+        .order("updated_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    return [_serialize_revision_tracker(dict(row)) for row in rows]
+
+
+def upsert_revision_tracker(
+    school_id: str,
+    student: dict[str, Any],
+    profile_id: str | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    topic_name = _normalize(payload.get("topic_name"))
+    topic_key = _normalize(payload.get("topic_key")) or _topic_key(payload.get("subject_name"), payload.get("chapter_name"), topic_name)
+    status = _normalize(payload.get("status")) or "not_started"
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+    if status not in {"not_started", "in_progress", "completed"}:
+        raise HTTPException(status_code=400, detail="Invalid revision status")
+    student_id = _normalize(student.get("id"))
+    query = (
+        _table("student_revision_tracker")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("student_id", student_id)
+        .eq("topic_key", topic_key)
+        .is_("deleted_at", "null")
+        .limit(1)
+    )
+    rows = list(query.execute().data or [])
+    revision_payload = {
+        "school_id": school_id,
+        "student_id": student_id,
+        "updated_by_profile_id": _normalize_optional_uuid(profile_id),
+        "course_id": _normalize_optional_uuid(payload.get("course_id")),
+        "topic_key": topic_key,
+        "topic_name": topic_name,
+        "chapter_name": payload.get("chapter_name"),
+        "subject_name": payload.get("subject_name"),
+        "course_title": payload.get("course_title"),
+        "status": status,
+        "metadata": _normalize_json_object(payload.get("metadata")),
+        "is_active": True,
+        "deleted_at": None,
+    }
+    if rows:
+        revision_id = _normalize(rows[0].get("id"))
+        _table("student_revision_tracker").update(revision_payload).eq("school_id", school_id).eq("id", revision_id).execute()
+    else:
+        revision_payload["created_by_profile_id"] = _normalize_optional_uuid(profile_id)
+        _table("student_revision_tracker").insert(revision_payload).execute()
+    refreshed = list(
+        _table("student_revision_tracker")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("student_id", student_id)
+        .eq("topic_key", topic_key)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not refreshed:
+        raise HTTPException(status_code=500, detail="Revision tracker update failed")
+    _log_audit_entry(
+        school_id=school_id,
+        profile_id=profile_id,
+        action="lms.revision_tracker_updated",
+        entity_id=_normalize(refreshed[0].get("id")),
+        payload={"student_id": student_id, "topic_key": topic_key, "status": status},
+    )
+    return _serialize_revision_tracker(dict(refreshed[0]))
 
 
 def _get_student_by_profile_id(school_id: str, profile_id: str) -> dict[str, Any]:
@@ -276,6 +431,72 @@ def _get_student(school_id: str, student_id: str) -> dict[str, Any]:
 
 
 def _list_parent_linked_students(school_id: str, profile_id: str | None, email: str | None) -> list[dict[str, Any]]:
+    normalized_profile_id = _normalize(profile_id)
+    normalized_email = _normalize(email).lower()
+    linked: list[dict[str, Any]] = []
+
+    if normalized_profile_id or normalized_email:
+        guardian_rows = list(
+            _client().schema("academic").table("guardians")
+            .select("id")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .execute()
+            .data
+            or []
+        )
+        matching_guardian_ids: list[str] = []
+        for row in guardian_rows:
+            guardian_id = _normalize(row.get("id"))
+            if not guardian_id:
+                continue
+            guardian_detail_rows = list(
+                _client().schema("academic").table("guardians")
+                .select("id,profile_id,email")
+                .eq("school_id", school_id)
+                .eq("id", guardian_id)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if not guardian_detail_rows:
+                continue
+            guardian = dict(guardian_detail_rows[0])
+            if normalized_profile_id and _normalize(guardian.get("profile_id")) == normalized_profile_id:
+                matching_guardian_ids.append(guardian_id)
+                continue
+            if normalized_email and _normalize(guardian.get("email")).lower() == normalized_email:
+                matching_guardian_ids.append(guardian_id)
+
+        if matching_guardian_ids:
+            link_rows = list(
+                _client().schema("academic").table("student_guardians")
+                .select("student_id")
+                .eq("school_id", school_id)
+                .in_("guardian_id", matching_guardian_ids)
+                .execute()
+                .data
+                or []
+            )
+            student_ids = sorted({_normalize(row.get("student_id")) for row in link_rows if _normalize(row.get("student_id"))})
+            if student_ids:
+                linked = [
+                    dict(row)
+                    for row in list(
+                        _public_table("students")
+                        .select("id,school_id,profile_id,batch_id,full_name,class_name,section,guardian_name,guardian_phone,metadata")
+                        .eq("school_id", school_id)
+                        .eq("is_active", True)
+                        .in_("id", student_ids)
+                        .execute()
+                        .data
+                        or []
+                    )
+                ]
+                if linked:
+                    return linked
+
     rows = list(
         _public_table("students")
         .select("id,school_id,profile_id,batch_id,full_name,class_name,section,guardian_name,guardian_phone,metadata")
@@ -285,9 +506,6 @@ def _list_parent_linked_students(school_id: str, profile_id: str | None, email: 
         .data
         or []
     )
-    linked: list[dict[str, Any]] = []
-    normalized_profile_id = _normalize(profile_id)
-    normalized_email = _normalize(email).lower()
     for row in rows:
         metadata = _deserialize_json_column(row.get("metadata"))
         candidate_ids = {
@@ -860,6 +1078,13 @@ def create_assignment(school_id: str, profile_id: str | None, payload: dict[str,
     title = _normalize(payload.get("title"))
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
+    metadata = _normalize_json_object(payload.get("metadata"))
+    reference_files = payload.get("reference_files")
+    if isinstance(reference_files, list):
+        metadata["reference_files"] = [_normalize_json_object(item) for item in reference_files]
+    batch_assignment_ids = payload.get("batch_assignment_ids")
+    if isinstance(batch_assignment_ids, list):
+        metadata["batch_assignment_ids"] = [_normalize(item) for item in batch_assignment_ids if _normalize(item)]
     response = _table("assignments").insert(
         {
             "school_id": school_id,
@@ -874,7 +1099,7 @@ def create_assignment(school_id: str, profile_id: str | None, payload: dict[str,
             "due_at": payload.get("due_at"),
             "max_score": float(payload.get("max_score") or 100),
             "status": _normalize(payload.get("status")) or "draft",
-            "metadata": _normalize_json_object(payload.get("metadata")),
+            "metadata": metadata,
             "is_active": True,
         }
     ).execute()
@@ -887,7 +1112,7 @@ def create_assignment(school_id: str, profile_id: str | None, payload: dict[str,
 
 
 def update_assignment(school_id: str, assignment_id: str, profile_id: str | None, payload: dict[str, Any]) -> dict[str, Any]:
-    _get_assignment_row(school_id, assignment_id)
+    current = _get_assignment_row(school_id, assignment_id)
     update_payload: dict[str, Any] = {"updated_by_profile_id": _normalize_optional_uuid(profile_id)}
     for key in ("title", "description", "attachment_url", "due_at", "status"):
         if key in payload:
@@ -897,8 +1122,23 @@ def update_assignment(school_id: str, assignment_id: str, profile_id: str | None
             update_payload[key] = _normalize_optional_uuid(payload.get(key))
     if "max_score" in payload and payload.get("max_score") is not None:
         update_payload["max_score"] = float(payload.get("max_score"))
+    next_metadata = _deserialize_json_column(current.get("metadata"))
+    metadata_changed = False
     if "metadata" in payload and payload.get("metadata") is not None:
-        update_payload["metadata"] = _normalize_json_object(payload.get("metadata"))
+        next_metadata = _merge_metadata(next_metadata, _normalize_json_object(payload.get("metadata")))
+        metadata_changed = True
+    if "reference_files" in payload and payload.get("reference_files") is not None:
+        next_metadata["reference_files"] = [
+            _normalize_json_object(item) for item in list(payload.get("reference_files") or [])
+        ]
+        metadata_changed = True
+    if "batch_assignment_ids" in payload and payload.get("batch_assignment_ids") is not None:
+        next_metadata["batch_assignment_ids"] = [
+            _normalize(item) for item in list(payload.get("batch_assignment_ids") or []) if _normalize(item)
+        ]
+        metadata_changed = True
+    if metadata_changed:
+        update_payload["metadata"] = next_metadata
     if "is_active" in payload and payload.get("is_active") is not None:
         update_payload["is_active"] = bool(payload.get("is_active"))
     _table("assignments").update(update_payload).eq("school_id", school_id).eq("id", assignment_id).execute()
@@ -932,6 +1172,10 @@ def submit_assignment(school_id: str, assignment_id: str, student: dict[str, Any
         .data
         or []
     )
+    submission_metadata = _normalize_json_object(payload.get("metadata"))
+    submission_files = payload.get("submission_files")
+    if isinstance(submission_files, list):
+        submission_metadata["submission_files"] = [_normalize_json_object(item) for item in submission_files]
     submission_payload = {
         "school_id": school_id,
         "assignment_id": assignment_id,
@@ -941,7 +1185,7 @@ def submit_assignment(school_id: str, assignment_id: str, student: dict[str, Any
         "attachment_url": payload.get("attachment_url"),
         "status": "submitted",
         "submitted_at": _utc_now_iso(),
-        "metadata": _normalize_json_object(payload.get("metadata")),
+        "metadata": submission_metadata,
         "is_active": True,
     }
     if existing_rows:
@@ -1083,6 +1327,8 @@ def update_progress(school_id: str, student: dict[str, Any], payload: dict[str, 
         .data
         or []
     )
+    merged_metadata = _normalize_json_object(payload.get("metadata"))
+    lesson_completion = float(payload.get("watch_percentage") or 0)
     progress_payload = {
         "school_id": school_id,
         "student_id": _normalize(student.get("id")),
@@ -1095,7 +1341,13 @@ def update_progress(school_id: str, student: dict[str, Any], payload: dict[str, 
         "is_completed": bool(payload.get("is_completed", False)),
         "last_accessed_at": _utc_now_iso(),
         "completed_at": _utc_now_iso() if bool(payload.get("is_completed", False)) else None,
-        "metadata": _normalize_json_object(payload.get("metadata")),
+        "metadata": _merge_metadata(
+            merged_metadata,
+            {
+                "lesson_completion_percentage": lesson_completion,
+                "progress_source": _normalize(payload.get("progress_source")) or "lesson_player",
+            },
+        ),
         "is_active": True,
     }
     if existing_rows:
@@ -1164,6 +1416,280 @@ def _build_ai_insights(school_id: str, student: dict[str, Any], enrolled_courses
     }
 
 
+def _attendance_signal(school_id: str, student_id: str) -> float:
+    rows = list(
+        _attendance_table("student_attendance")
+        .select("status")
+        .eq("school_id", school_id)
+        .eq("student_id", student_id)
+        .order("attendance_date", desc=True)
+        .limit(60)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        return 0.0
+    present_count = sum(1 for row in rows if _normalize(row.get("status")).lower() in {"present", "late", "excused"})
+    return round((present_count / len(rows)) * 100, 2)
+
+
+def _load_topic_performance_rows(school_id: str, student_id: str) -> list[dict[str, Any]]:
+    rows = list(
+        _analytics_table("topic_performance")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("owner_type", "student")
+        .eq("owner_id", student_id)
+        .is_("deleted_at", "null")
+        .order("percentage", desc=False)
+        .execute()
+        .data
+        or []
+    )
+    return [dict(row) for row in rows]
+
+
+def _merge_revision_tracker(
+    school_id: str,
+    student_id: str,
+    topic_rows: list[dict[str, Any]],
+    existing_rows: list[dict[str, Any]],
+    course_lookup: dict[str, str],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = list(existing_rows)
+    seen_keys = {_normalize(item.get("topic_key")) for item in existing_rows}
+    for row in topic_rows:
+        topic_name = _normalize(row.get("topic_name"))
+        chapter_name = row.get("chapter_name")
+        topic_key = _topic_key(row.get("subject_name"), chapter_name, topic_name)
+        if not topic_name or topic_key in seen_keys:
+            continue
+        course_id = _normalize(row.get("course_id")) or None
+        merged.append(
+            {
+                "id": None,
+                "school_id": school_id,
+                "student_id": student_id,
+                "topic_key": topic_key,
+                "topic_name": topic_name,
+                "chapter_name": chapter_name,
+                "subject_name": row.get("subject_name"),
+                "course_id": course_id,
+                "course_title": course_lookup.get(course_id or "", row.get("course_title")),
+                "status": "not_started",
+                "metadata": {"percentage": float(row.get("percentage") or 0)},
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+        seen_keys.add(topic_key)
+    return merged
+
+
+def _build_student_success_dashboard(
+    school_id: str,
+    student: dict[str, Any],
+    progress_items: list[dict[str, Any]],
+    enrolled_courses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    student_id = _normalize(student.get("id"))
+    course_lookup = {_normalize(course.get("id")): _normalize(course.get("title")) for course in enrolled_courses}
+    progress_by_course: dict[str, list[dict[str, Any]]] = {}
+    progress_by_lesson: dict[str, dict[str, Any]] = {}
+    for item in progress_items:
+        course_id = _normalize(item.get("course_id"))
+        progress_by_course.setdefault(course_id, []).append(item)
+        progress_by_lesson[_normalize(item.get("lesson_id"))] = item
+
+    assignments = list_assignments(school_id, student=student)
+    assignments_by_course: dict[str, list[dict[str, Any]]] = {}
+    for item in assignments:
+        assignments_by_course.setdefault(_normalize(item.get("course_id")), []).append(item)
+
+    course_summaries: list[dict[str, Any]] = []
+    course_progress_values: list[float] = []
+    last_activity_candidates: list[datetime] = []
+    for course in enrolled_courses:
+        course_id = _normalize(course.get("id"))
+        lessons = [lesson for module in course.get("modules") or [] for lesson in module.get("lessons") or []]
+        progress_rows = progress_by_course.get(course_id, [])
+        progress_percentage = max((float(item.get("course_completion_percentage") or 0) for item in progress_rows), default=0.0)
+        course_progress_values.append(progress_percentage)
+        video_lessons = [
+            lesson
+            for lesson in lessons
+            if _normalize(lesson.get("lesson_type")) in {"video", "mixed"}
+            or any(_normalize(resource.get("resource_type")) in {"video", "mp4"} for resource in lesson.get("resources") or [])
+        ]
+        videos_watched = sum(
+            1
+            for lesson in video_lessons
+            if float((progress_by_lesson.get(_normalize(lesson.get("id"))) or {}).get("watch_percentage") or 0) >= 80
+            or bool((progress_by_lesson.get(_normalize(lesson.get("id"))) or {}).get("is_completed"))
+        )
+        course_assignments = assignments_by_course.get(course_id, [])
+        assignments_submitted = sum(
+            1
+            for assignment in course_assignments
+            if _normalize((assignment.get("submission") or {}).get("status")) in {"submitted", "graded", "returned"}
+        )
+        course_last_activity = max((_parse_datetime(item.get("last_accessed_at")) for item in progress_rows), default=None)
+        if course_last_activity is not None:
+            last_activity_candidates.append(course_last_activity)
+        course_summaries.append(
+            {
+                "course_id": course_id,
+                "course_title": _normalize(course.get("title")),
+                "progress_percentage": round(progress_percentage, 2),
+                "videos_watched": videos_watched,
+                "videos_remaining": max(len(video_lessons) - videos_watched, 0),
+                "assignments_submitted": assignments_submitted,
+                "assignments_total": len(course_assignments),
+                "last_activity": course_last_activity.isoformat() if course_last_activity else None,
+            }
+        )
+
+    assignment_status = {"pending": 0, "submitted": 0, "graded": 0, "returned": 0}
+    for assignment in assignments:
+        submission_status = _normalize((assignment.get("submission") or {}).get("status"))
+        if submission_status == "graded":
+            assignment_status["graded"] += 1
+        elif submission_status == "returned":
+            assignment_status["returned"] += 1
+        elif submission_status == "submitted":
+            assignment_status["submitted"] += 1
+        else:
+            assignment_status["pending"] += 1
+
+    test_summary = {"tests_taken": 0, "average_score": 0.0, "highest_score": 0.0}
+    upcoming_tests: list[dict[str, Any]] = []
+    topic_analysis = {"weak": [], "medium": [], "strong": []}
+    revision_tracker = list_revision_tracker(school_id, student_id)
+    today_tasks: list[str] = []
+    try:
+        from app.services.supabase_analytics import get_student_analytics
+        from app.services.supabase_online_tests import list_results, list_tests
+
+        analytics = get_student_analytics(school_id, student_id)
+        result_rows = list_results(school_id, student_id=student_id, skip=0, limit=200)
+        percentages = [float(row.get("percentage") or 0) for row in result_rows]
+        test_summary = {
+            "tests_taken": len(result_rows),
+            "average_score": round(sum(percentages) / len(percentages), 2) if percentages else 0.0,
+            "highest_score": round(max(percentages), 2) if percentages else 0.0,
+        }
+        candidate_tests = list_tests(school_id, include_inactive=False, student_batch_id=_normalize(student.get("batch_id")) or None, skip=0, limit=50)
+        subject_ids = [_normalize(item.get("subject_id")) for item in candidate_tests if _normalize(item.get("subject_id"))]
+        subject_rows = list(
+            _public_table("subjects")
+            .select("id,name")
+            .eq("school_id", school_id)
+            .in_("id", subject_ids or ["00000000-0000-0000-0000-000000000000"])
+            .execute()
+            .data
+            or []
+        )
+        subject_map = {_normalize(row.get("id")): _normalize(row.get("name")) for row in subject_rows}
+        for item in candidate_tests:
+            starts_at = _parse_datetime(item.get("starts_at"))
+            if starts_at is None or starts_at <= datetime.now(timezone.utc):
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            upcoming_tests.append(
+                {
+                    "test_id": _normalize(item.get("id")),
+                    "title": _normalize(item.get("title")),
+                    "subject_name": subject_map.get(_normalize(item.get("subject_id"))) or _normalize(metadata.get("subject_name")) or None,
+                    "topic": _normalize(metadata.get("topic")) or _normalize(metadata.get("chapter")) or None,
+                    "starts_at": starts_at.isoformat(),
+                }
+            )
+        upcoming_tests.sort(key=lambda item: item.get("starts_at") or "")
+        topic_rows = _load_topic_performance_rows(school_id, student_id)
+        weak = [str(item) for item in list(analytics.get("weak_topics") or [])[:3] if _normalize(item)]
+        strong = [str(item) for item in list(analytics.get("strong_topics") or [])[:3] if _normalize(item)]
+        excluded_medium = {item.strip().lower() for item in weak + strong}
+        medium = [
+            _normalize(row.get("topic_name"))
+            for row in topic_rows
+            if 55 <= float(row.get("percentage") or 0) < 80 and _normalize(row.get("topic_name")).lower() not in excluded_medium
+        ][:4]
+        topic_analysis = {"weak": weak, "medium": medium, "strong": strong}
+        revision_tracker = _merge_revision_tracker(
+            school_id,
+            student_id,
+            topic_rows[:8],
+            revision_tracker,
+            course_lookup,
+        )
+        next_lesson = None
+        for course in enrolled_courses:
+            for module in course.get("modules") or []:
+                for lesson in module.get("lessons") or []:
+                    lesson_progress = progress_by_lesson.get(_normalize(lesson.get("id")))
+                    if not lesson_progress or not bool(lesson_progress.get("is_completed")):
+                        next_lesson = _normalize(lesson.get("title"))
+                        break
+                if next_lesson:
+                    break
+            if next_lesson:
+                break
+        if weak:
+            today_tasks.append(f"Revise {weak[0]}")
+        if len(weak) > 1:
+            today_tasks.append(f"Solve 20 MCQs on {weak[1]}")
+        elif assignment_status["pending"] > 0:
+            today_tasks.append(f"Complete {assignment_status['pending']} pending assignment{'s' if assignment_status['pending'] != 1 else ''}")
+        if next_lesson:
+            today_tasks.append(f"Watch {next_lesson}")
+        elif upcoming_tests:
+            today_tasks.append(f"Prepare for {upcoming_tests[0].get('title')}")
+    except Exception:
+        pass
+
+    attendance_percentage = _attendance_signal(school_id, student_id)
+    assignment_completion_score = _safe_percentage(
+        assignment_status["submitted"] + assignment_status["graded"] + assignment_status["returned"],
+        len(assignments),
+    ) if assignments else 0.0
+    test_average = float(test_summary.get("average_score") or 0)
+    course_average = round(sum(course_progress_values) / len(course_progress_values), 2) if course_progress_values else 0.0
+    overall_learning_score = round((course_average * 0.45) + (assignment_completion_score * 0.2) + (test_average * 0.35), 2)
+    if not course_progress_values and not assignments and not test_summary["tests_taken"]:
+        overall_learning_score = attendance_percentage or 0.0
+
+    return {
+        "student_id": student_id,
+        "student_name": _normalize(student.get("full_name")) or "Student",
+        "overall_learning_score": overall_learning_score,
+        "attendance_percentage": attendance_percentage,
+        "course_summaries": course_summaries,
+        "assignment_status": assignment_status,
+        "test_summary": test_summary,
+        "upcoming_tests": upcoming_tests[:5],
+        "topic_analysis": topic_analysis,
+        "revision_tracker": revision_tracker,
+        "today_tasks": today_tasks[:4],
+        "last_activity": max(last_activity_candidates).isoformat() if last_activity_candidates else None,
+    }
+
+
+def _to_parent_child_overview(student_dashboard: dict[str, Any]) -> dict[str, Any]:
+    assignment_status = student_dashboard.get("assignment_status") or {}
+    return {
+        "student_id": student_dashboard.get("student_id"),
+        "student_name": student_dashboard.get("student_name"),
+        "overall_learning_score": float(student_dashboard.get("overall_learning_score") or 0),
+        "attendance_percentage": float(student_dashboard.get("attendance_percentage") or 0),
+        "assignments_pending": int(assignment_status.get("pending") or 0),
+        "assignments_submitted": int(assignment_status.get("submitted") or 0),
+        "assignments_graded": int((assignment_status.get("graded") or 0) + (assignment_status.get("returned") or 0)),
+        "upcoming_tests_count": len(student_dashboard.get("upcoming_tests") or []),
+        "last_activity": student_dashboard.get("last_activity"),
+    }
+
+
 def get_progress_dashboard(
     school_id: str,
     *,
@@ -1202,3 +1728,69 @@ def get_progress_dashboard(
             "revision_suggestions": ["Track your child’s incomplete lessons and upcoming assignments from My Learning"],
         }
     return {"progress_items": progress_items, "enrolled_courses": enrolled_courses, "ai_insights": ai_insights}
+
+
+def get_student_success_dashboard(
+    school_id: str,
+    *,
+    student: dict[str, Any] | None = None,
+    parent_students: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    target_students = [student] if student is not None else list(parent_students or [])
+    if not target_students:
+        return {
+            "viewer_mode": "student",
+            "progress_items": [],
+            "enrolled_courses": [],
+            "ai_insights": {"weak_chapters": [], "recommended_lessons": [], "recommended_tests": [], "revision_suggestions": []},
+            "student_dashboard": None,
+            "child_dashboards": [],
+        }
+    student_ids = [_normalize(item.get("id")) for item in target_students]
+    progress_rows = list(
+        _table("student_progress")
+        .select("*")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .is_("deleted_at", "null")
+        .order("updated_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    progress_items = [_serialize_progress(dict(row)) for row in progress_rows]
+    if student is not None:
+        enrolled_courses = [get_course(school_id, item.get("id"), student=student) for item in list_courses(school_id, student=student)]
+        ai_insights = _build_ai_insights(school_id, student, enrolled_courses, progress_items)
+        student_dashboard = _build_student_success_dashboard(school_id, student, progress_items, enrolled_courses)
+        viewer_mode = "student"
+        child_dashboards: list[dict[str, Any]] = []
+    else:
+        enrolled_courses = []
+        student_dashboard = None
+        child_dashboards = []
+        for linked_student in target_students:
+            for item in list_courses(school_id, student=linked_student):
+                if not any(existing.get("id") == item.get("id") for existing in enrolled_courses):
+                    enrolled_courses.append(get_course(school_id, item.get("id"), student=linked_student))
+            child_progress_items = [item for item in progress_items if _normalize(item.get("student_id")) == _normalize(linked_student.get("id"))]
+            child_courses = [get_course(school_id, item.get("id"), student=linked_student) for item in list_courses(school_id, student=linked_student)]
+            child_dashboard = _build_student_success_dashboard(school_id, linked_student, child_progress_items, child_courses)
+            child_dashboards.append(_to_parent_child_overview(child_dashboard))
+            if len(target_students) == 1:
+                student_dashboard = child_dashboard
+        ai_insights = {
+            "weak_chapters": [],
+            "recommended_lessons": [str(course.get("title") or "").strip() for course in enrolled_courses[:3]],
+            "recommended_tests": [],
+            "revision_suggestions": ["Track your child's incomplete lessons and upcoming assignments from My Learning"],
+        }
+        viewer_mode = "parent"
+    return {
+        "viewer_mode": viewer_mode,
+        "progress_items": progress_items,
+        "enrolled_courses": enrolled_courses,
+        "ai_insights": ai_insights,
+        "student_dashboard": student_dashboard,
+        "child_dashboards": child_dashboards,
+    }

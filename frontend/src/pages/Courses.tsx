@@ -132,7 +132,14 @@ export default function Courses() {
       {!courses.length ? (
         <section className={`${cardClass} text-center`}>
           <h2 className="text-lg font-semibold text-slate-900">No courses available</h2>
-          <p className="mt-2 text-sm text-slate-600">Teacher course publish karega to yahan learning library dikh jayegi.</p>
+          <p className="mt-2 text-sm text-slate-600">
+            {canManage ? 'Coaching LMS abhi empty hai. First course create karke modules, lessons aur assignments start karo.' : 'Teacher course publish karega to yahan learning library dikh jayegi.'}
+          </p>
+          {canManage ? (
+            <button onClick={() => void handleCreateCourse()} disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70">
+              {saving ? 'Saving...' : 'Create First Course'}
+            </button>
+          ) : null}
         </section>
       ) : (
         <section className="grid gap-5 xl:grid-cols-2">

@@ -439,7 +439,9 @@ def generate_question_paper(school_id: str, *, role_key: str, profile_id: str | 
         (
             "You are the Aspire ERP Teacher AI. Return strict JSON with keys questions and instructions. "
             "questions must be a list of objects with question_type, difficulty, marks, prompt, source. "
-            "Keep every question aligned to the grounded topic, batch, subject, and difficulty.\n"
+            "Keep every question aligned to the grounded topic, batch, subject, and difficulty. "
+            "Use previous tests, attendance concerns, LMS lesson coverage, and assignment patterns where relevant. "
+            "Avoid generic paper generation.\n"
             f"Batch: {batch}\n"
             f"Subject: {subject}\n"
             f"Topic: {selected_topic}\n"
@@ -554,7 +556,9 @@ def generate_assignment(school_id: str, *, role_key: str, profile_id: str | None
     ai_payload = _generate_json_or_fallback(
         (
             "You are the Aspire ERP Teacher AI. Return strict JSON with keys tasks and instructions. "
-            "tasks must be a list of objects with task_no, task_type, difficulty_level, prompt, expected_outcome.\n"
+            "tasks must be a list of objects with task_no, task_type, difficulty_level, prompt, expected_outcome. "
+            "Ground the assignment in LMS lesson hits, prior assignments, and current readiness signals. "
+            "Avoid generic tasks.\n"
             f"Batch: {batch}\n"
             f"Subject: {subject}\n"
             f"Topic: {selected_topic}\n"
@@ -657,7 +661,7 @@ def generate_lesson_plan(school_id: str, *, role_key: str, profile_id: str | Non
         (
             "You are the Aspire ERP Teacher AI. Return strict JSON with keys schedule and teaching_goals. "
             "schedule must be a list of objects with day_of_week, start_time, end_time, subject, class_name, chapter, objective, activity. "
-            "Keep the plan aligned to the timetable slots and topic.\n"
+            "Keep the plan aligned to the timetable slots and topic. Use LMS continuity, assignments, and test readiness context when present.\n"
             f"Topic: {topic}\n"
             f"Plan scope: {plan_scope}\n"
             f"Timetable rows: {slots}\n"
@@ -798,7 +802,9 @@ def generate_report_comments(school_id: str, *, role_key: str, profile_id: str |
     ai_payload = _generate_json_or_fallback(
         (
             "You are the Aspire ERP Teacher AI. Return strict JSON with keys summary, remarks, improvement_suggestions. "
-            "Use professional school-report language, keep it specific, and stay grounded in the supplied analytics.\n"
+            "Use professional school-report language, keep it specific, and stay grounded in the supplied analytics. "
+            "Reference attendance, online test performance, LMS progress, and assignments when available. "
+            "Avoid vague praise or generic remediation.\n"
             f"Student: {student}\n"
             f"Analytics snapshot: {result_payload['analytics_snapshot']}\n"
             f"Score payload: {result_payload['score_payload']}\n"

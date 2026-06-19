@@ -27,6 +27,10 @@ export function ProtectedRoute({ children, allowedRoles, requiredPermissions }: 
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  if (user.must_change_password && location.pathname !== '/force-password-change') {
+    return <Navigate to="/force-password-change" replace />;
+  }
+
   if (!canAccess({ roles: allowedRoles, permissions: requiredPermissions })) {
     return <Navigate to={getDefaultRoute(user)} replace />;
   }
