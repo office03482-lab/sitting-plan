@@ -196,6 +196,10 @@ async function normalizeAuthError(error: unknown): Promise<Error> {
   return new Error('Authentication failed.');
 }
 
+function isEmailIdentifier(value: string): boolean {
+  return /\S+@\S+\.\S+/.test(value.trim());
+}
+
 function mapRoleKeyToLegacyRole(roleKey?: string | null): UserRole {
   if (roleKey === 'platform_admin' || roleKey === 'school_admin') return 'admin';
   if (roleKey === 'teacher') return 'teacher';
@@ -328,7 +332,13 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
     membership_id: activeMembership.id,
     default_school_id: profile.default_school_id,
     is_active: Boolean(profile.is_active),
-    username: profile.display_name || profile.email || session.user.email || undefined,
+    username:
+      profile.metadata?.portal_access?.username ||
+      profile.metadata?.username ||
+      profile.display_name ||
+      profile.email ||
+      session.user.email ||
+      undefined,
     must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
   };
 }
@@ -726,8 +736,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuthError(null);
         try {
           const trimmedIdentifier = identifier.trim();
-          const resolvedLogin = await apiService.resolveLoginIdentifier(trimmedIdentifier);
-          const loginEmail = String(resolvedLogin.data?.email || trimmedIdentifier).trim();
+          const loginEmail = isEmailIdentifier(trimmedIdentifier)
+            ? trimmedIdentifier
+            : String((await apiService.resolveLoginIdentifier(trimmedIdentifier)).data?.email || trimmedIdentifier).trim();
           const { data, error } = await supabase.auth.signInWithPassword({
             email: loginEmail,
             password,

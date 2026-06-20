@@ -2050,6 +2050,17 @@ def complete_password_change(profile_id: str) -> dict[str, Any]:
     return {"status": "ok"}
 
 
+def _profile_login_usernames(profile: dict[str, Any]) -> set[str]:
+    metadata = _json_object(profile.get("metadata"))
+    portal_access = _json_object(metadata.get("portal_access"))
+    candidates = {
+        _normalize(profile.get("display_name")),
+        _normalize(metadata.get("username")),
+        _normalize(portal_access.get("username")),
+    }
+    return {candidate.lower() for candidate in candidates if candidate}
+
+
 def resolve_login_email(identifier: str) -> dict[str, Any]:
     normalized = _normalize(identifier)
     if not normalized:
@@ -2058,14 +2069,22 @@ def resolve_login_email(identifier: str) -> dict[str, Any]:
         return {"email": normalized.lower()}
     profile_rows = list(
         _public_table("profiles")
-        .select("id,email,display_name")
-        .ilike("display_name", normalized)
-        .limit(5)
+        .select("id,email,display_name,metadata")
+        .limit(200)
         .execute()
         .data
         or []
     )
-    matches = [dict(row) for row in profile_rows if _normalize(row.get("email"))]
+    normalized_lookup = normalized.lower()
+    matches = [
+        dict(row)
+        for row in profile_rows
+        if _normalize(row.get("email"))
+        and (
+            normalized_lookup in _profile_login_usernames(dict(row))
+            or _normalize(row.get("email")).lower() == normalized_lookup
+        )
+    ]
     if len(matches) > 1:
         raise HTTPException(status_code=409, detail="Multiple accounts found for this username. Please use your login email.")
     if matches:
