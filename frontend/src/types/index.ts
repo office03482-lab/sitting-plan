@@ -142,16 +142,98 @@ export interface PortalAccessStatus {
 }
 
 export interface BulkPortalCredentialRow {
+  name?: string;
+  role?: string;
+  identifier?: string;
   student_name: string;
   roll_number: string;
   username: string;
   login_email?: string;
   temporary_password: string;
+  created_at?: string;
 }
 
 export interface BulkPortalGenerationResult {
   count: number;
+  skipped_count?: number;
   credentials: BulkPortalCredentialRow[];
+}
+
+export interface PortalPermissionTemplate {
+  key: string;
+  label: string;
+  selected_role: string;
+  permissions: string[];
+}
+
+export interface PortalOverviewRecord extends PortalAccessStatus {
+  entity_name?: string;
+  roll_number?: string;
+  employee_code?: string;
+  batch_name?: string | null;
+  class_name?: string | null;
+  section?: string | null;
+  batch_id?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  staff_type?: string | null;
+  department?: string | null;
+  designation?: string | null;
+}
+
+export interface PortalOverviewResponse {
+  summary: {
+    accounts_created: number;
+    accounts_pending: number;
+    accounts_disabled: number;
+    last_login_count: number;
+    portal_active?: number;
+    portal_disabled?: number;
+    portal_not_created?: number;
+    total_students?: number;
+    total_records: number;
+  };
+  records: PortalOverviewRecord[];
+  meta?: {
+    total_count: number;
+    offset: number;
+    limit: number;
+    returned: number;
+  };
+}
+
+export interface GeneratedCredentialRecord {
+  id: string;
+  school_id: string;
+  profile_id: string;
+  entity_type: string;
+  entity_id: string;
+  role_key: string;
+  entity_name?: string | null;
+  username: string;
+  login_email?: string | null;
+  temporary_password: string;
+  created_by?: string | null;
+  viewed: boolean;
+  expires_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface AccountHistoryItem {
+  id: string;
+  name: string;
+  action: string;
+  created_by: string;
+  timestamp?: string | null;
+  username?: string | null;
+  entity_type?: string | null;
+}
+
+export interface AccountHistoryResponse {
+  items: AccountHistoryItem[];
+  total_count: number;
+  limit: number;
+  offset: number;
 }
 
 export interface ActiveSessionRecord {

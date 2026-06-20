@@ -5,6 +5,7 @@ import type {
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
+  PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
@@ -360,8 +361,40 @@ class ApiService {
     return this.api.post(`/account-security/students/${studentId}/force-logout`);
   }
 
-  async bulkGenerateStudentPortalAccounts(data: { student_ids?: Array<string | number>; batch_id?: string | number } = {}) {
-    return this.api.post<BulkPortalGenerationResult>('/account-security/students/bulk-generate', data);
+  async bulkGenerateStudentPortalAccounts(data: {
+    student_ids?: Array<string | number>;
+    batch_id?: string | number;
+    class_name?: string;
+    permission_template?: string;
+    permissions?: string[];
+  } = {}) {
+    return this.api.post<BulkPortalGenerationResult & { permissions?: string[]; template_key?: string }>('/account-security/students/bulk-generate', data);
+  }
+
+  async getPortalPermissionTemplates() {
+    return this.api.get<PortalPermissionTemplate[]>('/account-security/templates');
+  }
+
+  async getPortalOverview(params: {
+    entity_type: 'student' | 'parent' | 'staff';
+    batch_id?: string | number;
+    class_name?: string;
+    staff_type?: string;
+    department?: string;
+    role_key?: string;
+    student_ids?: Array<string | number>;
+    guardian_ids?: Array<string | number>;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    return this.api.get<PortalOverviewResponse>('/account-security/overview', {
+      params: {
+        ...params,
+        student_ids: params.student_ids?.length ? params.student_ids.map(String).join(',') : undefined,
+        guardian_ids: params.guardian_ids?.length ? params.guardian_ids.map(String).join(',') : undefined,
+      },
+    });
   }
 
   async exportPortalCredentials(rows: Array<Record<string, unknown>>) {
@@ -369,6 +402,18 @@ class ApiService {
       responseType: 'blob',
       timeout: 120000,
     });
+  }
+
+  async listRecentGeneratedCredentials(params: { limit?: number; created_by_me?: boolean } = {}) {
+    return this.api.get<GeneratedCredentialRecord[]>('/account-security/credentials/recent', { params });
+  }
+
+  async getGeneratedCredentialDetails(profileId: string) {
+    return this.api.get<GeneratedCredentialRecord>(`/account-security/credentials/profile/${profileId}`);
+  }
+
+  async getAccountHistory(params: { search?: string; limit?: number; offset?: number } = {}) {
+    return this.api.get<AccountHistoryResponse>('/account-security/history', { params });
   }
 
   async getParentPortalAccess(guardianId: string | number) {
@@ -395,10 +440,34 @@ class ApiService {
     return this.api.post(`/account-security/parents/${guardianId}/force-logout`);
   }
 
+  async bulkGenerateParentPortalAccounts(data: {
+    guardian_ids?: Array<string | number>;
+    student_ids?: Array<string | number>;
+    batch_id?: string | number;
+    class_name?: string;
+    permission_template?: string;
+    permissions?: string[];
+  } = {}) {
+    return this.api.post<BulkPortalGenerationResult & { permissions?: string[]; template_key?: string }>('/account-security/parents/bulk-generate', data);
+  }
+
   async resetStaffPortalPassword(staffMemberId: string | number, roleKey = 'teacher') {
     return this.api.post(`/account-security/staff/${staffMemberId}/reset-password`, null, {
       params: { role_key: roleKey },
     });
+  }
+
+  async bulkGenerateStaffPortalAccounts(data: {
+    staff_member_ids?: Array<string | number>;
+    staff_type?: string;
+    permission_template?: string;
+    selected_role?: string;
+    permissions?: string[];
+  } = {}) {
+    return this.api.post<BulkPortalGenerationResult & { selected_role?: string; permissions?: string[]; template_key?: string }>(
+      '/account-security/staff/bulk-generate',
+      data,
+    );
   }
 
   async listSecuritySessions() {
@@ -419,6 +488,10 @@ class ApiService {
 
   async logoutAllProfileSessions(profileId: string) {
     return this.api.post(`/account-security/sessions/${profileId}/logout-all`);
+  }
+
+  async logoutDeviceSession(sessionId: string) {
+    return this.api.post(`/account-security/sessions/${sessionId}/logout-device`);
   }
 
   async disableProfileAccount(profileId: string) {

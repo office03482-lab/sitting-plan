@@ -41,6 +41,7 @@ import ParentTestResults from '@pages/ParentTestResults';
 import ParentAssignments from '@pages/ParentAssignments';
 import ParentAlerts from '@pages/ParentAlerts';
 import ParentAiAssistant from '@pages/ParentAiAssistant';
+import PortalAccessManager from '@pages/PortalAccessManager';
 import CourseDetail from '@pages/CourseDetail';
 import Courses from '@pages/Courses';
 import LessonPlayer from '@pages/LessonPlayer';
@@ -374,6 +375,14 @@ function AppShell() {
           element={
             <ProtectedRoute requiredPermissions={['admin_office.access_control']}>
               <AccessControl />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/portal-access"
+          element={
+            <ProtectedRoute requiredPermissions={['admin_office.access_control']}>
+              <PortalAccessManager />
             </ProtectedRoute>
           }
         />

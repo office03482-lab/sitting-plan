@@ -314,6 +314,7 @@ export default function Layout({ children }: LayoutProps) {
       permission: 'admin_office.access_control',
       children: [
         { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
+        { name: 'Portal Access Manager', path: '/admin/portal-access', permission: 'admin_office.access_control' },
         { name: 'Security & Sessions', path: '/admin/security-sessions', permission: 'admin_office.access_control' },
       ],
     },
@@ -325,7 +326,6 @@ export default function Layout({ children }: LayoutProps) {
     return rawSections
       .map((section) => {
         if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
-        if (section.key === 'security' && isPlatformAdmin) return null;
         const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission, child.roles));
         const sectionVisible =
           section.path

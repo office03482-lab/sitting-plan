@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -13,6 +14,7 @@ from openpyxl import Workbook
 
 from app.services.supabase_admin import create_supabase_admin_client
 
+logger = logging.getLogger(__name__)
 
 ACTIVE_SESSIONS_SCHEMA = "public"
 ACCOUNT_SECURITY_MODULE = "account_security"
@@ -52,18 +54,149 @@ DEFAULT_TEACHER_PERMISSIONS = [
     "online_tests.grade",
     "teacher_ai.generate",
 ]
+PORTAL_PERMISSION_TEMPLATES = {
+    "student": {
+        "label": "Student Template",
+        "selected_role": "student",
+        "permissions": [
+            "lms.view",
+            "online_tests.attempt",
+            "timetable.view",
+            "ai_tutor.chat",
+            "live_classes.join",
+        ],
+    },
+    "parent": {
+        "label": "Parent Template",
+        "selected_role": "parent",
+        "permissions": [
+            "parent_intelligence.view",
+            "attendance.student",
+            "lms.assignments",
+            "online_tests.view",
+            "edupay.parent_portal",
+        ],
+    },
+    "teacher": {
+        "label": "Teacher",
+        "selected_role": "teacher",
+        "permissions": DEFAULT_TEACHER_PERMISSIONS,
+    },
+    "class_teacher": {
+        "label": "Class Teacher",
+        "selected_role": "teacher",
+        "permissions": [
+            "attendance",
+            "attendance.student",
+            "attendance.reports",
+            "timetable",
+            "lms.view",
+            "lms.manage",
+            "lms.progress",
+            "lms.assignments",
+            "online_tests.view",
+            "online_tests.manage",
+            "online_tests.grade",
+            "study_planner.reports",
+            "teacher_ai.generate",
+            "teacher_ai.reports",
+        ],
+    },
+    "academic_coordinator": {
+        "label": "Academic Coordinator",
+        "selected_role": "teacher",
+        "permissions": [
+            "admin_office.batches",
+            "admin_office.students",
+            "attendance",
+            "attendance.reports",
+            "timetable",
+            "timetable.manage",
+            "lms.view",
+            "lms.manage",
+            "online_tests.view",
+            "online_tests.manage",
+            "online_tests.reports",
+            "teacher_ai.generate",
+            "teacher_ai.reports",
+            "study_planner.reports",
+        ],
+    },
+    "exam_cell": {
+        "label": "Exam Cell",
+        "selected_role": "staff",
+        "permissions": [
+            "admin_office.seating_generation",
+            "admin_office.seating_plans",
+            "admin_office.rooms",
+            "admin_office.invigilators",
+            "admin_office.reports",
+            "online_tests.view",
+            "online_tests.manage",
+            "online_tests.grade",
+            "online_tests.reports",
+        ],
+    },
+    "store_manager": {
+        "label": "Store Manager",
+        "selected_role": "store_manager",
+        "permissions": [
+            "inventory",
+            "inventory.dashboard",
+            "inventory.materials",
+            "inventory.suppliers",
+            "inventory.stock_in",
+            "inventory.stock_out",
+            "inventory.reports",
+        ],
+    },
+    "accountant": {
+        "label": "Accountant",
+        "selected_role": "staff",
+        "permissions": [
+            "edupay",
+            "edupay.dashboard",
+            "edupay.students",
+            "edupay.fees",
+            "edupay.payments",
+            "edupay.revenue",
+        ],
+    },
+    "viewer": {
+        "label": "Viewer",
+        "selected_role": "viewer",
+        "permissions": [
+            "attendance.overview",
+            "timetable.view",
+            "lms.view",
+            "online_tests.view",
+            "live_classes.view",
+        ],
+    },
+    "custom": {
+        "label": "Custom Role",
+        "selected_role": "staff",
+        "permissions": [],
+    },
+}
 
 
 def _client():
     return create_supabase_admin_client()
 
 
-def _public_table(name: str):
-    return _client().table(name)
+def _public_table(name: str, *, supabase: Any | None = None):
+    client = supabase or _client()
+    return client.table(name)
 
 
-def _schema_table(schema: str, name: str):
-    return _client().schema(schema).table(name)
+def _schema_table(schema: str, name: str, *, supabase: Any | None = None):
+    client = supabase or _client()
+    return client.schema(schema).table(name)
+
+
+def _eq_boolean(query: Any, column: str, value: bool) -> Any:
+    return query.filter(column, "eq", str(bool(value)).lower())
 
 
 def _normalize(value: Any) -> str:
@@ -77,6 +210,29 @@ def _normalize_optional(value: Any) -> str | None:
 
 def _normalize_role_key(value: Any) -> str:
     return _normalize(value).lower()
+
+
+def normalize_staff_type(value: Any) -> str | None:
+    normalized = _normalize_role_key(value)
+    if not normalized:
+        return None
+    if normalized in {"teacher", "teaching"}:
+        return "teaching"
+    if normalized in {"staff", "non_teaching", "non-teaching", "invigilator"}:
+        return "invigilator"
+    return normalized
+
+
+def _slug_token(value: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", _normalize(value)).upper()
+
+
+def _digits_only(value: Any) -> str:
+    return "".join(ch for ch in _normalize(value) if ch.isdigit())
+
+
+def _escape_ilike(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace(",", "\\,")
 
 
 def _now_iso() -> str:
@@ -104,7 +260,7 @@ def validate_password_strength(password: str) -> None:
 def generate_secure_password(length: int = 8) -> str:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*"
     while True:
-        value = "".join(secrets.choice(alphabet) for _ in range(max(length, 8)))
+        value = "".join(secrets.choice(alphabet) for _ in range(max(length, 10)))
         if PASSWORD_PATTERN.match(value):
             return value
 
@@ -123,27 +279,34 @@ def _school_slug(school_id: str) -> str:
     return (_normalize(school.get("slug")) or _normalize(school.get("school_code")) or "school").lower()
 
 
-def _default_student_login_email(school_id: str, roll_number: str) -> str:
-    return f"{roll_number.lower()}@{_school_slug(school_id)}.student.local"
+def _student_username(roll_number: str) -> str:
+    token = _slug_token(roll_number)
+    if not token:
+        raise HTTPException(status_code=400, detail="Student roll number is required for portal access")
+    return f"STU{token}"
 
 
-def _default_parent_login_email(school_id: str, guardian_id: str, email: str | None = None) -> str:
-    normalized_email = _normalize_optional(email)
-    if normalized_email:
-        return normalized_email.lower()
-    return f"parent.{guardian_id[:10].lower()}@{_school_slug(school_id)}.parent.local"
+def _parent_username(guardian_code: str | None, guardian_id: str) -> str:
+    token = _slug_token(guardian_code) or _digits_only(guardian_id) or _slug_token(guardian_id)[:10]
+    if not token:
+        raise HTTPException(status_code=400, detail="Guardian identifier is required for portal access")
+    return f"PAR{token}"
 
 
-def _default_teacher_login_email(school_id: str, employee_code: str, email: str | None = None) -> str:
-    normalized_email = _normalize_optional(email)
-    if normalized_email:
-        return normalized_email.lower()
-    return f"{employee_code.lower()}@{_school_slug(school_id)}.staff.local"
+def _staff_username(employee_code: str, *, selected_role: str) -> str:
+    token = _slug_token(employee_code)
+    if not token:
+        raise HTTPException(status_code=400, detail="Employee code is required for portal access")
+    return f"{'TCH' if _normalize_role_key(selected_role) == 'teacher' else 'STF'}{token}"
 
 
-def _load_profile(profile_id: str) -> dict[str, Any]:
+def _default_portal_login_email(school_id: str, username: str, entity_type: str) -> str:
+    return f"{username.lower()}@{_school_slug(school_id)}.{entity_type}.local"
+
+
+def _load_profile(profile_id: str, *, supabase: Any | None = None) -> dict[str, Any]:
     rows = list(
-        _public_table("profiles")
+        _public_table("profiles", supabase=supabase)
         .select("id,email,full_name,display_name,phone,metadata,is_active,created_at,updated_at")
         .eq("id", profile_id)
         .limit(1)
@@ -156,9 +319,9 @@ def _load_profile(profile_id: str) -> dict[str, Any]:
     return dict(rows[0])
 
 
-def _load_school_membership(school_id: str, profile_id: str) -> dict[str, Any] | None:
+def _load_school_membership(school_id: str, profile_id: str, *, supabase: Any | None = None) -> dict[str, Any] | None:
     rows = list(
-        _public_table("school_memberships")
+        _public_table("school_memberships", supabase=supabase)
         .select("id,school_id,profile_id,role_id,status,is_primary,is_active,metadata,roles(role_key,role_name,metadata)")
         .eq("school_id", school_id)
         .eq("profile_id", profile_id)
@@ -177,16 +340,69 @@ def _load_school_membership(school_id: str, profile_id: str) -> dict[str, Any] |
 
 
 def _load_students_for_batch(school_id: str, batch_id: str | None = None) -> list[dict[str, Any]]:
-    query = (
+    query = _eq_boolean(
         _public_table("students")
         .select("id,school_id,profile_id,batch_id,roll_number,full_name,email,phone,created_at,metadata,is_active")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
+        .eq("school_id", school_id),
+        "is_active",
+        True,
     )
     if batch_id:
         query = query.eq("batch_id", batch_id)
     rows = list(query.order("roll_number").execute().data or [])
     return [dict(row) for row in rows]
+
+
+def _load_students_for_scope(
+    school_id: str,
+    *,
+    batch_id: str | None = None,
+    class_name: str | None = None,
+    supabase: Any | None = None,
+) -> list[dict[str, Any]]:
+    query = _eq_boolean(
+        _public_table("students", supabase=supabase)
+        .select("id,school_id,profile_id,batch_id,roll_number,full_name,email,phone,class_name,section,created_at,metadata,is_active")
+        .eq("school_id", school_id),
+        "is_active",
+        True,
+    )
+    if batch_id:
+        query = query.eq("batch_id", batch_id)
+    if class_name:
+        query = query.eq("class_name", class_name)
+    rows = list(query.order("roll_number").execute().data or [])
+    records = [dict(row) for row in rows]
+    batch_names = _load_batch_names_for_students(school_id, records, supabase=supabase)
+    for record in records:
+        record["batch_name"] = batch_names.get(_normalize(record.get("batch_id"))) or "Unassigned"
+    return records
+
+
+def _load_batch_names_for_students(
+    school_id: str,
+    student_rows: list[dict[str, Any]],
+    *,
+    supabase: Any | None = None,
+) -> dict[str, str]:
+    batch_ids = sorted({_normalize(row.get("batch_id")) for row in student_rows if _normalize(row.get("batch_id"))})
+    if not batch_ids:
+        return {}
+    rows = list(
+        _public_table("batches", supabase=supabase)
+        .select("id,name,batch_code")
+        .eq("school_id", school_id)
+        .in_("id", batch_ids)
+        .execute()
+        .data
+        or []
+    )
+    batch_names: dict[str, str] = {}
+    for row in rows:
+        batch_id = _normalize(row.get("id"))
+        if batch_id:
+            batch_names[batch_id] = _normalize(row.get("name")) or _normalize(row.get("batch_code")) or "Unassigned"
+    return batch_names
 
 
 def _load_student(school_id: str, student_id: str) -> dict[str, Any]:
@@ -208,7 +424,7 @@ def _load_student(school_id: str, student_id: str) -> dict[str, Any]:
 def _load_guardian(school_id: str, guardian_id: str) -> dict[str, Any]:
     rows = list(
         _schema_table("academic", "guardians")
-        .select("id,school_id,profile_id,full_name,email,phone,relation_type,address,metadata,is_active,created_at")
+        .select("id,school_id,profile_id,guardian_code,full_name,email,phone,relation_type,address,metadata,is_active,created_at")
         .eq("school_id", school_id)
         .eq("id", guardian_id)
         .limit(1)
@@ -224,7 +440,7 @@ def _load_guardian(school_id: str, guardian_id: str) -> dict[str, Any]:
 def _load_staff_member(school_id: str, staff_member_id: str) -> dict[str, Any]:
     rows = list(
         _public_table("staff_members")
-        .select("id,school_id,profile_id,employee_code,full_name,email,phone,staff_type,metadata,is_active,created_at")
+        .select("id,school_id,profile_id,employee_code,full_name,email,phone,staff_type,department,designation,metadata,is_active,created_at")
         .eq("school_id", school_id)
         .eq("id", staff_member_id)
         .limit(1)
@@ -235,6 +451,117 @@ def _load_staff_member(school_id: str, staff_member_id: str) -> dict[str, Any]:
     if not rows:
         raise HTTPException(status_code=404, detail="Staff member not found")
     return dict(rows[0])
+
+
+def _load_staff_members_for_scope(
+    school_id: str,
+    *,
+    staff_type: str | None = None,
+    supabase: Any | None = None,
+) -> list[dict[str, Any]]:
+    rows = list(
+        _eq_boolean(
+            _public_table("staff_members", supabase=supabase)
+            .select("id,school_id,profile_id,employee_code,full_name,email,phone,staff_type,department,designation,metadata,is_active,created_at")
+            .eq("school_id", school_id),
+            "is_active",
+            True,
+        )
+        .order("full_name")
+        .execute()
+        .data
+        or []
+    )
+    records = [dict(row) for row in rows]
+    requested_staff_type = _normalize_optional(staff_type)
+    normalized_type = normalize_staff_type(staff_type)
+    if normalized_type in {"teaching", "invigilator"}:
+        records = [row for row in records if _normalize_role_key(row.get("staff_type")) == normalized_type]
+    logger.info(
+        "portal_access_manager.staff_scope",
+        extra={
+            "school_id": school_id,
+            "requested_staff_type": requested_staff_type,
+            "normalized_staff_type": normalized_type,
+            "returned_record_count": len(records),
+        },
+    )
+    return records
+
+
+def _load_guardian_ids_for_students(school_id: str, student_ids: list[str], *, supabase: Any | None = None) -> list[str]:
+    if not student_ids:
+        return []
+    rows = list(
+        _schema_table("academic", "student_guardians", supabase=supabase)
+        .select("guardian_id")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .execute()
+        .data
+        or []
+    )
+    guardian_ids = []
+    seen: set[str] = set()
+    for row in rows:
+        guardian_id = _normalize(row.get("guardian_id"))
+        if guardian_id and guardian_id not in seen:
+            seen.add(guardian_id)
+            guardian_ids.append(guardian_id)
+    return guardian_ids
+
+
+def _load_guardians_for_scope(
+    school_id: str,
+    *,
+    guardian_ids: list[str] | None = None,
+    student_ids: list[str] | None = None,
+    batch_id: str | None = None,
+    class_name: str | None = None,
+    supabase: Any | None = None,
+) -> list[dict[str, Any]]:
+    resolved_guardian_ids = [_normalize(item) for item in (guardian_ids or []) if _normalize(item)]
+    if student_ids:
+        resolved_guardian_ids.extend(
+            _load_guardian_ids_for_students(
+                school_id,
+                [_normalize(item) for item in student_ids if _normalize(item)],
+                supabase=supabase,
+            )
+        )
+    if batch_id or class_name:
+        students = _load_students_for_scope(
+            school_id,
+            batch_id=batch_id,
+            class_name=class_name,
+            supabase=supabase,
+        )
+        resolved_guardian_ids.extend(
+            _load_guardian_ids_for_students(
+                school_id,
+                [_normalize(row.get("id")) for row in students],
+                supabase=supabase,
+            )
+        )
+    normalized_guardian_ids: list[str] = []
+    seen: set[str] = set()
+    for guardian_id in resolved_guardian_ids:
+        if guardian_id and guardian_id not in seen:
+            seen.add(guardian_id)
+            normalized_guardian_ids.append(guardian_id)
+    query = (
+        _eq_boolean(
+            _schema_table("academic", "guardians", supabase=supabase)
+            .select("id,school_id,profile_id,guardian_code,full_name,email,phone,relation_type,address,metadata,is_active,created_at")
+            .eq("school_id", school_id),
+            "is_active",
+            True,
+        )
+    )
+    if normalized_guardian_ids:
+        query = query.in_("id", normalized_guardian_ids)
+    rows = list(query.order("full_name").execute().data or [])
+    return [dict(row) for row in rows]
 
 
 def _role_user_type(selected_role: str) -> str:
@@ -253,6 +580,22 @@ def _default_permissions_for_role(selected_role: str) -> list[str]:
     if selected_role == "teacher":
         return DEFAULT_TEACHER_PERMISSIONS
     return []
+
+
+def get_permission_templates() -> list[dict[str, Any]]:
+    from app.routes.auth import normalize_permissions
+
+    templates: list[dict[str, Any]] = []
+    for key, value in PORTAL_PERMISSION_TEMPLATES.items():
+        templates.append(
+            {
+                "key": key,
+                "label": value["label"],
+                "selected_role": value["selected_role"],
+                "permissions": normalize_permissions(value["permissions"]),
+            }
+        )
+    return templates
 
 
 def _ensure_membership_role(
@@ -331,6 +674,131 @@ def _record_audit(
         pass
 
 
+def _purge_expired_generated_credentials(*, supabase: Any | None = None) -> None:
+    try:
+        _public_table("generated_credentials", supabase=supabase).delete().lt("expires_at", _now_iso()).execute()
+    except Exception:
+        logger.exception("Failed to purge expired generated credentials")
+
+
+def _store_generated_credential(
+    *,
+    school_id: str,
+    profile_id: str,
+    entity_type: str,
+    entity_id: str,
+    role_key: str,
+    username: str,
+    login_email: str,
+    temporary_password: str,
+    created_by: str | None,
+    entity_name: str | None = None,
+) -> None:
+    _purge_expired_generated_credentials()
+    payload = {
+        "school_id": school_id,
+        "profile_id": profile_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "role_key": role_key,
+        "entity_name": entity_name,
+        "username": username,
+        "login_email": login_email,
+        "temporary_password": temporary_password,
+        "created_by": created_by,
+        "viewed": False,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+    }
+    _public_table("generated_credentials").insert(payload).execute()
+
+
+def get_recent_generated_credentials(
+    school_id: str,
+    *,
+    created_by: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    _purge_expired_generated_credentials()
+    query = (
+        _public_table("generated_credentials")
+        .select("*")
+        .eq("school_id", school_id)
+        .order("created_at", desc=True)
+        .limit(max(1, min(limit, 250)))
+    )
+    if created_by:
+        query = query.eq("created_by", created_by)
+    rows = list(query.execute().data or [])
+    return [dict(row) for row in rows]
+
+
+def get_generated_credential_details(school_id: str, profile_id: str) -> dict[str, Any]:
+    _purge_expired_generated_credentials()
+    rows = list(
+        _public_table("generated_credentials")
+        .select("*")
+        .eq("school_id", school_id)
+        .eq("profile_id", profile_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No temporary credential found for this account")
+    row = dict(rows[0])
+    _public_table("generated_credentials").update({"viewed": True}).eq("id", row["id"]).execute()
+    return row
+
+
+def list_account_history(
+    school_id: str,
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    query = (
+        _public_table("audit_logs")
+        .select("id,profile_id,action,payload,created_at", count="exact")
+        .eq("school_id", school_id)
+        .eq("module_key", ACCOUNT_SECURITY_MODULE)
+        .order("created_at", desc=True)
+        .range(offset, max(offset + limit - 1, offset))
+    )
+    response = query.execute()
+    rows = list(response.data or [])
+    total_count = int(getattr(response, "count", None) or 0)
+    filtered_rows = [dict(row) for row in rows]
+    if search:
+        needle = _normalize(search).lower()
+        filtered_rows = [
+            row for row in filtered_rows
+            if needle in _normalize(_json_object(row.get("payload")).get("entity_name")).lower()
+            or needle in _normalize(_json_object(row.get("payload")).get("username")).lower()
+            or needle in _normalize(row.get("action")).lower()
+        ]
+    actor_ids = sorted({_normalize(row.get("profile_id")) for row in filtered_rows if _normalize(row.get("profile_id"))})
+    actor_profiles = _load_profiles_batch(actor_ids) if actor_ids else {}
+    items: list[dict[str, Any]] = []
+    for row in filtered_rows:
+        payload = _json_object(row.get("payload"))
+        actor_profile = actor_profiles.get(_normalize(row.get("profile_id")), {})
+        items.append(
+            {
+                "id": _normalize(row.get("id")),
+                "name": _normalize(payload.get("entity_name")) or _normalize(payload.get("username")) or "Account",
+                "action": _normalize(payload.get("action_label")) or _normalize(row.get("action")),
+                "created_by": _normalize(actor_profile.get("full_name")) or _normalize(actor_profile.get("display_name")) or "System",
+                "timestamp": row.get("created_at"),
+                "username": _normalize_optional(payload.get("username")),
+                "entity_type": _normalize_optional(payload.get("entity_type")),
+            }
+        )
+    return {"items": items, "limit": limit, "offset": offset, "total_count": total_count}
+
+
 def _latest_session_for_profile(profile_id: str) -> dict[str, Any] | None:
     rows = list(
         _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
@@ -347,10 +815,13 @@ def _latest_session_for_profile(profile_id: str) -> dict[str, Any] | None:
 
 def _active_session_count(profile_id: str) -> int:
     rows = list(
-        _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
-        .select("id")
-        .eq("profile_id", profile_id)
-        .eq("is_active", True)
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
+            .select("id")
+            .eq("profile_id", profile_id),
+            "is_active",
+            True,
+        )
         .execute()
         .data
         or []
@@ -368,8 +839,15 @@ def _serialize_portal_status(
     entity: dict[str, Any],
     profile: dict[str, Any] | None,
     membership: dict[str, Any] | None,
+    _latest_session: dict[str, Any] | None = None,
+    _active_count: int | None = None,
 ) -> dict[str, Any]:
-    latest_session = _latest_session_for_profile(_normalize(profile.get("id"))) if profile else None
+    if profile and _latest_session is None:
+        _latest_session = _latest_session_for_profile(_normalize(profile.get("id")))
+    if profile and _active_count is None:
+        _active_count = _active_session_count(_normalize(profile.get("id")))
+    elif _active_count is None:
+        _active_count = 0
     portal_metadata = _portal_metadata(profile or {})
     role_data = membership.get("roles") if isinstance(membership, dict) else None
     if isinstance(role_data, list):
@@ -381,15 +859,15 @@ def _serialize_portal_status(
         "portal_status": "active" if profile and membership and profile.get("is_active", True) and membership.get("is_active", True) else ("not_created" if not profile else "disabled"),
         "username": _normalize(profile.get("display_name")) if profile else "",
         "login_email": _normalize(profile.get("email")) if profile else "",
-        "last_login": latest_session.get("login_time") if latest_session else portal_metadata.get("last_login"),
-        "last_activity": latest_session.get("last_activity") if latest_session else None,
+        "last_login": _latest_session.get("login_time") if _latest_session else portal_metadata.get("last_login"),
+        "last_activity": _latest_session.get("last_activity") if _latest_session else None,
         "profile_linked": bool(profile),
         "profile_id": _normalize(profile.get("id")) if profile else None,
         "account_created_date": profile.get("created_at") if profile else None,
         "must_change_password": bool(portal_metadata.get("must_change_password")) if profile else False,
         "force_password_change": bool(portal_metadata.get("must_change_password")) if profile else False,
         "last_password_reset_at": portal_metadata.get("last_password_reset_at") if profile else None,
-        "active_sessions": _active_session_count(_normalize(profile.get("id"))) if profile else 0,
+        "active_sessions": _active_count if profile else 0,
         "role_key": role_key or entity_type,
         "entity_label": _normalize(entity.get("full_name")) or _normalize(entity.get("roll_number")) or _normalize(entity.get("employee_code")),
         "is_enabled": bool(profile.get("is_active", True) and membership.get("is_active", True)) if profile and membership else False,
@@ -517,14 +995,19 @@ def create_or_reset_student_account(
     actor_profile_id: str | None,
     password: str | None = None,
     force_password_change: bool = True,
+    permissions: list[str] | None = None,
+    create_missing_only: bool = False,
 ) -> dict[str, Any]:
     student = _load_student(school_id, student_id)
-    username = _normalize(student.get("roll_number"))
-    if not username:
-        raise HTTPException(status_code=400, detail="Student roll number is required for portal access")
+    username = _student_username(_normalize(student.get("roll_number")))
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(student.get("profile_id"))
-    login_email = _default_student_login_email(school_id, username)
+    if create_missing_only and profile_id:
+        result = get_student_portal_access(school_id, student_id)
+        result["skipped"] = True
+        result["skip_reason"] = "account_exists"
+        return result
+    login_email = _default_portal_login_email(school_id, username, "student")
     new_profile_id = _create_or_update_auth_user(
         school_id=school_id,
         profile_id=profile_id,
@@ -540,7 +1023,7 @@ def create_or_reset_student_account(
         new_profile_id,
         full_name=_normalize(student.get("full_name")) or username,
         selected_role="student",
-        permissions=DEFAULT_STUDENT_PERMISSIONS,
+        permissions=permissions or DEFAULT_STUDENT_PERMISSIONS,
     )
     _upsert_membership(school_id, new_profile_id, _normalize(role_row.get("id")), is_active=True)
     profile = _update_profile_for_portal_access(
@@ -562,7 +1045,25 @@ def create_or_reset_student_account(
         actor_profile_id=actor_profile_id,
         action="account.created" if not profile_id else "password.reset",
         entity_id=new_profile_id,
-        payload={"entity_type": "student", "student_id": student_id, "username": username},
+        payload={
+            "entity_type": "student",
+            "student_id": student_id,
+            "username": username,
+            "entity_name": _normalize(student.get("full_name")) or username,
+            "action_label": "Account Created" if not profile_id else "Password Reset",
+        },
+    )
+    _store_generated_credential(
+        school_id=school_id,
+        profile_id=new_profile_id,
+        entity_type="student",
+        entity_id=_normalize(student.get("id")),
+        role_key="student",
+        username=username,
+        login_email=login_email,
+        temporary_password=generated_password,
+        created_by=actor_profile_id,
+        entity_name=_normalize(student.get("full_name")) or username,
     )
     result = get_student_portal_access(school_id, student_id)
     result["temporary_password"] = generated_password
@@ -577,12 +1078,19 @@ def create_or_reset_parent_account(
     actor_profile_id: str | None,
     password: str | None = None,
     force_password_change: bool = True,
+    permissions: list[str] | None = None,
+    create_missing_only: bool = False,
 ) -> dict[str, Any]:
     guardian = _load_guardian(school_id, guardian_id)
-    username = _normalize(guardian.get("email")).split("@")[0] if _normalize(guardian.get("email")) else f"parent-{guardian_id[:8]}"
+    username = _parent_username(_normalize_optional(guardian.get("guardian_code")), guardian_id)
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(guardian.get("profile_id"))
-    login_email = _default_parent_login_email(school_id, guardian_id, _normalize_optional(guardian.get("email")))
+    if create_missing_only and profile_id:
+        result = get_parent_portal_access(school_id, guardian_id)
+        result["skipped"] = True
+        result["skip_reason"] = "account_exists"
+        return result
+    login_email = _default_portal_login_email(school_id, username, "parent")
     new_profile_id = _create_or_update_auth_user(
         school_id=school_id,
         profile_id=profile_id,
@@ -598,7 +1106,7 @@ def create_or_reset_parent_account(
         new_profile_id,
         full_name=_normalize(guardian.get("full_name")) or username,
         selected_role="parent",
-        permissions=DEFAULT_PARENT_PERMISSIONS,
+        permissions=permissions or DEFAULT_PARENT_PERMISSIONS,
     )
     _upsert_membership(school_id, new_profile_id, _normalize(role_row.get("id")), is_active=True)
     _update_profile_for_portal_access(
@@ -620,7 +1128,25 @@ def create_or_reset_parent_account(
         actor_profile_id=actor_profile_id,
         action="account.created" if not profile_id else "password.reset",
         entity_id=new_profile_id,
-        payload={"entity_type": "parent", "guardian_id": guardian_id, "username": username},
+        payload={
+            "entity_type": "parent",
+            "guardian_id": guardian_id,
+            "username": username,
+            "entity_name": _normalize(guardian.get("full_name")) or username,
+            "action_label": "Account Created" if not profile_id else "Password Reset",
+        },
+    )
+    _store_generated_credential(
+        school_id=school_id,
+        profile_id=new_profile_id,
+        entity_type="parent",
+        entity_id=_normalize(guardian.get("id")),
+        role_key="parent",
+        username=username,
+        login_email=login_email,
+        temporary_password=generated_password,
+        created_by=actor_profile_id,
+        entity_name=_normalize(guardian.get("full_name")) or username,
     )
     result = get_parent_portal_access(school_id, guardian_id)
     result["temporary_password"] = generated_password
@@ -636,12 +1162,27 @@ def create_or_reset_staff_account(
     password: str | None = None,
     selected_role: str = "teacher",
     force_password_change: bool = True,
+    permissions: list[str] | None = None,
+    create_missing_only: bool = False,
 ) -> dict[str, Any]:
     staff_member = _load_staff_member(school_id, staff_member_id)
-    username = _normalize(staff_member.get("employee_code")) or f"staff-{staff_member_id[:8]}"
+    username = _staff_username(_normalize(staff_member.get("employee_code")), selected_role=selected_role)
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(staff_member.get("profile_id"))
-    login_email = _default_teacher_login_email(school_id, username, _normalize_optional(staff_member.get("email")))
+    if create_missing_only and profile_id:
+        membership = _load_school_membership(school_id, profile_id)
+        role_data = membership.get("roles") if isinstance(membership, dict) else None
+        if isinstance(role_data, list):
+            role_data = role_data[0] if role_data else None
+        return {
+            "profile_id": profile_id,
+            "username": username,
+            "login_email": _normalize_optional(_load_profile(profile_id).get("email")),
+            "role_key": _normalize_role_key((role_data or {}).get("role_key")) if isinstance(role_data, dict) else selected_role,
+            "skipped": True,
+            "skip_reason": "account_exists",
+        }
+    login_email = _default_portal_login_email(school_id, username, "staff")
     new_profile_id = _create_or_update_auth_user(
         school_id=school_id,
         profile_id=profile_id,
@@ -657,7 +1198,7 @@ def create_or_reset_staff_account(
         new_profile_id,
         full_name=_normalize(staff_member.get("full_name")) or username,
         selected_role=selected_role,
-        permissions=_default_permissions_for_role(selected_role),
+        permissions=permissions or _default_permissions_for_role(selected_role),
     )
     _upsert_membership(school_id, new_profile_id, _normalize(role_row.get("id")), is_active=True)
     _update_profile_for_portal_access(
@@ -679,7 +1220,25 @@ def create_or_reset_staff_account(
         actor_profile_id=actor_profile_id,
         action="account.created" if not profile_id else "password.reset",
         entity_id=new_profile_id,
-        payload={"entity_type": selected_role, "staff_member_id": staff_member_id, "username": username},
+        payload={
+            "entity_type": selected_role,
+            "staff_member_id": staff_member_id,
+            "username": username,
+            "entity_name": _normalize(staff_member.get("full_name")) or username,
+            "action_label": "Account Created" if not profile_id else "Password Reset",
+        },
+    )
+    _store_generated_credential(
+        school_id=school_id,
+        profile_id=new_profile_id,
+        entity_type="staff_member",
+        entity_id=_normalize(staff_member.get("id")),
+        role_key=selected_role,
+        username=username,
+        login_email=login_email,
+        temporary_password=generated_password,
+        created_by=actor_profile_id,
+        entity_name=_normalize(staff_member.get("full_name")) or username,
     )
     return {
         "profile_id": new_profile_id,
@@ -705,14 +1264,19 @@ def set_account_enabled(
     ).eq("id", membership["id"]).execute()
     if not is_enabled:
         force_logout_profile_sessions(school_id, profile_id, actor_profile_id=actor_profile_id, reason="account_disabled")
+    profile = _load_profile(profile_id)
     _record_audit(
         school_id=school_id,
         actor_profile_id=actor_profile_id,
         action="account.enabled" if is_enabled else "account.disabled",
         entity_id=profile_id,
-        payload={"profile_id": profile_id},
+        payload={
+            "profile_id": profile_id,
+            "username": _normalize(profile.get("display_name")),
+            "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+            "action_label": "Enabled" if is_enabled else "Disabled",
+        },
     )
-    profile = _load_profile(profile_id)
     return {"profile_id": profile_id, "is_enabled": is_enabled, "display_name": profile.get("display_name")}
 
 
@@ -724,11 +1288,14 @@ def force_logout_profile_sessions(
     reason: str = "force_logout",
 ) -> dict[str, Any]:
     active_rows = list(
-        _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
-        .select("id")
-        .eq("school_id", school_id)
-        .eq("profile_id", profile_id)
-        .eq("is_active", True)
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
+            .select("id")
+            .eq("school_id", school_id)
+            .eq("profile_id", profile_id),
+            "is_active",
+            True,
+        )
         .execute()
         .data
         or []
@@ -737,12 +1304,20 @@ def force_logout_profile_sessions(
         _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions").update(
             {"is_active": False, "ended_at": _now_iso(), "ended_reason": reason}
         ).eq("id", row["id"]).execute()
+    profile = _load_profile(profile_id)
     _record_audit(
         school_id=school_id,
         actor_profile_id=actor_profile_id,
         action="account.force_logout",
         entity_id=profile_id,
-        payload={"profile_id": profile_id, "count": len(active_rows), "reason": reason},
+        payload={
+            "profile_id": profile_id,
+            "count": len(active_rows),
+            "reason": reason,
+            "username": _normalize(profile.get("display_name")),
+            "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+            "action_label": "Force Logout",
+        },
     )
     return {"profile_id": profile_id, "terminated_sessions": len(active_rows)}
 
@@ -753,43 +1328,170 @@ def bulk_generate_student_accounts(
     actor_profile_id: str | None,
     student_ids: list[str] | None = None,
     batch_id: str | None = None,
+    class_name: str | None = None,
+    permission_template: str | None = None,
+    permissions: list[str] | None = None,
 ) -> dict[str, Any]:
-    students = _load_students_for_batch(school_id, batch_id)
+    from app.routes.auth import normalize_permissions
+
+    students = _load_students_for_scope(school_id, batch_id=batch_id, class_name=class_name)
     if student_ids:
         wanted = {_normalize(item) for item in student_ids if _normalize(item)}
         students = [row for row in students if _normalize(row.get("id")) in wanted]
+    template_key = _normalize_role_key(permission_template) or "student"
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key, PORTAL_PERMISSION_TEMPLATES["student"])
+    resolved_permissions = normalize_permissions(permissions if template_key == "custom" else template["permissions"])
     credentials: list[dict[str, Any]] = []
+    skipped_count = 0
     for student in students:
         result = create_or_reset_student_account(
             school_id,
             _normalize(student.get("id")),
             actor_profile_id=actor_profile_id,
+            permissions=resolved_permissions,
+            create_missing_only=True,
         )
+        if result.get("skipped"):
+            skipped_count += 1
+            continue
         credentials.append(
             {
+                "name": _normalize(student.get("full_name")),
+                "role": "Student",
+                "identifier": _normalize(student.get("roll_number")),
                 "student_name": _normalize(student.get("full_name")),
                 "roll_number": _normalize(student.get("roll_number")),
                 "username": result.get("username") or _normalize(student.get("roll_number")),
                 "login_email": result.get("login_email"),
                 "temporary_password": result.get("temporary_password"),
+                "created_at": _now_iso(),
             }
         )
-    return {"count": len(credentials), "credentials": credentials}
+    return {"count": len(credentials), "skipped_count": skipped_count, "credentials": credentials, "permissions": resolved_permissions, "template_key": template_key}
+
+
+def bulk_generate_parent_accounts(
+    school_id: str,
+    *,
+    actor_profile_id: str | None,
+    guardian_ids: list[str] | None = None,
+    student_ids: list[str] | None = None,
+    batch_id: str | None = None,
+    class_name: str | None = None,
+    permission_template: str | None = None,
+    permissions: list[str] | None = None,
+) -> dict[str, Any]:
+    from app.routes.auth import normalize_permissions
+
+    guardians = _load_guardians_for_scope(
+        school_id,
+        guardian_ids=guardian_ids,
+        student_ids=student_ids,
+        batch_id=batch_id,
+        class_name=class_name,
+    )
+    template_key = _normalize_role_key(permission_template) or "parent"
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key, PORTAL_PERMISSION_TEMPLATES["parent"])
+    resolved_permissions = normalize_permissions(permissions if template_key == "custom" else template["permissions"])
+    credentials: list[dict[str, Any]] = []
+    skipped_count = 0
+    for guardian in guardians:
+        result = create_or_reset_parent_account(
+            school_id,
+            _normalize(guardian.get("id")),
+            actor_profile_id=actor_profile_id,
+            permissions=resolved_permissions,
+            create_missing_only=True,
+        )
+        if result.get("skipped"):
+            skipped_count += 1
+            continue
+        credentials.append(
+            {
+                "name": _normalize(guardian.get("full_name")),
+                "role": "Parent",
+                "identifier": _normalize(guardian.get("guardian_code")) or _normalize(guardian.get("relation_type")) or "Parent",
+                "student_name": _normalize(guardian.get("full_name")),
+                "roll_number": _normalize(guardian.get("guardian_code")) or _normalize(guardian.get("relation_type")) or "Parent",
+                "username": result.get("username") or _parent_username(_normalize_optional(guardian.get("guardian_code")), _normalize(guardian.get("id"))),
+                "login_email": result.get("login_email"),
+                "temporary_password": result.get("temporary_password"),
+                "created_at": _now_iso(),
+            }
+        )
+    return {"count": len(credentials), "skipped_count": skipped_count, "credentials": credentials, "permissions": resolved_permissions, "template_key": template_key}
+
+
+def bulk_generate_staff_accounts(
+    school_id: str,
+    *,
+    actor_profile_id: str | None,
+    staff_member_ids: list[str] | None = None,
+    staff_type: str | None = None,
+    permission_template: str | None = None,
+    selected_role: str | None = None,
+    permissions: list[str] | None = None,
+) -> dict[str, Any]:
+    from app.routes.auth import normalize_permissions, validate_role_input
+
+    records = _load_staff_members_for_scope(school_id, staff_type=staff_type)
+    if staff_member_ids:
+        wanted = {_normalize(item) for item in staff_member_ids if _normalize(item)}
+        records = [row for row in records if _normalize(row.get("id")) in wanted]
+    template_key = _normalize_role_key(permission_template) or "teacher"
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key, PORTAL_PERMISSION_TEMPLATES["teacher"])
+    resolved_role = validate_role_input(selected_role or str(template["selected_role"]))
+    resolved_permissions = normalize_permissions(permissions if template_key == "custom" else template["permissions"])
+    credentials: list[dict[str, Any]] = []
+    skipped_count = 0
+    for staff_member in records:
+        result = create_or_reset_staff_account(
+            school_id,
+            _normalize(staff_member.get("id")),
+            actor_profile_id=actor_profile_id,
+            selected_role=resolved_role,
+            permissions=resolved_permissions,
+            create_missing_only=True,
+        )
+        if result.get("skipped"):
+            skipped_count += 1
+            continue
+        credentials.append(
+            {
+                "name": _normalize(staff_member.get("full_name")),
+                "role": "Teacher" if resolved_role == "teacher" else "Staff",
+                "identifier": _normalize(staff_member.get("employee_code")) or "Staff",
+                "student_name": _normalize(staff_member.get("full_name")),
+                "roll_number": _normalize(staff_member.get("employee_code")) or "Staff",
+                "username": result.get("username") or _normalize(staff_member.get("employee_code")),
+                "login_email": result.get("login_email"),
+                "temporary_password": result.get("temporary_password"),
+                "created_at": _now_iso(),
+            }
+        )
+    return {
+        "count": len(credentials),
+        "skipped_count": skipped_count,
+        "credentials": credentials,
+        "selected_role": resolved_role,
+        "permissions": resolved_permissions,
+        "template_key": template_key,
+    }
 
 
 def create_credentials_workbook(rows: list[dict[str, Any]]) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Portal Credentials"
-    worksheet.append(["Student Name", "Roll Number", "Username", "Login Email", "Temporary Password"])
+    worksheet.append(["Name", "Role", "Username", "Temporary Password", "Created Date"])
     for row in rows:
         worksheet.append(
             [
-                _normalize(row.get("student_name")),
-                _normalize(row.get("roll_number")),
+                _normalize(row.get("name") or row.get("student_name")),
+                _normalize(row.get("role")),
                 _normalize(row.get("username")),
-                _normalize(row.get("login_email")),
                 _normalize(row.get("temporary_password")),
+                _normalize(row.get("created_at")),
             ]
         )
     buffer = io.BytesIO()
@@ -845,6 +1547,297 @@ def list_active_sessions(school_id: str) -> list[dict[str, Any]]:
     return sessions
 
 
+def _load_profiles_batch(profile_ids: list[str], *, supabase: Any | None = None) -> dict[str, dict[str, Any]]:
+    if not profile_ids:
+        return {}
+    rows = list(
+        _public_table("profiles", supabase=supabase)
+        .select("id,email,full_name,display_name,phone,metadata,is_active,created_at,updated_at")
+        .in_("id", profile_ids)
+        .execute()
+        .data
+        or []
+    )
+    return {_normalize(row.get("id")): dict(row) for row in rows}
+
+
+def _load_memberships_batch(
+    school_id: str,
+    profile_ids: list[str],
+    *,
+    supabase: Any | None = None,
+) -> dict[str, dict[str, Any] | None]:
+    if not profile_ids:
+        return {}
+    rows = list(
+        _public_table("school_memberships", supabase=supabase)
+        .select("id,school_id,profile_id,role_id,status,is_primary,is_active,metadata,roles(role_key,role_name,metadata)")
+        .eq("school_id", school_id)
+        .in_("profile_id", profile_ids)
+        .execute()
+        .data
+        or []
+    )
+    result: dict[str, dict[str, Any] | None] = {}
+    for row in rows:
+        pid = _normalize(row.get("profile_id"))
+        if pid:
+            membership = dict(row)
+            roles = membership.get("roles")
+            if isinstance(roles, list):
+                membership["roles"] = roles[0] if roles else None
+            result[pid] = membership
+    return result
+
+
+def _load_latest_sessions_batch(profile_ids: list[str], *, supabase: Any | None = None) -> dict[str, dict[str, Any]]:
+    if not profile_ids:
+        return {}
+    rows = list(
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions", supabase=supabase)
+            .select("profile_id,login_time,last_activity")
+            .in_("profile_id", profile_ids),
+            "is_active",
+            True,
+        )
+        .order("last_activity", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pid = _normalize(row.get("profile_id"))
+        if pid and pid not in result:
+            result[pid] = dict(row)
+    return result
+
+
+def _load_active_session_counts_batch(profile_ids: list[str], *, supabase: Any | None = None) -> dict[str, int]:
+    if not profile_ids:
+        return {}
+    rows = list(
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions", supabase=supabase)
+            .select("profile_id")
+            .in_("profile_id", profile_ids),
+            "is_active",
+            True,
+        )
+        .execute()
+        .data
+        or []
+    )
+    result: dict[str, int] = {}
+    for row in rows:
+        pid = _normalize(row.get("profile_id"))
+        if pid:
+            result[pid] = result.get(pid, 0) + 1
+    return result
+
+
+def get_portal_access_overview(
+    school_id: str,
+    *,
+    entity_type: str,
+    batch_id: str | None = None,
+    class_name: str | None = None,
+    staff_type: str | None = None,
+    department: str | None = None,
+    role_key: str | None = None,
+    student_ids: list[str] | None = None,
+    guardian_ids: list[str] | None = None,
+    search: str | None = None,
+    limit: int = 25,
+    offset: int = 0,
+) -> dict[str, Any]:
+    import time
+    t0 = time.time()
+    supabase = _client()
+    normalized_entity = _normalize_role_key(entity_type)
+    records: list[dict[str, Any]] = []
+
+    if normalized_entity == "student":
+        student_rows = _load_students_for_scope(
+            school_id,
+            batch_id=batch_id,
+            class_name=class_name,
+            supabase=supabase,
+        )
+        if student_ids:
+            wanted = {_normalize(item) for item in student_ids if _normalize(item)}
+            student_rows = [row for row in student_rows if _normalize(row.get("id")) in wanted]
+        profile_ids = list(dict.fromkeys(_normalize(s.get("profile_id")) for s in student_rows if _normalize_optional(s.get("profile_id"))))  # unique, ordered
+        t1 = time.time()
+        profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
+        memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
+        active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
+        t2 = time.time()
+        for student in student_rows:
+            pid = _normalize(student.get("profile_id"))
+            profile = profiles_dict.get(pid)
+            membership = memberships_dict.get(pid)
+            portal = _serialize_portal_status(
+                entity_type="student",
+                entity=student,
+                profile=profile,
+                membership=membership,
+                _latest_session=latest_sessions.get(pid),
+                _active_count=active_counts.get(pid, 0),
+            )
+            portal["entity_name"] = _normalize(student.get("full_name"))
+            portal["roll_number"] = _normalize(student.get("roll_number"))
+            portal["batch_name"] = _normalize_optional(student.get("batch_name"))
+            portal["class_name"] = _normalize_optional(student.get("class_name"))
+            portal["section"] = _normalize_optional(student.get("section"))
+            portal["batch_id"] = _normalize_optional(student.get("batch_id"))
+            records.append(portal)
+        t3 = time.time()
+    elif normalized_entity == "parent":
+        guardians = _load_guardians_for_scope(
+            school_id,
+            guardian_ids=guardian_ids,
+            student_ids=student_ids,
+            batch_id=batch_id,
+            class_name=class_name,
+            supabase=supabase,
+        )
+        profile_ids = list(dict.fromkeys(_normalize(g.get("profile_id")) for g in guardians if _normalize_optional(g.get("profile_id"))))
+        t1 = time.time()
+        profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
+        memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
+        active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
+        t2 = time.time()
+        for guardian in guardians:
+            pid = _normalize(guardian.get("profile_id"))
+            profile = profiles_dict.get(pid)
+            membership = memberships_dict.get(pid)
+            portal = _serialize_portal_status(
+                entity_type="parent",
+                entity=guardian,
+                profile=profile,
+                membership=membership,
+                _latest_session=latest_sessions.get(pid),
+                _active_count=active_counts.get(pid, 0),
+            )
+            portal["entity_name"] = _normalize(guardian.get("full_name"))
+            portal["phone"] = _normalize_optional(guardian.get("phone"))
+            portal["email"] = _normalize_optional(guardian.get("email"))
+            records.append(portal)
+        t3 = time.time()
+    elif normalized_entity == "staff":
+        normalized_staff_type = normalize_staff_type(staff_type)
+        staff_rows = _load_staff_members_for_scope(school_id, staff_type=normalized_staff_type, supabase=supabase)
+        if department:
+            wanted_department = _normalize_role_key(department)
+            staff_rows = [row for row in staff_rows if _normalize_role_key(row.get("department")) == wanted_department]
+        profile_ids = list(dict.fromkeys(_normalize(s.get("profile_id")) for s in staff_rows if _normalize_optional(s.get("profile_id"))))
+        t1 = time.time()
+        profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
+        memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
+        active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
+        t2 = time.time()
+        for staff_member in staff_rows:
+            pid = _normalize(staff_member.get("profile_id"))
+            profile = profiles_dict.get(pid)
+            membership = memberships_dict.get(pid)
+            portal = _serialize_portal_status(
+                entity_type="staff_member",
+                entity=staff_member,
+                profile=profile,
+                membership=membership,
+                _latest_session=latest_sessions.get(pid),
+                _active_count=active_counts.get(pid, 0),
+            )
+            portal["entity_name"] = _normalize(staff_member.get("full_name"))
+            portal["employee_code"] = _normalize_optional(staff_member.get("employee_code"))
+            portal["staff_type"] = _normalize_optional(staff_member.get("staff_type"))
+            portal["department"] = _normalize_optional(staff_member.get("department"))
+            portal["designation"] = _normalize_optional(staff_member.get("designation"))
+            portal["email"] = _normalize_optional(staff_member.get("email"))
+            records.append(portal)
+        t3 = time.time()
+        logger.info(
+            "portal_access_manager.staff_overview",
+            extra={
+                "school_id": school_id,
+                "requested_staff_type": _normalize_optional(staff_type),
+                "normalized_staff_type": normalized_staff_type,
+                "returned_record_count": len(records),
+            },
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported entity_type")
+
+    if role_key:
+        wanted_role = _normalize_role_key(role_key)
+        records = [item for item in records if _normalize_role_key(item.get("role_key")) == wanted_role]
+    if search:
+        needle = _normalize(search).lower()
+        records = [
+            item for item in records
+            if needle in _normalize(item.get("entity_name")).lower()
+            or needle in _normalize(item.get("username")).lower()
+            or needle in _normalize(item.get("login_email")).lower()
+            or needle in _normalize(item.get("roll_number")).lower()
+            or needle in _normalize(item.get("employee_code")).lower()
+            or needle in _normalize(item.get("phone")).lower()
+            or needle in _normalize(item.get("department")).lower()
+        ]
+    total_records = len(records)
+    paged_records = records[offset: offset + max(1, limit)]
+    portal_active_count = sum(1 for item in records if item.get("portal_status") == "active")
+    portal_disabled_count = sum(1 for item in records if item.get("portal_status") == "disabled")
+    portal_not_created_count = sum(1 for item in records if item.get("portal_status") == "not_created")
+    summary = {
+        "total_records": total_records,
+        "accounts_created": portal_active_count,
+        "accounts_pending": portal_not_created_count,
+        "accounts_disabled": portal_disabled_count,
+        "last_login_count": sum(1 for item in records if item.get("last_login")),
+        "portal_active": portal_active_count,
+        "portal_disabled": portal_disabled_count,
+        "portal_not_created": portal_not_created_count,
+    }
+    t4 = time.time()
+    if normalized_entity == "student":
+        summary["total_students"] = len(records)
+        batch_names = {
+            _normalize(item.get("batch_name"))
+            for item in records
+            if _normalize(item.get("batch_name"))
+        }
+        logger.info(
+            "portal_access_manager.student_overview",
+            extra={
+                "school_id": school_id,
+                "student_count": len(records),
+                "batch_count": len(batch_names),
+                "portal_active_count": portal_active_count,
+                "portal_disabled_count": portal_disabled_count,
+                "portal_not_created_count": portal_not_created_count,
+                "batch_id": batch_id,
+                "class_name": class_name,
+                "selected_student_count": len(student_ids or []),
+                "load_ms": int((t4 - t0) * 1000),
+            },
+        )
+    return {
+        "summary": summary,
+        "records": paged_records,
+        "meta": {
+            "limit": limit,
+            "offset": offset,
+            "returned": len(paged_records),
+            "total_count": total_records,
+        },
+    }
+
+
 def _resolve_session_limit(role_key: str) -> int | None:
     normalized = _normalize_role_key(role_key)
     if normalized in SESSION_LIMITS:
@@ -868,10 +1861,13 @@ def register_active_session(
 ) -> dict[str, Any]:
     limit = _resolve_session_limit(role_key)
     current_rows = list(
-        _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
-        .select("*")
-        .eq("profile_id", profile_id)
-        .eq("is_active", True)
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
+            .select("*")
+            .eq("profile_id", profile_id),
+            "is_active",
+            True,
+        )
         .order("last_activity", desc=True)
         .execute()
         .data
@@ -1003,6 +1999,47 @@ def logout_session(profile_id: str, session_key: str) -> None:
     ).eq("id", rows[0]["id"]).execute()
 
 
+def logout_session_by_id(
+    school_id: str,
+    session_id: str,
+    *,
+    actor_profile_id: str | None,
+    reason: str = "admin_logout_device",
+) -> dict[str, Any]:
+    rows = list(
+        _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
+        .select("id,profile_id")
+        .eq("school_id", school_id)
+        .eq("id", session_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Session not found")
+    row = dict(rows[0])
+    _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions").update(
+        {"is_active": False, "ended_at": _now_iso(), "ended_reason": reason}
+    ).eq("id", row["id"]).execute()
+    profile = _load_profile(_normalize(row.get("profile_id")))
+    _record_audit(
+        school_id=school_id,
+        actor_profile_id=actor_profile_id,
+        action="account.force_logout",
+        entity_id=_normalize(row.get("profile_id")),
+        payload={
+            "profile_id": _normalize(row.get("profile_id")),
+            "session_id": _normalize(row.get("id")),
+            "reason": reason,
+            "username": _normalize(profile.get("display_name")),
+            "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+            "action_label": "Logout Device",
+        },
+    )
+    return {"session_id": _normalize(row.get("id")), "profile_id": _normalize(row.get("profile_id")), "status": "terminated"}
+
+
 def complete_password_change(profile_id: str) -> dict[str, Any]:
     profile = _load_profile(profile_id)
     metadata = _merge_metadata(
@@ -1048,12 +2085,15 @@ def start_test_session(
     mode: str = "terminate_previous",
 ) -> None:
     active_rows = list(
-        _schema_table(ACTIVE_SESSIONS_SCHEMA, "test_sessions")
-        .select("*")
-        .eq("school_id", school_id)
-        .eq("test_id", test_id)
-        .eq("student_id", student_id)
-        .eq("is_active", True)
+        _eq_boolean(
+            _schema_table(ACTIVE_SESSIONS_SCHEMA, "test_sessions")
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("test_id", test_id)
+            .eq("student_id", student_id),
+            "is_active",
+            True,
+        )
         .execute()
         .data
         or []
@@ -1113,13 +2153,14 @@ def touch_test_session(school_id: str, test_id: str, student_id: str, session_ke
 
 
 def end_test_session(school_id: str, test_id: str, student_id: str, session_key: str | None, *, reason: str = "completed") -> None:
-    query = (
+    query = _eq_boolean(
         _schema_table(ACTIVE_SESSIONS_SCHEMA, "test_sessions")
         .select("id")
         .eq("school_id", school_id)
         .eq("test_id", test_id)
-        .eq("student_id", student_id)
-        .eq("is_active", True)
+        .eq("student_id", student_id),
+        "is_active",
+        True,
     )
     current_key = _normalize(session_key)
     if current_key:

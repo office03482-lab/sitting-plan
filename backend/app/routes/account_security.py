@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response, status
@@ -10,16 +12,24 @@ from app.middleware.auth import get_authenticated_actor_context, get_authenticat
 from app.models import User
 from app.services.supabase_account_security import (
     bulk_generate_student_accounts,
+    bulk_generate_parent_accounts,
+    bulk_generate_staff_accounts,
     complete_password_change,
     create_credentials_workbook,
     create_or_reset_parent_account,
     create_or_reset_staff_account,
     create_or_reset_student_account,
     force_logout_profile_sessions,
+    get_generated_credential_details,
+    get_permission_templates,
     get_parent_portal_access,
+    get_portal_access_overview,
+    get_recent_generated_credentials,
     get_student_portal_access,
     heartbeat_active_session,
+    list_account_history,
     list_active_sessions,
+    logout_session_by_id,
     logout_session,
     register_active_session,
     resolve_login_email,
@@ -44,6 +54,49 @@ def require_access_control_user(
 @router.get("/resolve-login")
 async def api_resolve_login(identifier: str = Query(..., min_length=1)):
     return resolve_login_email(identifier)
+
+
+@router.get("/templates")
+async def api_get_portal_templates(_: User = Depends(require_access_control_user)):
+    t0 = time.time()
+    result = get_permission_templates()
+    logging.getLogger("app.performance").info("portal_templates duration=%.3fs", time.time() - t0)
+    return result
+
+
+@router.get("/overview")
+async def api_get_portal_overview(
+    entity_type: str = Query(...),
+    batch_id: str | None = Query(default=None),
+    class_name: str | None = Query(default=None),
+    staff_type: str | None = Query(default=None),
+    department: str | None = Query(default=None),
+    role_key: str | None = Query(default=None),
+    student_ids: str | None = Query(default=None),
+    guardian_ids: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    t0 = time.time()
+    result = get_portal_access_overview(
+        school_id,
+        entity_type=entity_type,
+        batch_id=batch_id,
+        class_name=class_name,
+        staff_type=staff_type,
+        department=department,
+        role_key=role_key,
+        student_ids=[item.strip() for item in (student_ids or "").split(",") if item.strip()],
+        guardian_ids=[item.strip() for item in (guardian_ids or "").split(",") if item.strip()],
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    logging.getLogger("app.performance").info("portal_overview entity=%s duration=%.3fs records=%d", entity_type, time.time() - t0, len(result.get("records") or []))
+    return result
 
 
 @router.get("/students/{student_id}")
@@ -129,6 +182,9 @@ async def api_bulk_generate_student_accounts(
         actor_profile_id=actor.get("profile_id"),
         student_ids=[str(item) for item in list(payload.get("student_ids") or [])],
         batch_id=str(payload.get("batch_id") or "").strip() or None,
+        class_name=str(payload.get("class_name") or "").strip() or None,
+        permission_template=str(payload.get("permission_template") or "").strip() or None,
+        permissions=[str(item) for item in list(payload.get("permissions") or [])],
     )
 
 
@@ -141,6 +197,41 @@ async def api_export_credentials(payload: dict[str, Any] = Body(default_factory=
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="portal-credentials.xlsx"'},
     )
+
+
+@router.get("/credentials/recent")
+async def api_recent_generated_credentials(
+    limit: int = Query(default=100, ge=1, le=250),
+    created_by_me: bool = Query(default=False),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return get_recent_generated_credentials(
+        school_id,
+        created_by=actor.get("profile_id") if created_by_me else None,
+        limit=limit,
+    )
+
+
+@router.get("/credentials/profile/{profile_id}")
+async def api_generated_credential_details(
+    profile_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    return get_generated_credential_details(school_id, profile_id)
+
+
+@router.get("/history")
+async def api_account_history(
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    return list_account_history(school_id, search=search, limit=limit, offset=offset)
 
 
 @router.get("/parents/{guardian_id}")
@@ -214,6 +305,25 @@ async def api_force_logout_parent(
     return force_logout_profile_sessions(school_id, profile_id, actor_profile_id=actor.get("profile_id"))
 
 
+@router.post("/parents/bulk-generate")
+async def api_bulk_generate_parent_accounts(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return bulk_generate_parent_accounts(
+        school_id,
+        actor_profile_id=actor.get("profile_id"),
+        guardian_ids=[str(item) for item in list(payload.get("guardian_ids") or [])],
+        student_ids=[str(item) for item in list(payload.get("student_ids") or [])],
+        batch_id=str(payload.get("batch_id") or "").strip() or None,
+        class_name=str(payload.get("class_name") or "").strip() or None,
+        permission_template=str(payload.get("permission_template") or "").strip() or None,
+        permissions=[str(item) for item in list(payload.get("permissions") or [])],
+    )
+
+
 @router.post("/staff/{staff_member_id}/reset-password")
 async def api_reset_staff_password(
     staff_member_id: str,
@@ -227,6 +337,24 @@ async def api_reset_staff_password(
         staff_member_id,
         actor_profile_id=actor.get("profile_id"),
         selected_role=role_key,
+    )
+
+
+@router.post("/staff/bulk-generate")
+async def api_bulk_generate_staff_accounts(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return bulk_generate_staff_accounts(
+        school_id,
+        actor_profile_id=actor.get("profile_id"),
+        staff_member_ids=[str(item) for item in list(payload.get("staff_member_ids") or [])],
+        staff_type=str(payload.get("staff_type") or "").strip() or None,
+        permission_template=str(payload.get("permission_template") or "").strip() or None,
+        selected_role=str(payload.get("selected_role") or "").strip() or None,
+        permissions=[str(item) for item in list(payload.get("permissions") or [])],
     )
 
 
@@ -294,6 +422,16 @@ async def api_logout_all_profile_sessions(
     _: User = Depends(require_access_control_user),
 ):
     return force_logout_profile_sessions(school_id, profile_id, actor_profile_id=actor.get("profile_id"), reason="logout_all_devices")
+
+
+@router.post("/sessions/{session_id}/logout-device")
+async def api_logout_device_session(
+    session_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return logout_session_by_id(school_id, session_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/profiles/{profile_id}/disable")
