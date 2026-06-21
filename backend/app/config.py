@@ -118,6 +118,8 @@ class Settings(BaseSettings):
         "Accept",
         "Origin",
         "X-Requested-With",
+        "X-Active-Session",
+        "X-Device-Id",
     ]
     cors_expose_headers: list = [
         "Content-Disposition",
