@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, RefreshCw, Shield, Users } from 'lucide-react';
+import { Check, ChevronDown, Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, Pencil, RefreshCw, Search, Shield, Users } from 'lucide-react';
 
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type {
@@ -11,6 +11,8 @@ import type {
   GeneratedCredentialRecord,
   PortalOverviewRecord,
   PortalOverviewResponse,
+  PortalPermissionGroup,
+  PortalPermissionSummary,
   PortalPermissionTemplate,
   RolePowerUser,
 } from '@types';
@@ -67,6 +69,43 @@ const normalizeStaffType = (value: 'teacher' | 'staff' | 'non_teaching' | 'teach
   if (value === 'teacher' || value === 'teaching') return 'teaching';
   return 'invigilator';
 };
+
+const buildPermissionGroups = (
+  modules: PermissionModule[],
+  grantedPermissions: string[],
+  templatePermissions: string[] = grantedPermissions,
+): PortalPermissionGroup[] => {
+  const granted = new Set(grantedPermissions);
+  const template = new Set(templatePermissions);
+  return modules
+    .map((module) => {
+      const keys = [module.key, ...module.sections.map((section) => section.key)];
+      const permissions = keys
+        .filter((key) => granted.has(key) || template.has(key))
+        .map((key) => {
+          const section = module.sections.find((item) => item.key === key);
+          return {
+            key,
+            label: section?.label || module.label,
+            granted: granted.has(key),
+            from_template: template.has(key),
+            manually_added: granted.has(key) && !template.has(key),
+            manually_removed: !granted.has(key) && template.has(key),
+          };
+        });
+      if (!permissions.length) return null;
+      return {
+        key: module.key,
+        label: module.label,
+        count: permissions.filter((item) => item.granted).length,
+        permissions,
+      };
+    })
+    .filter(Boolean) as PortalPermissionGroup[];
+};
+
+const getAllPermissionKeys = (modules: PermissionModule[]) =>
+  modules.flatMap((module) => [module.key, ...module.sections.map((section) => section.key)]);
 
 function SummaryCard({ title, value, helper }: { title: string; value: number; helper?: string }) {
   return (
@@ -142,6 +181,133 @@ function PermissionChecklist({
   );
 }
 
+function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/45">
+      <div className="h-full w-full max-w-2xl overflow-y-auto bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-700">Portal Account Details</p>
+            <h3 className="mt-1 text-2xl font-bold text-slate-900">{title}</h3>
+          </div>
+          <button type="button" onClick={onClose} className={BUTTON_SECONDARY}>Close</button>
+        </div>
+        <div className="mt-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function PermissionGroupList({
+  groups,
+  search,
+  expanded,
+  onToggleGroup,
+  editable = false,
+  selectedPermissions = [],
+  onTogglePermission,
+}: {
+  groups: PortalPermissionGroup[];
+  search: string;
+  expanded: Record<string, boolean>;
+  onToggleGroup: (key: string) => void;
+  editable?: boolean;
+  selectedPermissions?: string[];
+  onTogglePermission?: (permissionKey: string) => void;
+}) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredGroups = groups
+    .map((group) => ({
+      ...group,
+      permissions: group.permissions.filter((permission) => {
+        if (!normalizedSearch) return true;
+        return `${group.label} ${permission.label} ${permission.key}`.toLowerCase().includes(normalizedSearch);
+      }),
+    }))
+    .filter((group) => group.permissions.length > 0);
+
+  return (
+    <div className="space-y-3">
+      {filteredGroups.map((group) => (
+        <div key={group.key} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          <button type="button" onClick={() => onToggleGroup(group.key)} className="flex w-full items-center justify-between gap-3 text-left">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">{group.label}</p>
+              <p className="text-xs text-slate-500">{group.count} granted</p>
+            </div>
+            <ChevronDown className={`h-4 w-4 text-slate-500 transition ${expanded[group.key] ? 'rotate-180' : ''}`} />
+          </button>
+          {expanded[group.key] ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {group.permissions.map((permission) => {
+                const checked = editable ? selectedPermissions.includes(permission.key) : permission.granted;
+                return (
+                  <label key={permission.key} className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
+                    <div className="flex items-start gap-3">
+                      {editable ? (
+                        <input type="checkbox" checked={checked} onChange={() => onTogglePermission?.(permission.key)} className="mt-1" />
+                      ) : (
+                        <span className={`mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full ${permission.granted ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                          {permission.granted ? <Check className="h-3.5 w-3.5" /> : null}
+                        </span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-900">{permission.label}</p>
+                        <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+                          {permission.from_template ? <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-700">Template</span> : null}
+                          {permission.manually_added ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Manual Add</span> : null}
+                          {permission.manually_removed ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">Manual Remove</span> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TemplatePreviewCard({
+  title,
+  permissions,
+  modules,
+  onViewFull,
+}: {
+  title: string;
+  permissions: string[];
+  modules: PermissionModule[];
+  onViewFull: () => void;
+}) {
+  const groups = useMemo(() => buildPermissionGroups(modules, permissions), [modules, permissions]);
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-lg font-semibold text-slate-900">{title}</p>
+      <p className="mt-3 text-sm font-semibold text-slate-700">Permissions Included:</p>
+      <div className="mt-3 space-y-2 text-sm text-slate-700">
+        {groups.map((group) => (
+          <div key={group.key} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2">
+            <span>{group.label}</span>
+            <span className="font-semibold text-slate-900">({group.count})</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-sm">
+        <span className="text-slate-600">Total Permissions</span>
+        <span className="font-semibold text-slate-900">{permissions.length}</span>
+      </div>
+      <button type="button" onClick={onViewFull} className={`${BUTTON_SECONDARY} mt-4`}>
+        <Eye className="h-4 w-4" />
+        View Full Template
+      </button>
+    </div>
+  );
+}
+
 export default function PortalAccessManager() {
   const [activeTab, setActiveTab] = useState<TabKey>('student');
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +328,20 @@ export default function PortalAccessManager() {
   const [generatedRows, setGeneratedRows] = useState<BulkPortalCredentialRow[]>([]);
   const [generatedModalOpen, setGeneratedModalOpen] = useState(false);
   const [credentialModal, setCredentialModal] = useState<GeneratedCredentialRecord | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<PortalOverviewRecord | null>(null);
+  const [accountSummary, setAccountSummary] = useState<PortalPermissionSummary | null>(null);
+  const [accountHistory, setAccountHistory] = useState<AccountHistoryItem[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [viewPowersOpen, setViewPowersOpen] = useState(false);
+  const [editPowersOpen, setEditPowersOpen] = useState(false);
+  const [permissionSearch, setPermissionSearch] = useState('');
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [editTemplateKey, setEditTemplateKey] = useState('custom');
+  const [editSelectedRole, setEditSelectedRole] = useState('viewer');
+  const [editPermissions, setEditPermissions] = useState<string[]>([]);
+  const [templatePreviewTitle, setTemplatePreviewTitle] = useState<string | null>(null);
+  const [templatePreviewGroups, setTemplatePreviewGroups] = useState<PortalPermissionGroup[]>([]);
+  const [templatePreviewCount, setTemplatePreviewCount] = useState(0);
 
   const [studentScope, setStudentScope] = useState<ScopeValue>('school');
   const [studentBatchId, setStudentBatchId] = useState('');
@@ -226,6 +406,15 @@ export default function PortalAccessManager() {
     const defaultAdminTemplate = templateMap.get('academic_coordinator') || templateMap.get('viewer');
     setAdminPermissions(defaultAdminTemplate?.permissions || []);
   }, [templateMap]);
+
+  useEffect(() => {
+    if (!editPowersOpen) return;
+    if (editTemplateKey === 'custom') return;
+    const template = templateMap.get(editTemplateKey);
+    if (!template) return;
+    setEditSelectedRole(template.selected_role || editSelectedRole);
+    setEditPermissions(template.permissions || []);
+  }, [editPowersOpen, editTemplateKey, templateMap]);
 
   const refreshAll = async () => {
     try {
@@ -341,6 +530,47 @@ export default function PortalAccessManager() {
 
   const togglePermission = (permission: string, selected: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
     setter(selected.includes(permission) ? selected.filter((item) => item !== permission) : [...selected, permission]);
+  };
+
+  const toggleExpandedGroup = (key: string) => {
+    setExpandedGroups((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const openTemplatePreview = (title: string, permissions: string[]) => {
+    const groups = buildPermissionGroups(permissionModules, permissions);
+    setTemplatePreviewTitle(title);
+    setTemplatePreviewGroups(groups);
+    setTemplatePreviewCount(permissions.length);
+    setExpandedGroups(Object.fromEntries(groups.map((group) => [group.key, true])));
+    setPermissionSearch('');
+    setViewPowersOpen(true);
+  };
+
+  const loadAccountPanel = async (record: PortalOverviewRecord, mode: 'drawer' | 'view' | 'edit') => {
+    if (!record.profile_id) return;
+    const [summaryResponse, historyResponse] = await Promise.all([
+      apiService.getUserPermissionSummary(record.profile_id),
+      apiService.getAccountAuditLog({ profile_id: record.profile_id, limit: 25 }),
+    ]);
+    const summaryData = summaryResponse.data;
+    setSelectedAccount(record);
+    setAccountSummary(summaryData);
+    setAccountHistory(historyResponse.data.items || []);
+    setExpandedGroups(Object.fromEntries((summaryData.groups || []).map((group) => [group.key, true])));
+    setPermissionSearch('');
+    if (mode === 'drawer') {
+      setDrawerOpen(true);
+      return;
+    }
+    if (mode === 'view') {
+      setTemplatePreviewTitle(null);
+      setViewPowersOpen(true);
+      return;
+    }
+    setEditTemplateKey(summaryData.template_key || 'custom');
+    setEditSelectedRole(summaryData.selected_role || summaryData.role || 'viewer');
+    setEditPermissions(summaryData.permissions || []);
+    setEditPowersOpen(true);
   };
 
   const withAction = async (key: string, action: () => Promise<void>) => {
@@ -524,6 +754,55 @@ export default function PortalAccessManager() {
     });
   };
 
+  const handleDrawerPasswordReset = async () => {
+    if (!selectedAccount) return;
+    await withAction(`drawer-reset-${selectedAccount.entity_id}`, async () => {
+      if (selectedAccount.entity_type === 'student') {
+        await apiService.resetStudentPortalPassword(selectedAccount.entity_id);
+      } else if (selectedAccount.entity_type === 'parent') {
+        await apiService.resetParentPortalPassword(selectedAccount.entity_id);
+      } else {
+        await apiService.resetStaffPortalPassword(selectedAccount.entity_id, accountSummary?.selected_role || selectedAccount.role_key || 'teacher');
+      }
+      await refreshAll();
+      if (selectedAccount.profile_id) {
+        await openCredentialDetails(selectedAccount.profile_id);
+      }
+      setMessage('Password reset complete.');
+    });
+  };
+
+  const handleSavePermissionChanges = async () => {
+    if (!accountSummary?.profile_id) return;
+    await withAction(`save-powers-${accountSummary.profile_id}`, async () => {
+      const response = await apiService.updateUserPermissions(accountSummary.profile_id, {
+        selected_role: editSelectedRole,
+        permission_template: editTemplateKey,
+        permissions: editPermissions,
+      });
+      setAccountSummary(response.data);
+      setEditPowersOpen(false);
+      setMessage('Permissions updated.');
+      await refreshAll();
+    });
+  };
+
+  const handleResetToTemplate = async () => {
+    if (!accountSummary?.profile_id) return;
+    await withAction(`reset-template-${accountSummary.profile_id}`, async () => {
+      const response = await apiService.resetUserPermissionsToTemplate(accountSummary.profile_id, {
+        selected_role: editSelectedRole,
+        permission_template: editTemplateKey,
+      });
+      setAccountSummary(response.data);
+      setEditPermissions(response.data.permissions || []);
+      setEditTemplateKey(response.data.template_key || editTemplateKey);
+      setEditSelectedRole(response.data.selected_role || editSelectedRole);
+      setMessage('Permissions reset to template.');
+      await refreshAll();
+    });
+  };
+
   const studentPreviewPending = Math.max(studentRecords.filter((item) => item.portal_status === 'not_created').length, 0);
   const studentPreviewCreated = studentRecords.filter((item) => item.portal_status !== 'not_created').length;
 
@@ -540,6 +819,7 @@ export default function PortalAccessManager() {
             <th className="px-4 py-3 text-left"></th>
             <th className="px-4 py-3 text-left font-semibold text-slate-600">Name</th>
             <th className="px-4 py-3 text-left font-semibold text-slate-600">Username</th>
+            <th className="px-4 py-3 text-left font-semibold text-slate-600">Permissions</th>
             <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
             <th className="px-4 py-3 text-left font-semibold text-slate-600">Actions</th>
           </tr>
@@ -554,10 +834,31 @@ export default function PortalAccessManager() {
                 <p className="font-semibold text-slate-900">{record.entity_name}</p>
                 <p className="text-xs text-slate-500">{record.roll_number || record.employee_code || record.phone || record.email || 'Record'}</p>
               </td>
-              <td className="px-4 py-3 font-semibold text-slate-900">{record.username || 'Not created'}</td>
+              <td className="px-4 py-3">
+                {record.profile_id ? (
+                  <button type="button" onClick={() => void loadAccountPanel(record, 'drawer')} className="font-semibold text-sky-700 hover:text-sky-900">
+                    {record.username || 'Not created'}
+                  </button>
+                ) : (
+                  <span className="font-semibold text-slate-900">{record.username || 'Not created'}</span>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                  Permissions: {record.permission_count || 0}
+                </span>
+              </td>
               <td className="px-4 py-3 text-slate-700">{record.portal_status}</td>
               <td className="px-4 py-3">
                 <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void loadAccountPanel(record, 'view')} disabled={!record.profile_id} className={BUTTON_SECONDARY}>
+                    <Eye className="h-4 w-4" />
+                    View Powers
+                  </button>
+                  <button type="button" onClick={() => void loadAccountPanel(record, 'edit')} disabled={!record.profile_id} className={BUTTON_SECONDARY}>
+                    <Pencil className="h-4 w-4" />
+                    Edit Powers
+                  </button>
                   <button
                     type="button"
                     onClick={() =>
@@ -623,6 +924,12 @@ export default function PortalAccessManager() {
         </tbody>
       </table>
     </div>
+  );
+
+  const effectiveViewGroups = templatePreviewTitle ? templatePreviewGroups : (accountSummary?.groups || []);
+  const effectiveEditGroups = useMemo(
+    () => buildPermissionGroups(permissionModules, editPermissions, editTemplateKey === 'custom' ? accountSummary?.template_permissions || [] : templateMap.get(editTemplateKey)?.permissions || []),
+    [accountSummary?.template_permissions, editPermissions, editTemplateKey, permissionModules, templateMap],
   );
 
   return (
@@ -701,6 +1008,9 @@ export default function PortalAccessManager() {
                     </label>
                   ))}
                 </div>
+                <div className="mt-5">
+                  <TemplatePreviewCard title={`${toTitle(studentTemplateKey)} Template`} permissions={studentPermissions} modules={permissionModules} onViewFull={() => openTemplatePreview(`${toTitle(studentTemplateKey)} Template`, studentPermissions)} />
+                </div>
               </SectionCard>
               <SectionCard title="Preview" subtitle="Review before generating accounts.">
                 <div className="space-y-3 text-sm text-slate-700">
@@ -752,6 +1062,9 @@ export default function PortalAccessManager() {
                     </label>
                   ))}
                 </div>
+                <div className="mt-5">
+                  <TemplatePreviewCard title={`${toTitle(parentTemplateKey)} Template`} permissions={parentPermissions} modules={permissionModules} onViewFull={() => openTemplatePreview(`${toTitle(parentTemplateKey)} Template`, parentPermissions)} />
+                </div>
               </SectionCard>
               <SectionCard title="Preview">
                 <button type="button" onClick={() => void handleParentGenerate()} disabled={processingKey === 'generate-parents'} className={BUTTON_PRIMARY}>
@@ -784,6 +1097,9 @@ export default function PortalAccessManager() {
                     </label>
                   ))}
                 </div>
+                <div className="mt-5">
+                  <TemplatePreviewCard title={`${toTitle(teacherTemplateKey)} Template`} permissions={teacherPermissions} modules={permissionModules} onViewFull={() => openTemplatePreview(`${toTitle(teacherTemplateKey)} Template`, teacherPermissions)} />
+                </div>
                 <button type="button" onClick={() => void handleTeacherGenerate()} disabled={processingKey === 'generate-teachers'} className={`${BUTTON_PRIMARY} mt-5`}>
                   <Users className="h-4 w-4" />
                   Generate Teacher Accounts
@@ -813,6 +1129,9 @@ export default function PortalAccessManager() {
                       {permissionLabel(permission)}
                     </label>
                   ))}
+                </div>
+                <div className="mt-5">
+                  <TemplatePreviewCard title={`${toTitle(staffTemplateKey)} Template`} permissions={staffPermissions} modules={permissionModules} onViewFull={() => openTemplatePreview(`${toTitle(staffTemplateKey)} Template`, staffPermissions)} />
                 </div>
                 <button type="button" onClick={() => void handleStaffGenerate()} disabled={processingKey === 'generate-staff'} className={`${BUTTON_PRIMARY} mt-5`}>
                   <Users className="h-4 w-4" />
@@ -996,7 +1315,7 @@ export default function PortalAccessManager() {
                     {history
                       .filter((item) => {
                         if (!historySearch) return true;
-                        const haystack = `${item.name} ${item.action} ${item.created_by}`.toLowerCase();
+                        const haystack = `${item.name} ${item.target_user || ''} ${item.permission_key || ''} ${item.action} ${item.created_by}`.toLowerCase();
                         return haystack.includes(historySearch.toLowerCase());
                       })
                       .map((item) => (
@@ -1014,6 +1333,138 @@ export default function PortalAccessManager() {
           </div>
         ) : null}
       </div>
+
+      <Drawer open={drawerOpen} title={accountSummary?.user_name || selectedAccount?.entity_name || 'Account Details'} onClose={() => setDrawerOpen(false)}>
+        {accountSummary ? (
+          <div className="space-y-6">
+            <div className="grid gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 md:grid-cols-2">
+              <div><span className="font-semibold text-slate-900">Username:</span> {accountSummary.username}</div>
+              <div><span className="font-semibold text-slate-900">Role:</span> {accountSummary.role_label}</div>
+              <div><span className="font-semibold text-slate-900">Status:</span> {toTitle(accountSummary.status)}</div>
+              <div><span className="font-semibold text-slate-900">Created:</span> {formatDateTime(accountSummary.created_at)}</div>
+              <div><span className="font-semibold text-slate-900">Last Login:</span> {formatDateTime(accountSummary.last_login)}</div>
+              <div><span className="font-semibold text-slate-900">Active Sessions:</span> {accountSummary.active_sessions}</div>
+              <div><span className="font-semibold text-slate-900">Permissions:</span> {accountSummary.permission_count}</div>
+              <div><span className="font-semibold text-slate-900">Template:</span> {accountSummary.template_label}</div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={() => { setTemplatePreviewTitle(null); setViewPowersOpen(true); }} className={BUTTON_SECONDARY}>
+                <Eye className="h-4 w-4" />
+                View Powers
+              </button>
+              <button type="button" onClick={() => { setEditTemplateKey(accountSummary.template_key || 'custom'); setEditSelectedRole(accountSummary.selected_role || accountSummary.role); setEditPermissions(accountSummary.permissions || []); setEditPowersOpen(true); }} className={BUTTON_SECONDARY}>
+                <Pencil className="h-4 w-4" />
+                Edit Powers
+              </button>
+              <button type="button" onClick={() => void handleDrawerPasswordReset()} className={BUTTON_SECONDARY}>
+                <KeyRound className="h-4 w-4" />
+                Reset Password
+              </button>
+              <button type="button" onClick={() => accountSummary.profile_id && void withAction(`drawer-disable-${accountSummary.profile_id}`, async () => { await (accountSummary.is_enabled ? apiService.disableProfileAccount(accountSummary.profile_id) : apiService.enableProfileAccount(accountSummary.profile_id)); await refreshAll(); const summaryResponse = await apiService.getUserPermissionSummary(accountSummary.profile_id); setAccountSummary(summaryResponse.data); })} className={BUTTON_SECONDARY}>
+                <Lock className="h-4 w-4" />
+                {accountSummary.is_enabled ? 'Disable Account' : 'Enable Account'}
+              </button>
+              <button type="button" onClick={() => accountSummary.profile_id && void withAction(`drawer-logout-${accountSummary.profile_id}`, async () => { await apiService.logoutAllProfileSessions(accountSummary.profile_id); await refreshAll(); const summaryResponse = await apiService.getUserPermissionSummary(accountSummary.profile_id); setAccountSummary(summaryResponse.data); })} className={BUTTON_SECONDARY}>
+                <LogOut className="h-4 w-4" />
+                Logout All Devices
+              </button>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Account History</p>
+              <div className="mt-3 overflow-x-auto rounded-3xl border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Action</th>
+                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Actor</th>
+                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {accountHistory.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-4 py-3 text-slate-700">{item.action}</td>
+                        <td className="px-4 py-3 text-slate-700">{item.created_by}</td>
+                        <td className="px-4 py-3 text-slate-700">{formatDateTime(item.timestamp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Modal open={viewPowersOpen} title={templatePreviewTitle || `${accountSummary?.user_name || 'User'} Powers`} onClose={() => setViewPowersOpen(false)}>
+        <div className="space-y-5">
+          {accountSummary && !templatePreviewTitle ? (
+            <div className="grid gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:grid-cols-3">
+              <div><span className="font-semibold text-slate-900">Role:</span> {accountSummary.role_label}</div>
+              <div><span className="font-semibold text-slate-900">Status:</span> {toTitle(accountSummary.status)}</div>
+              <div><span className="font-semibold text-slate-900">Permission Count:</span> {accountSummary.permission_count}</div>
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Permission Count:</span> {templatePreviewCount}
+            </div>
+          )}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={permissionSearch} onChange={(event) => setPermissionSearch(event.target.value)} className={`${PANEL_INPUT} pl-11`} placeholder="Search permission" />
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => setExpandedGroups(Object.fromEntries(effectiveViewGroups.map((group) => [group.key, true])))} className={BUTTON_SECONDARY}>Expand All</button>
+            <button type="button" onClick={() => setExpandedGroups(Object.fromEntries(effectiveViewGroups.map((group) => [group.key, false])))} className={BUTTON_SECONDARY}>Collapse All</button>
+          </div>
+          <PermissionGroupList groups={effectiveViewGroups} search={permissionSearch} expanded={expandedGroups} onToggleGroup={toggleExpandedGroup} />
+        </div>
+      </Modal>
+
+      <Modal open={editPowersOpen} title={`Edit Powers${accountSummary ? ` - ${accountSummary.user_name}` : ''}`} onClose={() => setEditPowersOpen(false)}>
+        <div className="space-y-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="mb-2 text-sm font-semibold text-slate-900">Role Template</p>
+              <select value={editTemplateKey} onChange={(event) => setEditTemplateKey(event.target.value)} className={PANEL_INPUT}>
+                {permissionTemplates.map((template) => (
+                  <option key={template.key} value={template.key}>{template.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-semibold text-slate-900">Selected Role</p>
+              <select value={editSelectedRole} onChange={(event) => setEditSelectedRole(event.target.value)} className={PANEL_INPUT}>
+                {permissionTemplates.map((template) => (
+                  <option key={`${template.key}-${template.selected_role}`} value={template.selected_role}>{template.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => setEditPermissions(getAllPermissionKeys(permissionModules))} className={BUTTON_SECONDARY}>Select All</button>
+            <button type="button" onClick={() => setEditPermissions([])} className={BUTTON_SECONDARY}>Deselect All</button>
+            <button type="button" onClick={() => void handleResetToTemplate()} className={BUTTON_SECONDARY}>Reset To Template</button>
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={permissionSearch} onChange={(event) => setPermissionSearch(event.target.value)} className={`${PANEL_INPUT} pl-11`} placeholder="Search permissions" />
+          </div>
+          <PermissionGroupList
+            groups={effectiveEditGroups}
+            search={permissionSearch}
+            expanded={expandedGroups}
+            onToggleGroup={toggleExpandedGroup}
+            editable
+            selectedPermissions={editPermissions}
+            onTogglePermission={(permissionKey) => setEditPermissions((current) => current.includes(permissionKey) ? current.filter((item) => item !== permissionKey) : [...current, permissionKey])}
+          />
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setEditPowersOpen(false)} className={BUTTON_SECONDARY}>Cancel</button>
+            <button type="button" onClick={() => void handleSavePermissionChanges()} className={BUTTON_PRIMARY}>Save Changes</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={generatedModalOpen} title="Accounts Generated Successfully" onClose={() => setGeneratedModalOpen(false)}>
         <div className="mb-4 flex flex-wrap gap-3">

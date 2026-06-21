@@ -582,6 +582,137 @@ def _default_permissions_for_role(selected_role: str) -> list[str]:
     return []
 
 
+def _module_label(key: str) -> str:
+    return " ".join(word.capitalize() for word in _normalize(key).split("_") if word)
+
+
+def _permission_leaf_label(key: str) -> str:
+    value = _normalize(key)
+    if "." in value:
+        value = value.split(".", 1)[1]
+    return _module_label(value)
+
+
+def _selected_role_from_membership(membership: dict[str, Any] | None) -> str:
+    role_data = membership.get("roles") if isinstance(membership, dict) else None
+    if isinstance(role_data, list):
+        role_data = role_data[0] if role_data else None
+    metadata = _json_object((role_data or {}).get("metadata")) if isinstance(role_data, dict) else {}
+    selected_role = _normalize_role_key(metadata.get("role_key"))
+    if selected_role:
+        return selected_role
+    role_key = _normalize_role_key((role_data or {}).get("role_key")) if isinstance(role_data, dict) else ""
+    return role_key or "viewer"
+
+
+def _resolve_template_key_for_role(selected_role: str, permissions: list[str]) -> str:
+    from app.routes.auth import normalize_permissions
+
+    normalized_role = _normalize_role_key(selected_role)
+    normalized_permissions = normalize_permissions(permissions)
+    for key, template in PORTAL_PERMISSION_TEMPLATES.items():
+        if key == "custom":
+            continue
+        if _normalize_role_key(template.get("selected_role")) != normalized_role:
+            continue
+        if normalize_permissions(template.get("permissions")) == normalized_permissions:
+            return key
+    return "custom"
+
+
+def _group_permissions(
+    *,
+    granted_permissions: list[str],
+    template_permissions: list[str],
+) -> list[dict[str, Any]]:
+    from app.routes.auth import ALLOWED_PERMISSIONS, PERMISSION_CHILDREN, normalize_permissions
+
+    granted_set = set(normalize_permissions(granted_permissions))
+    template_set = set(normalize_permissions(template_permissions))
+    changed_keys = granted_set.symmetric_difference(template_set)
+    module_keys = list(PERMISSION_CHILDREN.keys())
+    grouped: list[dict[str, Any]] = []
+
+    for module_key in module_keys:
+        child_keys = list(PERMISSION_CHILDREN.get(module_key) or [])
+        granted_count = sum(1 for key in child_keys if key in granted_set)
+        entries: list[dict[str, Any]] = []
+        for permission_key in child_keys:
+            if permission_key not in granted_set and permission_key not in template_set and permission_key not in changed_keys:
+                continue
+            entries.append(
+                {
+                    "key": permission_key,
+                    "label": _permission_leaf_label(permission_key),
+                    "granted": permission_key in granted_set,
+                    "from_template": permission_key in template_set,
+                    "manually_added": permission_key in granted_set and permission_key not in template_set,
+                    "manually_removed": permission_key not in granted_set and permission_key in template_set,
+                }
+            )
+        if entries:
+            grouped.append(
+                {
+                    "key": module_key,
+                    "label": _module_label(module_key),
+                    "count": granted_count,
+                    "permissions": entries,
+                }
+            )
+
+    standalone_keys = sorted(
+        key
+        for key in ALLOWED_PERMISSIONS
+        if "." not in key and key not in PERMISSION_CHILDREN
+    )
+    for permission_key in standalone_keys:
+        if permission_key not in granted_set and permission_key not in template_set and permission_key not in changed_keys:
+            continue
+        grouped.append(
+            {
+                "key": permission_key,
+                "label": _module_label(permission_key),
+                "count": 1 if permission_key in granted_set else 0,
+                "permissions": [
+                    {
+                        "key": permission_key,
+                        "label": _module_label(permission_key),
+                        "granted": permission_key in granted_set,
+                        "from_template": permission_key in template_set,
+                        "manually_added": permission_key in granted_set and permission_key not in template_set,
+                        "manually_removed": permission_key not in granted_set and permission_key in template_set,
+                    }
+                ],
+            }
+        )
+    return grouped
+
+
+def _load_role_permissions_batch(role_ids: list[str], *, supabase: Any | None = None) -> dict[str, list[str]]:
+    from app.routes.auth import normalize_permissions
+
+    ids = [_normalize(item) for item in role_ids if _normalize(item)]
+    if not ids:
+        return {}
+    rows = list(
+        _public_table("role_permissions", supabase=supabase)
+        .select("role_id,permissions(permission_key)")
+        .in_("role_id", ids)
+        .execute()
+        .data
+        or []
+    )
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        role_id = _normalize(row.get("role_id"))
+        permission_data = row.get("permissions")
+        permission_key = _normalize_role_key(permission_data.get("permission_key")) if isinstance(permission_data, dict) else ""
+        if role_id and permission_key:
+            result.setdefault(role_id, [])
+            result[role_id].append(permission_key)
+    return {key: normalize_permissions(value) for key, value in result.items()}
+
+
 def get_permission_templates() -> list[dict[str, Any]]:
     from app.routes.auth import normalize_permissions
 
@@ -596,6 +727,179 @@ def get_permission_templates() -> list[dict[str, Any]]:
             }
         )
     return templates
+
+
+def get_role_template_permissions(role: str) -> dict[str, Any]:
+    from app.routes.auth import normalize_permissions
+
+    template_key = _normalize_role_key(role)
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Permission template not found")
+    template_permissions = normalize_permissions(template.get("permissions"))
+    return {
+        "template_key": template_key,
+        "template_label": _normalize(template.get("label")) or _module_label(template_key),
+        "selected_role": _normalize_role_key(template.get("selected_role")),
+        "permission_count": len(template_permissions),
+        "groups": _group_permissions(granted_permissions=template_permissions, template_permissions=template_permissions),
+    }
+
+
+def get_user_permission_summary(school_id: str, profile_id: str) -> dict[str, Any]:
+    from app.routes.auth import normalize_permissions
+
+    profile = _load_profile(profile_id)
+    membership = _load_school_membership(school_id, profile_id)
+    if not membership:
+        raise HTTPException(status_code=404, detail="School membership not found for account")
+    role_id = _normalize(membership.get("role_id"))
+    current_permissions = _load_role_permissions_batch([role_id]).get(role_id, [])
+    selected_role = _selected_role_from_membership(membership)
+    template_key = _resolve_template_key_for_role(selected_role, current_permissions)
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key) or {"label": "Custom Role", "permissions": [], "selected_role": selected_role}
+    template_permissions = normalize_permissions(template.get("permissions"))
+    latest_session = _latest_session_for_profile(profile_id)
+    active_sessions = _active_session_count(profile_id)
+    grouped = _group_permissions(granted_permissions=current_permissions, template_permissions=template_permissions)
+    manually_added = [key for key in current_permissions if key not in template_permissions]
+    manually_removed = [key for key in template_permissions if key not in current_permissions]
+    return {
+        "profile_id": profile_id,
+        "user_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")) or "User",
+        "username": _normalize(profile.get("display_name")),
+        "login_email": _normalize_optional(profile.get("email")),
+        "role": selected_role,
+        "role_label": _module_label(selected_role),
+        "status": "active" if bool(profile.get("is_active", True) and membership.get("is_active", True)) else "disabled",
+        "is_enabled": bool(profile.get("is_active", True) and membership.get("is_active", True)),
+        "last_login": latest_session.get("login_time") if latest_session else _portal_metadata(profile).get("last_login"),
+        "last_activity": latest_session.get("last_activity") if latest_session else None,
+        "active_sessions": active_sessions,
+        "created_at": profile.get("created_at"),
+        "permission_count": len(current_permissions),
+        "template_key": template_key,
+        "template_label": _normalize(template.get("label")) or "Custom Role",
+        "selected_role": selected_role,
+        "template_permission_count": len(template_permissions),
+        "manual_add_count": len(manually_added),
+        "manual_remove_count": len(manually_removed),
+        "permissions": current_permissions,
+        "template_permissions": template_permissions,
+        "manually_added": manually_added,
+        "manually_removed": manually_removed,
+        "groups": grouped,
+    }
+
+
+def update_user_permissions(
+    school_id: str,
+    profile_id: str,
+    *,
+    actor_profile_id: str | None,
+    selected_role: str | None = None,
+    permission_template: str | None = None,
+    permissions: list[str] | None = None,
+) -> dict[str, Any]:
+    from app.routes.auth import normalize_permissions, validate_role_input
+
+    profile = _load_profile(profile_id)
+    membership = _load_school_membership(school_id, profile_id)
+    if not membership:
+        raise HTTPException(status_code=404, detail="School membership not found for account")
+    previous_summary = get_user_permission_summary(school_id, profile_id)
+    next_role = validate_role_input(selected_role or previous_summary.get("selected_role") or previous_summary.get("role") or "viewer")
+    template_key = _normalize_role_key(permission_template) or _resolve_template_key_for_role(next_role, previous_summary.get("permissions") or [])
+    if template_key != "custom" and template_key not in PORTAL_PERMISSION_TEMPLATES:
+        raise HTTPException(status_code=404, detail="Permission template not found")
+    template = PORTAL_PERMISSION_TEMPLATES.get(template_key, PORTAL_PERMISSION_TEMPLATES["custom"])
+    resolved_permissions = normalize_permissions(permissions if template_key == "custom" else template.get("permissions"))
+    role_row = _ensure_membership_role(
+        school_id,
+        profile_id,
+        full_name=_normalize(profile.get("full_name")) or _normalize(profile.get("display_name")) or "User",
+        selected_role=next_role,
+        permissions=resolved_permissions,
+    )
+    _public_table("school_memberships").update({"role_id": _normalize(role_row.get("id"))}).eq("id", membership["id"]).execute()
+
+    previous_role = _normalize_role_key(previous_summary.get("selected_role"))
+    if previous_role != next_role:
+        _record_audit(
+            school_id=school_id,
+            actor_profile_id=actor_profile_id,
+            action="role.changed",
+            entity_id=profile_id,
+            payload={
+                "profile_id": profile_id,
+                "username": _normalize(profile.get("display_name")),
+                "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+                "previous_role": previous_role,
+                "next_role": next_role,
+                "action_label": "Role Changed",
+            },
+        )
+
+    previous_permissions = set(previous_summary.get("permissions") or [])
+    next_permissions = set(resolved_permissions)
+    for permission_key in sorted(next_permissions - previous_permissions):
+        _record_audit(
+            school_id=school_id,
+            actor_profile_id=actor_profile_id,
+            action="permission.added",
+            entity_id=profile_id,
+            payload={
+                "profile_id": profile_id,
+                "username": _normalize(profile.get("display_name")),
+                "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+                "permission_key": permission_key,
+                "action_label": "Permission Added",
+            },
+        )
+    for permission_key in sorted(previous_permissions - next_permissions):
+        _record_audit(
+            school_id=school_id,
+            actor_profile_id=actor_profile_id,
+            action="permission.removed",
+            entity_id=profile_id,
+            payload={
+                "profile_id": profile_id,
+                "username": _normalize(profile.get("display_name")),
+                "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+                "permission_key": permission_key,
+                "action_label": "Permission Removed",
+            },
+        )
+    return get_user_permission_summary(school_id, profile_id)
+
+
+def reset_user_permissions_to_template(
+    school_id: str,
+    profile_id: str,
+    *,
+    actor_profile_id: str | None,
+    permission_template: str | None = None,
+    selected_role: str | None = None,
+) -> dict[str, Any]:
+    summary = get_user_permission_summary(school_id, profile_id)
+    next_role = selected_role or summary.get("selected_role") or summary.get("role")
+    template_key = _normalize_role_key(permission_template)
+    if not template_key:
+        template_key = _resolve_template_key_for_role(_normalize_role_key(next_role), summary.get("template_permissions") or summary.get("permissions") or [])
+        if template_key == "custom":
+            role_matches = [
+                key for key, value in PORTAL_PERMISSION_TEMPLATES.items()
+                if key != "custom" and _normalize_role_key(value.get("selected_role")) == _normalize_role_key(next_role)
+            ]
+            template_key = role_matches[0] if role_matches else "custom"
+    return update_user_permissions(
+        school_id,
+        profile_id,
+        actor_profile_id=actor_profile_id,
+        selected_role=next_role,
+        permission_template=template_key,
+        permissions=None,
+    )
 
 
 def _ensure_membership_role(
@@ -756,6 +1060,7 @@ def list_account_history(
     school_id: str,
     *,
     search: str | None = None,
+    profile_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -767,6 +1072,8 @@ def list_account_history(
         .order("created_at", desc=True)
         .range(offset, max(offset + limit - 1, offset))
     )
+    if profile_id:
+        query = query.eq("entity_id", profile_id)
     response = query.execute()
     rows = list(response.data or [])
     total_count = int(getattr(response, "count", None) or 0)
@@ -794,6 +1101,8 @@ def list_account_history(
                 "timestamp": row.get("created_at"),
                 "username": _normalize_optional(payload.get("username")),
                 "entity_type": _normalize_optional(payload.get("entity_type")),
+                "target_user": _normalize(payload.get("entity_name")) or _normalize(payload.get("username")) or "Account",
+                "permission_key": _normalize_optional(payload.get("permission_key")),
             }
         )
     return {"items": items, "limit": limit, "offset": offset, "total_count": total_count}
@@ -839,6 +1148,7 @@ def _serialize_portal_status(
     entity: dict[str, Any],
     profile: dict[str, Any] | None,
     membership: dict[str, Any] | None,
+    permissions_by_role: dict[str, list[str]] | None = None,
     _latest_session: dict[str, Any] | None = None,
     _active_count: int | None = None,
 ) -> dict[str, Any]:
@@ -853,6 +1163,8 @@ def _serialize_portal_status(
     if isinstance(role_data, list):
         role_data = role_data[0] if role_data else None
     role_key = _normalize_role_key((role_data or {}).get("role_key") if isinstance(role_data, dict) else None)
+    role_id = _normalize(membership.get("role_id")) if isinstance(membership, dict) else ""
+    permission_count = len((permissions_by_role or {}).get(role_id, [])) if role_id else 0
     return {
         "entity_type": entity_type,
         "entity_id": _normalize(entity.get("id")),
@@ -869,6 +1181,7 @@ def _serialize_portal_status(
         "last_password_reset_at": portal_metadata.get("last_password_reset_at") if profile else None,
         "active_sessions": _active_count if profile else 0,
         "role_key": role_key or entity_type,
+        "permission_count": permission_count,
         "entity_label": _normalize(entity.get("full_name")) or _normalize(entity.get("roll_number")) or _normalize(entity.get("employee_code")),
         "is_enabled": bool(profile.get("is_active", True) and membership.get("is_active", True)) if profile and membership else False,
     }
@@ -1274,7 +1587,7 @@ def set_account_enabled(
             "profile_id": profile_id,
             "username": _normalize(profile.get("display_name")),
             "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
-            "action_label": "Enabled" if is_enabled else "Disabled",
+            "action_label": "Account Enabled" if is_enabled else "Account Disabled",
         },
     )
     return {"profile_id": profile_id, "is_enabled": is_enabled, "display_name": profile.get("display_name")}
@@ -1672,6 +1985,9 @@ def get_portal_access_overview(
         t1 = time.time()
         profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
         memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        permissions_by_role = _load_role_permissions_batch([
+            _normalize((memberships_dict.get(pid) or {}).get("role_id")) for pid in profile_ids
+        ], supabase=supabase)
         latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
         active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
         t2 = time.time()
@@ -1684,6 +2000,7 @@ def get_portal_access_overview(
                 entity=student,
                 profile=profile,
                 membership=membership,
+                permissions_by_role=permissions_by_role,
                 _latest_session=latest_sessions.get(pid),
                 _active_count=active_counts.get(pid, 0),
             )
@@ -1708,6 +2025,9 @@ def get_portal_access_overview(
         t1 = time.time()
         profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
         memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        permissions_by_role = _load_role_permissions_batch([
+            _normalize((memberships_dict.get(pid) or {}).get("role_id")) for pid in profile_ids
+        ], supabase=supabase)
         latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
         active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
         t2 = time.time()
@@ -1720,6 +2040,7 @@ def get_portal_access_overview(
                 entity=guardian,
                 profile=profile,
                 membership=membership,
+                permissions_by_role=permissions_by_role,
                 _latest_session=latest_sessions.get(pid),
                 _active_count=active_counts.get(pid, 0),
             )
@@ -1738,6 +2059,9 @@ def get_portal_access_overview(
         t1 = time.time()
         profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)
         memberships_dict = _load_memberships_batch(school_id, profile_ids, supabase=supabase)
+        permissions_by_role = _load_role_permissions_batch([
+            _normalize((memberships_dict.get(pid) or {}).get("role_id")) for pid in profile_ids
+        ], supabase=supabase)
         latest_sessions = _load_latest_sessions_batch(profile_ids, supabase=supabase)
         active_counts = _load_active_session_counts_batch(profile_ids, supabase=supabase)
         t2 = time.time()
@@ -1750,6 +2074,7 @@ def get_portal_access_overview(
                 entity=staff_member,
                 profile=profile,
                 membership=membership,
+                permissions_by_role=permissions_by_role,
                 _latest_session=latest_sessions.get(pid),
                 _active_count=active_counts.get(pid, 0),
             )

@@ -179,6 +179,7 @@ export interface PortalOverviewRecord extends PortalAccessStatus {
   staff_type?: string | null;
   department?: string | null;
   designation?: string | null;
+  permission_count?: number;
 }
 
 export interface PortalOverviewResponse {
@@ -227,6 +228,8 @@ export interface AccountHistoryItem {
   timestamp?: string | null;
   username?: string | null;
   entity_type?: string | null;
+  target_user?: string | null;
+  permission_key?: string | null;
 }
 
 export interface AccountHistoryResponse {
@@ -252,6 +255,57 @@ export interface ActiveSessionRecord {
   status: string;
   session_key: string;
   is_active: boolean;
+}
+
+export interface PortalPermissionGroupItem {
+  key: string;
+  label: string;
+  granted: boolean;
+  from_template: boolean;
+  manually_added: boolean;
+  manually_removed: boolean;
+}
+
+export interface PortalPermissionGroup {
+  key: string;
+  label: string;
+  count: number;
+  permissions: PortalPermissionGroupItem[];
+}
+
+export interface PortalPermissionSummary {
+  profile_id: string;
+  user_name: string;
+  username: string;
+  login_email?: string | null;
+  role: string;
+  role_label: string;
+  status: string;
+  is_enabled: boolean;
+  last_login?: string | null;
+  last_activity?: string | null;
+  active_sessions: number;
+  created_at?: string | null;
+  permission_count: number;
+  template_key: string;
+  template_label: string;
+  selected_role: string;
+  template_permission_count: number;
+  manual_add_count: number;
+  manual_remove_count: number;
+  permissions: string[];
+  template_permissions: string[];
+  manually_added: string[];
+  manually_removed: string[];
+  groups: PortalPermissionGroup[];
+}
+
+export interface PortalRolePermissionTemplate {
+  template_key: string;
+  template_label: string;
+  selected_role: string;
+  permission_count: number;
+  groups: PortalPermissionGroup[];
 }
 
 export interface BulkActionRequest {

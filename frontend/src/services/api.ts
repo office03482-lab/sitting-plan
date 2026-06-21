@@ -5,7 +5,7 @@ import type {
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
-  PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse,
+  PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
@@ -412,8 +412,41 @@ class ApiService {
     return this.api.get<GeneratedCredentialRecord>(`/account-security/credentials/profile/${profileId}`);
   }
 
-  async getAccountHistory(params: { search?: string; limit?: number; offset?: number } = {}) {
+  async getAccountHistory(params: { search?: string; profile_id?: string; limit?: number; offset?: number } = {}) {
     return this.api.get<AccountHistoryResponse>('/account-security/history', { params });
+  }
+
+  async getAccountAuditLog(params: { search?: string; profile_id?: string; limit?: number; offset?: number } = {}) {
+    return this.api.get<AccountHistoryResponse>('/account-security/audit-log', { params });
+  }
+
+  async getUserPermissionSummary(profileId: string) {
+    return this.api.get<PortalPermissionSummary>(`/account-security/users/${profileId}/permission-summary`);
+  }
+
+  async getUserPermissions(profileId: string) {
+    return this.api.get<PortalPermissionSummary>(`/account-security/users/${profileId}/permissions`);
+  }
+
+  async updateUserPermissions(profileId: string, data: {
+    selected_role?: string;
+    role?: string;
+    permission_template?: string;
+    permissions?: string[];
+  }) {
+    return this.api.put<PortalPermissionSummary>(`/account-security/users/${profileId}/permissions`, data);
+  }
+
+  async resetUserPermissionsToTemplate(profileId: string, data: {
+    selected_role?: string;
+    role?: string;
+    permission_template?: string;
+  } = {}) {
+    return this.api.post<PortalPermissionSummary>(`/account-security/users/${profileId}/reset-to-template`, data);
+  }
+
+  async getRoleTemplatePermissions(role: string) {
+    return this.api.get<PortalRolePermissionTemplate>(`/account-security/roles/${role}/permissions`);
   }
 
   async getParentPortalAccess(guardianId: string | number) {

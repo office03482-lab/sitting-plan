@@ -110,11 +110,15 @@ def decode_token(token: str) -> Optional[dict]:
         logger.info("decode_token.local_secret_failed", extra={"error": str(exc)})
 
     # 2) Try Supabase JWT secret (if configured)
+    # Supabase tokens include an `aud` claim (e.g. "authenticated").
+    # python-jose 3.3.0 requires `audience` to be provided when the token
+    # contains `aud` and `verify_aud` is True.  Disable audience/issuer
+    # verification here – the signature check is still enforced.
     supabase_secret = settings.supabase_jwt_secret
     if supabase_secret:
         for alg in ["HS256", "ES256"]:
             try:
-                payload = jwt.decode(token, supabase_secret, algorithms=[alg])
+                payload = jwt.decode(token, supabase_secret, algorithms=[alg], options={"verify_aud": False, "verify_iss": False})
                 logger.info("decode_token.success.using_supabase_secret", extra={"algorithm": alg})
                 return _cache_payload(payload)
             except JWTError as exc:

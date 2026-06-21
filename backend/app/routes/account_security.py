@@ -20,6 +20,8 @@ from app.services.supabase_account_security import (
     create_or_reset_staff_account,
     create_or_reset_student_account,
     force_logout_profile_sessions,
+    get_role_template_permissions,
+    get_user_permission_summary,
     get_generated_credential_details,
     get_permission_templates,
     get_parent_portal_access,
@@ -32,8 +34,10 @@ from app.services.supabase_account_security import (
     logout_session_by_id,
     logout_session,
     register_active_session,
+    reset_user_permissions_to_template,
     resolve_login_email,
     set_account_enabled,
+    update_user_permissions,
 )
 from app.services.supabase_context import resolve_school_id_from_actor
 
@@ -226,12 +230,86 @@ async def api_generated_credential_details(
 @router.get("/history")
 async def api_account_history(
     search: str | None = Query(default=None),
+    profile_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     school_id: str = Depends(resolve_school_id_from_actor),
     _: User = Depends(require_access_control_user),
 ):
-    return list_account_history(school_id, search=search, limit=limit, offset=offset)
+    return list_account_history(school_id, search=search, profile_id=profile_id, limit=limit, offset=offset)
+
+
+@router.get("/audit-log")
+async def api_account_audit_log(
+    search: str | None = Query(default=None),
+    profile_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    return list_account_history(school_id, search=search, profile_id=profile_id, limit=limit, offset=offset)
+
+
+@router.get("/users/{profile_id}/permissions")
+async def api_user_permissions(
+    profile_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    return get_user_permission_summary(school_id, profile_id)
+
+
+@router.get("/users/{profile_id}/permission-summary")
+async def api_user_permission_summary(
+    profile_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_access_control_user),
+):
+    return get_user_permission_summary(school_id, profile_id)
+
+
+@router.put("/users/{profile_id}/permissions")
+async def api_update_user_permissions(
+    profile_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return update_user_permissions(
+        school_id,
+        profile_id,
+        actor_profile_id=actor.get("profile_id"),
+        selected_role=str(payload.get("selected_role") or payload.get("role") or "").strip() or None,
+        permission_template=str(payload.get("permission_template") or "").strip() or None,
+        permissions=[str(item) for item in list(payload.get("permissions") or [])],
+    )
+
+
+@router.post("/users/{profile_id}/reset-to-template")
+async def api_reset_user_permissions_to_template(
+    profile_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_access_control_user),
+):
+    return reset_user_permissions_to_template(
+        school_id,
+        profile_id,
+        actor_profile_id=actor.get("profile_id"),
+        selected_role=str(payload.get("selected_role") or payload.get("role") or "").strip() or None,
+        permission_template=str(payload.get("permission_template") or "").strip() or None,
+    )
+
+
+@router.get("/roles/{role}/permissions")
+async def api_role_permissions(
+    role: str,
+    _: User = Depends(require_access_control_user),
+):
+    return get_role_template_permissions(role)
 
 
 @router.get("/parents/{guardian_id}")
