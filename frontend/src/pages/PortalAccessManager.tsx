@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, Pencil, RefreshCw, Search, Shield, Users } from 'lucide-react';
+import { Check, ChevronDown, Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, Pencil, Plus, RefreshCw, Search, Shield, Users, X } from 'lucide-react';
 
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type {
@@ -107,6 +107,42 @@ const buildPermissionGroups = (
 const getAllPermissionKeys = (modules: PermissionModule[]) =>
   modules.flatMap((module) => [module.key, ...module.sections.map((section) => section.key)]);
 
+const buildPermissionCatalogGroups = (
+  modules: PermissionModule[],
+  selectedPermissions: string[],
+  templatePermissions: string[] = [],
+): PortalPermissionGroup[] => {
+  const selected = new Set(selectedPermissions);
+  const template = new Set(templatePermissions);
+  return modules.map((module) => {
+    const moduleIncluded = selected.has(module.key);
+    const moduleFromTemplate = template.has(module.key);
+    return {
+      key: module.key,
+      label: module.label,
+      count: [module.key, ...module.sections.map((section) => section.key)].filter((key) => selected.has(key)).length,
+      permissions: [
+        {
+          key: module.key,
+          label: module.label,
+          granted: moduleIncluded,
+          from_template: moduleFromTemplate,
+          manually_added: moduleIncluded && !moduleFromTemplate,
+          manually_removed: !moduleIncluded && moduleFromTemplate,
+        },
+        ...module.sections.map((section) => ({
+          key: section.key,
+          label: section.label,
+          granted: selected.has(section.key),
+          from_template: template.has(section.key),
+          manually_added: selected.has(section.key) && !template.has(section.key),
+          manually_removed: !selected.has(section.key) && template.has(section.key),
+        })),
+      ],
+    };
+  });
+};
+
 function SummaryCard({ title, value, helper }: { title: string; value: number; helper?: string }) {
   return (
     <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
@@ -129,21 +165,39 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle?: 
   );
 }
 
-function Modal({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  sizeClassName = 'max-w-4xl',
+  panelClassName = '',
+  contentClassName = '',
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  sizeClassName?: string;
+  panelClassName?: string;
+  contentClassName?: string;
+}) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4">
-      <div className="w-full max-w-4xl rounded-[2rem] bg-white p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-700">User Account & Access Center</p>
-            <h3 className="mt-1 text-2xl font-bold text-slate-900">{title}</h3>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/45 px-4 py-4">
+      <div className={`mx-auto flex min-h-full items-center justify-center ${sizeClassName}`}>
+        <div className={`flex w-full flex-col rounded-[2rem] bg-white p-6 shadow-2xl ${panelClassName}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-sky-700">User Account & Access Center</p>
+              <h3 className="mt-1 text-2xl font-bold text-slate-900">{title}</h3>
+            </div>
+            <button type="button" onClick={onClose} className={BUTTON_SECONDARY}>
+              Close
+            </button>
           </div>
-          <button type="button" onClick={onClose} className={BUTTON_SECONDARY}>
-            Close
-          </button>
+          <div className={`mt-6 ${contentClassName}`}>{children}</div>
         </div>
-        <div className="mt-6">{children}</div>
       </div>
     </div>
   );
@@ -308,6 +362,190 @@ function TemplatePreviewCard({
   );
 }
 
+function RbacPermissionEditor({
+  modules,
+  selectedPermissions,
+  templatePermissions,
+  search,
+  onSearchChange,
+  expanded,
+  onToggleGroup,
+  onTogglePermission,
+  onSelectAll,
+  onDeselectAll,
+  onResetToTemplate,
+  onSave,
+  onClose,
+  saving,
+  templateLabel,
+}: {
+  modules: PermissionModule[];
+  selectedPermissions: string[];
+  templatePermissions: string[];
+  search: string;
+  onSearchChange: (value: string) => void;
+  expanded: Record<string, boolean>;
+  onToggleGroup: (key: string) => void;
+  onTogglePermission: (permissionKey: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
+  onResetToTemplate: () => void;
+  onSave: () => void;
+  onClose: () => void;
+  saving: boolean;
+  templateLabel: string;
+}) {
+  const catalogGroups = useMemo(
+    () => buildPermissionCatalogGroups(modules, selectedPermissions, templatePermissions),
+    [modules, selectedPermissions, templatePermissions],
+  );
+  const selectedGroups = useMemo(
+    () => buildPermissionGroups(modules, selectedPermissions, templatePermissions),
+    [modules, selectedPermissions, templatePermissions],
+  );
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredCatalogGroups = useMemo(
+    () =>
+      catalogGroups
+        .map((group) => ({
+          ...group,
+          permissions: group.permissions.filter((permission) => {
+            if (!normalizedSearch) return true;
+            return `${group.label} ${permission.label} ${permission.key}`.toLowerCase().includes(normalizedSearch);
+          }),
+        }))
+        .filter((group) => group.permissions.length > 0),
+    [catalogGroups, normalizedSearch],
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-50">
+      <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Permission Editor</p>
+            <p className="mt-1 text-sm text-slate-500">Browse the full RBAC catalog, review role-derived powers, and apply manual overrides without leaving the current manager.</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full bg-sky-100 px-3 py-1 font-semibold text-sky-700">Role: {templateLabel}</span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-700">Assigned: {selectedPermissions.length}</span>
+            <span className="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-700">Manual Adds: {selectedPermissions.filter((item) => !templatePermissions.includes(item)).length}</span>
+            <span className="rounded-full bg-amber-100 px-3 py-1 font-semibold text-amber-700">Removed Overrides: {templatePermissions.filter((item) => !selectedPermissions.includes(item)).length}</span>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button type="button" onClick={onSelectAll} className={BUTTON_SECONDARY}>Select All</button>
+          <button type="button" onClick={onDeselectAll} className={BUTTON_SECONDARY}>Deselect All</button>
+          <button type="button" onClick={onResetToTemplate} className={BUTTON_SECONDARY}>Reset To Template</button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div className="grid min-h-full gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+          <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Permission Catalog</p>
+                <p className="text-xs text-slate-500">Every module and action is available here, not just the ones already assigned.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{filteredCatalogGroups.length} modules</span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {filteredCatalogGroups.map((group) => (
+                <div key={group.key} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <button type="button" onClick={() => onToggleGroup(group.key)} className="flex w-full items-center justify-between gap-3 text-left">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">{group.label}</p>
+                      <p className="text-xs text-slate-500">{group.permissions.filter((permission) => permission.granted).length} selected</p>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 text-slate-500 transition ${expanded[group.key] ? 'rotate-180' : ''}`} />
+                  </button>
+                  {expanded[group.key] ? (
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      {group.permissions.map((permission) => {
+                        const isSelected = selectedPermissions.includes(permission.key);
+                        return (
+                          <div key={permission.key} className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-medium text-slate-900">{permission.label}</p>
+                                <p className="mt-1 text-xs text-slate-500">{permission.key}</p>
+                                <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                                  {permission.from_template ? <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-700">Role</span> : null}
+                                  {permission.manually_added ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Manual</span> : null}
+                                  {permission.manually_removed ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">Removed Override</span> : null}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onTogglePermission(permission.key)}
+                                className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${
+                                  isSelected
+                                    ? 'border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                    : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                }`}
+                              >
+                                {isSelected ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                                {isSelected ? 'Remove' : 'Add Permission'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Assigned Access</p>
+                <p className="text-xs text-slate-500">Selected powers, grouped by module with source badges.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{selectedPermissions.length} permissions</span>
+            </div>
+            <div className="mt-4">
+              {selectedGroups.length ? (
+                <PermissionGroupList
+                  groups={selectedGroups}
+                  search={search}
+                  expanded={expanded}
+                  onToggleGroup={onToggleGroup}
+                />
+              ) : (
+                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                  No permissions selected. Use the catalog to add powers.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="relative w-full max-w-md">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              className={`${PANEL_INPUT} pl-11`}
+              placeholder="Search permissions, modules, or keys"
+            />
+          </div>
+          <div className="flex flex-wrap justify-end gap-3">
+            <button type="button" onClick={onClose} className={BUTTON_SECONDARY}>Cancel</button>
+            <button type="button" onClick={onSave} disabled={saving} className={BUTTON_PRIMARY}>Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PortalAccessManager() {
   const [activeTab, setActiveTab] = useState<TabKey>('student');
   const [error, setError] = useState<string | null>(null);
@@ -409,12 +647,9 @@ export default function PortalAccessManager() {
 
   useEffect(() => {
     if (!editPowersOpen) return;
-    if (editTemplateKey === 'custom') return;
-    const template = templateMap.get(editTemplateKey);
-    if (!template) return;
-    setEditSelectedRole(template.selected_role || editSelectedRole);
-    setEditPermissions(template.permissions || []);
-  }, [editPowersOpen, editTemplateKey, templateMap]);
+    setPermissionSearch('');
+    setExpandedGroups(Object.fromEntries(permissionModules.map((module) => [module.key, false])));
+  }, [editPowersOpen, permissionModules]);
 
   const refreshAll = async () => {
     try {
@@ -927,10 +1162,6 @@ export default function PortalAccessManager() {
   );
 
   const effectiveViewGroups = templatePreviewTitle ? templatePreviewGroups : (accountSummary?.groups || []);
-  const effectiveEditGroups = useMemo(
-    () => buildPermissionGroups(permissionModules, editPermissions, editTemplateKey === 'custom' ? accountSummary?.template_permissions || [] : templateMap.get(editTemplateKey)?.permissions || []),
-    [accountSummary?.template_permissions, editPermissions, editTemplateKey, permissionModules, templateMap],
-  );
 
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.14),_transparent_28%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] px-4 py-8 md:px-8">
@@ -1421,12 +1652,31 @@ export default function PortalAccessManager() {
         </div>
       </Modal>
 
-      <Modal open={editPowersOpen} title={`Edit Powers${accountSummary ? ` - ${accountSummary.user_name}` : ''}`} onClose={() => setEditPowersOpen(false)}>
-        <div className="space-y-5">
+      <Modal
+        open={editPowersOpen}
+        title={`Edit Powers${accountSummary ? ` - ${accountSummary.user_name}` : ''}`}
+        onClose={() => setEditPowersOpen(false)}
+        sizeClassName="max-w-7xl"
+        panelClassName="max-h-[95vh] overflow-hidden"
+        contentClassName="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="flex min-h-0 flex-1 flex-col gap-5">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="mb-2 text-sm font-semibold text-slate-900">Role Template</p>
-              <select value={editTemplateKey} onChange={(event) => setEditTemplateKey(event.target.value)} className={PANEL_INPUT}>
+              <select
+                value={editTemplateKey}
+                onChange={(event) => {
+                  const nextTemplateKey = event.target.value;
+                  setEditTemplateKey(nextTemplateKey);
+                  if (nextTemplateKey === 'custom') return;
+                  const template = templateMap.get(nextTemplateKey);
+                  if (!template) return;
+                  setEditSelectedRole(template.selected_role || editSelectedRole);
+                  setEditPermissions(template.permissions || []);
+                }}
+                className={PANEL_INPUT}
+              >
                 {permissionTemplates.map((template) => (
                   <option key={template.key} value={template.key}>{template.label}</option>
                 ))}
@@ -1441,28 +1691,23 @@ export default function PortalAccessManager() {
               </select>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={() => setEditPermissions(getAllPermissionKeys(permissionModules))} className={BUTTON_SECONDARY}>Select All</button>
-            <button type="button" onClick={() => setEditPermissions([])} className={BUTTON_SECONDARY}>Deselect All</button>
-            <button type="button" onClick={() => void handleResetToTemplate()} className={BUTTON_SECONDARY}>Reset To Template</button>
-          </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={permissionSearch} onChange={(event) => setPermissionSearch(event.target.value)} className={`${PANEL_INPUT} pl-11`} placeholder="Search permissions" />
-          </div>
-          <PermissionGroupList
-            groups={effectiveEditGroups}
+          <RbacPermissionEditor
+            modules={permissionModules}
+            selectedPermissions={editPermissions}
+            templatePermissions={editTemplateKey === 'custom' ? accountSummary?.template_permissions || [] : templateMap.get(editTemplateKey)?.permissions || []}
             search={permissionSearch}
+            onSearchChange={setPermissionSearch}
             expanded={expandedGroups}
             onToggleGroup={toggleExpandedGroup}
-            editable
-            selectedPermissions={editPermissions}
             onTogglePermission={(permissionKey) => setEditPermissions((current) => current.includes(permissionKey) ? current.filter((item) => item !== permissionKey) : [...current, permissionKey])}
+            onSelectAll={() => setEditPermissions(getAllPermissionKeys(permissionModules))}
+            onDeselectAll={() => setEditPermissions([])}
+            onResetToTemplate={() => void handleResetToTemplate()}
+            onSave={() => void handleSavePermissionChanges()}
+            onClose={() => setEditPowersOpen(false)}
+            saving={processingKey === `save-powers-${accountSummary?.profile_id || ''}`}
+            templateLabel={templateMap.get(editTemplateKey)?.label || accountSummary?.template_label || 'Custom Role'}
           />
-          <div className="flex justify-end gap-3">
-            <button type="button" onClick={() => setEditPowersOpen(false)} className={BUTTON_SECONDARY}>Cancel</button>
-            <button type="button" onClick={() => void handleSavePermissionChanges()} className={BUTTON_PRIMARY}>Save Changes</button>
-          </div>
         </div>
       </Modal>
 
