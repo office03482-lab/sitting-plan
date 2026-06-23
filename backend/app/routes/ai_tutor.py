@@ -10,6 +10,7 @@ from app.middleware.auth import get_authenticated_actor_context, get_authenticat
 from app.models import User, UserRole
 from app.schemas import AiTutorConversationSummaryResponse, AiTutorRequest, AiTutorResponse
 from app.services.bulk_action_requests import is_platform_admin_user
+from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.supabase_ai_tutor import list_ai_conversations, tutor_chat, tutor_explain, tutor_practice, tutor_revision
 from app.services.supabase_context import resolve_school_id_from_actor
 
@@ -48,13 +49,26 @@ async def api_ai_chat(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
-    return tutor_chat(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="ai_tutor.chat",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_chat",
+        credit_amount=1,
+        reason="ai_tutor.chat",
+    )
+    result = tutor_chat(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/conversations", response_model=list[AiTutorConversationSummaryResponse])
@@ -82,13 +96,26 @@ async def api_ai_explain(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
-    return tutor_explain(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="ai_tutor.chat",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_chat",
+        credit_amount=1,
+        reason="ai_tutor.explain",
+    )
+    result = tutor_explain(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/practice", response_model=AiTutorResponse)
@@ -98,13 +125,26 @@ async def api_ai_practice(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
-    return tutor_practice(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="ai_tutor.chat",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_chat",
+        credit_amount=1,
+        reason="ai_tutor.practice",
+    )
+    result = tutor_practice(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/revision", response_model=AiTutorResponse)
@@ -114,10 +154,23 @@ async def api_ai_revision(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
-    return tutor_revision(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="ai_tutor.chat",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_chat",
+        credit_amount=1,
+        reason="ai_tutor.revision",
+    )
+    result = tutor_revision(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result

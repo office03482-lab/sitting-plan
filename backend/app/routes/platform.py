@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.middleware.auth import get_authenticated_user
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
 from app.models import User
 from app.schemas import (
     BulkActionRequestResponse,
@@ -15,8 +15,19 @@ from app.schemas import (
     PlatformWorkflowEventResponse,
     PlatformWorkflowRequestDetailResponse,
 )
+from app.schemas.subscription_api import (
+    PlatformSubscriptionActivateRequest,
+    PlatformSubscriptionCancelRequest,
+    PlatformSubscriptionChangeRequest,
+    PlatformSubscriptionPauseRequest,
+)
 from app.services.bulk_action_requests import _serialize_bulk_action_request
 from app.services.supabase_admin import create_supabase_admin_client
+from app.services.subscription_engine import (
+    PlanChangeRequestService,
+    PlanCronService,
+    SchoolSubscriptionService,
+)
 router = APIRouter(prefix="/api/platform", tags=["Platform Administration"])
 
 
@@ -24,6 +35,16 @@ def require_platform_admin(user: User = Depends(get_authenticated_user)) -> User
     if str(getattr(user, "role_key", "") or "").strip().lower() != "platform_admin":
         raise HTTPException(status_code=403, detail="Only Platform Admin can access this section")
     return user
+
+
+school_subscription_service = SchoolSubscriptionService()
+plan_change_request_service = PlanChangeRequestService()
+plan_cron_service = PlanCronService(
+    school_subscription_service=school_subscription_service,
+    plan_change_request_service=plan_change_request_service,
+    school_plan_repository=school_subscription_service.repository,
+    plan_change_repository=plan_change_request_service.repository,
+)
 
 
 def _load_profiles_map(profile_ids: set[str], supabase=None) -> dict[str, dict[str, Any]]:
@@ -318,4 +339,92 @@ def list_platform_audit_logs(
         total_count=total_count,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/plans")
+def list_platform_plan_catalog(
+    _: User = Depends(require_platform_admin),
+):
+    plans = school_subscription_service.list_plan_catalog()
+    return {"plans": plans, "count": len(plans)}
+
+
+@router.get("/schools/{school_id}/subscription")
+def get_platform_school_subscription(
+    school_id: str,
+    _: User = Depends(require_platform_admin),
+):
+    return school_subscription_service.get_school_plan(school_id)
+
+
+@router.post("/schools/{school_id}/subscription/activate")
+def activate_platform_school_subscription(
+    school_id: str,
+    payload: PlatformSubscriptionActivateRequest,
+    user: User = Depends(require_platform_admin),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+):
+    return school_subscription_service.activate_plan(
+        school_id,
+        payload.plan_tier.value,
+        payload.billing_cycle,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+    )
+
+
+@router.post("/schools/{school_id}/subscription/change")
+def change_platform_school_subscription(
+    school_id: str,
+    payload: PlatformSubscriptionChangeRequest,
+    user: User = Depends(require_platform_admin),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+):
+    return school_subscription_service.change_plan(
+        school_id,
+        payload.new_plan_tier.value,
+        payload.effective_date,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+        billing_cycle=payload.billing_cycle,
+        reason=payload.reason,
+    )
+
+
+@router.post("/schools/{school_id}/subscription/cancel")
+def cancel_platform_school_subscription(
+    school_id: str,
+    payload: PlatformSubscriptionCancelRequest,
+    user: User = Depends(require_platform_admin),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+):
+    return school_subscription_service.cancel_plan(
+        school_id,
+        payload.mode,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+    )
+
+
+@router.post("/schools/{school_id}/subscription/pause")
+def pause_platform_school_subscription(
+    school_id: str,
+    payload: PlatformSubscriptionPauseRequest,
+    user: User = Depends(require_platform_admin),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+):
+    return school_subscription_service.pause_plan(
+        school_id,
+        payload.pause_until,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+    )
+
+
+@router.post("/schools/{school_id}/subscription/resume")
+def resume_platform_school_subscription(
+    school_id: str,
+    user: User = Depends(require_platform_admin),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+):
+    return school_subscription_service.resume_plan(
+        school_id,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
     )

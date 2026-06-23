@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     use_supabase_native_services: bool | None = None
     live_classes_enabled: bool = True
+    enable_retrofit_ai: bool = False
+    enable_retrofit_tests: bool = False
+    enable_retrofit_lms: bool = False
+    enable_retrofit_storage: bool = False
+    enable_retrofit_analytics: bool = False
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
+    stripe_secret_key: str | None = None
+    cashfree_app_id: str | None = None
+    cashfree_secret_key: str | None = None
+    billing_invoice_prefix: str = "INV"
+    billing_gst_rate: float = 18.0
+    ai_credit_price_per_credit_inr: float = 1.0
 
     # AI
     ai_provider: str = "gemini"
@@ -120,13 +134,25 @@ class Settings(BaseSettings):
         "X-Requested-With",
         "X-Active-Session",
         "X-Device-Id",
+        "Idempotency-Key",
     ]
     cors_expose_headers: list = [
         "Content-Disposition",
         "Content-Length",
     ]
 
-    @field_validator("debug", "reload", "use_supabase_native_services", "live_classes_enabled", mode="before")
+    @field_validator(
+        "debug",
+        "reload",
+        "use_supabase_native_services",
+        "live_classes_enabled",
+        "enable_retrofit_ai",
+        "enable_retrofit_tests",
+        "enable_retrofit_lms",
+        "enable_retrofit_storage",
+        "enable_retrofit_analytics",
+        mode="before",
+    )
     @classmethod
     def parse_bool_flags(cls, value):
         return _coerce_env_bool(value)

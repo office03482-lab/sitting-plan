@@ -14,6 +14,7 @@ from app.schemas import (
     TestAnalyticsResponse,
 )
 from app.services.bulk_action_requests import is_platform_admin_user
+from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.supabase_analytics import (
     get_batch_analytics,
     get_platform_analytics,
@@ -82,6 +83,17 @@ async def api_get_student_analytics(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_student_analytics_user),
 ):
+    permission_key = "online_tests.attempt" if _is_student_user(user) else "online_tests.reports"
+    reservation = prepare_route_retrofit(
+        flag_name="analytics",
+        user=user,
+        actor=actor,
+        permission_key=permission_key,
+        school_id=school_id,
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="analytics.student",
+    )
     target_student_id = student_id
     if student_id == "me":
         if not _is_student_user(user):
@@ -92,7 +104,9 @@ async def api_get_student_analytics(
         if not profile_id:
             raise HTTPException(status_code=403, detail="Student profile context is missing")
         target_student_id = str(_get_student_by_profile_id(school_id, profile_id).get("id") or "").strip()
-    return get_student_analytics(school_id, target_student_id, actor_profile_id=actor.get("profile_id"))
+    result = get_student_analytics(school_id, target_student_id, actor_profile_id=actor.get("profile_id"))
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/test/{test_id}", response_model=TestAnalyticsResponse)
@@ -102,8 +116,19 @@ async def api_get_test_analytics(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_analytics_user),
 ):
-    del user
-    return get_test_analytics(school_id, test_id, actor_profile_id=actor.get("profile_id"))
+    reservation = prepare_route_retrofit(
+        flag_name="analytics",
+        user=user,
+        actor=actor,
+        permission_key="online_tests.reports",
+        school_id=school_id,
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="analytics.test",
+    )
+    result = get_test_analytics(school_id, test_id, actor_profile_id=actor.get("profile_id"))
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/batch/{batch_id}", response_model=BatchAnalyticsResponse)
@@ -113,8 +138,19 @@ async def api_get_batch_analytics(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_analytics_user),
 ):
-    del user
-    return get_batch_analytics(school_id, batch_id, actor_profile_id=actor.get("profile_id"))
+    reservation = prepare_route_retrofit(
+        flag_name="analytics",
+        user=user,
+        actor=actor,
+        permission_key="online_tests.reports",
+        school_id=school_id,
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="analytics.batch",
+    )
+    result = get_batch_analytics(school_id, batch_id, actor_profile_id=actor.get("profile_id"))
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/school/{target_school_id}", response_model=SchoolAnalyticsResponse)
@@ -124,12 +160,24 @@ async def api_get_school_analytics(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_school_analytics_user),
 ):
+    reservation = prepare_route_retrofit(
+        flag_name="analytics",
+        user=user,
+        actor=actor,
+        permission_key="online_tests.reports",
+        school_id=school_id,
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="analytics.school",
+    )
     resolved_school_id = target_school_id
     if target_school_id == "me":
         resolved_school_id = school_id
     if not is_platform_admin_user(user) and resolved_school_id != school_id:
         raise HTTPException(status_code=403, detail="Cross-school analytics are not allowed for this user")
-    return get_school_analytics(resolved_school_id, actor_profile_id=actor.get("profile_id"))
+    result = get_school_analytics(resolved_school_id, actor_profile_id=actor.get("profile_id"))
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/platform", response_model=PlatformAnalyticsResponse)
@@ -137,5 +185,16 @@ async def api_get_platform_analytics(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_platform_analytics_user),
 ):
-    del user
-    return get_platform_analytics(actor_profile_id=actor.get("profile_id"))
+    reservation = prepare_route_retrofit(
+        flag_name="analytics",
+        user=user,
+        actor=actor,
+        permission_key="online_tests.reports",
+        school_id=str(actor.get("school_id") or "").strip(),
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="analytics.platform",
+    )
+    result = get_platform_analytics(actor_profile_id=actor.get("profile_id"))
+    commit_route_retrofit(reservation)
+    return result

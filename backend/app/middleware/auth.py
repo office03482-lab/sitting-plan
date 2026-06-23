@@ -263,6 +263,8 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
         "role": _map_supabase_role_to_legacy_role(role_key, role_metadata),
         "user_type": _map_supabase_role_to_user_type(role_key, role_metadata),
         "permissions": permissions,
+        "role_metadata": role_metadata or {},
+        "scope_assignments": dict((role_metadata or {}).get("scope_assignments") or {}) if isinstance((role_metadata or {}).get("scope_assignments"), dict) else {},
         "auth_source": "supabase",
     }
 
@@ -337,6 +339,8 @@ def _build_synthetic_user_from_supabase(principal: dict[str, Any]) -> User:
     synthetic_user.role_key = principal.get("role_key")
     synthetic_user.school_id = principal.get("school_id")
     synthetic_user.default_school_id = principal.get("default_school_id")
+    synthetic_user.role_metadata = principal.get("role_metadata") or {}
+    synthetic_user.scope_assignments = principal.get("scope_assignments") or {}
     return synthetic_user
 
 

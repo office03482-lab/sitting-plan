@@ -10,7 +10,9 @@ from fastapi.responses import StreamingResponse
 from postgrest.exceptions import APIError
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.auth import get_authenticated_actor_context, require_permissions
+from app.models import User
+from app.services.scope_engine import PermissionScopeContext, build_scope_context, ensure_school_wide_scope
 from app.models import SeatingPlan, Student, Room, Invigilator, RoomInvigilator
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client
 from app.services.supabase_context import (
@@ -25,6 +27,25 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 EXPORT_ALL_ROOMS_WARN_ROOM_COUNT = 75
 EXPORT_ALL_ROOMS_WARN_STUDENT_COUNT = 5000
+
+
+def require_reports_scope(
+    school_id: str = Depends(resolve_school_id_from_seating_plan_context),
+    actor: dict[str, str] = Depends(get_authenticated_actor_context),
+    user: User = Depends(
+        require_permissions(
+            "admin_office.reports",
+            "admin_office.seating_generation",
+            "admin_office.seating_plans",
+        )
+    ),
+) -> PermissionScopeContext:
+    return build_scope_context(
+        user=user,
+        actor=actor,
+        school_id=school_id,
+        permission_key="admin_office.reports",
+    )
 
 
 def parse_plan_batches(plan: SeatingPlan) -> list[str]:
@@ -414,11 +435,13 @@ def build_enriched_room_plan(db: Session, plan: SeatingPlan) -> dict:
 async def export_pdf(
     plan_id: str,
     school_id: str = Depends(resolve_school_id_from_seating_plan_context),
+    scope_context: PermissionScopeContext = Depends(require_reports_scope),
     db: Session = Depends(get_db),
 ):
     """
     Export seating plan as PDF
     """
+    ensure_school_wide_scope(scope_context, "Only school-wide report access can export seating plan PDFs")
     if not is_legacy_sqlite_mode():
         enriched_room_plan = _build_supabase_single_room_plan(school_id, plan_id)
         pdf_buffer = create_seating_report_pdf(enriched_room_plan["plan_data"], enriched_room_plan["room_data"])
@@ -515,11 +538,13 @@ async def export_pdf(
 async def export_excel(
     plan_id: str,
     school_id: str = Depends(resolve_school_id_from_seating_plan_context),
+    scope_context: PermissionScopeContext = Depends(require_reports_scope),
     db: Session = Depends(get_db),
 ):
     """
     Export seating plan as Excel file
     """
+    ensure_school_wide_scope(scope_context, "Only school-wide report access can export seating plan spreadsheets")
     if not is_legacy_sqlite_mode():
         enriched_room_plan = _build_supabase_single_room_plan(school_id, plan_id)
         excel_buffer = create_seating_export_excel(enriched_room_plan["plan_data"], enriched_room_plan["room_data"])
@@ -551,9 +576,11 @@ async def export_all_rooms_excel(
     plan_type: str | None = None,
     school_id: str = Depends(resolve_school_id_from_exam_context),
     actor: dict = Depends(get_authenticated_actor_context),
+    scope_context: PermissionScopeContext = Depends(require_reports_scope),
     db: Session = Depends(get_db),
 ):
     """Export all seating plans for an exam into one workbook, one sheet per room."""
+    ensure_school_wide_scope(scope_context, "Only school-wide report access can export all seating plan rooms")
     request_started_at = time.perf_counter()
     logger.info(
         "reports.export_all_rooms_excel.request",

@@ -605,6 +605,36 @@ def _selected_role_from_membership(membership: dict[str, Any] | None) -> str:
     return role_key or "viewer"
 
 
+def _normalize_scope_value(value: Any) -> str:
+    normalized = _normalize_role_key(value)
+    return normalized if normalized in {"own", "assigned", "school", "platform"} else "school"
+
+
+def _default_scope_for_permission(permission_key: str, selected_role: str) -> str:
+    normalized_role = _normalize_role_key(selected_role)
+    if normalized_role == "platform_admin":
+        return "platform"
+    if normalized_role in {"student", "parent"}:
+        return "own"
+    if normalized_role in {"teacher", "staff", "viewer", "store_manager"}:
+        return "assigned"
+    return "school"
+
+
+def _normalize_scope_assignments(
+    assignments: dict[str, Any] | None,
+    *,
+    permissions: list[str],
+    selected_role: str,
+) -> dict[str, str]:
+    normalized_permissions = [_normalize_role_key(item) for item in permissions if _normalize_role_key(item)]
+    raw_assignments = assignments if isinstance(assignments, dict) else {}
+    result: dict[str, str] = {}
+    for permission_key in normalized_permissions:
+        result[permission_key] = _normalize_scope_value(raw_assignments.get(permission_key) or _default_scope_for_permission(permission_key, selected_role))
+    return result
+
+
 def _resolve_template_key_for_role(selected_role: str, permissions: list[str]) -> str:
     from app.routes.auth import normalize_permissions
 
@@ -759,6 +789,15 @@ def get_user_permission_summary(school_id: str, profile_id: str) -> dict[str, An
     template_key = _resolve_template_key_for_role(selected_role, current_permissions)
     template = PORTAL_PERMISSION_TEMPLATES.get(template_key) or {"label": "Custom Role", "permissions": [], "selected_role": selected_role}
     template_permissions = normalize_permissions(template.get("permissions"))
+    role_data = membership.get("roles") if isinstance(membership, dict) else None
+    if isinstance(role_data, list):
+        role_data = role_data[0] if role_data else None
+    role_metadata = _json_object((role_data or {}).get("metadata")) if isinstance(role_data, dict) else {}
+    scope_assignments = _normalize_scope_assignments(
+        role_metadata.get("scope_assignments"),
+        permissions=current_permissions,
+        selected_role=selected_role,
+    )
     latest_session = _latest_session_for_profile(profile_id)
     active_sessions = _active_session_count(profile_id)
     grouped = _group_permissions(granted_permissions=current_permissions, template_permissions=template_permissions)
@@ -785,6 +824,7 @@ def get_user_permission_summary(school_id: str, profile_id: str) -> dict[str, An
         "manual_add_count": len(manually_added),
         "manual_remove_count": len(manually_removed),
         "permissions": current_permissions,
+        "scope_assignments": scope_assignments,
         "template_permissions": template_permissions,
         "manually_added": manually_added,
         "manually_removed": manually_removed,
@@ -800,6 +840,7 @@ def update_user_permissions(
     selected_role: str | None = None,
     permission_template: str | None = None,
     permissions: list[str] | None = None,
+    scope_assignments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from app.routes.auth import normalize_permissions, validate_role_input
 
@@ -814,12 +855,18 @@ def update_user_permissions(
         raise HTTPException(status_code=404, detail="Permission template not found")
     template = PORTAL_PERMISSION_TEMPLATES.get(template_key, PORTAL_PERMISSION_TEMPLATES["custom"])
     resolved_permissions = normalize_permissions(permissions if template_key == "custom" else template.get("permissions"))
+    resolved_scope_assignments = _normalize_scope_assignments(
+        scope_assignments if scope_assignments is not None else previous_summary.get("scope_assignments"),
+        permissions=resolved_permissions,
+        selected_role=next_role,
+    )
     role_row = _ensure_membership_role(
         school_id,
         profile_id,
         full_name=_normalize(profile.get("full_name")) or _normalize(profile.get("display_name")) or "User",
         selected_role=next_role,
         permissions=resolved_permissions,
+        scope_assignments=resolved_scope_assignments,
     )
     _public_table("school_memberships").update({"role_id": _normalize(role_row.get("id"))}).eq("id", membership["id"]).execute()
 
@@ -870,6 +917,31 @@ def update_user_permissions(
                 "action_label": "Permission Removed",
             },
         )
+    previous_scopes = {
+        _normalize_role_key(key): _normalize_scope_value(value)
+        for key, value in dict(previous_summary.get("scope_assignments") or {}).items()
+        if _normalize_role_key(key)
+    }
+    for permission_key in sorted(next_permissions):
+        previous_scope = previous_scopes.get(permission_key)
+        next_scope = resolved_scope_assignments.get(permission_key)
+        if not next_scope or previous_scope == next_scope:
+            continue
+        _record_audit(
+            school_id=school_id,
+            actor_profile_id=actor_profile_id,
+            action="permission.scope_changed",
+            entity_id=profile_id,
+            payload={
+                "profile_id": profile_id,
+                "username": _normalize(profile.get("display_name")),
+                "entity_name": _normalize(profile.get("full_name")) or _normalize(profile.get("display_name")),
+                "permission_key": permission_key,
+                "previous_scope": previous_scope,
+                "next_scope": next_scope,
+                "action_label": "Permission Scope Changed",
+            },
+        )
     return get_user_permission_summary(school_id, profile_id)
 
 
@@ -899,6 +971,7 @@ def reset_user_permissions_to_template(
         selected_role=next_role,
         permission_template=template_key,
         permissions=None,
+        scope_assignments=None,
     )
 
 
@@ -909,10 +982,16 @@ def _ensure_membership_role(
     full_name: str,
     selected_role: str,
     permissions: list[str] | None = None,
+    scope_assignments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from app.routes.auth import _ensure_managed_role, normalize_permissions
 
     role_permissions = normalize_permissions(permissions or _default_permissions_for_role(selected_role))
+    normalized_scope_assignments = _normalize_scope_assignments(
+        scope_assignments,
+        permissions=role_permissions,
+        selected_role=selected_role,
+    )
     return _ensure_managed_role(
         school_id,
         profile_id,
@@ -920,6 +999,7 @@ def _ensure_membership_role(
         selected_role=selected_role,
         user_type=_role_user_type(selected_role),
         permissions=role_permissions,
+        metadata_updates={"scope_assignments": normalized_scope_assignments},
         supabase=_client(),
     )
 
@@ -2386,15 +2466,42 @@ def _profile_login_usernames(profile: dict[str, Any]) -> set[str]:
     return {candidate.lower() for candidate in candidates if candidate}
 
 
-def resolve_login_email(identifier: str) -> dict[str, Any]:
+def resolve_login_email(identifier: str, *, school_id: str | None = None) -> dict[str, Any]:
     normalized = _normalize(identifier)
     if not normalized:
         raise HTTPException(status_code=400, detail="Identifier is required")
     if "@" in normalized:
         return {"email": normalized.lower()}
+    normalized_school_id = _normalize(school_id)
+    if not normalized_school_id:
+        raise HTTPException(
+            status_code=400,
+            detail="School context is required for username login. Please use your login email.",
+        )
+    membership_rows = list(
+        _public_table("school_memberships")
+        .select("profile_id")
+        .eq("school_id", normalized_school_id)
+        .eq("is_active", True)
+        .eq("status", "active")
+        .limit(500)
+        .execute()
+        .data
+        or []
+    )
+    scoped_profile_ids = sorted(
+        {
+            _normalize(row.get("profile_id"))
+            for row in membership_rows
+            if _normalize(row.get("profile_id"))
+        }
+    )
+    if not scoped_profile_ids:
+        raise HTTPException(status_code=404, detail="Login account not found")
     profile_rows = list(
         _public_table("profiles")
         .select("id,email,display_name,metadata")
+        .in_("id", scoped_profile_ids)
         .limit(200)
         .execute()
         .data

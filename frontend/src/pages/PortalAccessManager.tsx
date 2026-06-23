@@ -21,6 +21,7 @@ type TabKey = 'student' | 'parent' | 'teacher' | 'staff' | 'administrator' | 'cr
 type PermissionModule = { key: string; label: string; sections: Array<{ key: string; label: string }> };
 type ScopeValue = 'selected' | 'batch' | 'class' | 'school';
 type ParentScopeValue = 'selected_parents' | 'selected_students' | 'batch' | 'school';
+type PermissionScopeValue = 'own' | 'assigned' | 'school' | 'platform';
 
 const PANEL_INPUT =
   'w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-200/60';
@@ -106,6 +107,30 @@ const buildPermissionGroups = (
 
 const getAllPermissionKeys = (modules: PermissionModule[]) =>
   modules.flatMap((module) => [module.key, ...module.sections.map((section) => section.key)]);
+
+const permissionScopeOptions: PermissionScopeValue[] = ['own', 'assigned', 'school', 'platform'];
+
+const defaultScopeForRole = (role: string): PermissionScopeValue => {
+  const normalized = String(role || '').trim().toLowerCase();
+  if (normalized === 'platform_admin') return 'platform';
+  if (normalized === 'student' || normalized === 'parent') return 'own';
+  if (normalized === 'teacher' || normalized === 'staff' || normalized === 'viewer' || normalized === 'store_manager') return 'assigned';
+  return 'school';
+};
+
+const normalizeScopeAssignments = (
+  permissions: string[],
+  selectedRole: string,
+  rawAssignments?: Record<string, string>,
+): Record<string, PermissionScopeValue> => {
+  const fallback = defaultScopeForRole(selectedRole);
+  const result: Record<string, PermissionScopeValue> = {};
+  permissions.forEach((permission) => {
+    const value = rawAssignments?.[permission];
+    result[permission] = permissionScopeOptions.includes(value as PermissionScopeValue) ? (value as PermissionScopeValue) : fallback;
+  });
+  return result;
+};
 
 const buildPermissionCatalogGroups = (
   modules: PermissionModule[],
@@ -366,11 +391,14 @@ function RbacPermissionEditor({
   modules,
   selectedPermissions,
   templatePermissions,
+  scopeAssignments,
+  selectedRole,
   search,
   onSearchChange,
   expanded,
   onToggleGroup,
   onTogglePermission,
+  onChangePermissionScope,
   onSelectAll,
   onDeselectAll,
   onResetToTemplate,
@@ -382,11 +410,14 @@ function RbacPermissionEditor({
   modules: PermissionModule[];
   selectedPermissions: string[];
   templatePermissions: string[];
+  scopeAssignments: Record<string, PermissionScopeValue>;
+  selectedRole: string;
   search: string;
   onSearchChange: (value: string) => void;
   expanded: Record<string, boolean>;
   onToggleGroup: (key: string) => void;
   onTogglePermission: (permissionKey: string) => void;
+  onChangePermissionScope: (permissionKey: string, scope: PermissionScopeValue) => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
   onResetToTemplate: () => void;
@@ -403,6 +434,14 @@ function RbacPermissionEditor({
     () => buildPermissionGroups(modules, selectedPermissions, templatePermissions),
     [modules, selectedPermissions, templatePermissions],
   );
+  const selectedScopeBadges = useMemo(() => {
+    const counts: Record<PermissionScopeValue, number> = { own: 0, assigned: 0, school: 0, platform: 0 };
+    selectedPermissions.forEach((permission) => {
+      const scope = scopeAssignments[permission] || defaultScopeForRole(selectedRole);
+      counts[scope] += 1;
+    });
+    return counts;
+  }, [scopeAssignments, selectedPermissions, selectedRole]);
   const normalizedSearch = search.trim().toLowerCase();
   const filteredCatalogGroups = useMemo(
     () =>
@@ -503,18 +542,72 @@ function RbacPermissionEditor({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Assigned Access</p>
-                <p className="text-xs text-slate-500">Selected powers, grouped by module with source badges.</p>
+                <p className="text-xs text-slate-500">Selected powers, grouped by module with source badges and scope assignment.</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{selectedPermissions.length} permissions</span>
             </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+              {permissionScopeOptions.map((scope) => (
+                <span key={scope} className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">
+                  {toTitle(scope)}: {selectedScopeBadges[scope]}
+                </span>
+              ))}
+            </div>
             <div className="mt-4">
               {selectedGroups.length ? (
-                <PermissionGroupList
-                  groups={selectedGroups}
-                  search={search}
-                  expanded={expanded}
-                  onToggleGroup={onToggleGroup}
-                />
+                <div className="space-y-3">
+                  {selectedGroups
+                    .map((group) => ({
+                      ...group,
+                      permissions: group.permissions.filter((permission) => {
+                        if (!normalizedSearch) return true;
+                        return `${group.label} ${permission.label} ${permission.key}`.toLowerCase().includes(normalizedSearch);
+                      }),
+                    }))
+                    .filter((group) => group.permissions.length > 0)
+                    .map((group) => (
+                      <div key={group.key} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <button type="button" onClick={() => onToggleGroup(group.key)} className="flex w-full items-center justify-between gap-3 text-left">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{group.label}</p>
+                            <p className="text-xs text-slate-500">{group.count} selected</p>
+                          </div>
+                          <ChevronDown className={`h-4 w-4 text-slate-500 transition ${expanded[group.key] ? 'rotate-180' : ''}`} />
+                        </button>
+                        {expanded[group.key] ? (
+                          <div className="mt-3 space-y-2">
+                            {group.permissions.map((permission) => (
+                              <div key={permission.key} className="rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-slate-900">{permission.label}</p>
+                                    <p className="mt-1 text-xs text-slate-500">{permission.key}</p>
+                                    <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                                      {permission.from_template ? <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-700">Role</span> : null}
+                                      {permission.manually_added ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">Manual</span> : null}
+                                      {permission.manually_removed ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-700">Removed Override</span> : null}
+                                    </div>
+                                  </div>
+                                  <div className="flex w-full flex-col gap-2 lg:w-44">
+                                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scope</label>
+                                    <select
+                                      value={scopeAssignments[permission.key] || defaultScopeForRole(selectedRole)}
+                                      onChange={(event) => onChangePermissionScope(permission.key, event.target.value as PermissionScopeValue)}
+                                      className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-200/60"
+                                    >
+                                      {permissionScopeOptions.map((scope) => (
+                                        <option key={scope} value={scope}>{toTitle(scope)}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                </div>
               ) : (
                 <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
                   No permissions selected. Use the catalog to add powers.
@@ -577,6 +670,7 @@ export default function PortalAccessManager() {
   const [editTemplateKey, setEditTemplateKey] = useState('custom');
   const [editSelectedRole, setEditSelectedRole] = useState('viewer');
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
+  const [editScopeAssignments, setEditScopeAssignments] = useState<Record<string, PermissionScopeValue>>({});
   const [templatePreviewTitle, setTemplatePreviewTitle] = useState<string | null>(null);
   const [templatePreviewGroups, setTemplatePreviewGroups] = useState<PortalPermissionGroup[]>([]);
   const [templatePreviewCount, setTemplatePreviewCount] = useState(0);
@@ -805,6 +899,7 @@ export default function PortalAccessManager() {
     setEditTemplateKey(summaryData.template_key || 'custom');
     setEditSelectedRole(summaryData.selected_role || summaryData.role || 'viewer');
     setEditPermissions(summaryData.permissions || []);
+    setEditScopeAssignments(normalizeScopeAssignments(summaryData.permissions || [], summaryData.selected_role || summaryData.role || 'viewer', summaryData.scope_assignments));
     setEditPowersOpen(true);
   };
 
@@ -1014,8 +1109,10 @@ export default function PortalAccessManager() {
         selected_role: editSelectedRole,
         permission_template: editTemplateKey,
         permissions: editPermissions,
+        scope_assignments: editScopeAssignments,
       });
       setAccountSummary(response.data);
+      setEditScopeAssignments(normalizeScopeAssignments(response.data.permissions || [], response.data.selected_role || response.data.role || 'viewer', response.data.scope_assignments));
       setEditPowersOpen(false);
       setMessage('Permissions updated.');
       await refreshAll();
@@ -1033,6 +1130,7 @@ export default function PortalAccessManager() {
       setEditPermissions(response.data.permissions || []);
       setEditTemplateKey(response.data.template_key || editTemplateKey);
       setEditSelectedRole(response.data.selected_role || editSelectedRole);
+      setEditScopeAssignments(normalizeScopeAssignments(response.data.permissions || [], response.data.selected_role || response.data.role || 'viewer', response.data.scope_assignments));
       setMessage('Permissions reset to template.');
       await refreshAll();
     });
@@ -1583,7 +1681,7 @@ export default function PortalAccessManager() {
                 <Eye className="h-4 w-4" />
                 View Powers
               </button>
-              <button type="button" onClick={() => { setEditTemplateKey(accountSummary.template_key || 'custom'); setEditSelectedRole(accountSummary.selected_role || accountSummary.role); setEditPermissions(accountSummary.permissions || []); setEditPowersOpen(true); }} className={BUTTON_SECONDARY}>
+              <button type="button" onClick={() => { setEditTemplateKey(accountSummary.template_key || 'custom'); setEditSelectedRole(accountSummary.selected_role || accountSummary.role); setEditPermissions(accountSummary.permissions || []); setEditScopeAssignments(normalizeScopeAssignments(accountSummary.permissions || [], accountSummary.selected_role || accountSummary.role || 'viewer', accountSummary.scope_assignments)); setEditPowersOpen(true); }} className={BUTTON_SECONDARY}>
                 <Pencil className="h-4 w-4" />
                 Edit Powers
               </button>
@@ -1674,6 +1772,7 @@ export default function PortalAccessManager() {
                   if (!template) return;
                   setEditSelectedRole(template.selected_role || editSelectedRole);
                   setEditPermissions(template.permissions || []);
+                  setEditScopeAssignments(normalizeScopeAssignments(template.permissions || [], template.selected_role || editSelectedRole));
                 }}
                 className={PANEL_INPUT}
               >
@@ -1684,7 +1783,15 @@ export default function PortalAccessManager() {
             </div>
             <div>
               <p className="mb-2 text-sm font-semibold text-slate-900">Selected Role</p>
-              <select value={editSelectedRole} onChange={(event) => setEditSelectedRole(event.target.value)} className={PANEL_INPUT}>
+              <select
+                value={editSelectedRole}
+                onChange={(event) => {
+                  const nextRole = event.target.value;
+                  setEditSelectedRole(nextRole);
+                  setEditScopeAssignments(normalizeScopeAssignments(editPermissions, nextRole, editScopeAssignments));
+                }}
+                className={PANEL_INPUT}
+              >
                 {permissionTemplates.map((template) => (
                   <option key={`${template.key}-${template.selected_role}`} value={template.selected_role}>{template.label}</option>
                 ))}
@@ -1699,14 +1806,30 @@ export default function PortalAccessManager() {
             onSearchChange={setPermissionSearch}
             expanded={expandedGroups}
             onToggleGroup={toggleExpandedGroup}
-            onTogglePermission={(permissionKey) => setEditPermissions((current) => current.includes(permissionKey) ? current.filter((item) => item !== permissionKey) : [...current, permissionKey])}
-            onSelectAll={() => setEditPermissions(getAllPermissionKeys(permissionModules))}
-            onDeselectAll={() => setEditPermissions([])}
+            onTogglePermission={(permissionKey) =>
+              setEditPermissions((current) => {
+                const next = current.includes(permissionKey) ? current.filter((item) => item !== permissionKey) : [...current, permissionKey];
+                setEditScopeAssignments((existing) => normalizeScopeAssignments(next, editSelectedRole, existing));
+                return next;
+              })
+            }
+            onChangePermissionScope={(permissionKey, scope) => setEditScopeAssignments((current) => ({ ...current, [permissionKey]: scope }))}
+            onSelectAll={() => {
+              const next = getAllPermissionKeys(permissionModules);
+              setEditPermissions(next);
+              setEditScopeAssignments(normalizeScopeAssignments(next, editSelectedRole, editScopeAssignments));
+            }}
+            onDeselectAll={() => {
+              setEditPermissions([]);
+              setEditScopeAssignments({});
+            }}
             onResetToTemplate={() => void handleResetToTemplate()}
             onSave={() => void handleSavePermissionChanges()}
             onClose={() => setEditPowersOpen(false)}
             saving={processingKey === `save-powers-${accountSummary?.profile_id || ''}`}
             templateLabel={templateMap.get(editTemplateKey)?.label || accountSummary?.template_label || 'Custom Role'}
+            scopeAssignments={editScopeAssignments}
+            selectedRole={editSelectedRole}
           />
         </div>
       </Modal>

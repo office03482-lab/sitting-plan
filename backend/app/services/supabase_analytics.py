@@ -219,27 +219,53 @@ def _load_students(*, school_id: str | None = None, student_ids: list[str] | Non
     return [dict(row) for row in list(query.execute().data or [])]
 
 
-def _load_batches(batch_ids: list[str]) -> dict[str, dict[str, Any]]:
+def _load_batches(batch_ids: list[str], *, school_id: str | None = None) -> dict[str, dict[str, Any]]:
     ids = [item for item in batch_ids if item]
     if not ids:
         return {}
-    rows = list(_public_table("batches").select("id,name,class_name,section").in_("id", ids).execute().data or [])
+    query = _public_table("batches").select("id,school_id,name,class_name,section").in_("id", ids)
+    if school_id:
+        query = query.eq("school_id", school_id)
+    rows = list(query.execute().data or [])
     return {_normalize(row.get("id")): dict(row) for row in rows}
 
 
-def _load_subjects(subject_ids: list[str]) -> dict[str, dict[str, Any]]:
+def _load_subjects(subject_ids: list[str], *, school_id: str | None = None) -> dict[str, dict[str, Any]]:
     ids = [item for item in subject_ids if item]
     if not ids:
         return {}
-    rows = list(_public_table("subjects").select("id,name,class_name").in_("id", ids).execute().data or [])
+    query = _public_table("subjects").select("id,school_id,name,class_name").in_("id", ids)
+    if school_id:
+        query = query.eq("school_id", school_id)
+    rows = list(query.execute().data or [])
     return {_normalize(row.get("id")): dict(row) for row in rows}
 
 
-def _load_profiles(profile_ids: list[str]) -> dict[str, dict[str, Any]]:
+def _load_profiles(profile_ids: list[str], *, school_id: str | None = None) -> dict[str, dict[str, Any]]:
     ids = [item for item in profile_ids if item]
     if not ids:
         return {}
-    rows = list(_public_table("profiles").select("id,full_name,display_name,email").in_("id", ids).execute().data or [])
+    scoped_ids = ids
+    if school_id:
+        membership_rows = list(
+            _public_table("school_memberships")
+            .select("profile_id")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .eq("status", "active")
+            .in_("profile_id", ids)
+            .execute()
+            .data
+            or []
+        )
+        scoped_ids = [
+            _normalize(row.get("profile_id"))
+            for row in membership_rows
+            if _normalize(row.get("profile_id"))
+        ]
+        if not scoped_ids:
+            return {}
+    rows = list(_public_table("profiles").select("id,full_name,display_name,email").in_("id", scoped_ids).execute().data or [])
     return {_normalize(row.get("id")): dict(row) for row in rows}
 
 
@@ -302,8 +328,17 @@ def _get_test(school_id: str, test_id: str) -> dict[str, Any]:
     return dict(rows[0])
 
 
-def _get_batch(batch_id: str) -> dict[str, Any]:
-    rows = list(_public_table("batches").select("id,name,class_name,section").eq("id", batch_id).limit(1).execute().data or [])
+def _get_batch(school_id: str, batch_id: str) -> dict[str, Any]:
+    rows = list(
+        _public_table("batches")
+        .select("id,school_id,name,class_name,section")
+        .eq("school_id", school_id)
+        .eq("id", batch_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="Batch not found")
     return dict(rows[0])
@@ -572,7 +607,7 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
     attempt_map = {_normalize(row.get("id")): row for row in attempt_rows}
     test_rows = _load_tests(school_id=school_id, test_ids=[_normalize(row.get("test_id")) for row in result_rows])
     test_map = {_normalize(row.get("id")): row for row in test_rows}
-    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows])
+    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows], school_id=school_id)
     response_rows = _load_responses(school_id=school_id, attempt_ids=[_normalize(row.get("attempt_id")) for row in result_rows])
     question_rows = _load_questions(school_id=school_id, test_ids=[_normalize(row.get("id")) for row in test_rows])
     question_map = {_normalize(row.get("id")): row for row in question_rows}
@@ -717,8 +752,11 @@ def get_test_analytics(school_id: str, test_id: str, *, actor_profile_id: str | 
     }
     student_rows = _load_students(school_id=school_id, student_ids=[_normalize(row.get("student_id")) for row in result_rows])
     student_map = {_normalize(row.get("id")): row for row in student_rows}
-    batch_map = _load_batches([_normalize(row.get("batch_id")) for row in student_rows] + [_normalize(test.get("batch_id"))])
-    creator_profile_map = _load_profiles([_normalize(test.get("created_by_profile_id"))])
+    batch_map = _load_batches(
+        [_normalize(row.get("batch_id")) for row in student_rows] + [_normalize(test.get("batch_id"))],
+        school_id=school_id,
+    )
+    creator_profile_map = _load_profiles([_normalize(test.get("created_by_profile_id"))], school_id=school_id)
 
     average_percentage = round(sum(float(row.get("percentage") or 0) for row in result_rows) / len(result_rows), 2) if result_rows else 0.0
     average_score = round(sum(float(row.get("score_obtained") or 0) for row in result_rows) / len(result_rows), 2) if result_rows else 0.0
@@ -836,13 +874,13 @@ def get_batch_analytics(school_id: str, batch_id: str, *, actor_profile_id: str 
     if cached:
         return cached
 
-    batch = _get_batch(batch_id)
+    batch = _get_batch(school_id, batch_id)
     student_rows = _load_students(school_id=school_id, batch_id=batch_id)
     student_ids = [_normalize(row.get("id")) for row in student_rows]
     result_rows = _load_results(school_id=school_id, student_ids=student_ids)
     test_rows = _load_tests(school_id=school_id, test_ids=[_normalize(row.get("test_id")) for row in result_rows])
     test_map = {_normalize(row.get("id")): row for row in test_rows}
-    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows])
+    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows], school_id=school_id)
     attempt_rows = _load_attempts(school_id=school_id, student_ids=student_ids)
     response_rows = _load_responses(school_id=school_id, student_ids=student_ids)
     question_rows = _load_questions(school_id=school_id, test_ids=[_normalize(row.get("id")) for row in test_rows])
@@ -851,7 +889,7 @@ def get_batch_analytics(school_id: str, batch_id: str, *, actor_profile_id: str 
         _normalize(row.get("id")): row
         for row in _load_sections(school_id=school_id, section_ids=[_normalize(row.get("section_id")) for row in question_rows])
     }
-    batch_map = _load_batches([batch_id])
+    batch_map = _load_batches([batch_id], school_id=school_id)
     student_map = {_normalize(row.get("id")): row for row in student_rows}
 
     total_score = sum(float(row.get("score_obtained") or 0) for row in result_rows)
@@ -950,8 +988,8 @@ def get_school_analytics(school_id: str, *, actor_profile_id: str | None = None)
     test_rows = _load_tests(school_id=school_id)
     student_rows = _load_students(school_id=school_id)
     test_map = {_normalize(row.get("id")): row for row in test_rows}
-    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows])
-    profile_map = _load_profiles([_normalize(row.get("created_by_profile_id")) for row in test_rows])
+    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows], school_id=school_id)
+    profile_map = _load_profiles([_normalize(row.get("created_by_profile_id")) for row in test_rows], school_id=school_id)
     school_map = _load_schools([school_id])
 
     total_score = sum(float(row.get("score_obtained") or 0) for row in result_rows)

@@ -17,6 +17,7 @@ from app.schemas import (
     TeacherAiReportCommentsResponse,
 )
 from app.services.bulk_action_requests import is_platform_admin_user
+from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_teacher_ai import (
     generate_assignment,
@@ -58,12 +59,25 @@ async def api_teacher_ai_question_paper(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
-    return generate_question_paper(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="teacher_ai.generate",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_test_generation",
+        credit_amount=5,
+        reason="teacher_ai.question_paper",
+    )
+    result = generate_question_paper(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/assignment", response_model=TeacherAiAssignmentResponse)
@@ -73,12 +87,25 @@ async def api_teacher_ai_assignment(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
-    return generate_assignment(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="teacher_ai.generate",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_test_generation",
+        credit_amount=5,
+        reason="teacher_ai.assignment",
+    )
+    result = generate_assignment(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/lesson-plan", response_model=TeacherAiLessonPlanResponse)
@@ -88,12 +115,25 @@ async def api_teacher_ai_lesson_plan(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
-    return generate_lesson_plan(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="teacher_ai.generate",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_study_plan",
+        credit_amount=3,
+        reason="teacher_ai.lesson_plan",
+    )
+    result = generate_lesson_plan(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/report-comments", response_model=TeacherAiReportCommentsResponse)
@@ -103,12 +143,25 @@ async def api_teacher_ai_report_comments(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
-    return generate_report_comments(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="teacher_ai.reports",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_analytics",
+        credit_amount=4,
+        reason="teacher_ai.report_comments",
+    )
+    result = generate_report_comments(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @alias_router.get("/teacher-assistant", include_in_schema=False)

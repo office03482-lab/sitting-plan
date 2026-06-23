@@ -287,6 +287,7 @@ export interface PortalPermissionSummary {
   active_sessions: number;
   created_at?: string | null;
   permission_count: number;
+  scope_assignments: Record<string, 'own' | 'assigned' | 'school' | 'platform' | string>;
   template_key: string;
   template_label: string;
   selected_role: string;

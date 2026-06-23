@@ -8,6 +8,7 @@ from app.middleware.auth import get_authenticated_actor_context, get_authenticat
 from app.models import User, UserRole
 from app.schemas import LearningGoalCreate, LearningGoalResponse
 from app.services.bulk_action_requests import is_platform_admin_user
+from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_study_planner import (
     create_learning_goal,
@@ -67,12 +68,25 @@ async def api_get_today_planner(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
-    return get_today_planner(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="study_planner.view",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_study_plan",
+        credit_amount=3,
+        reason="study_planner.today",
+    )
+    result = get_today_planner(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/week")
@@ -82,12 +96,25 @@ async def api_get_week_planner(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
-    return get_week_planner(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="study_planner.view",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_study_plan",
+        credit_amount=3,
+        reason="study_planner.week",
+    )
+    result = get_week_planner(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.get("/recommendations")
@@ -97,12 +124,25 @@ async def api_get_study_recommendations(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
-    return get_study_recommendations(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="study_planner.view",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_study_plan",
+        credit_amount=3,
+        reason="study_planner.recommendations",
+    )
+    result = get_study_recommendations(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
     )
+    commit_route_retrofit(reservation)
+    return result
 
 
 @router.post("/goals", response_model=LearningGoalResponse)
@@ -112,10 +152,23 @@ async def api_create_learning_goal(
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_goals_user),
 ):
-    return create_learning_goal(
+    reservation = prepare_route_retrofit(
+        flag_name="ai",
+        user=user,
+        actor=actor,
+        permission_key="study_planner.goals",
+        school_id=school_id,
+        resource_key="ai_credits_used",
+        credit_feature="ai_study_plan",
+        credit_amount=3,
+        reason="study_planner.goals",
+    )
+    result = create_learning_goal(
         school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
         user_email=getattr(user, "email", None),
     )
+    commit_route_retrofit(reservation)
+    return result

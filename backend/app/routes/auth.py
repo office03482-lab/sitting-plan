@@ -545,6 +545,7 @@ def _ensure_managed_role(
     selected_role: str,
     user_type: str,
     permissions: list[str],
+    metadata_updates: dict[str, Any] | None = None,
     supabase=None,
 ) -> dict[str, Any]:
     supabase = supabase or create_supabase_admin_client()
@@ -574,6 +575,7 @@ def _ensure_managed_role(
             "user_type": user_type,
             "managed_by": "access_control",
             "profile_id": profile_id,
+            **(metadata_updates or {}),
         },
     }
     if rows:

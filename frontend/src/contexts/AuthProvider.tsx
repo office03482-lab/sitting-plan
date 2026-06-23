@@ -13,7 +13,7 @@ import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSIO
 import { supabase } from '@/lib/supabase';
 import { runtimeConfig } from '@/lib/runtimeConfig';
 import type { User, UserRole, UserType } from '@types';
-import { useAuthStore } from '@store/auth';
+import { useAuthStore, isJwtActive } from '@store/auth';
 
 type MembershipRole = {
   role_key: string;
@@ -603,16 +603,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeSyncFingerprintRef.current = nextFingerprint;
 
       try {
-        const appUser = await buildAppUserFromSession(nextSession);
+        let bootstrapSession = nextSession;
+        if (!isJwtActive(bootstrapSession.access_token)) {
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+          if (!refreshError && refreshData?.session?.access_token) {
+            bootstrapSession = refreshData.session;
+            useAuthStore.getState().hydrate({
+              token: bootstrapSession.access_token,
+              refreshToken: bootstrapSession.refresh_token,
+              user: storeUserRef.current,
+            });
+          }
+        }
+        const appUser = await buildAppUserFromSession(bootstrapSession);
         if (!isMounted) return;
 
-        setSession(nextSession);
+        setSession(bootstrapSession);
         setAuthError(null);
         failedSessionFingerprintRef.current = null;
-        lastProfileBootstrapUserIdRef.current = nextSession.user.id;
+        lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
         hydrate({
-          token: nextSession.access_token,
-          refreshToken: nextSession.refresh_token,
+          token: bootstrapSession.access_token,
+          refreshToken: bootstrapSession.refresh_token,
           user: appUser,
         });
         finalizeInitialization('AUTHENTICATED');
@@ -686,6 +698,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (event === 'TOKEN_REFRESHED') {
+        if (nextSession?.access_token) {
+          useAuthStore.getState().setToken(nextSession.access_token);
+          if (nextSession.refresh_token) {
+            useAuthStore.getState().setRefreshToken(nextSession.refresh_token);
+          }
+        }
         if (tokenRefreshDebounceRef.current) {
           window.clearTimeout(tokenRefreshDebounceRef.current);
         }

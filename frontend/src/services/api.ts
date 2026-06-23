@@ -433,6 +433,7 @@ class ApiService {
     role?: string;
     permission_template?: string;
     permissions?: string[];
+    scope_assignments?: Record<string, string>;
   }) {
     return this.api.put<PortalPermissionSummary>(`/account-security/users/${profileId}/permissions`, data);
   }

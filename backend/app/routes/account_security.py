@@ -56,8 +56,11 @@ def require_access_control_user(
 
 
 @router.get("/resolve-login")
-async def api_resolve_login(identifier: str = Query(..., min_length=1)):
-    return resolve_login_email(identifier)
+async def api_resolve_login(
+    identifier: str = Query(..., min_length=1),
+    school_id: str | None = Query(default=None),
+):
+    return resolve_login_email(identifier, school_id=school_id)
 
 
 @router.get("/templates")
@@ -284,6 +287,7 @@ async def api_update_user_permissions(
         selected_role=str(payload.get("selected_role") or payload.get("role") or "").strip() or None,
         permission_template=str(payload.get("permission_template") or "").strip() or None,
         permissions=[str(item) for item in list(payload.get("permissions") or [])],
+        scope_assignments=dict(payload.get("scope_assignments") or {}) if isinstance(payload.get("scope_assignments"), dict) else None,
     )
 
 

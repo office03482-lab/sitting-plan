@@ -25,7 +25,7 @@ const decodeJwtExp = (token: string): number | null => {
   }
 };
 
-const isJwtActive = (token: string) => {
+export const isJwtActive = (token: string) => {
   const exp = decodeJwtExp(token);
   if (!exp) return false;
   const now = Math.floor(Date.now() / 1000);
