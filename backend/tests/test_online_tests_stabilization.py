@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routes import online_tests
+from app.services.scope_engine import PermissionScopeContext
 from app.services import supabase_online_tests
 
 
@@ -17,11 +18,23 @@ def _build_app() -> FastAPI:
     return app
 
 
+def _scope(user, permission_key: str) -> PermissionScopeContext:
+    return PermissionScopeContext(
+        user=user,
+        permission_key=permission_key,
+        scope="school",
+        role_key=str(getattr(user, "role_key", "") or ""),
+        school_id="school-1",
+        profile_id="profile-1",
+    )
+
+
 def test_attempt_routes_use_student_scope(monkeypatch):
     app = _build_app()
     student_user = SimpleNamespace(role_key="student", user_type="student", role=None)
     app.dependency_overrides[online_tests.require_view_user] = lambda: student_user
     app.dependency_overrides[online_tests.require_attempt_user] = lambda: student_user
+    app.dependency_overrides[online_tests.require_online_tests_view_scope] = lambda: _scope(student_user, "online_tests.attempt")
 
     captured: dict[str, object] = {}
 
@@ -62,7 +75,7 @@ def test_attempt_routes_use_student_scope(monkeypatch):
     monkeypatch.setattr(
         online_tests,
         "start_attempt",
-        lambda school_id, test_id, profile_id: {
+        lambda school_id, test_id, profile_id, metadata=None: {
             "id": "attempt-1",
             "school_id": school_id,
             "test_id": test_id,
@@ -76,7 +89,7 @@ def test_attempt_routes_use_student_scope(monkeypatch):
             "total_questions_snapshot": 0,
             "answered_questions_snapshot": 0,
             "time_spent_seconds": 0,
-            "metadata": {"profile_id": profile_id},
+            "metadata": {"profile_id": profile_id, "request_metadata": metadata or {}},
             "is_active": True,
             "responses": [],
             "created_at": None,
@@ -110,7 +123,7 @@ def test_attempt_routes_use_student_scope(monkeypatch):
     monkeypatch.setattr(
         online_tests,
         "submit_attempt",
-        lambda school_id, attempt_id, profile_id: {
+        lambda school_id, attempt_id, profile_id, active_session_id=None: {
             "id": "result-1",
             "school_id": school_id,
             "attempt_id": attempt_id,
@@ -130,7 +143,7 @@ def test_attempt_routes_use_student_scope(monkeypatch):
             "passed": True,
             "pass_marks": 5.0,
             "published_at": None,
-            "metadata": {"profile_id": profile_id},
+            "metadata": {"profile_id": profile_id, "active_session_id": active_session_id},
             "is_active": True,
             "created_at": None,
             "updated_at": None,
@@ -184,6 +197,10 @@ def test_manage_routes_cover_test_and_question_crud(monkeypatch):
     app.dependency_overrides[online_tests.require_manage_user] = lambda: admin_user
     app.dependency_overrides[online_tests.require_view_user] = lambda: admin_user
     app.dependency_overrides[online_tests.require_reports_user] = lambda: admin_user
+    app.dependency_overrides[online_tests.require_results_analytics_user] = lambda: admin_user
+    app.dependency_overrides[online_tests.require_online_tests_manage_scope] = lambda: _scope(admin_user, "online_tests.manage")
+    app.dependency_overrides[online_tests.require_online_tests_view_scope] = lambda: _scope(admin_user, "online_tests.view")
+    app.dependency_overrides[online_tests.require_online_tests_reports_scope] = lambda: _scope(admin_user, "online_tests.reports")
 
     monkeypatch.setattr(
         online_tests,
@@ -249,6 +266,8 @@ def test_manage_routes_cover_test_and_question_crud(monkeypatch):
     monkeypatch.setattr(online_tests, "publish_test", lambda school_id, test_id, profile_id: online_tests.create_test(school_id, profile_id, {"title": "Published Test", "status": "published"}))
     monkeypatch.setattr(online_tests, "unpublish_test", lambda school_id, test_id, profile_id: online_tests.create_test(school_id, profile_id, {"title": "Draft Test", "status": "draft"}))
     monkeypatch.setattr(online_tests, "duplicate_test", lambda school_id, test_id, profile_id: online_tests.create_test(school_id, profile_id, {"title": "Draft Test (Copy)", "status": "draft"}))
+    monkeypatch.setattr(online_tests, "_get_test_row", lambda school_id, test_id: {"id": test_id, "school_id": school_id, "batch_id": "batch-1"})
+    monkeypatch.setattr(online_tests, "_get_question_row", lambda school_id, question_id: {"id": question_id, "school_id": school_id, "test_id": "test-1"})
     monkeypatch.setattr(
         online_tests,
         "get_results_analytics",
@@ -428,6 +447,7 @@ def test_submit_attempt_records_pass_and_auto_submit(monkeypatch):
             "updated_at": None,
         },
     )
+    monkeypatch.setattr("app.services.supabase_account_security.end_test_session", lambda *args, **kwargs: None)
     monkeypatch.setattr(supabase_online_tests, "_log_audit_entry", lambda **_kwargs: None)
 
     result = supabase_online_tests.submit_attempt("school-1", "attempt-1", "profile-1")

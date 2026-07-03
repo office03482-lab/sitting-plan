@@ -100,12 +100,10 @@ export default function CommercePage() {
       <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <form onSubmit={submitOrder} className={cardClass}>
           <h2 className="text-lg font-semibold text-slate-900">Create Commerce Order</h2>
-          <p className="mt-1 text-sm text-slate-500">Provider abstraction supports Razorpay, Stripe, and Cashfree through one shared API contract.</p>
+          <p className="mt-1 text-sm text-slate-500">Razorpay payment flow is available in the current release through the shared billing API contract.</p>
           <div className="mt-4 grid gap-3">
             <select value={providerKey} onChange={(event) => setProviderKey(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm">
               <option value="razorpay">Razorpay</option>
-              <option value="stripe">Stripe</option>
-              <option value="cashfree">Cashfree</option>
             </select>
             <input value={productId} onChange={(event) => setProductId(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder="Product UUID" />
             <input value={couponCode} onChange={(event) => setCouponCode(event.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" placeholder="Coupon code" />

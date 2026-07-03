@@ -6,7 +6,9 @@ from io import BytesIO
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.models import UserRole
 from app.routes import timetable
+from app.services.scope_engine import PermissionScopeContext
 from app.services import supabase_timetable
 
 
@@ -21,6 +23,19 @@ def _build_app(actor: dict[str, str] | None = None) -> FastAPI:
         "email": "admin@example.com",
     }
     return app
+
+
+def _context(*, role: UserRole, role_key: str, scope: str, staff_member_id: str | None = None) -> PermissionScopeContext:
+    user = type("TestUser", (), {"role": role, "role_key": role_key, "user_type": "staff"})()
+    return PermissionScopeContext(
+        user=user,
+        permission_key="timetable.view" if scope != "manage" else "timetable.manage",
+        scope=scope,
+        role_key=role_key,
+        school_id="school-1",
+        profile_id="profile-1",
+        staff_member_id=staff_member_id,
+    )
 
 
 def _row(entry_id: str, teacher_id: str = "teacher-1", teacher_name: str = "Teacher One", room_id: str = "room-1", room_name: str = "Room 1", class_name: str = "10 | A") -> dict[str, object]:
@@ -59,6 +74,12 @@ def _row(entry_id: str, teacher_id: str = "teacher-1", teacher_name: str = "Teac
 def test_teacher_scope_is_enforced_for_list_count_get_and_export(monkeypatch):
     actor = {"role": "teacher", "name": "Teacher One", "email": "teacher1@example.com"}
     app = _build_app(actor)
+    app.dependency_overrides[timetable.require_timetable_view_scope] = lambda: _context(
+        role=UserRole.TEACHER,
+        role_key="teacher",
+        scope="assigned",
+        staff_member_id="teacher-1",
+    )
     client = TestClient(app)
 
     monkeypatch.setattr(timetable, "_resolve_actor_teacher_scope", lambda school_id, actor: ("teacher-1", "teacher one"))
@@ -99,6 +120,16 @@ def test_teacher_scope_is_enforced_for_list_count_get_and_export(monkeypatch):
 
 def test_admin_crud_conflict_and_export_routes(monkeypatch):
     app = _build_app()
+    app.dependency_overrides[timetable.require_timetable_view_scope] = lambda: _context(
+        role=UserRole.ADMIN,
+        role_key="school_admin",
+        scope="school",
+    )
+    app.dependency_overrides[timetable.require_timetable_manage_scope] = lambda: _context(
+        role=UserRole.ADMIN,
+        role_key="school_admin",
+        scope="school",
+    )
     client = TestClient(app)
     created_payloads: list[dict[str, object]] = []
 

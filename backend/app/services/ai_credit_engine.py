@@ -330,7 +330,8 @@ class AICreditService:
                 "reason": reason,
                 "reference_type": reference_type,
                 "reference_id": reference_id,
-                "expires_at": expiry_value.isoformat() if expiry_value else None,
+                # Keep idempotency stable when bonus expiry is server-generated.
+                "expires_at": expires_at.isoformat() if expires_at else None,
                 "metadata": metadata or {},
             },
         )

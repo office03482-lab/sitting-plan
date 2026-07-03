@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.routes import account_security, analytics, attendance, lms, reports, students
+from app.models import UserRole
 from app.services import supabase_account_security, supabase_analytics
 from app.services.scope_engine import PermissionScopeContext
 
@@ -22,7 +23,9 @@ def _dummy_db():
 
 
 def _school_scope(permission_key: str, school_id: str = SCHOOL_A) -> PermissionScopeContext:
+    user = SimpleNamespace(role=UserRole.ADMIN, role_key="school_admin", user_type="staff")
     return PermissionScopeContext(
+        user=user,
         permission_key=permission_key,
         scope="school",
         role_key="school_admin",
