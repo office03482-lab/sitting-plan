@@ -4,6 +4,7 @@ import type {
   Student, Room, SeatingPlan, RoomLayout, LoginCredentials, Exam,
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
+  PlatformAnalyticsOverview, PlatformAuditCenterResponse, PlatformGlobalSearchResponse, PlatformHealthDashboardResponse, PlatformNotification, PlatformNotificationListResponse, PlatformOnboardingResponse, PlatformSchoolListResponse, PlatformSchoolSummary, PlatformSubscriptionSummary, PlatformSupportActionResponse, PlatformUsageDashboardResponse,
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
   PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
@@ -1807,6 +1808,81 @@ class ApiService {
     offset?: number;
   } = {}) {
     return this.api.get<PlatformAuditLogListResponse>('/platform/audit-logs', { params });
+  }
+
+  async listPlatformSchools(params: { status?: string; q?: string } = {}) {
+    return this.api.get<PlatformSchoolListResponse>('/platform/schools', { params });
+  }
+
+  async createPlatformSchool(data: Record<string, unknown>) {
+    return this.api.post<PlatformSchoolSummary>('/platform/schools', data);
+  }
+
+  async getPlatformSchool(schoolId: string) {
+    return this.api.get<PlatformSchoolSummary>(`/platform/schools/${schoolId}`);
+  }
+
+  async updatePlatformSchool(schoolId: string, data: Record<string, unknown>) {
+    return this.api.put<PlatformSchoolSummary>(`/platform/schools/${schoolId}`, data);
+  }
+
+  async updatePlatformSchoolStatus(schoolId: string, data: Record<string, unknown>) {
+    return this.api.post<PlatformSchoolSummary>(`/platform/schools/${schoolId}/status`, data);
+  }
+
+  async clonePlatformSchoolSettings(data: Record<string, unknown>) {
+    return this.api.post<PlatformSchoolSummary>('/platform/schools/clone-settings', data);
+  }
+
+  async copyPlatformAcademicStructure(data: Record<string, unknown>) {
+    return this.api.post('/platform/schools/copy-academic-structure', data);
+  }
+
+  async getPlatformSubscriptionSummary(schoolId: string) {
+    return this.api.get<PlatformSubscriptionSummary>(`/platform/schools/${schoolId}/subscription-summary`);
+  }
+
+  async getPlatformUsageDashboard(params: { school_id?: string } = {}) {
+    return this.api.get<PlatformUsageDashboardResponse>('/platform/usage', { params });
+  }
+
+  async getPlatformHealthDashboard(params: { school_id?: string } = {}) {
+    return this.api.get<PlatformHealthDashboardResponse>('/platform/health', { params });
+  }
+
+  async searchPlatformEntities(params: { q: string; limit?: number }) {
+    return this.api.get<PlatformGlobalSearchResponse>('/platform/search', { params });
+  }
+
+  async getPlatformAnalyticsOverview() {
+    return this.api.get<PlatformAnalyticsOverview>('/platform/analytics-overview');
+  }
+
+  async runPlatformSupportAction(schoolId: string, data: Record<string, unknown>) {
+    return this.api.post<PlatformSupportActionResponse>(`/platform/support/${schoolId}`, data);
+  }
+
+  async getPlatformAuditCenter(params: {
+    school_id?: string;
+    user_id?: string;
+    action?: string;
+    module_key?: string;
+    severity?: string;
+    limit?: number;
+  } = {}) {
+    return this.api.get<PlatformAuditCenterResponse>('/platform/audit-center', { params });
+  }
+
+  async listPlatformNotifications() {
+    return this.api.get<PlatformNotificationListResponse>('/platform/notifications');
+  }
+
+  async createPlatformNotification(data: Record<string, unknown>) {
+    return this.api.post<PlatformNotification>('/platform/notifications', data);
+  }
+
+  async runPlatformOnboarding(data: Record<string, unknown>) {
+    return this.api.post<PlatformOnboardingResponse>('/platform/onboarding', data);
   }
 
   async listHostels(schoolId: string | number = 1) {

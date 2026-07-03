@@ -58,9 +58,19 @@ import StudentDirectory from '@pages/StudentDirectory';
 import StudentManagement from '@pages/StudentManagement';
 import TeacherManagement from '@pages/TeacherManagement';
 import TimetableManagement from '@pages/TimetableManagement';
+import PlatformAnalyticsPage from '@pages/PlatformAnalyticsPage';
 import PlatformDashboard from '@pages/PlatformDashboard';
+import PlatformGlobalSearchPage from '@pages/PlatformGlobalSearchPage';
+import PlatformHealthDashboardPage from '@pages/PlatformHealthDashboardPage';
 import PlatformWorkflowQueue from '@pages/PlatformWorkflowQueue';
 import PlatformAuditLogs from '@pages/PlatformAuditLogs';
+import PlatformNotificationCenterPage from '@pages/PlatformNotificationCenterPage';
+import PlatformOnboardingWizardPage from '@pages/PlatformOnboardingWizardPage';
+import PlatformSchoolDetailsPage from '@pages/PlatformSchoolDetailsPage';
+import PlatformSchoolsPage from '@pages/PlatformSchoolsPage';
+import PlatformSubscriptionCenterPage from '@pages/PlatformSubscriptionCenterPage';
+import PlatformSupportCenterPage from '@pages/PlatformSupportCenterPage';
+import PlatformUsageDashboardPage from '@pages/PlatformUsageDashboardPage';
 
 function AppShell() {
   const { user } = useAuth();
@@ -399,6 +409,86 @@ function AppShell() {
           element={
             <PlatformAdminRoute>
               <PlatformDashboard />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/schools"
+          element={
+            <PlatformAdminRoute>
+              <PlatformSchoolsPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/schools/:schoolId"
+          element={
+            <PlatformAdminRoute>
+              <PlatformSchoolDetailsPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/subscriptions"
+          element={
+            <PlatformAdminRoute>
+              <PlatformSubscriptionCenterPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/usage"
+          element={
+            <PlatformAdminRoute>
+              <PlatformUsageDashboardPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/health"
+          element={
+            <PlatformAdminRoute>
+              <PlatformHealthDashboardPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/search"
+          element={
+            <PlatformAdminRoute>
+              <PlatformGlobalSearchPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/analytics"
+          element={
+            <PlatformAdminRoute>
+              <PlatformAnalyticsPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/support"
+          element={
+            <PlatformAdminRoute>
+              <PlatformSupportCenterPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/notifications"
+          element={
+            <PlatformAdminRoute>
+              <PlatformNotificationCenterPage />
+            </PlatformAdminRoute>
+          }
+        />
+        <Route
+          path="/platform/onboarding"
+          element={
+            <PlatformAdminRoute>
+              <PlatformOnboardingWizardPage />
             </PlatformAdminRoute>
           }
         />

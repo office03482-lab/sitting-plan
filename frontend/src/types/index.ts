@@ -384,6 +384,168 @@ export interface PlatformAuditLogListResponse {
   offset: number;
 }
 
+export interface PlatformSchoolSummary {
+  id: string;
+  school_code: string;
+  slug: string;
+  name: string;
+  legal_name?: string | null;
+  timezone: string;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  school_domain?: string | null;
+  academic_session?: string | null;
+  logo_url?: string | null;
+  status: string;
+  is_active: boolean;
+  student_count: number;
+  teacher_count: number;
+  staff_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  metadata: Record<string, unknown>;
+  subscription?: PlatformSubscriptionSummary;
+  usage?: PlatformUsageSummary;
+  health?: PlatformHealthSummary;
+}
+
+export interface PlatformSchoolListResponse {
+  items: PlatformSchoolSummary[];
+  total_count: number;
+}
+
+export interface PlatformSubscriptionSummary {
+  school_id: string;
+  current_plan: string;
+  status: string;
+  expiry?: string | null;
+  renewal?: string | null;
+  usage: Record<string, unknown>;
+  grace_period_days: number;
+  payment_status: string;
+  subscription_id?: string | null;
+  billing_cycle?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PlatformUsageSummary {
+  school_id: string;
+  school_name: string;
+  students: number;
+  teachers: number;
+  parents: number;
+  staff: number;
+  rooms: number;
+  attendance_records: number;
+  ai_credits_used: number;
+  ai_requests: number;
+  online_tests: number;
+  storage_used_gb: number;
+  database_size_mb: number;
+  monthly_active_users: number;
+  generated_at?: string | null;
+}
+
+export interface PlatformUsageDashboardResponse {
+  items: PlatformUsageSummary[];
+  total_students: number;
+  total_teachers: number;
+  total_ai_requests: number;
+  total_storage_used_gb: number;
+  generated_at?: string | null;
+}
+
+export interface PlatformHealthSummary {
+  school_id: string;
+  school_name: string;
+  api_status: string;
+  background_jobs: string;
+  queue_status: string;
+  storage_health: string;
+  last_backup?: string | null;
+  last_login?: string | null;
+  last_activity?: string | null;
+  last_billing_event?: string | null;
+}
+
+export interface PlatformHealthDashboardResponse {
+  items: PlatformHealthSummary[];
+  generated_at?: string | null;
+}
+
+export interface PlatformGlobalSearchItem {
+  entity_type: string;
+  school_id?: string | null;
+  school_name?: string | null;
+  entity_id?: string | null;
+  title: string;
+  subtitle?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PlatformGlobalSearchResponse {
+  items: PlatformGlobalSearchItem[];
+  total_count: number;
+}
+
+export interface PlatformAnalyticsOverview {
+  total_schools: number;
+  active_schools: number;
+  trial_schools: number;
+  revenue: number;
+  monthly_growth: number;
+  student_count: number;
+  teacher_count: number;
+  subscriptions: number;
+  ai_usage: number;
+  credit_sales: number;
+  generated_at?: string | null;
+}
+
+export interface PlatformSupportActionResponse {
+  school_id: string;
+  action: string;
+  status: string;
+  audited: boolean;
+  details: Record<string, unknown>;
+}
+
+export interface PlatformAuditCenterResponse {
+  items: Array<Record<string, unknown>>;
+  total_count: number;
+}
+
+export interface PlatformNotification {
+  id: string;
+  title: string;
+  message: string;
+  notification_type: string;
+  severity: string;
+  audience_scope: string;
+  school_ids: string[];
+  created_by_profile_id?: string | null;
+  created_at?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PlatformNotificationListResponse {
+  items: PlatformNotification[];
+  total_count: number;
+}
+
+export interface PlatformOnboardingResponse {
+  school: PlatformSchoolSummary;
+  roles_created: number;
+  permissions_seeded: boolean;
+  batches_created: number;
+  subscription_initialized: boolean;
+  usage_initialized: boolean;
+  ai_wallet_initialized: boolean;
+  admin_membership_created: boolean;
+}
+
 export interface AuthState {
   user: User | null;
   token: string | null;

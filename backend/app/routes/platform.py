@@ -15,6 +15,27 @@ from app.schemas import (
     PlatformWorkflowEventResponse,
     PlatformWorkflowRequestDetailResponse,
 )
+from app.schemas.platform_control_plane import (
+    PlatformAnalyticsOverviewResponse,
+    PlatformAuditCenterResponse,
+    PlatformCloneSchoolRequest,
+    PlatformGlobalSearchResponse,
+    PlatformHealthDashboardResponse,
+    PlatformNotificationCreateRequest,
+    PlatformNotificationListResponse,
+    PlatformNotificationResponse,
+    PlatformOnboardingRequest,
+    PlatformOnboardingResponse,
+    PlatformSchoolCreateRequest,
+    PlatformSchoolLifecycleRequest,
+    PlatformSchoolListResponse,
+    PlatformSchoolSummaryResponse,
+    PlatformSchoolUpdateRequest,
+    PlatformSubscriptionSummaryResponse,
+    PlatformSupportActionRequest,
+    PlatformSupportActionResponse,
+    PlatformUsageDashboardResponse,
+)
 from app.schemas.subscription_api import (
     PlatformSubscriptionActivateRequest,
     PlatformSubscriptionCancelRequest,
@@ -22,6 +43,7 @@ from app.schemas.subscription_api import (
     PlatformSubscriptionPauseRequest,
 )
 from app.services.bulk_action_requests import _serialize_bulk_action_request
+from app.services import platform_control_plane
 from app.services.supabase_admin import create_supabase_admin_client
 from app.services.subscription_engine import (
     PlanChangeRequestService,
@@ -428,3 +450,172 @@ def resume_platform_school_subscription(
         school_id,
         actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
     )
+
+
+@router.get("/schools", response_model=PlatformSchoolListResponse)
+def list_platform_schools(
+    status: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.list_schools(status=status, q=q)
+
+
+@router.post("/schools", response_model=PlatformSchoolSummaryResponse)
+def create_platform_school(
+    payload: PlatformSchoolCreateRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.create_school(payload.model_dump(), actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.get("/schools/{school_id}", response_model=PlatformSchoolSummaryResponse)
+def get_platform_school_detail(
+    school_id: str,
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.get_school_detail(school_id)
+
+
+@router.put("/schools/{school_id}", response_model=PlatformSchoolSummaryResponse)
+def update_platform_school(
+    school_id: str,
+    payload: PlatformSchoolUpdateRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.update_school(school_id, payload.model_dump(exclude_none=True), actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.post("/schools/{school_id}/status", response_model=PlatformSchoolSummaryResponse)
+def update_platform_school_status(
+    school_id: str,
+    payload: PlatformSchoolLifecycleRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.set_school_status(
+        school_id,
+        payload.status,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+        reason=payload.reason,
+    )
+
+
+@router.post("/schools/clone-settings", response_model=PlatformSchoolSummaryResponse)
+def clone_platform_school_settings(
+    payload: PlatformCloneSchoolRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.clone_school_settings(payload.source_school_id, payload.target_school_id, actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.post("/schools/copy-academic-structure")
+def copy_platform_school_academic_structure(
+    payload: PlatformCloneSchoolRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.copy_academic_structure(payload.source_school_id, payload.target_school_id, actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.get("/schools/{school_id}/subscription-summary", response_model=PlatformSubscriptionSummaryResponse)
+def get_platform_subscription_summary(
+    school_id: str,
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.get_subscription_summary(school_id)
+
+
+@router.get("/usage", response_model=PlatformUsageDashboardResponse)
+def get_platform_usage_dashboard(
+    school_id: Optional[str] = Query(default=None),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.get_usage_dashboard(school_id=school_id)
+
+
+@router.get("/health", response_model=PlatformHealthDashboardResponse)
+def get_platform_health_dashboard(
+    school_id: Optional[str] = Query(default=None),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.get_health_dashboard(school_id=school_id)
+
+
+@router.get("/search", response_model=PlatformGlobalSearchResponse)
+def search_platform_entities(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(default=25, ge=1, le=100),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.global_search(q, limit=limit)
+
+
+@router.get("/analytics-overview", response_model=PlatformAnalyticsOverviewResponse)
+def get_platform_analytics_overview(
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.get_platform_analytics_overview()
+
+
+@router.post("/support/{school_id}", response_model=PlatformSupportActionResponse)
+def run_platform_support_action(
+    school_id: str,
+    payload: PlatformSupportActionRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.run_support_action(
+        school_id,
+        payload.action,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+        notes=payload.notes,
+    )
+
+
+@router.get("/audit-center", response_model=PlatformAuditCenterResponse)
+def get_platform_audit_center(
+    school_id: Optional[str] = Query(default=None),
+    user_id: Optional[str] = Query(default=None),
+    action: Optional[str] = Query(default=None),
+    module_key: Optional[str] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=250),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.list_audit_center(
+        school_id=school_id,
+        user_id=user_id,
+        action=action,
+        module_key=module_key,
+        severity=severity,
+        limit=limit,
+    )
+
+
+@router.get("/notifications", response_model=PlatformNotificationListResponse)
+def list_platform_notifications(
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.list_notifications()
+
+
+@router.post("/notifications", response_model=PlatformNotificationResponse)
+def create_platform_notification(
+    payload: PlatformNotificationCreateRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.create_notification(payload.model_dump(), actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.post("/onboarding", response_model=PlatformOnboardingResponse)
+def run_platform_onboarding(
+    payload: PlatformOnboardingRequest,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.run_onboarding(payload.model_dump(), actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
