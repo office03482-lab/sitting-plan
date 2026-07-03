@@ -21,6 +21,7 @@ from app.schemas.platform_control_plane import (
     PlatformCloneSchoolRequest,
     PlatformGlobalSearchResponse,
     PlatformHealthDashboardResponse,
+    PlatformOnboardingCredentialResponse,
     PlatformNotificationCreateRequest,
     PlatformNotificationListResponse,
     PlatformNotificationResponse,
@@ -619,3 +620,15 @@ def run_platform_onboarding(
     _: User = Depends(require_platform_admin),
 ):
     return platform_control_plane.run_onboarding(payload.model_dump(), actor_profile_id=str(actor.get("profile_id") or "").strip() or None)
+
+
+@router.post("/schools/{school_id}/regenerate-admin-password", response_model=PlatformOnboardingCredentialResponse)
+def regenerate_platform_school_admin_password(
+    school_id: str,
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_platform_admin),
+):
+    return platform_control_plane.regenerate_school_admin_credentials(
+        school_id,
+        actor_profile_id=str(actor.get("profile_id") or "").strip() or None,
+    )

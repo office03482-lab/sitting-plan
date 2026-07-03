@@ -212,25 +212,82 @@ class PlatformNotificationListResponse(BaseModel):
 
 
 class PlatformOnboardingRequest(BaseModel):
-    school_code: str
-    slug: str
+    school_code: str | None = None
+    slug: str | None = None
     name: str
     legal_name: str | None = None
     timezone: str = "Asia/Kolkata"
     contact_email: str | None = None
     contact_phone: str | None = None
+    board: str | None = None
     academic_session: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    website: str | None = None
+    language: str | None = None
+    logo_url: str | None = None
+    school_domain: str | None = None
     admin_profile_id: str | None = None
-    admin_email: str | None = None
-    admin_full_name: str | None = None
+    admin_email: str
+    admin_full_name: str
+    admin_mobile: str | None = None
+    admin_employee_code: str | None = None
     plan_tier: str = "starter"
     billing_cycle: str = "monthly"
+    max_students: int | None = None
+    max_teachers: int | None = None
+    max_staff: int | None = None
+    max_parents: int | None = None
+    max_storage_gb: float | None = None
     create_default_batches: bool = True
     initialize_ai_wallet: bool = True
 
 
+class PlatformOnboardingCredentialResponse(BaseModel):
+    username: str
+    temporary_password: str
+    login_email: str
+    login_url: str
+    expires_at: str | None = None
+    visible_once: bool = True
+
+
+class PlatformOnboardingAdminResponse(BaseModel):
+    profile_id: str | None = None
+    full_name: str
+    email: str
+    mobile: str | None = None
+    employee_code: str | None = None
+    role_key: str = "school_admin"
+    first_login_completed: bool = False
+    must_change_password: bool = True
+
+
+class PlatformProvisioningStatusResponse(BaseModel):
+    school_settings: bool = False
+    academic_session: bool = False
+    role_templates: bool = False
+    permission_templates: bool = False
+    departments: bool = False
+    attendance_settings: bool = False
+    timetable_settings: bool = False
+    examination_settings: bool = False
+    ai_settings: bool = False
+    notification_settings: bool = False
+    usage_counters: bool = False
+    subscription: bool = False
+    ai_wallet: bool = False
+    platform_notification: bool = False
+    audit_entry: bool = False
+
+
 class PlatformOnboardingResponse(BaseModel):
     school: PlatformSchoolSummaryResponse
+    admin: PlatformOnboardingAdminResponse
+    credentials: PlatformOnboardingCredentialResponse
+    provisioning: PlatformProvisioningStatusResponse
     roles_created: int = 0
     permissions_seeded: bool = False
     batches_created: int = 0
@@ -238,9 +295,12 @@ class PlatformOnboardingResponse(BaseModel):
     usage_initialized: bool = False
     ai_wallet_initialized: bool = False
     admin_membership_created: bool = False
+    admin_account_created: bool = False
+    notification_created: bool = False
+    activation_status: str = "provisioned"
+    audit_events: list[str] = Field(default_factory=list)
 
 
 class PlatformAuditCenterResponse(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     total_count: int
-

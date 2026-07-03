@@ -66,6 +66,7 @@ export interface User {
   membership_id?: string;
   default_school_id?: string | null;
   must_change_password?: boolean;
+  first_login_completed?: boolean;
 }
 
 export interface RolePowerUser {
@@ -537,6 +538,25 @@ export interface PlatformNotificationListResponse {
 
 export interface PlatformOnboardingResponse {
   school: PlatformSchoolSummary;
+  admin: {
+    profile_id?: string | null;
+    full_name: string;
+    email: string;
+    mobile?: string | null;
+    employee_code?: string | null;
+    role_key: string;
+    first_login_completed: boolean;
+    must_change_password: boolean;
+  };
+  credentials: {
+    username: string;
+    temporary_password: string;
+    login_email: string;
+    login_url: string;
+    expires_at?: string | null;
+    visible_once: boolean;
+  };
+  provisioning: Record<string, boolean>;
   roles_created: number;
   permissions_seeded: boolean;
   batches_created: number;
@@ -544,6 +564,77 @@ export interface PlatformOnboardingResponse {
   usage_initialized: boolean;
   ai_wallet_initialized: boolean;
   admin_membership_created: boolean;
+  admin_account_created: boolean;
+  notification_created: boolean;
+  activation_status: string;
+  audit_events: string[];
+}
+
+export interface SchoolBrandAsset {
+  id: string;
+  asset_type: string;
+  file_name: string;
+  public_url: string;
+  content_type?: string | null;
+  size_bytes: number;
+  bucket: string;
+  storage_path: string;
+  created_at?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface SchoolStorageOverview {
+  total_files: number;
+  total_size_bytes: number;
+  total_size_mb: number;
+  assets: SchoolBrandAsset[];
+}
+
+export interface SchoolBackupHistoryItem {
+  id: string;
+  request_type: string;
+  status: string;
+  download_url?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface SchoolBackupHistoryResponse {
+  items: SchoolBackupHistoryItem[];
+  total_count: number;
+}
+
+export interface SchoolPublicBranding {
+  school_name: string;
+  portal_name: string;
+  logo_url?: string | null;
+  banner_url?: string | null;
+  favicon_url?: string | null;
+  background_image_url?: string | null;
+  tagline?: string | null;
+  welcome_message?: string | null;
+  footer_text?: string | null;
+  primary_color: string;
+  secondary_color: string;
+  accent_color: string;
+  theme: string;
+  subdomain?: string | null;
+  custom_domain?: string | null;
+}
+
+export interface SchoolSelfServiceProfile {
+  school_id: string;
+  branding: Record<string, unknown>;
+  portal_settings: Record<string, unknown>;
+  domain_settings: Record<string, unknown>;
+  email_templates: Record<string, string>;
+  messaging_templates: Record<string, string>;
+  preferences: Record<string, unknown>;
+  assets: SchoolBrandAsset[];
+  storage: SchoolStorageOverview;
+  backups: SchoolBackupHistoryResponse;
+  school_summary: Record<string, unknown>;
 }
 
 export interface AuthState {

@@ -71,6 +71,31 @@ import PlatformSchoolsPage from '@pages/PlatformSchoolsPage';
 import PlatformSubscriptionCenterPage from '@pages/PlatformSubscriptionCenterPage';
 import PlatformSupportCenterPage from '@pages/PlatformSupportCenterPage';
 import PlatformUsageDashboardPage from '@pages/PlatformUsageDashboardPage';
+import SchoolBackupCenterPage from '@pages/SchoolBackupCenterPage';
+import SchoolBrandingPage from '@pages/SchoolBrandingPage';
+import SchoolEmailTemplatesPage from '@pages/SchoolEmailTemplatesPage';
+import SchoolPortalSettingsPage from '@pages/SchoolPortalSettingsPage';
+import SchoolPreferencesPage from '@pages/SchoolPreferencesPage';
+import SchoolSmsTemplatesPage from '@pages/SchoolSmsTemplatesPage';
+import SchoolStorageCenterPage from '@pages/SchoolStorageCenterPage';
+
+function SchoolAdminRoute({ children }: { children: JSX.Element }) {
+  const { user, getDefaultRoute } = useAuth();
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role_key === 'platform_admin') {
+    return <Navigate to={getDefaultRoute(user)} replace />;
+  }
+
+  return (
+    <ProtectedRoute allowedRoles={['admin', 'school_admin']} requiredPermissions={['settings']}>
+      {children}
+    </ProtectedRoute>
+  );
+}
 
 function AppShell() {
   const { user } = useAuth();
@@ -378,6 +403,62 @@ function AppShell() {
             <ProtectedRoute requiredPermissions={['settings']}>
               <Settings />
             </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/branding"
+          element={
+            <SchoolAdminRoute>
+              <SchoolBrandingPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/preferences"
+          element={
+            <SchoolAdminRoute>
+              <SchoolPreferencesPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/portal-settings"
+          element={
+            <SchoolAdminRoute>
+              <SchoolPortalSettingsPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/email-templates"
+          element={
+            <SchoolAdminRoute>
+              <SchoolEmailTemplatesPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/messaging-templates"
+          element={
+            <SchoolAdminRoute>
+              <SchoolSmsTemplatesPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/storage"
+          element={
+            <SchoolAdminRoute>
+              <SchoolStorageCenterPage />
+            </SchoolAdminRoute>
+          }
+        />
+        <Route
+          path="/school-self-service/backups"
+          element={
+            <SchoolAdminRoute>
+              <SchoolBackupCenterPage />
+            </SchoolAdminRoute>
           }
         />
         <Route

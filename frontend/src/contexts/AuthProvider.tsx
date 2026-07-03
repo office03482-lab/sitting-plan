@@ -340,6 +340,7 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
       session.user.email ||
       undefined,
     must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
+    first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
   };
 }
 

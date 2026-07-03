@@ -1,15 +1,64 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.supabase_account_security import (
+    _create_or_update_auth_user,
+    _default_portal_login_email,
+    _ensure_membership_role,
+    _load_profile,
+    _update_profile_for_portal_access,
+    _upsert_membership,
+    generate_secure_password,
+)
 from app.services.subscription_engine import SchoolSubscriptionService
 from app.services.supabase_admin import get_supabase_admin_client
 
 MODULE_KEY = "platform_control_plane"
+DEFAULT_PLATFORM_DEPARTMENTS = [
+    "Administration",
+    "Academics",
+    "Examination",
+    "Accounts",
+    "Transport",
+    "Library",
+]
+DEFAULT_FIRST_LOGIN_STEPS = [
+    "verify_email",
+    "accept_terms",
+    "change_password",
+    "confirm_mobile",
+    "mfa_setup",
+    "review_school_information",
+    "complete_school_profile",
+    "finish_setup",
+]
+DEFAULT_SCHOOL_APP_SETTINGS = {
+    "name": "",
+    "address": "",
+    "phone": "",
+    "email": "",
+    "website": "",
+    "principal_name": "",
+    "established_year": datetime.now(timezone.utc).year,
+    "timezone": "Asia/Kolkata",
+    "date_format": "DD/MM/YYYY",
+    "default_batch_colors": {
+        "11th": "#3B82F6",
+        "12th": "#10B981",
+        "Dropper 1": "#F59E0B",
+        "Dropper 2": "#EF4444",
+    },
+    "export_format": "both",
+    "auto_save": True,
+    "conflict_detection": True,
+    "email_notifications": True,
+}
 
 
 def _client():
@@ -34,6 +83,55 @@ def _iso_now() -> str:
 
 def _normalize(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", _normalize(value).lower())
+    return normalized.strip("-") or "school"
+
+
+def _unique_slug(preferred: str) -> str:
+    base = _slugify(preferred)
+    slug = base
+    suffix = 1
+    while _public_table("schools").select("id").eq("slug", slug).limit(1).execute().data:
+        suffix += 1
+        slug = f"{base}-{suffix}"
+    return slug
+
+
+def _resolve_school_code(payload: dict[str, Any]) -> str:
+    provided = _normalize(payload.get("school_code")).upper()
+    if provided:
+        return provided
+    derived = re.sub(r"[^A-Z0-9]+", "", _normalize(payload.get("name")).upper())[:8]
+    return derived or f"SCH{_utc_now().strftime('%m%d%H')}"
+
+
+def _school_admin_username(school_code: str, school_name: str) -> str:
+    base = re.sub(r"[^A-Z0-9]+", "", school_code.upper())[:10] or re.sub(r"[^A-Z0-9]+", "", school_name.upper())[:10] or "SCHOOL"
+    return f"{base}ADMIN"
+
+
+def _school_admin_permissions() -> list[str]:
+    rows = list(
+        _public_table("permissions")
+        .select("permission_key,module_key")
+        .eq("is_active", True)
+        .execute()
+        .data
+        or []
+    )
+    permissions: list[str] = []
+    for row in rows:
+        permission_key = _normalize(row.get("permission_key"))
+        module_key = _normalize(row.get("module_key"))
+        if not permission_key:
+            continue
+        if module_key == "platform" or permission_key.startswith("platform."):
+            continue
+        permissions.append(permission_key)
+    return sorted(set(permissions))
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -106,6 +204,173 @@ def _merge_school_metadata(existing: dict[str, Any] | None, updates: dict[str, A
     return merged
 
 
+def _provision_school_defaults(school: dict[str, Any], payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, bool]:
+    school_id = _normalize(school.get("id"))
+    school_metadata = school.get("metadata") if isinstance(school.get("metadata"), dict) else {}
+    app_settings = {
+        **DEFAULT_SCHOOL_APP_SETTINGS,
+        "name": _normalize(school.get("name")),
+        "phone": _normalize(school.get("contact_phone")),
+        "email": _normalize(school.get("contact_email")),
+        "timezone": _normalize(school.get("timezone")) or DEFAULT_SCHOOL_APP_SETTINGS["timezone"],
+        "address": _normalize(payload.get("address")),
+        "website": _normalize(payload.get("website")),
+    }
+    provisioning_metadata = {
+        "board": payload.get("board"),
+        "language": payload.get("language") or "English",
+        "address": payload.get("address"),
+        "city": payload.get("city"),
+        "state": payload.get("state"),
+        "country": payload.get("country"),
+        "default_departments": DEFAULT_PLATFORM_DEPARTMENTS,
+        "attendance_settings": {"minimum_attendance_threshold": 75, "working_hours_start": "09:00", "working_hours_end": "17:00"},
+        "timetable_settings": {"days_per_week": 6, "periods_per_day": 8},
+        "examination_settings": {"grading_mode": "percentage", "marks_entry_locked": False},
+        "ai_settings": {"enabled": True, "monthly_guardrails_enabled": True},
+        "notification_settings": {"email_notifications": True, "platform_broadcasts": True, "welcome_sms_enabled": False},
+    }
+    merged_metadata = _merge_school_metadata(
+        school_metadata,
+        {
+            "app_settings": app_settings,
+            "school_domain": payload.get("school_domain"),
+            "academic_session": payload.get("academic_session"),
+            "branding": {"logo_url": payload.get("logo_url")} if payload.get("logo_url") else school_metadata.get("branding") or {},
+            "onboarding": {
+                "status": "provisioned",
+                "completed_at": _iso_now(),
+                "provisioned_by": actor_profile_id,
+                **provisioning_metadata,
+            },
+        },
+    )
+    _public_table("schools").update({"metadata": merged_metadata}).eq("id", school_id).execute()
+    _schema_table("attendance", "settings").upsert(
+        {
+            "school_id": school_id,
+            "minimum_attendance_threshold": 75,
+            "working_hours_start": "09:00",
+            "working_hours_end": "17:00",
+            "metadata": {"source": "platform_onboarding"},
+            "is_active": True,
+        },
+        on_conflict="school_id",
+    ).execute()
+    return {
+        "school_settings": True,
+        "academic_session": True,
+        "departments": True,
+        "attendance_settings": True,
+        "timetable_settings": True,
+        "examination_settings": True,
+        "ai_settings": True,
+        "notification_settings": True,
+    }
+
+
+def _provision_school_admin(school: dict[str, Any], payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
+    school_id = _normalize(school.get("id"))
+    school_code = _normalize(school.get("school_code")).upper()
+    school_name = _normalize(school.get("name"))
+    admin_full_name = _normalize(payload.get("admin_full_name"))
+    admin_email = _normalize(payload.get("admin_email")).lower()
+    admin_mobile = _normalize(payload.get("admin_mobile")) or None
+    username = _school_admin_username(school_code, school_name)
+    temporary_password = generate_secure_password(length=16)
+    login_email = admin_email or _default_portal_login_email(school_id, username, "school_admin")
+    profile_id = _normalize(payload.get("admin_profile_id")) or None
+    new_profile_id = _create_or_update_auth_user(
+        school_id=school_id,
+        profile_id=profile_id,
+        login_email=login_email,
+        username=username,
+        full_name=admin_full_name or username,
+        phone=admin_mobile,
+        password=temporary_password,
+        selected_role="school_admin",
+    )
+    role_row = _ensure_membership_role(
+        school_id,
+        new_profile_id,
+        full_name=admin_full_name or username,
+        selected_role="school_admin",
+        permissions=_school_admin_permissions(),
+    )
+    membership = _upsert_membership(
+        school_id,
+        new_profile_id,
+        _normalize(role_row.get("id")),
+        is_active=True,
+        metadata={"source": "platform_onboarding", "first_login_completed": False},
+    )
+    profile = _update_profile_for_portal_access(
+        profile_id=new_profile_id,
+        full_name=admin_full_name or username,
+        username=username,
+        login_email=login_email,
+        phone=admin_mobile,
+        entity_type="staff_member",
+        entity_id=new_profile_id,
+        actor_profile_id=actor_profile_id,
+        must_change_password=True,
+        is_active=True,
+    )
+    portal_access = dict(((profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}).get("portal_access") or {}))
+    portal_access.update(
+        {
+            "entity_type": "school_admin",
+            "must_change_password": True,
+            "first_login_completed": False,
+            "first_login_steps": DEFAULT_FIRST_LOGIN_STEPS,
+            "temporary_password_expires_at": (_utc_now() + timedelta(days=7)).isoformat(),
+            "school_onboarding_required": True,
+            "onboarding_status": "pending",
+            "managed_by": "platform_onboarding",
+        }
+    )
+    metadata = _merge_school_metadata(
+        profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {},
+        {"portal_access": portal_access},
+    )
+    _public_table("profiles").update(
+        {
+            "metadata": metadata,
+            "default_school_id": school_id,
+            "email": login_email,
+            "phone": admin_mobile,
+            "full_name": admin_full_name or username,
+            "display_name": username,
+        }
+    ).eq("id", new_profile_id).execute()
+    _public_table("ai_credit_wallets").upsert(
+        {
+            "profile_id": new_profile_id,
+            "school_id": school_id,
+            "wallet_type": "personal",
+            "balance": 0,
+            "created_by": actor_profile_id,
+            "updated_by": actor_profile_id,
+            "metadata": {"source": "platform_onboarding"},
+        },
+        on_conflict="profile_id,school_id,wallet_type",
+    ).execute()
+    return {
+        "profile_id": new_profile_id,
+        "username": username,
+        "temporary_password": temporary_password,
+        "login_email": login_email,
+        "full_name": admin_full_name or username,
+        "mobile": admin_mobile,
+        "employee_code": _normalize(payload.get("admin_employee_code")) or None,
+        "role_key": "school_admin",
+        "must_change_password": True,
+        "first_login_completed": False,
+        "membership_created": bool(membership),
+        "account_created": True,
+    }
+
+
 def _school_status(row: dict[str, Any]) -> str:
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     if metadata.get("deleted_at"):
@@ -167,19 +432,38 @@ def _load_school_row(school_id: str) -> dict[str, Any]:
 
 def _resolve_counts(school_ids: list[str]) -> dict[str, dict[str, int]]:
     counters: dict[str, dict[str, int]] = {school_id: {"students": 0, "teachers": 0, "staff": 0} for school_id in school_ids}
-    for table_name, key in (("students", "students"), ("staff_members", "staff"), ("staff_members", "teachers")):
-        rows = _public_table(table_name).select("school_id,staff_type").in_("school_id", school_ids).eq("is_active", True).execute().data or []
-        for row in rows:
-            school_id = _normalize(row.get("school_id"))
-            if school_id not in counters:
-                continue
-            if table_name == "students":
-                counters[school_id]["students"] += 1
-            elif key == "teachers":
-                if _normalize(row.get("staff_type")) == "teaching":
-                    counters[school_id]["teachers"] += 1
-            else:
-                counters[school_id]["staff"] += 1
+    student_rows = (
+        _public_table("students")
+        .select("school_id")
+        .in_("school_id", school_ids)
+        .eq("is_active", True)
+        .execute()
+        .data
+        or []
+    )
+    for row in student_rows:
+        school_id = _normalize(row.get("school_id"))
+        if school_id in counters:
+            counters[school_id]["students"] += 1
+
+    staff_rows = (
+        _public_table("staff_members")
+        .select("school_id,staff_type")
+        .in_("school_id", school_ids)
+        .eq("is_active", True)
+        .execute()
+        .data
+        or []
+    )
+    for row in staff_rows:
+        school_id = _normalize(row.get("school_id"))
+        if school_id not in counters:
+            continue
+        staff_type = _normalize(row.get("staff_type"))
+        if staff_type == "teaching":
+            counters[school_id]["teachers"] += 1
+        elif staff_type == "non_teaching":
+            counters[school_id]["staff"] += 1
     return counters
 
 
@@ -207,6 +491,8 @@ def list_schools(*, status: str | None = None, q: str | None = None) -> dict[str
 
 
 def create_school(payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
+    resolved_school_code = _resolve_school_code(payload)
+    resolved_slug = _unique_slug(payload.get("slug") or resolved_school_code or payload.get("name") or "school")
     metadata = _merge_school_metadata(
         payload.get("metadata"),
         {
@@ -217,8 +503,8 @@ def create_school(payload: dict[str, Any], *, actor_profile_id: str | None) -> d
         },
     )
     insert_payload = {
-        "school_code": _normalize(payload.get("school_code")),
-        "slug": _normalize(payload.get("slug")).lower(),
+        "school_code": resolved_school_code,
+        "slug": resolved_slug,
         "name": _normalize(payload.get("name")),
         "legal_name": payload.get("legal_name"),
         "timezone": payload.get("timezone") or "Asia/Kolkata",
@@ -433,7 +719,7 @@ def _usage_item_for_school(school: dict[str, Any]) -> dict[str, Any]:
     students = _safe_count("students", school_id=school_id, active_only=True)
     staff_rows = _safe_list("staff_members", school_id=school_id)
     teachers = sum(1 for row in staff_rows if _normalize(row.get("staff_type")) == "teaching" and row.get("is_active", True))
-    staff = sum(1 for row in staff_rows if row.get("is_active", True))
+    staff = sum(1 for row in staff_rows if _normalize(row.get("staff_type")) == "non_teaching" and row.get("is_active", True))
     parents = _execute_count(_public_table("school_memberships").select("id", count="exact", head=True).eq("school_id", school_id).eq("status", "active"))
     rooms = _safe_count("rooms", school_id=school_id, active_only=True)
     attendance_records = _safe_count("student_attendance", school_id=school_id, schema="attendance") + _safe_count("staff_attendance", school_id=school_id, schema="attendance")
@@ -696,15 +982,35 @@ def create_notification(payload: dict[str, Any], *, actor_profile_id: str | None
 
 
 def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
+    audit_events = ["platform.school.created", "platform.onboarding.started"]
+    _audit(school_id=None, profile_id=actor_profile_id, action="platform.onboarding.started", payload={"school_name": payload.get("name"), "admin_email": payload.get("admin_email")})
     school = create_school(payload, actor_profile_id=actor_profile_id)
     school_id = school["id"]
     roles_created = 0
     permissions_seeded = False
+    provisioning = {
+        "school_settings": False,
+        "academic_session": False,
+        "role_templates": False,
+        "permission_templates": False,
+        "departments": False,
+        "attendance_settings": False,
+        "timetable_settings": False,
+        "examination_settings": False,
+        "ai_settings": False,
+        "notification_settings": False,
+        "usage_counters": False,
+        "subscription": False,
+        "ai_wallet": False,
+        "platform_notification": False,
+        "audit_entry": True,
+    }
+    seeded_permissions = _school_admin_permissions()
     for role_key, role_name in (("school_admin", "School Admin"), ("teacher", "Teacher"), ("student", "Student"), ("parent", "Parent"), ("viewer", "Viewer")):
         existing = _public_table("roles").select("id").eq("school_id", school_id).eq("role_key", role_key).limit(1).execute().data or []
         if existing:
             continue
-        _public_table("roles").insert(
+        created_role_rows = _public_table("roles").insert(
             {
                 "school_id": school_id,
                 "role_key": role_key,
@@ -714,9 +1020,21 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
                 "is_active": True,
                 "metadata": {"created_by": "platform_onboarding"},
             }
-        ).execute()
+        ).execute().data or []
+        if role_key == "school_admin" and created_role_rows and seeded_permissions:
+            permission_rows = _public_table("permissions").select("id,permission_key").in_("permission_key", seeded_permissions).execute().data or []
+            permission_map = {_normalize(row.get("permission_key")): _normalize(row.get("id")) for row in permission_rows}
+            role_permission_rows = [
+                {"role_id": _normalize(created_role_rows[0].get("id")), "permission_id": permission_map[key]}
+                for key in seeded_permissions
+                if key in permission_map
+            ]
+            if role_permission_rows:
+                _public_table("role_permissions").insert(role_permission_rows).execute()
         roles_created += 1
-    permissions_seeded = roles_created >= 0
+    permissions_seeded = True
+    provisioning["role_templates"] = True
+    provisioning["permission_templates"] = True
     batches_created = 0
     if payload.get("create_default_batches", True):
         for batch in (
@@ -735,6 +1053,9 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
                 }
             ).execute()
             batches_created += 1
+    provisioning.update(_provision_school_defaults(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id))
+    admin_account = _provision_school_admin(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id)
+    audit_events.append("platform.onboarding.credentials_generated")
     school_plan_rows = _public_table("school_plans").upsert(
         {
             "school_id": school_id,
@@ -743,11 +1064,19 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
             "effective_from": date.today().isoformat(),
             "created_by": actor_profile_id,
             "updated_by": actor_profile_id,
-            "metadata": {"billing_cycle": payload.get("billing_cycle") or "monthly"},
+            "student_limit": payload.get("max_students") if payload.get("max_students") is not None else 100,
+            "teacher_limit": payload.get("max_teachers") if payload.get("max_teachers") is not None else 10,
+            "parent_limit": payload.get("max_parents") if payload.get("max_parents") is not None else 50,
+            "storage_limit_gb": payload.get("max_storage_gb") if payload.get("max_storage_gb") is not None else 5,
+            "metadata": {
+                "billing_cycle": payload.get("billing_cycle") or "monthly",
+                "max_staff": payload.get("max_staff"),
+            },
         },
         on_conflict="school_id",
     ).execute().data or []
     subscription_initialized = bool(school_plan_rows or True)
+    provisioning["subscription"] = subscription_initialized
     _public_table("usage_snapshots").upsert(
         {
             "school_id": school_id,
@@ -758,11 +1087,12 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
         on_conflict="school_id,snapshot_date",
     ).execute()
     usage_initialized = True
+    provisioning["usage_counters"] = True
     ai_wallet_initialized = False
     if payload.get("initialize_ai_wallet", True):
         _public_table("ai_credit_wallets").upsert(
             {
-                "profile_id": payload.get("admin_profile_id") or actor_profile_id,
+                "profile_id": admin_account["profile_id"],
                 "school_id": school_id,
                 "wallet_type": "school",
                 "balance": 0,
@@ -772,27 +1102,45 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
             on_conflict="profile_id,school_id,wallet_type",
         ).execute()
         ai_wallet_initialized = True
-    admin_membership_created = False
-    if payload.get("admin_profile_id"):
-        role_rows = _public_table("roles").select("id").eq("school_id", school_id).eq("role_key", "school_admin").limit(1).execute().data or []
-        role_id = _normalize(role_rows[0].get("id")) if role_rows else ""
-        if role_id:
-            _public_table("school_memberships").upsert(
-                {
-                    "school_id": school_id,
-                    "profile_id": payload.get("admin_profile_id"),
-                    "role_id": role_id,
-                    "status": "active",
-                    "is_primary": True,
-                    "is_active": True,
-                    "metadata": {"source": "platform_onboarding"},
-                },
-                on_conflict="school_id,profile_id",
-            ).execute()
-            admin_membership_created = True
-    _audit(school_id=school_id, profile_id=actor_profile_id, action="platform.onboarding.completed", payload={"roles_created": roles_created, "batches_created": batches_created})
+    provisioning["ai_wallet"] = ai_wallet_initialized
+    admin_membership_created = bool(admin_account.get("membership_created"))
+    _public_table("platform_notifications").insert(
+        {
+            "title": f"Welcome {school['name']}",
+            "message": f"{school['name']} is provisioned and ready for first login.",
+            "notification_type": "system_alert",
+            "severity": "info",
+            "audience_scope": "school",
+            "school_ids": [school_id],
+            "metadata": {"source": "platform_onboarding", "admin_profile_id": admin_account["profile_id"]},
+            "created_by_profile_id": actor_profile_id,
+        }
+    ).execute()
+    provisioning["platform_notification"] = True
+    _audit(school_id=school_id, profile_id=actor_profile_id, action="platform.onboarding.credentials_generated", payload={"username": admin_account["username"], "login_email": admin_account["login_email"]})
+    _audit(school_id=school_id, profile_id=actor_profile_id, action="platform.onboarding.completed", payload={"roles_created": roles_created, "batches_created": batches_created, "admin_profile_id": admin_account["profile_id"]})
+    audit_events.extend(["platform.onboarding.completed", "platform.school.activated"])
     return {
         "school": school,
+        "admin": {
+            "profile_id": admin_account["profile_id"],
+            "full_name": admin_account["full_name"],
+            "email": admin_account["login_email"],
+            "mobile": admin_account["mobile"],
+            "employee_code": admin_account["employee_code"],
+            "role_key": "school_admin",
+            "first_login_completed": False,
+            "must_change_password": True,
+        },
+        "credentials": {
+            "username": admin_account["username"],
+            "temporary_password": admin_account["temporary_password"],
+            "login_email": admin_account["login_email"],
+            "login_url": "/login",
+            "expires_at": (_utc_now() + timedelta(days=7)).isoformat(),
+            "visible_once": True,
+        },
+        "provisioning": provisioning,
         "roles_created": roles_created,
         "permissions_seeded": permissions_seeded,
         "batches_created": batches_created,
@@ -800,5 +1148,69 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
         "usage_initialized": usage_initialized,
         "ai_wallet_initialized": ai_wallet_initialized,
         "admin_membership_created": admin_membership_created,
+        "admin_account_created": bool(admin_account.get("account_created")),
+        "notification_created": True,
+        "activation_status": "provisioned",
+        "audit_events": audit_events,
     }
 
+
+def regenerate_school_admin_credentials(school_id: str, *, actor_profile_id: str | None) -> dict[str, Any]:
+    school = _load_school_row(school_id)
+    memberships = (
+        _public_table("school_memberships")
+        .select("profile_id,role_id,roles(*)")
+        .eq("school_id", school_id)
+        .eq("status", "active")
+        .eq("is_active", True)
+        .execute()
+        .data
+        or []
+    )
+    admin_membership = next(
+        (
+            item for item in memberships
+            if _normalize(((item.get("roles")[0] if isinstance(item.get("roles"), list) and item.get("roles") else item.get("roles") or {}).get("metadata") or {}).get("role_key")) == "school_admin"
+            or _normalize((item.get("roles")[0] if isinstance(item.get("roles"), list) and item.get("roles") else item.get("roles") or {}).get("role_key")) == "school_admin"
+        ),
+        None,
+    )
+    if not admin_membership:
+        raise HTTPException(status_code=404, detail="School admin account not found")
+    profile_id = _normalize(admin_membership.get("profile_id"))
+    profile = _load_profile(profile_id)
+    username = _normalize(profile.get("display_name")) or _school_admin_username(_normalize(school.get("school_code")), _normalize(school.get("name")))
+    login_email = _normalize(profile.get("email"))
+    temporary_password = generate_secure_password(length=16)
+    _create_or_update_auth_user(
+        school_id=school_id,
+        profile_id=profile_id,
+        login_email=login_email,
+        username=username,
+        full_name=_normalize(profile.get("full_name")) or username,
+        phone=_normalize(profile.get("phone")) or None,
+        password=temporary_password,
+        selected_role="school_admin",
+    )
+    portal_access = dict((((profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}).get("portal_access")) or {}))
+    portal_access.update(
+        {
+            "must_change_password": True,
+            "first_login_completed": False,
+            "school_onboarding_required": True,
+            "onboarding_status": "pending",
+            "temporary_password_expires_at": (_utc_now() + timedelta(days=7)).isoformat(),
+            "last_password_reset_at": _iso_now(),
+        }
+    )
+    metadata = _merge_school_metadata(profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}, {"portal_access": portal_access})
+    _public_table("profiles").update({"metadata": metadata}).eq("id", profile_id).execute()
+    _audit(school_id=school_id, profile_id=actor_profile_id, action="platform.onboarding.credentials_regenerated", payload={"profile_id": profile_id, "username": username})
+    return {
+        "username": username,
+        "temporary_password": temporary_password,
+        "login_email": login_email,
+        "login_url": "/login",
+        "expires_at": (_utc_now() + timedelta(days=7)).isoformat(),
+        "visible_once": True,
+    }

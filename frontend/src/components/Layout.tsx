@@ -28,6 +28,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
+import { apiService } from '@services/api';
 import type { UserRole } from '@types';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 
@@ -61,6 +62,14 @@ export default function Layout({ children }: LayoutProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [openSections, setOpenSections] = useState<string[]>(['dashboard']);
   const [hoveredCollapsedKey, setHoveredCollapsedKey] = useState<string | null>(null);
+  const [schoolBranding, setSchoolBranding] = useState<{
+    logo_url?: string | null;
+    favicon_url?: string | null;
+    portal_name?: string;
+    primary_color?: string;
+    secondary_color?: string;
+    accent_color?: string;
+  } | null>(null);
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const { signOut } = useAuth();
@@ -71,6 +80,47 @@ export default function Layout({ children }: LayoutProps) {
   const isTeacherAiUser = roleKey === 'teacher' || user?.role === 'teacher';
   const isSchoolAiUser = isAdmin || roleKey === 'school_admin' || roleKey === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
+  const brandPrimary = schoolBranding?.primary_color || '#1e3a8a';
+  const brandSecondary = schoolBranding?.secondary_color || '#2563eb';
+  const brandAccent = schoolBranding?.accent_color || '#22d3ee';
+  const sidebarGradient = `linear-gradient(180deg, ${brandPrimary} 0%, ${brandSecondary} 48%, ${brandAccent} 100%)`;
+  const shellBackground = `linear-gradient(180deg, color-mix(in srgb, ${brandAccent} 12%, white) 0%, #eef3fa 40%, white 100%)`;
+
+  useEffect(() => {
+    if (!user?.school_id || isPlatformAdmin) {
+      setSchoolBranding(null);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const response = await apiService.getPublicSchoolBranding({ school: user.school_id });
+        if (active) {
+          setSchoolBranding(response.data);
+        }
+      } catch {
+        if (active) {
+          setSchoolBranding(null);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [user?.school_id, isPlatformAdmin]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.title = schoolBranding?.portal_name || 'Dr. Girish App';
+    const faviconHref = schoolBranding?.logo_url || bhavyaAxisLogo;
+    let favicon = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
+    if (!favicon) {
+      favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      document.head.appendChild(favicon);
+    }
+    favicon.href = schoolBranding?.logo_url || schoolBranding?.favicon_url || faviconHref;
+  }, [schoolBranding]);
 
   const canAccess = (permission?: string, roles?: UserRole[]) => {
     const roleAllowed = !roles?.length || Boolean(user?.role && roles.includes(user.role));
@@ -306,6 +356,23 @@ export default function Layout({ children }: LayoutProps) {
       children: [],
     },
     {
+      key: 'school-self-service',
+      name: 'School Self-Service',
+      icon: Settings,
+      iconBackground: 'linear-gradient(180deg, #86efac 0%, #0f766e 100%)',
+      permission: 'settings',
+      roles: ['admin', 'school_admin'],
+      children: [
+        { name: 'School Branding', path: '/school-self-service/branding', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'School Preferences', path: '/school-self-service/preferences', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'Portal Settings', path: '/school-self-service/portal-settings', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'Email Templates', path: '/school-self-service/email-templates', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'SMS / WhatsApp', path: '/school-self-service/messaging-templates', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'Storage Center', path: '/school-self-service/storage', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'Backup Center', path: '/school-self-service/backups', permission: 'settings', roles: ['admin', 'school_admin'] },
+      ],
+    },
+    {
       key: 'settings',
       name: 'Settings',
       icon: Settings,
@@ -335,6 +402,7 @@ export default function Layout({ children }: LayoutProps) {
     return rawSections
       .map((section) => {
         if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
+        if (section.key === 'school-self-service' && isPlatformAdmin) return null;
         const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission, child.roles));
         const sectionVisible =
           section.path
@@ -534,8 +602,7 @@ export default function Layout({ children }: LayoutProps) {
     <div
       className="flex h-full flex-col text-white"
       style={{
-        background:
-          'linear-gradient(180deg, rgba(30,58,138,0.92) 0%, rgba(37,99,235,0.84) 38%, rgba(59,130,246,0.8) 68%, rgba(34,211,238,0.56) 100%)',
+        background: sidebarGradient,
         color: '#ffffff',
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
@@ -550,11 +617,12 @@ export default function Layout({ children }: LayoutProps) {
         <div className={`flex items-center ${sidebarExpanded || mobile ? 'justify-between gap-3' : 'justify-center'}`}>
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white px-1">
-              <img src={bhavyaAxisLogo} alt="Dr. Girish App logo" className="h-8 w-auto object-contain" />
+              <img src={schoolBranding?.logo_url || bhavyaAxisLogo} alt="School logo" className="h-8 w-auto object-contain" />
             </div>
             {sidebarExpanded || mobile ? (
               <div className="min-w-0">
-                <p className="truncate text-lg font-semibold text-white">Dr. Girish App</p>
+                <p className="truncate text-lg font-semibold text-white">{schoolBranding?.portal_name || 'Dr. Girish App'}</p>
+                <p className="truncate text-[11px] uppercase tracking-[0.22em] text-white/70">{user?.school_id ? 'School Workspace' : 'Platform Workspace'}</p>
               </div>
             ) : null}
           </div>
@@ -641,12 +709,15 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-[#eef3fa]">
+      <div
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{ background: shellBackground }}
+      />
       <div className="relative hidden h-[100dvh] shrink-0 lg:block">
         <div
           className={`h-full transition-all duration-300 ${sidebarExpanded ? 'w-[320px]' : 'w-[94px]'}`}
           style={{
-            background:
-              'linear-gradient(180deg, rgba(30,58,138,0.92) 0%, rgba(37,99,235,0.84) 38%, rgba(59,130,246,0.8) 68%, rgba(34,211,238,0.56) 100%)',
+            background: sidebarGradient,
           }}
         >
           {sidebarContent(false)}
@@ -676,8 +747,7 @@ export default function Layout({ children }: LayoutProps) {
           <div
             className="relative h-full w-[88vw] max-w-[340px] shadow-2xl"
             style={{
-              background:
-                'linear-gradient(180deg, rgba(30,58,138,0.92) 0%, rgba(37,99,235,0.84) 38%, rgba(59,130,246,0.8) 68%, rgba(34,211,238,0.56) 100%)',
+              background: sidebarGradient,
             }}
           >
             {sidebarContent(true)}
@@ -694,7 +764,7 @@ export default function Layout({ children }: LayoutProps) {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <p className="truncate text-sm font-semibold text-slate-900">{user?.full_name || 'Dr. Girish App'}</p>
+          <p className="truncate text-sm font-semibold text-slate-900">{schoolBranding?.portal_name || user?.full_name || 'Dr. Girish App'}</p>
           <button
             onClick={handleLogout}
             className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700"

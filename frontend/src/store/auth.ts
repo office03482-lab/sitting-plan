@@ -143,6 +143,7 @@ const areUsersEquivalent = (left: User | null, right: User | null) => {
     left.membership_id === right.membership_id &&
     left.username === right.username &&
     Boolean(left.must_change_password) === Boolean(right.must_change_password) &&
+    Boolean(left.first_login_completed) === Boolean(right.first_login_completed) &&
     Boolean(left.is_active) === Boolean(right.is_active) &&
     leftPermissions.join('|') === rightPermissions.join('|')
   );

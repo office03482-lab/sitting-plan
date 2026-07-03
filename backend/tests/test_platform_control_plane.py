@@ -62,7 +62,24 @@ def test_platform_support_audit_search_notifications_and_onboarding(monkeypatch)
     monkeypatch.setattr(platform.platform_control_plane, "list_audit_center", lambda **kwargs: {"items": [{"action": "platform.school.created", "module_key": "platform_control_plane"}], "total_count": 1})
     monkeypatch.setattr(platform.platform_control_plane, "list_notifications", lambda: {"items": [{"id": "notif-1", "title": "Maintenance", "message": "Tonight", "notification_type": "maintenance", "severity": "warning", "audience_scope": "all", "school_ids": [], "metadata": {}}], "total_count": 1})
     monkeypatch.setattr(platform.platform_control_plane, "create_notification", lambda payload, actor_profile_id=None: {"id": "notif-2", "title": payload["title"], "message": payload["message"], "notification_type": payload["notification_type"], "severity": payload.get("severity", "info"), "audience_scope": payload.get("audience_scope", "all"), "school_ids": payload.get("school_ids", []), "metadata": payload.get("metadata", {})})
-    monkeypatch.setattr(platform.platform_control_plane, "run_onboarding", lambda payload, actor_profile_id=None: {"school": {"id": SCHOOL_ID, "school_code": payload["school_code"], "slug": payload["slug"], "name": payload["name"], "timezone": "Asia/Kolkata", "status": "active", "is_active": True, "student_count": 0, "teacher_count": 0, "staff_count": 0, "metadata": {}}, "roles_created": 5, "permissions_seeded": True, "batches_created": 2, "subscription_initialized": True, "usage_initialized": True, "ai_wallet_initialized": True, "admin_membership_created": False})
+    monkeypatch.setattr(platform.platform_control_plane, "run_onboarding", lambda payload, actor_profile_id=None: {
+        "school": {"id": SCHOOL_ID, "school_code": payload.get("school_code") or "NEW1", "slug": payload.get("slug") or "new-1", "name": payload["name"], "timezone": "Asia/Kolkata", "status": "active", "is_active": True, "student_count": 0, "teacher_count": 0, "staff_count": 0, "metadata": {}},
+        "admin": {"profile_id": "admin-1", "full_name": payload["admin_full_name"], "email": payload["admin_email"], "mobile": payload.get("admin_mobile"), "employee_code": payload.get("admin_employee_code"), "role_key": "school_admin", "first_login_completed": False, "must_change_password": True},
+        "credentials": {"username": "NEW1ADMIN", "temporary_password": "Temp#Pass123456", "login_email": payload["admin_email"], "login_url": "/login", "expires_at": None, "visible_once": True},
+        "provisioning": {"school_settings": True, "academic_session": True, "role_templates": True, "permission_templates": True, "departments": True, "attendance_settings": True, "timetable_settings": True, "examination_settings": True, "ai_settings": True, "notification_settings": True, "usage_counters": True, "subscription": True, "ai_wallet": True, "platform_notification": True, "audit_entry": True},
+        "roles_created": 5,
+        "permissions_seeded": True,
+        "batches_created": 2,
+        "subscription_initialized": True,
+        "usage_initialized": True,
+        "ai_wallet_initialized": True,
+        "admin_membership_created": True,
+        "admin_account_created": True,
+        "notification_created": True,
+        "activation_status": "provisioned",
+        "audit_events": ["platform.onboarding.completed"],
+    })
+    monkeypatch.setattr(platform.platform_control_plane, "regenerate_school_admin_credentials", lambda school_id, actor_profile_id=None: {"username": "NEW1ADMIN", "temporary_password": "New#Pass123456", "login_email": "admin@example.com", "login_url": "/login", "expires_at": None, "visible_once": True})
 
     assert client.get("/api/platform/search", params={"q": "Aarav"}).status_code == 200
     support_response = client.post(f"/api/platform/support/{SCHOOL_ID}", json={"action": "recalculate_usage"})
@@ -71,6 +88,10 @@ def test_platform_support_audit_search_notifications_and_onboarding(monkeypatch)
     assert client.get("/api/platform/audit-center").status_code == 200
     assert client.get("/api/platform/notifications").status_code == 200
     assert client.post("/api/platform/notifications", json={"title": "Maintenance", "message": "Tonight", "notification_type": "maintenance", "severity": "warning", "audience_scope": "all"}).status_code == 200
-    onboarding_response = client.post("/api/platform/onboarding", json={"school_code": "NEW1", "slug": "new-1", "name": "New School"})
+    onboarding_response = client.post("/api/platform/onboarding", json={"school_code": "NEW1", "slug": "new-1", "name": "New School", "admin_full_name": "Platform Admin", "admin_email": "admin@example.com"})
     assert onboarding_response.status_code == 200
     assert onboarding_response.json()["roles_created"] == 5
+    assert onboarding_response.json()["credentials"]["username"] == "NEW1ADMIN"
+    regenerate_response = client.post(f"/api/platform/schools/{SCHOOL_ID}/regenerate-admin-password")
+    assert regenerate_response.status_code == 200
+    assert regenerate_response.json()["temporary_password"] == "New#Pass123456"

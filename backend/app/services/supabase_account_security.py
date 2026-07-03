@@ -1257,6 +1257,7 @@ def _serialize_portal_status(
         "profile_id": _normalize(profile.get("id")) if profile else None,
         "account_created_date": profile.get("created_at") if profile else None,
         "must_change_password": bool(portal_metadata.get("must_change_password")) if profile else False,
+        "first_login_completed": bool(portal_metadata.get("first_login_completed")) if profile else False,
         "force_password_change": bool(portal_metadata.get("must_change_password")) if profile else False,
         "last_password_reset_at": portal_metadata.get("last_password_reset_at") if profile else None,
         "active_sessions": _active_count if profile else 0,
@@ -1361,6 +1362,7 @@ def _update_profile_for_portal_access(
                 "entity_id": entity_id,
                 "username": username,
                 "must_change_password": must_change_password,
+                "first_login_completed": False if must_change_password else bool(_portal_metadata(current).get("first_login_completed")),
                 "account_created_at": current.get("created_at") or _now_iso(),
                 "last_password_reset_at": _now_iso(),
                 "managed_by": "account_security",
@@ -2449,7 +2451,17 @@ def complete_password_change(profile_id: str) -> dict[str, Any]:
     profile = _load_profile(profile_id)
     metadata = _merge_metadata(
         profile.get("metadata"),
-        {"portal_access": {**_portal_metadata(profile), "must_change_password": False, "password_changed_at": _now_iso()}},
+        {
+            "portal_access": {
+                **_portal_metadata(profile),
+                "must_change_password": False,
+                "first_login_completed": True,
+                "school_onboarding_required": False,
+                "onboarding_status": "completed",
+                "password_changed_at": _now_iso(),
+                "completed_at": _now_iso(),
+            }
+        },
     )
     _public_table("profiles").update({"metadata": metadata}).eq("id", profile_id).execute()
     return {"status": "ok"}
