@@ -72,7 +72,7 @@ const AUTH_STORAGE_KEYS = [
 
 const ACTIVE_SESSION_HEARTBEAT_MS = 60_000;
 const SESSION_REGISTRATION_RETRY_DELAYS_MS = [350, 900];
-const SESSION_REGISTRATION_REQUEST_TIMEOUT_MS = 8_000;
+const SESSION_REGISTRATION_ATTEMPT_TIMEOUTS_MS = [8_000, 12_000, 18_000];
 
 const createReadySignal = (): ReadySignal => {
   let resolvePromise!: () => void;
@@ -375,6 +375,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const tokenRefreshDebounceRef = useRef<number | null>(null);
   const authSubscriptionAttachedRef = useRef(false);
   const sessionRegistrationFingerprintRef = useRef<string | null>(null);
+  const sessionRegistrationInFlightRef = useRef<{ fingerprint: string; promise: Promise<string> } | null>(null);
 
   useEffect(() => {
     storeUserRef.current = storeUser;
@@ -401,7 +402,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     for (let attempt = 0; attempt <= SESSION_REGISTRATION_RETRY_DELAYS_MS.length; attempt += 1) {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), SESSION_REGISTRATION_REQUEST_TIMEOUT_MS);
+      const timeoutMs = SESSION_REGISTRATION_ATTEMPT_TIMEOUTS_MS[Math.min(attempt, SESSION_REGISTRATION_ATTEMPT_TIMEOUTS_MS.length - 1)];
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      const attemptStartedAt = performance.now();
       try {
         await fetch(registrationUrl, {
           method: 'POST',
@@ -420,10 +423,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }),
         }).then(async (response) => {
           if (response.ok) {
+            console.debug('[auth-session-registration]', {
+              attempt: attempt + 1,
+              method: 'POST',
+              path: '/account-security/sessions/register',
+              status: response.status,
+              duration_ms: Math.round(performance.now() - attemptStartedAt),
+            });
             return response.json().catch(() => ({}));
           }
           const payload = await response.json().catch(() => ({}));
           const detail = payload?.detail;
+          console.debug('[auth-session-registration]', {
+            attempt: attempt + 1,
+            method: 'POST',
+            path: '/account-security/sessions/register',
+            status: response.status,
+            duration_ms: Math.round(performance.now() - attemptStartedAt),
+          });
           if (detail?.code === 'session_limit_exceeded') {
             const error = new Error(detail.message || 'Existing session detected') as Error & {
               code?: string;
@@ -443,10 +460,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw error;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
-          lastError = new Error('Session registration timed out');
+          lastError = new Error('Session registration timeout');
         } else {
           lastError = error instanceof Error ? error : new Error('Session registration failed');
         }
+        console.warn('[auth-session-registration]', {
+          attempt: attempt + 1,
+          method: 'POST',
+          path: '/account-security/sessions/register',
+          status: Number((error as any)?.response?.status || 0) || null,
+          duration_ms: Math.round(performance.now() - attemptStartedAt),
+          reason: lastError.message,
+          aborted: error instanceof DOMException && error.name === 'AbortError',
+        });
         if (attempt >= SESSION_REGISTRATION_RETRY_DELAYS_MS.length) {
           break;
         }
@@ -455,6 +481,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     throw lastError || new Error('Session registration failed');
+  };
+
+  const registerPortalSession = async (
+    nextSession: Session,
+    options?: { forceTakeover?: boolean },
+  ) => {
+    const fingerprint = `${nextSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
+    if (sessionRegistrationReady && sessionRegistrationFingerprintRef.current === fingerprint) {
+      return getStoredActiveSessionKey() || '';
+    }
+    const inFlight = sessionRegistrationInFlightRef.current;
+    if (inFlight?.fingerprint === fingerprint) {
+      return inFlight.promise;
+    }
+
+    const promise = ensurePortalSessionRegistered(nextSession.access_token, options).finally(() => {
+      if (sessionRegistrationInFlightRef.current?.promise === promise) {
+        sessionRegistrationInFlightRef.current = null;
+      }
+    });
+    sessionRegistrationInFlightRef.current = {
+      fingerprint,
+      promise,
+    };
+    return promise;
   };
 
   const reloadUserProfile = async () => {
@@ -509,6 +560,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearPersistedAuthArtifacts();
       setSession(null);
       setSessionRegistrationReady(false);
+      sessionRegistrationInFlightRef.current = null;
       failedSessionFingerprintRef.current = null;
       lastProfileBootstrapUserIdRef.current = null;
       activeSyncFingerprintRef.current = null;
@@ -619,11 +671,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: storeUserRef.current,
         });
         if (!getStoredActiveSessionKey()) {
-          await ensurePortalSessionRegistered(nextSession.access_token);
+          await registerPortalSession(nextSession);
         }
         if (!isMounted) return;
         setSessionRegistrationReady(true);
-        sessionRegistrationFingerprintRef.current = `${nextSession.user.id}:${nextSession.access_token.slice(0, 12)}`;
+        sessionRegistrationFingerprintRef.current = `${nextSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.fast_path_complete', {
           origin,
@@ -664,7 +716,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
         const appUser = await buildAppUserFromSession(bootstrapSession);
-        await ensurePortalSessionRegistered(bootstrapSession.access_token);
+        await registerPortalSession(bootstrapSession, {
+          forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
+        });
         if (!isMounted) return;
 
         setSession(bootstrapSession);
@@ -672,7 +726,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSessionRegistrationReady(true);
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
-        sessionRegistrationFingerprintRef.current = `${bootstrapSession.user.id}:${bootstrapSession.access_token.slice(0, 12)}`;
+        sessionRegistrationFingerprintRef.current = `${bootstrapSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
         hydrate({
           token: bootstrapSession.access_token,
           refreshToken: bootstrapSession.refresh_token,
@@ -792,7 +846,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return ({
       loading,
       initialized,
-      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session,
+      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && sessionRegistrationReady && !!session,
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
       schoolContextReady,
       sessionRegistrationReady,
@@ -821,7 +875,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!data.session?.access_token) {
             throw new Error('Authenticated session not returned by Supabase.');
           }
-          await ensurePortalSessionRegistered(data.session.access_token, {
+          await registerPortalSession(data.session, {
             forceTakeover: options?.forceTakeover,
           });
         } catch (error: any) {
@@ -910,16 +964,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const fingerprint = `${storeUser.id}:${session.access_token.slice(0, 12)}`;
-    if (sessionRegistrationFingerprintRef.current === fingerprint) {
+    if (sessionRegistrationFingerprintRef.current === `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`) {
       setSessionRegistrationReady(true);
       return;
     }
-    sessionRegistrationFingerprintRef.current = fingerprint;
+    sessionRegistrationFingerprintRef.current = `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`;
 
-    void ensurePortalSessionRegistered(session.access_token)
+    void registerPortalSession(session)
       .then(() => {
         setSessionRegistrationReady(true);
+        sessionRegistrationFingerprintRef.current = `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`;
       })
       .catch(async (error: any) => {
         const detail = error?.conflict;

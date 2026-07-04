@@ -2336,11 +2336,13 @@ def register_active_session(
     ).execute()
     rows = list(response.data or [])
     created = dict(rows[0]) if rows else {}
+    profile = _load_profile(profile_id)
+    portal_metadata = _portal_metadata(profile)
     _public_table("profiles").update(
         {
             "metadata": _merge_metadata(
-                _load_profile(profile_id).get("metadata"),
-                {"portal_access": {**_portal_metadata(_load_profile(profile_id)), "last_login": created.get("login_time")}},
+                profile.get("metadata"),
+                {"portal_access": {**portal_metadata, "last_login": created.get("login_time")}},
             )
         }
     ).eq("id", profile_id).execute()
