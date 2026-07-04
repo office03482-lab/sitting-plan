@@ -134,7 +134,7 @@ export default function Layout({ children }: LayoutProps) {
       name: 'Overview',
       icon: LayoutDashboard,
       iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%)',
-      path: '/',
+      path: '/overview',
     },
     {
       key: 'parent-portal',

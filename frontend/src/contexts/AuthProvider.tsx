@@ -39,6 +39,7 @@ type AuthContextValue = {
   authReady: boolean;
   sessionReady: boolean;
   schoolContextReady: boolean;
+  sessionRegistrationReady: boolean;
   authStatus: AuthStatus;
   user: User | null;
   session: Session | null;
@@ -70,6 +71,7 @@ const AUTH_STORAGE_KEYS = [
 ] as const;
 
 const ACTIVE_SESSION_HEARTBEAT_MS = 60_000;
+const SESSION_REGISTRATION_RETRY_DELAYS_MS = [350, 900];
 
 const createReadySignal = (): ReadySignal => {
   let resolvePromise!: () => void;
@@ -152,6 +154,10 @@ function redirectToLogin() {
   }
 }
 
+function wait(delayMs: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
 async function diagnoseSupabaseConnectivityError() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
@@ -217,8 +223,8 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
 
 function getDefaultRouteForUser(user?: User | null) {
   if (!user) return '/login';
-  if (user.role_key === 'school_admin' || user.role_key === 'platform_admin') return '/school-ai-assistant';
-  if (user.role === 'admin') return '/';
+  if (user.role_key === 'platform_admin') return '/platform/dashboard';
+  if (user.role_key === 'school_admin' || user.role === 'admin') return '/overview';
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
   if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
   if (user.role === 'student' && (user.permissions?.includes('doubt_solver.solve') || user.permissions?.includes('study_planner.view'))) return '/ai-study-assistant';
@@ -355,6 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus>('IDLE');
+  const [sessionRegistrationReady, setSessionRegistrationReady] = useState(false);
 
   const storeUserRef = useRef(storeUser);
   const authErrorRef = useRef(authError);
@@ -387,38 +394,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionKey);
     }
-    await fetch(`${runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || '/api'}/account-security/sessions/register`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'X-Device-Id': getStoredDeviceId(),
-      },
-      body: JSON.stringify({
-        session_key: sessionKey,
-        device_id: getStoredDeviceId(),
-        device_name: getDeviceLabel(),
-        browser: getBrowserLabel(),
-        force_takeover: Boolean(options?.forceTakeover),
-      }),
-    }).then(async (response) => {
-      if (response.ok) {
-        return response.json().catch(() => ({}));
+    const registrationUrl = `${runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || '/api'}/account-security/sessions/register`;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= SESSION_REGISTRATION_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        await fetch(registrationUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            'X-Device-Id': getStoredDeviceId(),
+          },
+          body: JSON.stringify({
+            session_key: sessionKey,
+            device_id: getStoredDeviceId(),
+            device_name: getDeviceLabel(),
+            browser: getBrowserLabel(),
+            force_takeover: Boolean(options?.forceTakeover),
+          }),
+        }).then(async (response) => {
+          if (response.ok) {
+            return response.json().catch(() => ({}));
+          }
+          const payload = await response.json().catch(() => ({}));
+          const detail = payload?.detail;
+          if (detail?.code === 'session_limit_exceeded') {
+            const error = new Error(detail.message || 'Existing session detected') as Error & {
+              code?: string;
+              conflict?: unknown;
+            };
+            error.code = 'session_limit_exceeded';
+            error.conflict = detail;
+            throw error;
+          }
+          throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
+        });
+        return sessionKey;
+      } catch (error) {
+        if ((error as any)?.code === 'session_limit_exceeded') {
+          throw error;
+        }
+        lastError = error instanceof Error ? error : new Error('Session registration failed');
+        if (attempt >= SESSION_REGISTRATION_RETRY_DELAYS_MS.length) {
+          break;
+        }
+        await wait(SESSION_REGISTRATION_RETRY_DELAYS_MS[attempt]);
       }
-      const payload = await response.json().catch(() => ({}));
-      const detail = payload?.detail;
-      if (detail?.code === 'session_limit_exceeded') {
-        const error = new Error(detail.message || 'Existing session detected') as Error & {
-          code?: string;
-          conflict?: unknown;
-        };
-        error.code = 'session_limit_exceeded';
-        error.conflict = detail;
-        throw error;
-      }
-      throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
-    });
-    return sessionKey;
+    }
+
+    throw lastError || new Error('Session registration failed');
   };
 
   const reloadUserProfile = async () => {
@@ -472,9 +497,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!isMounted) return;
       clearPersistedAuthArtifacts();
       setSession(null);
+      setSessionRegistrationReady(false);
       failedSessionFingerprintRef.current = null;
       lastProfileBootstrapUserIdRef.current = null;
       activeSyncFingerprintRef.current = null;
+      sessionRegistrationFingerprintRef.current = null;
       logoutStore();
       finalizeInitialization('UNAUTHENTICATED', options?.reason ?? null);
       if (options?.redirectToLogin) {
@@ -527,6 +554,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         !storeUserRef.current
       ) {
         setSession(nextSession);
+        setSessionRegistrationReady(false);
         finalizeInitialization('UNAUTHENTICATED', authErrorRef.current);
         return;
       }
@@ -544,6 +572,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: storeUserRef.current,
         });
         setSession(nextSession);
+        setSessionRegistrationReady(Boolean(getStoredActiveSessionKey()));
         finalizeInitialization('AUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.silent_refresh_applied', {
           origin,
@@ -560,6 +589,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         !shouldBootstrapProfile &&
         hasResolvedSchoolContext(storeUserRef.current)
       ) {
+        setSessionRegistrationReady(Boolean(getStoredActiveSessionKey()));
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED', authErrorRef.current);
         console.debug('[auth-sync]', 'syncSession.noop_same_fingerprint', {
           origin,
@@ -577,6 +607,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: storeUserRef.current,
         });
+        if (!getStoredActiveSessionKey()) {
+          await ensurePortalSessionRegistered(nextSession.access_token);
+        }
+        if (!isMounted) return;
+        setSessionRegistrationReady(true);
+        sessionRegistrationFingerprintRef.current = `${nextSession.user.id}:${nextSession.access_token.slice(0, 12)}`;
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.fast_path_complete', {
           origin,
@@ -617,12 +653,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
         const appUser = await buildAppUserFromSession(bootstrapSession);
+        await ensurePortalSessionRegistered(bootstrapSession.access_token);
         if (!isMounted) return;
 
         setSession(bootstrapSession);
         setAuthError(null);
+        setSessionRegistrationReady(true);
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
+        sessionRegistrationFingerprintRef.current = `${bootstrapSession.user.id}:${bootstrapSession.access_token.slice(0, 12)}`;
         hydrate({
           token: bootstrapSession.access_token,
           refreshToken: bootstrapSession.refresh_token,
@@ -639,6 +678,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!isMounted) return;
 
         setSession(nextSession);
+        setSessionRegistrationReady(false);
         failedSessionFingerprintRef.current = nextFingerprint;
         hydrate({
           token: nextSession.access_token,
@@ -741,9 +781,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return ({
       loading,
       initialized,
-      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session,
+      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session && sessionRegistrationReady,
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
       schoolContextReady,
+      sessionRegistrationReady,
       authStatus,
       user: storeUser,
       session,
@@ -803,6 +844,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           clearPersistedAuthArtifacts();
           logoutStore();
           setSession(null);
+          setSessionRegistrationReady(false);
           setAuthStatus('UNAUTHENTICATED');
           setAuthError(null);
           AuthInitializationRegistry.resolve('UNAUTHENTICATED');
@@ -848,7 +890,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     },
-    [authError, authStatus, initialized, loading, logoutStore, session, storeUser],
+    [authError, authStatus, initialized, loading, logoutStore, session, sessionRegistrationReady, storeUser],
   );
 
   useEffect(() => {
@@ -859,22 +901,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const fingerprint = `${storeUser.id}:${session.access_token.slice(0, 12)}`;
     if (sessionRegistrationFingerprintRef.current === fingerprint) {
+      setSessionRegistrationReady(true);
       return;
     }
     sessionRegistrationFingerprintRef.current = fingerprint;
 
-    void ensurePortalSessionRegistered(session.access_token).catch(async (error: any) => {
-      const detail = error?.conflict;
-      if (error?.code === 'session_limit_exceeded') {
-        setAuthError(
-          typeof detail?.message === 'string'
-            ? detail.message
-            : 'Existing session detected. Please sign in again and choose Continue Here.',
-        );
-        return;
-      }
-      console.warn('Session registration failed (non-fatal):', error);
-    });
+    void ensurePortalSessionRegistered(session.access_token)
+      .then(() => {
+        setSessionRegistrationReady(true);
+      })
+      .catch(async (error: any) => {
+        const detail = error?.conflict;
+        if (error?.code === 'session_limit_exceeded') {
+          setAuthError(
+            typeof detail?.message === 'string'
+              ? detail.message
+              : 'Existing session detected. Please sign in again and choose Continue Here.',
+          );
+          setSessionRegistrationReady(false);
+          return;
+        }
+        console.warn('Session registration failed (non-fatal):', error);
+        setSessionRegistrationReady(false);
+      });
   }, [authStatus, logoutStore, session, storeUser?.id]);
 
   useEffect(() => {

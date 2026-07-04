@@ -17,6 +17,15 @@ import type {
   AiAgentDashboard, AiAgentRecommendation, AiAgentRunResponse,
 } from '@types';
 
+type RetriableAxiosConfig = {
+  __retryCount?: number;
+  __retryableRequest?: boolean;
+} & Record<string, any>;
+
+const SAFE_RETRY_METHODS = new Set(['get']);
+const SAFE_RETRY_STATUS_CODES = new Set([502, 503, 504]);
+const MAX_SAFE_GET_RETRIES = 2;
+
 export function isRequestCanceled(error: unknown): boolean {
   return axios.isCancel(error);
 }
@@ -65,7 +74,7 @@ export function getRequestErrorMessage(error: any, fallback: string): string {
     return '';
   }
   if (isRequestTimeoutError(error)) {
-    return 'Server response aane me zyada time lag raha hai. Thodi der baad retry karo.';
+    return 'Server abhi wake-up ya slow response state me ho sakta hai. Humne safe retry kiya, lekin response abhi bhi time par nahi mila. Kripya thodi der me phir try karo.';
   }
   if (isMissingSchoolContextError(error)) {
     return getMissingSchoolContextMessage('This module');
@@ -161,6 +170,44 @@ function normalizeRequestSchoolId(
   }
 }
 
+function waitForRetry(delayMs: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
+function getSafeGetRetryDelayMs(attempt: number) {
+  const baseDelay = attempt === 1 ? 350 : 900;
+  const jitter = Math.floor(Math.random() * 200);
+  return baseDelay + jitter;
+}
+
+function isSafeRetryableRequest(error: any): boolean {
+  if (axios.isCancel(error)) {
+    return false;
+  }
+
+  const config = (error?.config || {}) as RetriableAxiosConfig;
+  const method = String(config.method || 'get').toLowerCase();
+  if (!SAFE_RETRY_METHODS.has(method)) {
+    return false;
+  }
+
+  const retryCount = Number(config.__retryCount || 0);
+  if (retryCount >= MAX_SAFE_GET_RETRIES) {
+    return false;
+  }
+
+  const status = Number(error?.response?.status || 0);
+  if (isRequestTimeoutError(error)) {
+    return true;
+  }
+
+  if (!status) {
+    return true;
+  }
+
+  return SAFE_RETRY_STATUS_CODES.has(status);
+}
+
 class ApiService {
   private api: AxiosInstance;
 
@@ -215,6 +262,32 @@ class ApiService {
 
       return config;
     });
+
+    this.api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        if (!isSafeRetryableRequest(error)) {
+          return Promise.reject(error);
+        }
+
+        const config = (error.config || {}) as RetriableAxiosConfig;
+        const nextAttempt = Number(config.__retryCount || 0) + 1;
+        config.__retryCount = nextAttempt;
+
+        const delayMs = getSafeGetRetryDelayMs(nextAttempt);
+        console.warn('[api-retry]', {
+          url: `${config.baseURL || ''}${config.url || ''}`,
+          method: String(config.method || 'get').toUpperCase(),
+          attempt: nextAttempt,
+          delayMs,
+          status: Number(error?.response?.status || 0) || null,
+          reason: error?.message || 'retryable request failure',
+        });
+
+        await waitForRetry(delayMs);
+        return this.api.request(config as any);
+      },
+    );
   }
 
   private uploadWithProgress(

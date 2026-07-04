@@ -98,7 +98,7 @@ function SchoolAdminRoute({ children }: { children: JSX.Element }) {
 }
 
 function AppShell() {
-  const { user } = useAuth();
+  const { user, getDefaultRoute } = useAuth();
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -111,7 +111,8 @@ function AppShell() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Navigate to={getDefaultRoute(user)} replace />} />
+        <Route path="/overview" element={<Dashboard />} />
         <Route
           path="/admin-office"
           element={
@@ -654,7 +655,7 @@ function AppShell() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={getDefaultRoute(user)} replace />} />
       </Routes>
     </Layout>
   );
