@@ -72,6 +72,7 @@ const AUTH_STORAGE_KEYS = [
 
 const ACTIVE_SESSION_HEARTBEAT_MS = 60_000;
 const SESSION_REGISTRATION_RETRY_DELAYS_MS = [350, 900];
+const SESSION_REGISTRATION_REQUEST_TIMEOUT_MS = 8_000;
 
 const createReadySignal = (): ReadySignal => {
   let resolvePromise!: () => void;
@@ -118,6 +119,7 @@ const createAuthInitializationRegistry = () => {
 };
 
 export const AuthInitializationRegistry = createAuthInitializationRegistry();
+export const DEFAULT_HOME_ROUTE = '/overview';
 
 function clearPersistedAuthArtifacts() {
   if (typeof window === 'undefined') return;
@@ -223,8 +225,8 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
 
 function getDefaultRouteForUser(user?: User | null) {
   if (!user) return '/login';
-  if (user.role_key === 'platform_admin') return '/platform/dashboard';
-  if (user.role_key === 'school_admin' || user.role === 'admin') return '/overview';
+  if (user.role_key === 'platform_admin') return DEFAULT_HOME_ROUTE;
+  if (user.role_key === 'school_admin' || user.role === 'admin') return DEFAULT_HOME_ROUTE;
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
   if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
   if (user.role === 'student' && (user.permissions?.includes('doubt_solver.solve') || user.permissions?.includes('study_planner.view'))) return '/ai-study-assistant';
@@ -398,9 +400,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= SESSION_REGISTRATION_RETRY_DELAYS_MS.length; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), SESSION_REGISTRATION_REQUEST_TIMEOUT_MS);
       try {
         await fetch(registrationUrl, {
           method: 'POST',
+          signal: controller.signal,
           headers: {
             Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
@@ -430,12 +435,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
         });
+        window.clearTimeout(timeoutId);
         return sessionKey;
       } catch (error) {
+        window.clearTimeout(timeoutId);
         if ((error as any)?.code === 'session_limit_exceeded') {
           throw error;
         }
-        lastError = error instanceof Error ? error : new Error('Session registration failed');
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          lastError = new Error('Session registration timed out');
+        } else {
+          lastError = error instanceof Error ? error : new Error('Session registration failed');
+        }
         if (attempt >= SESSION_REGISTRATION_RETRY_DELAYS_MS.length) {
           break;
         }
@@ -781,7 +792,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return ({
       loading,
       initialized,
-      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session && sessionRegistrationReady,
+      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && !!session,
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
       schoolContextReady,
       sessionRegistrationReady,

@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@store/auth';
-import { useAuth } from '@/contexts/AuthProvider';
+import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { UserRole } from '@types';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
@@ -134,7 +134,7 @@ export default function Layout({ children }: LayoutProps) {
       name: 'Overview',
       icon: LayoutDashboard,
       iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%)',
-      path: '/overview',
+      path: DEFAULT_HOME_ROUTE,
     },
     {
       key: 'parent-portal',

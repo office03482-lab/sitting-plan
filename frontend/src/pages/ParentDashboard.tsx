@@ -4,38 +4,114 @@ import { BookOpen, CalendarCheck, CreditCard, GraduationCap, TrendingUp, Clipboa
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
-import { apiService, getRequestErrorMessage } from '@services/api';
+import {
+  apiService,
+  getMissingSchoolContextMessage,
+  getRequestErrorMessage,
+  isMissingSchoolContextError,
+} from '@services/api';
 import type { ParentPortalChildDashboard } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
+type ParentDashboardViewState =
+  | 'loading'
+  | 'success'
+  | 'empty'
+  | 'unauthorized'
+  | 'session_expired'
+  | 'school_context_unavailable'
+  | 'error';
 
 export default function ParentDashboard() {
-  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const {
+    authReady,
+    sessionReady,
+    schoolContextReady,
+    session,
+    user,
+    initialized,
+    loading: authLoading,
+    authError,
+  } = useAuth();
   const canRun = authReady && sessionReady && schoolContextReady && !!session;
 
   const [children, setChildren] = useState<ParentPortalChildDashboard[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [viewState, setViewState] = useState<ParentDashboardViewState>('loading');
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    if (!canRun) return;
+    if (authLoading || !initialized) {
+      setViewState('loading');
+      return;
+    }
+    if (!user || !session) {
+      setViewState('session_expired');
+      setError('Session expired. Please sign in again.');
+      return;
+    }
+    if (!schoolContextReady) {
+      setViewState('school_context_unavailable');
+      setError(getMissingSchoolContextMessage('Parent dashboard'));
+      return;
+    }
+    if (!authReady) {
+      setViewState('loading');
+      if (authError) {
+        setError(authError);
+      }
+      return;
+    }
     void loadDashboard();
-  }, [canRun]);
+  }, [authError, authLoading, authReady, initialized, schoolContextReady, session, user]);
 
   const loadDashboard = async () => {
+    if (!canRun) {
+      return;
+    }
     try {
-      setLoading(true);
+      setViewState('loading');
+      setError('');
       const res = await apiService.getParentPortalDashboard();
       const data = res.data;
-      setChildren(data.children);
-      if (data.children.length > 0 && !selectedChildId) {
-        setSelectedChildId(data.children[0].student_id);
+      const nextChildren = Array.isArray(data.children) ? data.children : [];
+      setChildren(nextChildren);
+      if (nextChildren.length > 0) {
+        if (!selectedChildId) {
+          setSelectedChildId(nextChildren[0].student_id);
+        }
+        setViewState('success');
+      } else {
+        setSelectedChildId('');
+        setViewState('empty');
       }
     } catch (err) {
-      setError(getRequestErrorMessage(err, 'Dashboard load failed.'));
-    } finally {
-      setLoading(false);
+      const status = Number((err as any)?.response?.status || 0);
+      const message = getRequestErrorMessage(err, 'Dashboard load failed.');
+      if (status === 404 && message.toLowerCase().includes('no linked students')) {
+        setChildren([]);
+        setSelectedChildId('');
+        setError('');
+        setViewState('empty');
+        return;
+      }
+      if (status === 403) {
+        setError(message || 'You are not authorized to view the parent dashboard.');
+        setViewState('unauthorized');
+        return;
+      }
+      if (status === 401) {
+        setError(message || 'Session expired. Please sign in again.');
+        setViewState('session_expired');
+        return;
+      }
+      if (isMissingSchoolContextError(err)) {
+        setError(getMissingSchoolContextMessage('Parent dashboard'));
+        setViewState('school_context_unavailable');
+        return;
+      }
+      setError(message);
+      setViewState('error');
     }
   };
 
@@ -44,7 +120,40 @@ export default function ParentDashboard() {
     [children, selectedChildId]
   );
 
-  if (loading) return <LoadingSpinner message="Loading parent dashboard..." />;
+  if (viewState === 'loading') {
+    return <LoadingSpinner message="Loading parent dashboard..." />;
+  }
+
+  if (viewState !== 'success') {
+    return (
+      <div className="space-y-6 p-4 md:p-6">
+        <section className={cardClass}>
+          <h1 className="text-2xl font-bold text-slate-900">Parent Dashboard</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            {viewState === 'empty'
+              ? 'No linked children found for this account.'
+              : viewState === 'unauthorized'
+                ? 'You do not have permission to access the parent dashboard.'
+                : viewState === 'session_expired'
+                  ? 'Your session has expired. Please sign in again.'
+                  : viewState === 'school_context_unavailable'
+                    ? 'School context is unavailable for this parent account right now.'
+                    : 'We could not load the parent dashboard.'}
+          </p>
+          {error ? <div className="mt-4"><Alert type={viewState === 'empty' ? 'info' : 'error'} message={error} /></div> : null}
+          {(viewState === 'error' || viewState === 'school_context_unavailable') ? (
+            <button
+              type="button"
+              onClick={() => void loadDashboard()}
+              className="mt-4 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Retry
+            </button>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 p-4 md:p-6">
@@ -139,7 +248,7 @@ export default function ParentDashboard() {
         </>
       )}
 
-      {!selectedChild && !loading && (
+      {!selectedChild && (
         <section className={cardClass}>
           <p className="text-sm text-slate-500">No children linked to this account.</p>
         </section>

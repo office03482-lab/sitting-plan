@@ -7,7 +7,7 @@ import { ErrorBoundary } from '@components/ErrorBoundary';
 import Layout from '@components/Layout';
 import PlatformAdminRoute from '@components/PlatformAdminRoute';
 import { ProtectedRoute } from '@components/ProtectedRoute';
-import { useAuth } from '@/contexts/AuthProvider';
+import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 
 import AccessControl from '@pages/AccessControl';
 import AddStaff from '@pages/AddStaff';
@@ -112,7 +112,7 @@ function AppShell() {
     <Layout>
       <Routes>
         <Route path="/" element={<Navigate to={getDefaultRoute(user)} replace />} />
-        <Route path="/overview" element={<Dashboard />} />
+        <Route path={DEFAULT_HOME_ROUTE} element={<Dashboard />} />
         <Route
           path="/admin-office"
           element={

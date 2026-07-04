@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { DEFAULT_HOME_ROUTE } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 
 type PlatformAdminRouteProps = {
@@ -14,7 +15,7 @@ export function PlatformAdminRoute({ children }: PlatformAdminRouteProps) {
   }
 
   if (user.role_key !== 'platform_admin') {
-    return <Navigate to="/" replace />;
+    return <Navigate to={DEFAULT_HOME_ROUTE} replace />;
   }
 
   return <>{children}</>;
