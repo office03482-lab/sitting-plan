@@ -438,7 +438,7 @@ def _list_parent_linked_students(school_id: str, profile_id: str | None, email: 
     if normalized_profile_id or normalized_email:
         guardian_rows = list(
             _client().schema("academic").table("guardians")
-            .select("id")
+            .select("id,profile_id,email")
             .eq("school_id", school_id)
             .eq("is_active", True)
             .execute()
@@ -446,23 +446,10 @@ def _list_parent_linked_students(school_id: str, profile_id: str | None, email: 
             or []
         )
         matching_guardian_ids: list[str] = []
-        for row in guardian_rows:
-            guardian_id = _normalize(row.get("id"))
+        for guardian in guardian_rows:
+            guardian_id = _normalize(guardian.get("id"))
             if not guardian_id:
                 continue
-            guardian_detail_rows = list(
-                _client().schema("academic").table("guardians")
-                .select("id,profile_id,email")
-                .eq("school_id", school_id)
-                .eq("id", guardian_id)
-                .limit(1)
-                .execute()
-                .data
-                or []
-            )
-            if not guardian_detail_rows:
-                continue
-            guardian = dict(guardian_detail_rows[0])
             if normalized_profile_id and _normalize(guardian.get("profile_id")) == normalized_profile_id:
                 matching_guardian_ids.append(guardian_id)
                 continue

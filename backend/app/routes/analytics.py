@@ -105,6 +105,11 @@ async def api_get_student_analytics(
             raise HTTPException(status_code=403, detail="Student profile context is missing")
         target_student_id = str(_get_student_by_profile_id(school_id, profile_id).get("id") or "").strip()
     result = get_student_analytics(school_id, target_student_id, actor_profile_id=actor.get("profile_id"))
+    try:
+        from app.services.supabase_analytics import persist_student_analytics
+        persist_student_analytics(school_id, target_student_id, actor_profile_id=actor.get("profile_id"))
+    except Exception:
+        pass
     commit_route_retrofit(reservation)
     return result
 

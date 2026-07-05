@@ -188,33 +188,47 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
 
 # ─── Fee Status ────────────────────────────────────────────────────────
 
+_FEE_TABLE_CANDIDATES = [
+    ("public", "edupay_fee_assignments"),
+    ("finance", "fee_assignments"),
+    ("edupay", "fee_assignments"),
+    ("public", "fee_assignments"),
+    ("public", "student_fees"),
+]
+
+
 def _get_fee_status(school_id: str, student_id: str) -> dict[str, Any]:
-    try:
-        rows = list(
-            _public_table("edupay_fee_assignments")
-            .select("id,total_fee,paid_amount,due_amount,due_date,status")
-            .eq("school_id", school_id)
-            .eq("student_id", student_id)
-            .order("due_date", desc=True)
-            .limit(1)
-            .execute()
-            .data or []
-        )
-        if rows:
-            r = dict(rows[0])
-            total = _safe_float(r.get("total_fee") or r.get("total_amount") or 0)
-            paid = _safe_float(r.get("paid_amount") or 0)
-            due = _safe_float(r.get("due_amount") or 0)
-            return {
-                "total_fee": total,
-                "paid_amount": paid,
-                "due_amount": due,
-                "status": _normalize(r.get("status")) or "unknown",
-                "due_date": _normalize(r.get("due_date")),
-                "payment_percentage": _safe_percentage(paid, max(total, 1)),
-            }
-    except Exception:
-        pass
+    for schema, table in _FEE_TABLE_CANDIDATES:
+        try:
+            if schema == "public":
+                query = _public_table(table)
+            else:
+                query = _client().schema(schema).table(table)
+            rows = list(
+                query
+                .select("id,total_fee,paid_amount,due_amount,due_date,status")
+                .eq("school_id", school_id)
+                .eq("student_id", student_id)
+                .order("due_date", desc=True)
+                .limit(1)
+                .execute()
+                .data or []
+            )
+            if rows:
+                r = dict(rows[0])
+                total = _safe_float(r.get("total_fee") or r.get("total_amount") or 0)
+                paid = _safe_float(r.get("paid_amount") or 0)
+                due = _safe_float(r.get("due_amount") or 0)
+                return {
+                    "total_fee": total,
+                    "paid_amount": paid,
+                    "due_amount": due,
+                    "status": _normalize(r.get("status")) or "unknown",
+                    "due_date": _normalize(r.get("due_date")),
+                    "payment_percentage": _safe_percentage(paid, max(total, 1)),
+                }
+        except Exception:
+            continue
     return {"total_fee": 0, "paid_amount": 0, "due_amount": 0, "status": "unavailable", "due_date": None, "payment_percentage": 0}
 
 

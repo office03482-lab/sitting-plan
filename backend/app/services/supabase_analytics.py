@@ -716,6 +716,21 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
         "latest_test_id": latest_test_id,
         "generated_at": _utc_now_iso(),
     }
+    return _cache_set(cache_key, payload)
+
+
+def persist_student_analytics(school_id: str, student_id: str, *, actor_profile_id: str | None = None) -> None:
+    payload = get_student_analytics(school_id, student_id, actor_profile_id=actor_profile_id)
+    result_rows = _load_results(school_id=school_id, student_ids=[student_id])
+    response_rows = _load_responses(school_id=school_id, student_ids=[student_id])
+    question_rows = _load_questions(school_id=school_id, test_ids=[
+        _normalize(row.get("test_id")) for row in result_rows
+    ])
+    topic_metrics = _build_topic_metrics(
+        response_rows,
+        {_normalize(row.get("id")): row for row in question_rows},
+        {},
+    )
     _upsert_student_performance_snapshot(school_id, student_id, payload)
     _replace_topic_performance_rows(
         owner_type="student",
@@ -730,7 +745,6 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
         action="analytics.student.generated",
         payload={"student_id": student_id},
     )
-    return _cache_set(cache_key, payload)
 
 
 def get_test_analytics(school_id: str, test_id: str, *, actor_profile_id: str | None = None) -> dict[str, Any]:

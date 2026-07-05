@@ -488,22 +488,198 @@ def _replace_parent_alerts(
         _analytics_table("parent_alerts").insert(payload).execute()
 
 
+def _load_student_attendance_rows_batch(school_id: str, student_ids: list[str], *, days: int) -> dict[str, list[dict[str, Any]]]:
+    if not student_ids:
+        return {}
+    start_date = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
+    rows = list(
+        _schema_table(ATTENDANCE_SCHEMA, "student_attendance")
+        .select("attendance_date,status,student_id")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .gte("attendance_date", start_date)
+        .execute()
+        .data
+        or []
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        sid = _normalize(row.get("student_id"))
+        grouped.setdefault(sid, []).append(dict(row))
+    return grouped
+
+
+def _load_live_attendance_rows_batch(school_id: str, student_ids: list[str], *, days: int) -> dict[str, list[dict[str, Any]]]:
+    if not student_ids:
+        return {}
+    start_iso = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
+    rows = list(
+        _schema_table(ACADEMIC_SCHEMA, "live_class_attendance")
+        .select("session_id,attendance_percentage,attendance_status,total_duration_seconds,join_timestamp,leave_timestamp,student_id")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .is_("deleted_at", "null")
+        .gte("created_at", start_iso)
+        .execute()
+        .data
+        or []
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        sid = _normalize(row.get("student_id"))
+        grouped.setdefault(sid, []).append(dict(row))
+    return grouped
+
+
+def _load_results_batch(school_id: str, student_ids: list[str], *, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+    if not student_ids:
+        return {}
+    from app.services.supabase_online_tests import _table as _ot_table
+    rows = list(
+        _ot_table("test_results")
+        .select("*")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        sid = _normalize(row.get("student_id"))
+        grouped.setdefault(sid, []).append(dict(row))
+    for sid in grouped:
+        grouped[sid] = grouped[sid][:limit]
+    return grouped
+
+
+def _load_study_plans_batch(school_id: str, student_ids: list[str], *, days: int = 30) -> dict[str, list[dict[str, Any]]]:
+    if not student_ids:
+        return {}
+    start_date = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
+    rows = list(
+        _analytics_table("study_plans")
+        .select("scope,plan_date,completion_percentage,summary,generated_at,student_id")
+        .eq("school_id", school_id)
+        .in_("student_id", student_ids)
+        .is_("deleted_at", "null")
+        .gte("plan_date", start_date)
+        .execute()
+        .data
+        or []
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        sid = _normalize(row.get("student_id"))
+        grouped.setdefault(sid, []).append(dict(row))
+    return grouped
+
+
+def _load_discipline_records_batch(school_id: str, student_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    if not student_ids:
+        return {}
+    candidate_tables = [
+        ("academic", "discipline_records"),
+        ("academic", "student_discipline_records"),
+        ("public", "discipline_records"),
+    ]
+    for schema_name, table_name in candidate_tables:
+        try:
+            if schema_name == "public":
+                response = (
+                    _public_table(table_name)
+                    .select("*")
+                    .eq("school_id", school_id)
+                    .in_("student_id", student_ids)
+                    .limit(200)
+                    .execute()
+                )
+            else:
+                response = (
+                    _schema_table(schema_name, table_name)
+                    .select("*")
+                    .eq("school_id", school_id)
+                    .in_("student_id", student_ids)
+                    .limit(200)
+                    .execute()
+                )
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for row in list(response.data or []):
+                sid = _normalize(row.get("student_id"))
+                grouped.setdefault(sid, []).append(dict(row))
+            return grouped
+        except Exception:
+            continue
+    return {}
+
+
+def _batch_student_parent_payloads(
+    school_id: str,
+    students: list[dict[str, Any]],
+    *,
+    parent_profile_id: str | None,
+) -> list[dict[str, Any]]:
+    if not students:
+        return []
+    student_ids = [_normalize(s.get("id")) for s in students if _normalize(s.get("id"))]
+    if not student_ids:
+        return []
+
+    attendance_map = _load_student_attendance_rows_batch(school_id, student_ids, days=90)
+    live_map = _load_live_attendance_rows_batch(school_id, student_ids, days=90)
+    results_map = _load_results_batch(school_id, student_ids, limit=20)
+    study_plans_map = _load_study_plans_batch(school_id, student_ids, days=30)
+    discipline_map = _load_discipline_records_batch(school_id, student_ids)
+
+    all_hostel_requests = list_hostel_requests(school_id)
+    hostel_map: dict[str, dict[str, Any] | None] = {}
+    for sid in student_ids:
+        matching = [item for item in all_hostel_requests if _normalize(item.get("student_id")) == sid]
+        if matching:
+            matching.sort(key=lambda item: _normalize(item.get("requested_at")), reverse=True)
+            hostel_map[sid] = dict(matching[0])
+        else:
+            hostel_map[sid] = None
+
+    return [
+        _student_parent_payload(
+            school_id, student,
+            parent_profile_id=parent_profile_id,
+            _attendance_rows=attendance_map.get(sid, []),
+            _live_rows=live_map.get(sid, []),
+            _result_rows=results_map.get(sid, []),
+            _study_plans=study_plans_map.get(sid, []),
+            _discipline_rows=discipline_map.get(sid, []),
+            _hostel_status=hostel_map.get(sid),
+        )
+        for student, sid in zip(students, student_ids)
+    ]
+
+
 def _student_parent_payload(
     school_id: str,
     student: dict[str, Any],
     *,
     parent_profile_id: str | None,
+    _attendance_rows: list[dict[str, Any]] | None = None,
+    _live_rows: list[dict[str, Any]] | None = None,
+    _result_rows: list[dict[str, Any]] | None = None,
+    _study_plans: list[dict[str, Any]] | None = None,
+    _discipline_rows: list[dict[str, Any]] | None = None,
+    _hostel_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     student_id = _normalize(student.get("id"))
-    attendance_rows = _load_student_attendance_rows(school_id, student_id, days=90)
-    live_rows = _load_live_attendance_rows(school_id, student_id, days=90)
-    result_rows = list_results(school_id, student_id=student_id, limit=20)
+    attendance_rows = _attendance_rows if _attendance_rows is not None else _load_student_attendance_rows(school_id, student_id, days=90)
+    live_rows = _live_rows if _live_rows is not None else _load_live_attendance_rows(school_id, student_id, days=90)
+    result_rows = _result_rows if _result_rows is not None else list_results(school_id, student_id=student_id, limit=20)
     analytics = get_student_analytics(school_id, student_id)
     progress_dashboard = get_progress_dashboard(school_id, student=student)
     assignments = list_assignments(school_id, student=student)
-    study_plans = _load_study_plans(school_id, student_id, days=30)
-    hostel_status = _load_hostel_status(school_id, student_id)
-    discipline_rows = _load_discipline_records(school_id, student_id)
+    study_plans = _study_plans if _study_plans is not None else _load_study_plans(school_id, student_id, days=30)
+    hostel_status = _hostel_status if _hostel_status is not None else _load_hostel_status(school_id, student_id)
+    discipline_rows = _discipline_rows if _discipline_rows is not None else _load_discipline_records(school_id, student_id)
     timetable_rows = _load_recent_timetable_rows(school_id, student)
     upcoming_tests = [
         item for item in list_tests(school_id, student_batch_id=_normalize(student.get("batch_id")) or None, limit=10)
@@ -751,7 +927,7 @@ def _resolve_parent_students(school_id: str, profile_id: str | None, user_email:
 
 def get_parent_dashboard(school_id: str, *, profile_id: str | None, user_email: str | None) -> dict[str, Any]:
     linked_students = _resolve_parent_students(school_id, profile_id, user_email)
-    children = [_student_parent_payload(school_id, student, parent_profile_id=profile_id) for student in linked_students]
+    children = _batch_student_parent_payloads(school_id, linked_students, parent_profile_id=profile_id)
     overall_health = round(sum(_safe_float(item.get("academic_health_score")) for item in children) / max(len(children), 1), 2)
     overall_risk = "high" if any(item.get("risk_level") == "high" for item in children) else "medium" if any(item.get("risk_level") == "medium" for item in children) else "low"
     payload = {
@@ -783,7 +959,7 @@ def get_parent_dashboard(school_id: str, *, profile_id: str | None, user_email: 
 
 def get_parent_insights(school_id: str, *, profile_id: str | None, user_email: str | None) -> dict[str, Any]:
     linked_students = _resolve_parent_students(school_id, profile_id, user_email)
-    children = [_student_parent_payload(school_id, student, parent_profile_id=profile_id) for student in linked_students]
+    children = _batch_student_parent_payloads(school_id, linked_students, parent_profile_id=profile_id)
     items = []
     for child in children:
         for insight in list(child.get("insights") or []):
@@ -824,7 +1000,7 @@ def get_parent_insights(school_id: str, *, profile_id: str | None, user_email: s
 
 def get_parent_risk_scores(school_id: str, *, profile_id: str | None, user_email: str | None) -> dict[str, Any]:
     linked_students = _resolve_parent_students(school_id, profile_id, user_email)
-    children = [_student_parent_payload(school_id, student, parent_profile_id=profile_id) for student in linked_students]
+    children = _batch_student_parent_payloads(school_id, linked_students, parent_profile_id=profile_id)
     payload = {
         "role": "parent",
         "children": [
@@ -860,7 +1036,7 @@ def get_parent_risk_scores(school_id: str, *, profile_id: str | None, user_email
 
 def get_parent_alerts(school_id: str, *, profile_id: str | None, user_email: str | None) -> dict[str, Any]:
     linked_students = _resolve_parent_students(school_id, profile_id, user_email)
-    children = [_student_parent_payload(school_id, student, parent_profile_id=profile_id) for student in linked_students]
+    children = _batch_student_parent_payloads(school_id, linked_students, parent_profile_id=profile_id)
     student_ids = [_normalize(child.get("student_id")) for child in children if _normalize(child.get("student_id"))]
     query = (
         _analytics_table("parent_alerts")

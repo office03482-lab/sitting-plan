@@ -324,9 +324,10 @@ async def api_get_parent_insights(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user)
+    profile_id = str(actor.get("profile_id") or "").strip() or None
     return {
         "role": "parent" if _is_parent_user(user) else "admin",
-        "children": [parent_intelligence_service._student_parent_payload(school_id, student, parent_profile_id=str(actor.get("profile_id") or "").strip() or None) for student in visible_students],  # type: ignore[attr-defined]
+        "children": parent_intelligence_service._batch_student_parent_payloads(school_id, visible_students, parent_profile_id=profile_id),  # type: ignore[attr-defined]
     }
 
 
@@ -338,9 +339,10 @@ async def api_get_parent_risk_scores(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user)
+    profile_id = str(actor.get("profile_id") or "").strip() or None
     return {
         "role": "parent" if _is_parent_user(user) else "admin",
-        "children": [parent_intelligence_service._student_parent_payload(school_id, student, parent_profile_id=str(actor.get("profile_id") or "").strip() or None) for student in visible_students],  # type: ignore[attr-defined]
+        "children": parent_intelligence_service._batch_student_parent_payloads(school_id, visible_students, parent_profile_id=profile_id),  # type: ignore[attr-defined]
     }
 
 
