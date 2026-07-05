@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { AlertTriangle, Bell, BookOpen, Calendar, CreditCard, TrendingDown } from 'lucide-react';
 
 import { Alert } from '@components/Alert';
@@ -8,6 +8,7 @@ import { apiService, getRequestErrorMessage } from '@services/api';
 import type { ParentPortalAlertChild, ParentPortalAlertItem } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
+const LOADING_TIMEOUT_MS = 30_000;
 
 export default function ParentAlerts() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
@@ -17,24 +18,44 @@ export default function ParentAlerts() {
   const [selectedChildId, setSelectedChildId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    if (!canRun) return;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canRun) {
+      timeoutRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          setLoading(false);
+          setError('Parent authentication context not fully ready. Please wait or refresh.');
+        }
+      }, LOADING_TIMEOUT_MS);
+      return () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      };
+    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     void loadData();
   }, [canRun]);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      setError('');
       const res = await apiService.getParentPortalAlerts();
       const data = res.data;
-      setChildren(data.children);
+      if (!mountedRef.current) return;
+      setChildren(Array.isArray(data.children) ? data.children : []);
       if (data.children.length > 0 && !selectedChildId) {
         setSelectedChildId(data.children[0].student_id);
       }
+      setLoading(false);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(getRequestErrorMessage(err, 'Alerts load failed.'));
-    } finally {
       setLoading(false);
     }
   };
@@ -67,14 +88,12 @@ export default function ParentAlerts() {
 
       {error ? <Alert type="error" message={error} onClose={() => setError('')} /> : null}
 
-      {/* Alert Summary */}
       <section className="grid gap-4 sm:grid-cols-3">
         <SummaryTile icon={AlertTriangle} label="Critical" value={String(criticalCount)} color="rose" />
         <SummaryTile icon={Bell} label="Warnings" value={String(warningCount)} color="amber" />
         <SummaryTile icon={Bell} label="Info" value={String(infoCount)} color="sky" />
       </section>
 
-      {/* Alert List */}
       <section className={cardClass}>
         <h3 className="text-lg font-semibold text-slate-900">All Alerts</h3>
         {allAlerts.length > 0 ? (

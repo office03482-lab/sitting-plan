@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Award, BarChart3, TrendingDown, TrendingUp, Minus, ClipboardCheck } from 'lucide-react';
 
 import { Alert } from '@components/Alert';
@@ -8,6 +8,7 @@ import { apiService, getRequestErrorMessage } from '@services/api';
 import type { ParentPortalTestChild } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
+const LOADING_TIMEOUT_MS = 30_000;
 
 export default function ParentTestResults() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
@@ -17,24 +18,44 @@ export default function ParentTestResults() {
   const [selectedChildId, setSelectedChildId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    if (!canRun) return;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canRun) {
+      timeoutRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          setLoading(false);
+          setError('Parent authentication context not fully ready. Please wait or refresh.');
+        }
+      }, LOADING_TIMEOUT_MS);
+      return () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      };
+    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     void loadData();
   }, [canRun]);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      setError('');
       const res = await apiService.getParentPortalTestResults();
       const data = res.data;
-      setChildren(data.children);
+      if (!mountedRef.current) return;
+      setChildren(Array.isArray(data.children) ? data.children : []);
       if (data.children.length > 0 && !selectedChildId) {
         setSelectedChildId(data.children[0].student_id);
       }
+      setLoading(false);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(getRequestErrorMessage(err, 'Test results load failed.'));
-    } finally {
       setLoading(false);
     }
   };
@@ -64,7 +85,6 @@ export default function ParentTestResults() {
 
       {child && (
         <>
-          {/* Summary Stats */}
           <section className="grid gap-4 sm:grid-cols-4">
             <MetricCard icon={BarChart3} label="Average" value={`${child.average_percentage}%`} color="sky" />
             <MetricCard icon={Award} label="Best Rank" value={child.best_rank ? `#${child.best_rank}` : 'N/A'} color="amber" />
@@ -73,7 +93,6 @@ export default function ParentTestResults() {
               label="Trend" value={child.improvement_trend.replace('_', ' ')} color={child.improvement_trend === 'improving' ? 'emerald' : child.improvement_trend === 'declining' ? 'rose' : 'slate'} />
           </section>
 
-          {/* Score History Chart */}
           {child.percentage_history.length > 1 && (
             <section className={cardClass}>
               <h3 className="text-lg font-semibold text-slate-900">Score History</h3>
@@ -92,7 +111,6 @@ export default function ParentTestResults() {
             </section>
           )}
 
-          {/* Recent Tests Table */}
           <section className={cardClass}>
             <h3 className="text-lg font-semibold text-slate-900">Recent Tests</h3>
             {child.recent_tests.length > 0 ? (
@@ -152,7 +170,7 @@ function MetricCard({ icon: Icon, label, value, color }: {
       <div className={`inline-flex rounded-2xl p-3 ${colors[color] || colors.slate}`}>
         <Icon className="h-5 w-5" />
       </div>
-      <p className="mt-3 text-2xl font-bold text-slate-900 capitalize">{value}</p>
+      <p className="mt-2 text-2xl font-bold text-slate-900 capitalize">{value}</p>
       <p className="text-sm text-slate-500">{label}</p>
     </section>
   );
