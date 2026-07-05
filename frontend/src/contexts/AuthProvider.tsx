@@ -490,12 +490,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     nextSession: Session,
     options?: { forceTakeover?: boolean },
   ) => {
-    const fingerprint = `${nextSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
-    if (sessionRegistrationReady && sessionRegistrationFingerprintRef.current === fingerprint) {
+    const userId = nextSession.user.id;
+    if (sessionRegistrationReady && sessionRegistrationFingerprintRef.current === userId) {
       return getStoredActiveSessionKey() || '';
     }
     const inFlight = sessionRegistrationInFlightRef.current;
-    if (inFlight?.fingerprint === fingerprint) {
+    if (inFlight?.fingerprint === userId) {
       return inFlight.promise;
     }
 
@@ -505,7 +505,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
     sessionRegistrationInFlightRef.current = {
-      fingerprint,
+      fingerprint: userId,
       promise,
     };
     return promise;
@@ -679,7 +679,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (!isMounted) return;
         setSessionRegistrationReady(true);
-        sessionRegistrationFingerprintRef.current = `${nextSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
+        sessionRegistrationFingerprintRef.current = nextSession.user.id;
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.fast_path_complete', {
           origin,
@@ -730,7 +730,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSessionRegistrationReady(true);
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
-        sessionRegistrationFingerprintRef.current = `${bootstrapSession.user.id}:${getStoredActiveSessionKey() || 'pending'}`;
+        sessionRegistrationFingerprintRef.current = bootstrapSession.user.id;
         hydrate({
           token: bootstrapSession.access_token,
           refreshToken: bootstrapSession.refresh_token,
@@ -749,6 +749,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to build ERP profile from Supabase session.';
         const isProfileError = errorMessage.includes('profile') || errorMessage.includes('membership');
         const isRegistrationTimeout = error instanceof DOMException && error.name === 'AbortError';
+
+        if ((error as any)?.code === 'session_limit_exceeded') {
+          setSession(nextSession);
+          setSessionRegistrationReady(false);
+          setSessionRegistrationError(errorMessage);
+          setAuthError(
+            typeof (error as any)?.conflict?.message === 'string'
+              ? (error as any)?.conflict?.message
+              : 'Existing session detected.',
+          );
+          finalizeInitialization('REGISTRATION_ERROR', errorMessage);
+          return;
+        }
 
         if (isRegistrationTimeout || (!isProfileError && nextSession?.access_token)) {
           setSession(nextSession);
@@ -879,7 +892,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: storeUser,
       session,
       authError,
-      async signIn(identifier: string, password: string, options?: { forceTakeover?: boolean }) {
+      async signIn(identifier: string, password: string, _options?: { forceTakeover?: boolean }) {
         setLoading(true);
         setAuthStatus('INITIALIZING');
         AuthInitializationRegistry.reset('INITIALIZING');
@@ -900,9 +913,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!data.session?.access_token) {
             throw new Error('Authenticated session not returned by Supabase.');
           }
-          await registerPortalSession(data.session, {
-            forceTakeover: options?.forceTakeover,
-          });
         } catch (error: any) {
           if (error?.code === 'session_limit_exceeded') {
             try {
@@ -915,15 +925,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             AuthInitializationRegistry.fail(error, 'UNAUTHENTICATED');
             throw await normalizeAuthError(error);
           }
-          const isRegistrationTimeout = error instanceof DOMException && error.name === 'AbortError';
-          const errorMessage = isRegistrationTimeout ? 'Session registration timeout' : (error?.message || 'Session registration failed');
-          setSessionRegistrationError(errorMessage);
-          setAuthStatus('REGISTRATION_ERROR');
-          setLoading(false);
-          setInitialized(true);
-          initializedRef.current = true;
-          AuthInitializationRegistry.fail(errorMessage, 'REGISTRATION_ERROR');
-          throw new Error(errorMessage);
+          throw error;
         }
       },
       async signOut() {
@@ -1029,21 +1031,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (sessionRegistrationFingerprintRef.current === `${storeUser.id}:${currentKey}`) {
+    if (sessionRegistrationFingerprintRef.current === storeUser.id) {
       setSessionRegistrationReady(true);
       return;
     }
-    sessionRegistrationFingerprintRef.current = `${storeUser.id}:${currentKey}`;
+    sessionRegistrationFingerprintRef.current = storeUser.id;
 
     const inFlight = sessionRegistrationInFlightRef.current;
-    if (inFlight?.fingerprint === `${storeUser.id}:${currentKey}`) {
+    if (inFlight?.fingerprint === storeUser.id) {
       return;
     }
 
     void registerPortalSession(session)
       .then(() => {
         setSessionRegistrationReady(true);
-        sessionRegistrationFingerprintRef.current = `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`;
+        sessionRegistrationFingerprintRef.current = storeUser.id;
       })
       .catch(async (error: any) => {
         const detail = error?.conflict;

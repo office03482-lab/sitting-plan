@@ -6,6 +6,7 @@ import io
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -2266,6 +2267,7 @@ def register_active_session(
     user_agent: str | None,
     force_takeover: bool = False,
 ) -> dict[str, Any]:
+    _t0 = time.monotonic()
     limit = _resolve_session_limit(role_key)
     current_rows = list(
         _eq_boolean(
@@ -2280,8 +2282,11 @@ def register_active_session(
         .data
         or []
     )
+    _t1 = time.monotonic()
     same_session = next((dict(row) for row in current_rows if _normalize(row.get("session_key")) == session_key), None)
     if same_session:
+        logger.info("register_active_session.timing", extra={"step": "session_lookup_ms", "value": round((time.monotonic() - _t0) * 1000)})
+        
         _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions").update(
             {
                 "device_id": device_id,
@@ -2336,7 +2341,9 @@ def register_active_session(
     ).execute()
     rows = list(response.data or [])
     created = dict(rows[0]) if rows else {}
+    _t2 = time.monotonic()
     profile = _load_profile(profile_id)
+    _t3 = time.monotonic()
     portal_metadata = _portal_metadata(profile)
     _public_table("profiles").update(
         {
@@ -2346,6 +2353,14 @@ def register_active_session(
             )
         }
     ).eq("id", profile_id).execute()
+    _t4 = time.monotonic()
+    logger.info("register_active_session.timing", extra={
+        "step": "all_ms", "value": round((_t4 - _t0) * 1000),
+        "session_lookup_ms": round((_t1 - _t0) * 1000),
+        "insert_ms": round((_t2 - _t1) * 1000),
+        "load_profile_ms": round((_t3 - _t2) * 1000),
+        "profile_update_ms": round((_t4 - _t3) * 1000),
+    })
     return {"status": "ok", "session_id": _normalize(created.get("id")), "limit": limit}
 
 

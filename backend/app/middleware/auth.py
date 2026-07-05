@@ -147,6 +147,7 @@ def _complete_supabase_principal_fetch(cache_key: str, *, principal: Optional[di
 
 
 def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email: str, token_school_id: str) -> Optional[dict[str, Any]]:
+    _t0 = time.monotonic()
     if not profile_id and not email:
         return None
 
@@ -246,8 +247,17 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
             if permission_key:
                 permissions.append(str(permission_key).strip().lower())
 
+    _t1 = time.monotonic()
     role_key = _normalize_role_key(role.get("role_key"))
     role_metadata = role.get("metadata") if isinstance(role.get("metadata"), dict) else None
+    logger.info("auth.load_supabase_principal.timing", extra={
+        "profile_id": profile_id,
+        "duration_ms": round((_t1 - _t0) * 1000),
+        "has_profile": True,
+        "has_membership": True,
+        "membership_count": len(memberships),
+        "permission_count": len(permissions),
+    })
     return {
         "profile_id": resolved_profile_id,
         "membership_id": str(active_membership.get("id") or "").strip(),

@@ -24,25 +24,16 @@ export default function RegistrationError({ errorMessage }: Props) {
     }
   };
 
-  const isTimeout = errorMessage.includes('timeout');
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-md rounded-3xl border border-amber-200 bg-white p-8 shadow-sm">
         <p className="text-sm font-semibold uppercase tracking-[0.24em] text-amber-700">Session Setup</p>
         <h1 className="mt-3 text-2xl font-bold text-slate-900">Could not complete session setup</h1>
 
-        {isTimeout ? (
-          <p className="mt-3 text-sm text-slate-600">
-            Your login was verified, but the application session setup timed out.
-            This is not a credential error — the backend server may be starting up or temporarily busy.
-          </p>
-        ) : (
-          <p className="mt-3 text-sm text-slate-600">
-            Your login was verified, but the application session could not be registered.
-            This is not a credential error.
-          </p>
-        )}
+        <p className="mt-3 text-sm text-slate-600">
+          Your login succeeded, but the application session initialization did not complete.
+          This is not a credential error.
+        </p>
 
         <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
           <p className="text-xs font-medium text-amber-800">
