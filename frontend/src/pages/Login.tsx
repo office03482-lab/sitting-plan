@@ -176,15 +176,25 @@ export default function Login() {
               </div>
             ) : null}
             {!error && authError ? <p className="mb-4 text-sm font-semibold text-amber-700">{authError}</p> : null}
-            {error || authError ? (
+            {error && (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                Agar error Failed to fetch ya network related ho, browser me F12, phir Network tab khol kar
-                auth v1 token request dekho. Saath hi ye URL browser me check karo:
-                <div className="mt-1 break-all font-semibold">
-                  {`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}
-                </div>
+                {error.includes('Session registration timeout') || error.includes('session registration') ? (
+                  <p>
+                    Login verified, but application session setup could not complete.
+                    The backend server may still be starting up. Please try again.
+                  </p>
+                ) : error.includes('Failed to fetch') || error.includes('NetworkError') || error.includes('network') ? (
+                  <>
+                    <p>Network error. Open browser F12 &gt; Network tab and check the auth request. Also verify Supabase health:</p>
+                    <div className="mt-1 break-all font-semibold">
+                      {`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}
+                    </div>
+                  </>
+                ) : (
+                  <p>{error}</p>
+                )}
               </div>
-            ) : null}
+            )}
 
             <button
               type="submit"

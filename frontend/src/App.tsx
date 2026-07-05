@@ -8,6 +8,7 @@ import Layout from '@components/Layout';
 import PlatformAdminRoute from '@components/PlatformAdminRoute';
 import { ProtectedRoute } from '@components/ProtectedRoute';
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
+import RegistrationError from '@components/RegistrationError';
 
 import AccessControl from '@pages/AccessControl';
 import AddStaff from '@pages/AddStaff';
@@ -662,7 +663,15 @@ function AppShell() {
 }
 
 export function App() {
-  const { user, loading, initialized, getDefaultRoute } = useAuth();
+  const { user, loading, initialized, getDefaultRoute, authStatus, sessionRegistrationError } = useAuth();
+
+  if (authStatus === 'REGISTRATION_ERROR') {
+    return (
+      <ErrorBoundary>
+        <RegistrationError errorMessage={sessionRegistrationError || 'Session registration failed'} />
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>

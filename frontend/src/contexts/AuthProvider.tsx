@@ -31,7 +31,7 @@ type MembershipRecord = {
   roles?: MembershipRole | MembershipRole[];
 };
 
-export type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED';
+export type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'REGISTRATION_ERROR';
 
 type AuthContextValue = {
   loading: boolean;
@@ -40,6 +40,7 @@ type AuthContextValue = {
   sessionReady: boolean;
   schoolContextReady: boolean;
   sessionRegistrationReady: boolean;
+  sessionRegistrationError: string | null;
   authStatus: AuthStatus;
   user: User | null;
   session: Session | null;
@@ -47,6 +48,7 @@ type AuthContextValue = {
   signIn: (identifier: string, password: string, options?: { forceTakeover?: boolean }) => Promise<void>;
   signOut: () => Promise<void>;
   reloadUserProfile: () => Promise<void>;
+  retrySessionRegistration: () => Promise<void>;
   getDefaultRoute: (user?: User | null) => string;
   hasRole: (roles: UserRole | UserRole[]) => boolean;
   hasPermission: (permissions: string | string[]) => boolean;
@@ -364,6 +366,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus>('IDLE');
   const [sessionRegistrationReady, setSessionRegistrationReady] = useState(false);
+  const [sessionRegistrationError, setSessionRegistrationError] = useState<string | null>(null);
 
   const storeUserRef = useRef(storeUser);
   const authErrorRef = useRef(authError);
@@ -560,6 +563,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearPersistedAuthArtifacts();
       setSession(null);
       setSessionRegistrationReady(false);
+      setSessionRegistrationError(null);
       sessionRegistrationInFlightRef.current = null;
       failedSessionFingerprintRef.current = null;
       lastProfileBootstrapUserIdRef.current = null;
@@ -742,25 +746,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Failed to build authenticated ERP user from Supabase session.', error);
         if (!isMounted) return;
 
-        setSession(nextSession);
-        setSessionRegistrationReady(false);
-        failedSessionFingerprintRef.current = nextFingerprint;
-        hydrate({
-          token: nextSession.access_token,
-          refreshToken: nextSession.refresh_token,
-          user: null,
-        });
-        finalizeInitialization(
-          'UNAUTHENTICATED',
-          error instanceof Error
-            ? error.message
-            : 'Authenticated session mili, lekin ERP profile ya school membership load nahi hui.',
-        );
-        console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
-          origin,
-          nextFingerprint,
-          userId: nextSession.user.id,
-        });
+        const errorMessage = error instanceof Error ? error.message : 'Failed to build ERP profile from Supabase session.';
+        const isProfileError = errorMessage.includes('profile') || errorMessage.includes('membership');
+        const isRegistrationTimeout = error instanceof DOMException && error.name === 'AbortError';
+
+        if (isRegistrationTimeout || (!isProfileError && nextSession?.access_token)) {
+          setSession(nextSession);
+          setSessionRegistrationReady(false);
+          setSessionRegistrationError(errorMessage);
+          failedSessionFingerprintRef.current = nextFingerprint;
+          hydrate({
+            token: nextSession.access_token,
+            refreshToken: nextSession.refresh_token,
+            user: null,
+          });
+          finalizeInitialization('REGISTRATION_ERROR', errorMessage);
+          console.debug('[auth-sync]', 'syncSession.registration_failed', {
+            origin,
+            nextFingerprint,
+            userId: nextSession.user.id,
+          });
+        } else {
+          setSession(nextSession);
+          setSessionRegistrationReady(false);
+          failedSessionFingerprintRef.current = nextFingerprint;
+          hydrate({
+            token: nextSession.access_token,
+            refreshToken: nextSession.refresh_token,
+            user: null,
+          });
+          finalizeInitialization(
+            'UNAUTHENTICATED',
+            errorMessage,
+          );
+          console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
+            origin,
+            nextFingerprint,
+            userId: nextSession.user.id,
+          });
+        }
       } finally {
         if (isMounted) {
           activeSyncFingerprintRef.current = null;
@@ -846,10 +870,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return ({
       loading,
       initialized,
-      authReady: authStatus === 'AUTHENTICATED' && schoolContextReady && sessionRegistrationReady && !!session,
+      authReady: (authStatus === 'AUTHENTICATED' || authStatus === 'REGISTRATION_ERROR') && schoolContextReady && !!session,
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
       schoolContextReady,
       sessionRegistrationReady,
+      sessionRegistrationError,
       authStatus,
       user: storeUser,
       session,
@@ -890,8 +915,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             AuthInitializationRegistry.fail(error, 'UNAUTHENTICATED');
             throw await normalizeAuthError(error);
           }
-          console.warn('Session registration failed (non-fatal during sign-in):', error);
+          const isRegistrationTimeout = error instanceof DOMException && error.name === 'AbortError';
+          const errorMessage = isRegistrationTimeout ? 'Session registration timeout' : (error?.message || 'Session registration failed');
+          setSessionRegistrationError(errorMessage);
+          setAuthStatus('REGISTRATION_ERROR');
           setLoading(false);
+          setInitialized(true);
+          initializedRef.current = true;
+          AuthInitializationRegistry.fail(errorMessage, 'REGISTRATION_ERROR');
+          throw new Error(errorMessage);
         }
       },
       async signOut() {
@@ -910,6 +942,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logoutStore();
           setSession(null);
           setSessionRegistrationReady(false);
+          setSessionRegistrationError(null);
           setAuthStatus('UNAUTHENTICATED');
           setAuthError(null);
           AuthInitializationRegistry.resolve('UNAUTHENTICATED');
@@ -917,6 +950,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       reloadUserProfile,
+      async retrySessionRegistration() {
+        if (!session?.access_token) return;
+        setSessionRegistrationError(null);
+        setAuthStatus('INITIALIZING');
+        setLoading(true);
+        setInitialized(false);
+        AuthInitializationRegistry.reset('INITIALIZING');
+        try {
+          await registerPortalSession(session);
+          setSessionRegistrationReady(true);
+          setAuthStatus('AUTHENTICATED');
+          setLoading(false);
+          setInitialized(true);
+          initializedRef.current = true;
+          AuthInitializationRegistry.resolve('AUTHENTICATED');
+        } catch (error: any) {
+          const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+          const errorMessage = isTimeout ? 'Session registration timeout' : (error?.message || 'Session registration failed');
+          setSessionRegistrationError(errorMessage);
+          setSessionRegistrationReady(false);
+          setAuthStatus('REGISTRATION_ERROR');
+          setLoading(false);
+          setInitialized(true);
+          initializedRef.current = true;
+          AuthInitializationRegistry.fail(errorMessage, 'REGISTRATION_ERROR');
+        }
+      },
       getDefaultRoute: getDefaultRouteForUser,
       hasRole(roles) {
         if (!storeUser?.role) return false;
@@ -955,7 +1015,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     },
-    [authError, authStatus, initialized, loading, logoutStore, session, sessionRegistrationReady, storeUser],
+    [authError, authStatus, initialized, loading, logoutStore, session, sessionRegistrationError, sessionRegistrationReady, storeUser],
   );
 
   useEffect(() => {
@@ -964,11 +1024,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (sessionRegistrationFingerprintRef.current === `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`) {
+    const currentKey = getStoredActiveSessionKey();
+    if (!currentKey) {
+      return;
+    }
+
+    if (sessionRegistrationFingerprintRef.current === `${storeUser.id}:${currentKey}`) {
       setSessionRegistrationReady(true);
       return;
     }
-    sessionRegistrationFingerprintRef.current = `${storeUser.id}:${getStoredActiveSessionKey() || 'pending'}`;
+    sessionRegistrationFingerprintRef.current = `${storeUser.id}:${currentKey}`;
+
+    const inFlight = sessionRegistrationInFlightRef.current;
+    if (inFlight?.fingerprint === `${storeUser.id}:${currentKey}`) {
+      return;
+    }
 
     void registerPortalSession(session)
       .then(() => {
@@ -986,8 +1056,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSessionRegistrationReady(false);
           return;
         }
-        console.warn('Session registration failed (non-fatal):', error);
+        const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+        const errorMessage = isTimeout ? 'Session registration timeout' : (error?.message || 'Session registration failed');
+        console.warn('[auth] Session registration failed in background effect:', errorMessage);
+        setSessionRegistrationError(errorMessage);
         setSessionRegistrationReady(false);
+        setAuthStatus('REGISTRATION_ERROR');
       });
   }, [authStatus, logoutStore, session, storeUser?.id]);
 
