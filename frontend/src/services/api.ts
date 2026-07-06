@@ -196,11 +196,11 @@ function isSafeRetryableRequest(error: any): boolean {
     return false;
   }
 
-  const status = Number(error?.response?.status || 0);
   if (isRequestTimeoutError(error)) {
-    return true;
+    return false;
   }
 
+  const status = Number(error?.response?.status || 0);
   if (!status) {
     return true;
   }

@@ -397,9 +397,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     options?: { forceTakeover?: boolean },
   ) => {
     const sessionKey = getStoredActiveSessionKey() || generateActiveSessionKey();
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionKey);
-    }
     const registrationUrl = `${runtimeConfig.apiUrl || import.meta.env.VITE_API_URL || '/api'}/account-security/sessions/register`;
     let lastError: Error | null = null;
 
@@ -456,6 +453,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
         });
         window.clearTimeout(timeoutId);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionKey);
+        }
         return sessionKey;
       } catch (error) {
         window.clearTimeout(timeoutId);
@@ -725,24 +725,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(bootstrapSession);
         setAuthError(null);
 
-        // Non-blocking session registration — don't let timeout prevent login
-        try {
-          await registerPortalSession(bootstrapSession, {
-            forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
-          });
+        // Fire-and-forget session registration — do not block auth readiness
+        registerPortalSession(bootstrapSession, {
+          forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
+        }).then(() => {
           setSessionRegistrationReady(true);
-        } catch (regError) {
+        }).catch((regError) => {
           if ((regError as any)?.code === 'session_limit_exceeded') {
             setSessionRegistrationReady(false);
             setSessionRegistrationError((regError as any)?.conflict?.message || 'Existing session detected.');
             setAuthError((regError as any)?.conflict?.message || 'Existing session detected.');
-            finalizeInitialization('REGISTRATION_ERROR', (regError as any)?.conflict?.message || 'Existing session detected.');
             return;
           }
           console.warn('[auth-sync] session registration non-fatal:', regError);
           setSessionRegistrationReady(false);
           setSessionRegistrationError('Session registration unavailable. Some features may be limited.');
-        }
+        });
 
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
@@ -1088,12 +1086,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const sessionKey = getStoredActiveSessionKey();
     if (!sessionKey) return;
-    const intervalId = window.setInterval(() => {
-      void apiService.heartbeatSecuritySession(sessionKey).catch(() => {
-        // Ignore transient heartbeat failures; middleware validation will enforce revocations.
-      });
-    }, ACTIVE_SESSION_HEARTBEAT_MS);
-    return () => window.clearInterval(intervalId);
+    let active = true;
+    const scheduleNext = () => {
+      if (!active) return;
+      window.setTimeout(() => {
+        if (!active) return;
+        apiService.heartbeatSecuritySession(sessionKey).catch(() => {
+          // Ignore transient heartbeat failures; middleware validation will enforce revocations.
+        }).finally(() => {
+          scheduleNext();
+        });
+      }, ACTIVE_SESSION_HEARTBEAT_MS);
+    };
+    scheduleNext();
+    return () => { active = false; };
   }, [authStatus, storeUser?.id]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
