@@ -720,14 +720,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
         const appUser = await buildAppUserFromSession(bootstrapSession);
-        await registerPortalSession(bootstrapSession, {
-          forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
-        });
         if (!isMounted) return;
 
         setSession(bootstrapSession);
         setAuthError(null);
-        setSessionRegistrationReady(true);
+
+        // Non-blocking session registration — don't let timeout prevent login
+        try {
+          await registerPortalSession(bootstrapSession, {
+            forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
+          });
+          setSessionRegistrationReady(true);
+        } catch (regError) {
+          if ((regError as any)?.code === 'session_limit_exceeded') {
+            setSessionRegistrationReady(false);
+            setSessionRegistrationError((regError as any)?.conflict?.message || 'Existing session detected.');
+            setAuthError((regError as any)?.conflict?.message || 'Existing session detected.');
+            finalizeInitialization('REGISTRATION_ERROR', (regError as any)?.conflict?.message || 'Existing session detected.');
+            return;
+          }
+          console.warn('[auth-sync] session registration non-fatal:', regError);
+          setSessionRegistrationReady(false);
+          setSessionRegistrationError('Session registration unavailable. Some features may be limited.');
+        }
+
         failedSessionFingerprintRef.current = null;
         lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
         sessionRegistrationFingerprintRef.current = bootstrapSession.user.id;
@@ -748,7 +764,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const errorMessage = error instanceof Error ? error.message : 'Failed to build ERP profile from Supabase session.';
         const isProfileError = errorMessage.includes('profile') || errorMessage.includes('membership');
-        const isRegistrationTimeout = error instanceof DOMException && error.name === 'AbortError';
 
         if ((error as any)?.code === 'session_limit_exceeded') {
           setSession(nextSession);
@@ -763,7 +778,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (isRegistrationTimeout || (!isProfileError && nextSession?.access_token)) {
+        if (!isProfileError && nextSession?.access_token) {
           setSession(nextSession);
           setSessionRegistrationReady(false);
           setSessionRegistrationError(errorMessage);
