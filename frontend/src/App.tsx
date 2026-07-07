@@ -6,7 +6,9 @@ import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-d
 import { ErrorBoundary } from '@components/ErrorBoundary';
 import Layout from '@components/Layout';
 import PlatformAdminRoute from '@components/PlatformAdminRoute';
+import { ParentRoute } from '@components/ParentRoute';
 import { ProtectedRoute } from '@components/ProtectedRoute';
+import { StudentRoute } from '@components/StudentRoute';
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 import RegistrationError from '@components/RegistrationError';
 
@@ -591,69 +593,78 @@ function AppShell() {
             </PlatformAdminRoute>
           }
         />
+        {/* Student Portal Routes */}
+        <Route
+          path="/student/dashboard"
+          element={
+            <StudentRoute>
+              <MyLearning />
+            </StudentRoute>
+          }
+        />
         {/* Parent Portal Routes */}
         <Route
           path="/parent"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentDashboard />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/dashboard"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentDashboard />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/attendance"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentAttendance />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/progress"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentAcademicProgress />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/assignments"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentAssignments />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/tests"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentTestResults />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/alerts"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentAlerts />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route
           path="/parent/ai"
           element={
-            <ProtectedRoute requiredPermissions={['parent_intelligence.view', 'parent_intelligence.reports', 'edupay.parent_portal']}>
+            <ParentRoute>
               <ParentAiAssistant />
-            </ProtectedRoute>
+            </ParentRoute>
           }
         />
         <Route path="*" element={<Navigate to={getDefaultRoute(user)} replace />} />
@@ -662,8 +673,54 @@ function AppShell() {
   );
 }
 
+function PortalDenied({ message }: { message: string }) {
+  const { signOut } = useAuth();
+  const isStudentDenial = message.includes('student');
+  const isParentDenial = message.includes('parent');
+  const portalName = isStudentDenial ? 'Student Portal' : isParentDenial ? 'Parent Portal' : 'Portal';
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <div className="w-full max-w-md rounded-3xl border border-orange-200 bg-white p-8 shadow-sm">
+        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-orange-700">Access Denied</p>
+        <h1 className="mt-3 text-2xl font-bold text-slate-900">{portalName} Access Unavailable</h1>
+        <p className="mt-3 text-sm text-slate-600">
+          This account is not linked to an active {isStudentDenial ? 'student profile' : isParentDenial ? 'parent account' : 'portal identity'}.
+        </p>
+        <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3">
+          <p className="text-xs font-medium text-orange-800">{message}</p>
+        </div>
+        <div className="mt-6 flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex w-full items-center justify-center rounded-full border border-slate-300 bg-white px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Back to portal selection
+          </button>
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex w-full items-center justify-center rounded-full bg-sky-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-sky-700"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const { user, loading, initialized, getDefaultRoute, authStatus, sessionRegistrationError } = useAuth();
+
+  if (authStatus === 'PORTAL_DENIED') {
+    return (
+      <ErrorBoundary>
+        <PortalDenied message={sessionRegistrationError || 'Access denied for this portal.'} />
+      </ErrorBoundary>
+    );
+  }
 
   if (authStatus === 'REGISTRATION_ERROR') {
     return (

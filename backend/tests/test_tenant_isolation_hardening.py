@@ -124,13 +124,13 @@ def test_account_security_route_forwards_school_context(monkeypatch):
     monkeypatch.setattr(
         account_security,
         "resolve_login_email",
-        lambda identifier, school_id=None: captured.update({"identifier": identifier, "school_id": school_id}) or {"email": "x@example.com"},
+        lambda identifier, school_id=None, portal_intent=None: captured.update({"identifier": identifier, "school_id": school_id, "portal_intent": portal_intent}) or {"email": "x@example.com"},
     )
 
     client = TestClient(app)
     response = client.get("/api/account-security/resolve-login", params={"identifier": "student01", "school_id": SCHOOL_A})
     assert response.status_code == 200
-    assert captured == {"identifier": "student01", "school_id": SCHOOL_A}
+    assert captured == {"identifier": "student01", "school_id": SCHOOL_A, "portal_intent": None}
 
 
 def test_school_analytics_blocks_cross_tenant_access_for_school_admin():

@@ -5,6 +5,8 @@
  */
 
 // ==================== Common ====================
+export type PortalIntent = 'school_erp' | 'student_portal' | 'parent_portal' | 'platform_admin';
+
 export type UserRole =
   | 'admin'
   | 'platform_admin'

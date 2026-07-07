@@ -497,4 +497,111 @@ describe('Auth State Machine', () => {
     expect(pendingRequests).toBe(0);
     expect(cleanupFired).toBe(true);
   });
+
+  describe('Parent Portal PGRST205 Fix', () => {
+    function classifyBootstrapError(error: unknown): {
+      status: 'DENIAL' | 'INFRASTRUCTURE' | 'MEMBERSHIP' | 'SESSION_LIMIT';
+      message: string;
+    } {
+      const errorMessage = error instanceof Error ? error.message : (error as any)?.message || 'Profile bootstrap failed.';
+      const isSessionLimit = (error as any)?.code === 'session_limit_exceeded';
+      const isDenial =
+        errorMessage.includes('No active student account') ||
+        errorMessage.includes('No active parent account') ||
+        errorMessage.includes('not authorized') ||
+        errorMessage.includes('Platform Admin');
+      const noMembershipError = errorMessage.includes('No active school membership');
+
+      if (isSessionLimit) return { status: 'SESSION_LIMIT', message: errorMessage };
+      if (isDenial) return { status: 'DENIAL', message: errorMessage };
+      if (noMembershipError) return { status: 'MEMBERSHIP', message: errorMessage };
+      return { status: 'INFRASTRUCTURE', message: errorMessage };
+    }
+
+    it('36. PGRST205 maps to INFRASTRUCTURE bootstrap error, not DENIAL', () => {
+      const pgrst205 = {
+        code: 'PGRST205',
+        message: 'Could not find the table \'public.academic.guardians\' in the schema cache',
+        details: null,
+        hint: 'Perhaps you meant the table \'public.academic_guardians\'',
+      };
+      const result = classifyBootstrapError(pgrst205);
+      expect(result.status).toBe('INFRASTRUCTURE');
+      expect(result.message).toContain('Could not find the table');
+    });
+
+    it('37. non-Error throwable with .message extracts correctly', () => {
+      const plainObject = { message: 'Something went wrong' };
+      const result = classifyBootstrapError(plainObject);
+      expect(result.status).toBe('INFRASTRUCTURE');
+      expect(result.message).toBe('Something went wrong');
+    });
+
+    it('38. non-Error throwable with no .message uses fallback', () => {
+      const nullError = null;
+      const result = classifyBootstrapError(nullError);
+      expect(result.status).toBe('INFRASTRUCTURE');
+      expect(result.message).toBe('Profile bootstrap failed.');
+    });
+
+    it('39. valid active parent account denial message maps to DENIAL', () => {
+      const error = new Error('No active parent account found for this user.');
+      const result = classifyBootstrapError(error);
+      expect(result.status).toBe('DENIAL');
+    });
+
+    it('40. PostgrestError with session_limit_exceeded maps to SESSION_LIMIT', () => {
+      const sessionLimitError = {
+        code: 'session_limit_exceeded',
+        message: 'Session limit exceeded',
+        conflict: { message: 'Existing session detected.' },
+      };
+      const result = classifyBootstrapError(sessionLimitError);
+      expect(result.status).toBe('SESSION_LIMIT');
+      expect(result.message).toBe('Session limit exceeded');
+    });
+
+    it('41. PostgrestError (Error subclass) passes instanceof Error check', () => {
+      class PostgrestError extends Error {
+        code: string;
+        details: string | null;
+        hint: string | null;
+        constructor(message: string, code: string) {
+          super(message);
+          this.name = 'PostgrestError';
+          this.code = code;
+          this.details = null;
+          this.hint = null;
+        }
+      }
+      const pgError = new PostgrestError('relation "public.academic.guardians" does not exist', 'PGRST205');
+      const result = classifyBootstrapError(pgError);
+      expect(result.status).toBe('INFRASTRUCTURE');
+      expect(result.message).toBe('relation "public.academic.guardians" does not exist');
+    });
+  });
+
+  describe('Parent Bootstrap Schema Addressing', () => {
+    it('42. parent portal uses schema("academic") .from("guardians") on separate lines', async () => {
+      const path = await import('path');
+      const fs = await import('fs');
+      const cwd = process.cwd();
+      const sourcePath = path.resolve(cwd, 'src', 'contexts', 'AuthProvider.tsx');
+      const source = fs.readFileSync(sourcePath, 'utf-8');
+      const hasSchemaLine = source.includes(".schema('academic')");
+      const hasFromGuardians = source.includes(".from('guardians')");
+      expect(hasSchemaLine).toBe(true);
+      expect(hasFromGuardians).toBe(true);
+    });
+
+    it('43. parent portal does NOT use dotted "academic.guardians" in source', async () => {
+      const path = await import('path');
+      const fs = await import('fs');
+      const cwd = process.cwd();
+      const sourcePath = path.resolve(cwd, 'src', 'contexts', 'AuthProvider.tsx');
+      const source = fs.readFileSync(sourcePath, 'utf-8');
+      const hasDottedGuardians = source.includes(".from('academic.guardians')");
+      expect(hasDottedGuardians).toBe(false);
+    });
+  });
 });

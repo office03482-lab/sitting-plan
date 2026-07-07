@@ -12,7 +12,7 @@ import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSION_STORAGE_KEY } from '@services/api';
 import { supabase } from '@/lib/supabase';
 import { runtimeConfig } from '@/lib/runtimeConfig';
-import type { User, UserRole, UserType } from '@types';
+import type { PortalIntent, User, UserRole, UserType } from '@types';
 import { useAuthStore, isJwtActive } from '@store/auth';
 
 type MembershipRole = {
@@ -31,7 +31,7 @@ type MembershipRecord = {
   roles?: MembershipRole | MembershipRole[];
 };
 
-export type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'REGISTRATION_ERROR';
+export type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'REGISTRATION_ERROR' | 'PORTAL_DENIED';
 
 type AuthContextValue = {
   loading: boolean;
@@ -42,10 +42,11 @@ type AuthContextValue = {
   sessionRegistrationReady: boolean;
   sessionRegistrationError: string | null;
   authStatus: AuthStatus;
+  portalIntent: PortalIntent;
   user: User | null;
   session: Session | null;
   authError: string | null;
-  signIn: (identifier: string, password: string, options?: { forceTakeover?: boolean }) => Promise<void>;
+  signIn: (identifier: string, password: string, options?: { forceTakeover?: boolean; portalIntent?: PortalIntent }) => Promise<void>;
   signOut: () => Promise<void>;
   reloadUserProfile: () => Promise<void>;
   retrySessionRegistration: () => Promise<void>;
@@ -75,6 +76,25 @@ const AUTH_STORAGE_KEYS = [
 const ACTIVE_SESSION_HEARTBEAT_MS = 60_000;
 const SESSION_REGISTRATION_RETRY_DELAYS_MS = [1000, 2000];
 const SESSION_REGISTRATION_ATTEMPT_TIMEOUTS_MS = [15_000, 25_000, 40_000];
+const PORTAL_INTENT_STORAGE_KEY = 'portal_intent';
+
+function persistPortalIntent(intent: PortalIntent) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(PORTAL_INTENT_STORAGE_KEY, intent);
+  } catch {}
+}
+
+function restorePortalIntent(): PortalIntent | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = window.sessionStorage.getItem(PORTAL_INTENT_STORAGE_KEY);
+    if (stored === 'school_erp' || stored === 'platform_admin' || stored === 'student_portal' || stored === 'parent_portal') {
+      return stored;
+    }
+  } catch {}
+  return null;
+}
 
 const createReadySignal = (): ReadySignal => {
   let resolvePromise!: () => void;
@@ -120,8 +140,9 @@ const createAuthInitializationRegistry = () => {
   };
 };
 
-export const AuthInitializationRegistry = createAuthInitializationRegistry();
+const AuthInitializationRegistry = createAuthInitializationRegistry();
 export const DEFAULT_HOME_ROUTE = '/overview';
+export const PLATFORM_HOME_ROUTE = '/platform/dashboard';
 
 function clearPersistedAuthArtifacts() {
   if (typeof window === 'undefined') return;
@@ -130,6 +151,7 @@ function clearPersistedAuthArtifacts() {
     window.sessionStorage.removeItem(key);
   }
   window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+  window.sessionStorage.removeItem(PORTAL_INTENT_STORAGE_KEY);
 }
 
 function generateActiveSessionKey() {
@@ -227,7 +249,9 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
 
 function getDefaultRouteForUser(user?: User | null) {
   if (!user) return '/login';
-  if (user.role_key === 'platform_admin') return DEFAULT_HOME_ROUTE;
+  if (user.role_key === 'platform_admin') return PLATFORM_HOME_ROUTE;
+  if (user.role === 'student') return '/student/dashboard';
+  if (user.role === 'parent') return '/parent/dashboard';
   if (user.role_key === 'school_admin' || user.role === 'admin') return DEFAULT_HOME_ROUTE;
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
   if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
@@ -255,6 +279,14 @@ function hasResolvedSchoolContext(user?: User | null): boolean {
   );
 }
 
+function hasResolvedUserContext(user?: User | null): boolean {
+  if (!user?.id || !user.role) return false;
+  if (user.role_key === 'platform_admin') return true;
+  if (user.role === 'student') return Boolean(user.school_id);
+  if (user.role === 'parent') return Boolean(user.school_id);
+  return hasResolvedSchoolContext(user);
+}
+
 async function fetchRolePermissions(roleId: string) {
   const { data, error } = await supabase
     .from('role_permissions')
@@ -270,46 +302,49 @@ async function fetchRolePermissions(roleId: string) {
     .filter(Boolean) as string[];
 }
 
-async function buildAppUserFromSession(session: Session): Promise<User> {
+async function buildAppUserFromSession(session: Session, portalIntent: PortalIntent = 'school_erp'): Promise<User> {
   const userId = session.user.id;
 
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select(`
-      id,
-      email,
-      full_name,
-      display_name,
-      is_active,
-      default_school_id,
-      metadata
-    `)
-    .eq('id', userId)
-    .single();
+  const [profileResult, membershipsResult] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select(`
+        id,
+        email,
+        full_name,
+        display_name,
+        is_active,
+        default_school_id,
+        metadata
+      `)
+      .eq('id', userId)
+      .single(),
+    supabase
+      .from('school_memberships')
+      .select(`
+        id,
+        school_id,
+        role_id,
+        status,
+        is_primary,
+        is_active,
+        roles (
+          role_key,
+          role_name,
+          is_system
+        )
+      `)
+      .eq('profile_id', userId)
+      .eq('is_active', true)
+      .eq('status', 'active'),
+  ]);
 
+  const { data: profile, error: profileError } = profileResult;
   if (profileError) {
     throw profileError;
   }
 
-  const { data: memberships, error: membershipError } = await supabase
-    .from('school_memberships')
-    .select(`
-      id,
-      school_id,
-      role_id,
-      status,
-      is_primary,
-      is_active,
-      roles (
-        role_key,
-        role_name,
-        is_system
-      )
-    `)
-    .eq('profile_id', userId)
-    .eq('is_active', true)
-    .eq('status', 'active');
-
+  const { data: memberships, error: membershipError } = membershipsResult;
   if (membershipError) {
     throw membershipError;
   }
@@ -318,10 +353,135 @@ async function buildAppUserFromSession(session: Session): Promise<User> {
     ...item,
     roles: Array.isArray(item.roles) ? item.roles[0] || null : item.roles || null,
   }));
+
+  if (portalIntent === 'student_portal') {
+    const { data: studentData, error: studentError } = await supabase
+      .from('students')
+      .select('id, school_id, roll_number, class_name, section, batch_id, is_active')
+      .eq('profile_id', userId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (studentError) throw studentError;
+    if (!studentData) {
+      throw new Error('No active student account found for this user.');
+    }
+
+    return {
+      id: profile.id,
+      email: profile.email || session.user.email || '',
+      full_name: profile.full_name || profile.display_name || session.user.email || 'User',
+      role: 'student' as const,
+      role_key: 'student',
+      user_type: 'student' as const,
+      permissions: [],
+      school_id: studentData.school_id,
+      membership_id: undefined,
+      default_school_id: profile.default_school_id,
+      is_active: Boolean(profile.is_active),
+      username:
+        profile.metadata?.portal_access?.username ||
+        profile.metadata?.username ||
+        profile.display_name ||
+        profile.email ||
+        session.user.email ||
+        undefined,
+      must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
+      first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
+    };
+  }
+
+  if (portalIntent === 'parent_portal') {
+    const { data: guardianData, error: guardianError } = await supabase
+      .schema('academic')
+      .from('guardians')
+      .select('id, school_id, full_name, is_active')
+      .eq('profile_id', userId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (guardianError) throw guardianError;
+    if (!guardianData) {
+      throw new Error('No active parent account found for this user.');
+    }
+
+    const { data: linkData, error: linkError } = await supabase
+      .schema('academic')
+      .from('student_guardians')
+      .select('student_id')
+      .eq('guardian_id', guardianData.id)
+      .limit(1);
+
+    if (linkError) throw linkError;
+    if (!linkData || linkData.length === 0) {
+      throw new Error('No linked students found for this parent account.');
+    }
+
+    return {
+      id: profile.id,
+      email: profile.email || session.user.email || '',
+      full_name: profile.full_name || profile.display_name || guardianData.full_name || session.user.email || 'User',
+      role: 'parent' as const,
+      role_key: 'parent',
+      user_type: 'non_teaching' as const,
+      permissions: [],
+      school_id: guardianData.school_id,
+      membership_id: undefined,
+      default_school_id: profile.default_school_id,
+      is_active: Boolean(profile.is_active),
+      username:
+        profile.metadata?.portal_access?.username ||
+        profile.metadata?.username ||
+        profile.display_name ||
+        profile.email ||
+        session.user.email ||
+        undefined,
+      must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
+      first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
+    };
+  }
+
+  if (portalIntent === 'platform_admin') {
+    const paMembership = membershipList.find((m) => {
+      const role = Array.isArray(m.roles) ? m.roles[0] || null : m.roles;
+      return role?.role_key === 'platform_admin';
+    });
+    if (!paMembership) {
+      throw new Error('You are not authorized to access Platform Admin.');
+    }
+    return {
+      id: profile.id,
+      email: profile.email || session.user.email || '',
+      full_name: profile.full_name || profile.display_name || session.user.email || 'User',
+      role: 'admin' as const,
+      role_key: 'platform_admin',
+      user_type: 'non_teaching' as const,
+      permissions: [],
+      school_id: '',
+      membership_id: paMembership.id,
+      default_school_id: profile.default_school_id,
+      is_active: Boolean(profile.is_active),
+      username:
+        profile.metadata?.portal_access?.username ||
+        profile.metadata?.username ||
+        profile.display_name ||
+        profile.email ||
+        session.user.email ||
+        undefined,
+      must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
+      first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
+    };
+  }
+
+  const nonPaMemberships = membershipList.filter((item) => {
+    const role = Array.isArray(item.roles) ? item.roles[0] || null : item.roles;
+    return role?.role_key !== 'platform_admin';
+  });
+
   const activeMembership =
-    membershipList.find((item) => item.is_primary) ||
-    membershipList.find((item) => item.school_id === profile.default_school_id) ||
-    membershipList[0];
+    nonPaMemberships.find((item) => item.is_primary) ||
+    nonPaMemberships.find((item) => item.school_id === profile.default_school_id) ||
+    nonPaMemberships[0];
 
   if (!activeMembership) {
     throw new Error('No active school membership found for this user.');
@@ -379,6 +539,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authSubscriptionAttachedRef = useRef(false);
   const sessionRegistrationFingerprintRef = useRef<string | null>(null);
   const sessionRegistrationInFlightRef = useRef<{ fingerprint: string; promise: Promise<string> } | null>(null);
+  const portalIntentRef = useRef<PortalIntent>('school_erp');
+  const isSigningOutRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const heartbeatActiveRef = useRef(false);
+  const signOutInProgressRef = useRef(false);
 
   useEffect(() => {
     storeUserRef.current = storeUser;
@@ -483,6 +648,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    }
     throw lastError || new Error('Session registration failed');
   };
 
@@ -513,7 +681,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reloadUserProfile = async () => {
     if (!session) return;
-    const appUser = await buildAppUserFromSession(session);
+    const appUser = await buildAppUserFromSession(session, portalIntentRef.current);
     hydrate({
       token: session.access_token,
       refreshToken: session.refresh_token,
@@ -540,6 +708,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authSubscriptionAttachedRef.current = true;
 
     let isMounted = true;
+    const storedIntent = restorePortalIntent();
+    if (storedIntent) {
+      portalIntentRef.current = storedIntent;
+    }
     AuthInitializationRegistry.reset('INITIALIZING');
     setAuthStatus('INITIALIZING');
     setLoading(true);
@@ -569,6 +741,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       lastProfileBootstrapUserIdRef.current = null;
       activeSyncFingerprintRef.current = null;
       sessionRegistrationFingerprintRef.current = null;
+      portalIntentRef.current = 'school_erp';
       logoutStore();
       finalizeInitialization('UNAUTHENTICATED', options?.reason ?? null);
       if (options?.redirectToLogin) {
@@ -610,7 +783,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           !storeUserRef.current ||
           storeUserRef.current.id !== nextSession.user.id ||
           lastProfileBootstrapUserIdRef.current !== nextSession.user.id ||
-          !hasResolvedSchoolContext(storeUserRef.current)
+          !hasResolvedUserContext(storeUserRef.current)
         );
 
       if (
@@ -630,7 +803,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         options?.silentTokenRefresh &&
         storeUserRef.current &&
         storeUserRef.current.id === nextSession.user.id &&
-        hasResolvedSchoolContext(storeUserRef.current)
+        hasResolvedUserContext(storeUserRef.current)
       ) {
         failedSessionFingerprintRef.current = null;
         useAuthStore.getState().hydrate({
@@ -654,7 +827,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         nextFingerprint &&
         currentFingerprint === nextFingerprint &&
         !shouldBootstrapProfile &&
-        hasResolvedSchoolContext(storeUserRef.current)
+        hasResolvedUserContext(storeUserRef.current)
       ) {
         setSessionRegistrationReady(Boolean(getStoredActiveSessionKey()));
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED', authErrorRef.current);
@@ -665,7 +838,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!shouldBootstrapProfile && hasResolvedSchoolContext(storeUserRef.current)) {
+      if (!shouldBootstrapProfile && hasResolvedUserContext(storeUserRef.current)) {
         setSession(nextSession);
         setAuthError(null);
         failedSessionFingerprintRef.current = null;
@@ -705,6 +878,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(true);
       }
       activeSyncFingerprintRef.current = nextFingerprint;
+      const effectivePortalIntent = portalIntentRef.current;
 
       try {
         let bootstrapSession = nextSession;
@@ -719,51 +893,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
           }
         }
-        const appUser = await buildAppUserFromSession(bootstrapSession);
+        const appUser = await buildAppUserFromSession(bootstrapSession, effectivePortalIntent);
         if (!isMounted) return;
 
         setSession(bootstrapSession);
         setAuthError(null);
 
-        // Fire-and-forget session registration — do not block auth readiness
-        registerPortalSession(bootstrapSession, {
-          forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
-        }).then(() => {
-          setSessionRegistrationReady(true);
-        }).catch((regError) => {
-          if ((regError as any)?.code === 'session_limit_exceeded') {
-            setSessionRegistrationReady(false);
-            setSessionRegistrationError((regError as any)?.conflict?.message || 'Existing session detected.');
-            setAuthError((regError as any)?.conflict?.message || 'Existing session detected.');
-            return;
-          }
-          console.warn('[auth-sync] session registration non-fatal:', regError);
+        if (effectivePortalIntent === 'platform_admin' || effectivePortalIntent === 'student_portal' || effectivePortalIntent === 'parent_portal') {
           setSessionRegistrationReady(false);
-          setSessionRegistrationError('Session registration unavailable. Some features may be limited.');
-        });
+        } else {
+          registerPortalSession(bootstrapSession, {
+            forceTakeover: options?.origin === 'SIGNED_IN' ? false : undefined,
+          }).then(() => {
+            setSessionRegistrationReady(true);
+          }).catch((regError) => {
+            if ((regError as any)?.code === 'session_limit_exceeded') {
+              setSessionRegistrationReady(false);
+              setSessionRegistrationError((regError as any)?.conflict?.message || 'Existing session detected.');
+              setAuthError((regError as any)?.conflict?.message || 'Existing session detected.');
+              return;
+            }
+            console.warn('[auth-sync] session registration non-fatal:', regError);
+            setSessionRegistrationReady(false);
+            setSessionRegistrationError('Session registration unavailable. Some features may be limited.');
+          });
 
-        failedSessionFingerprintRef.current = null;
-        lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
-        sessionRegistrationFingerprintRef.current = bootstrapSession.user.id;
+          failedSessionFingerprintRef.current = null;
+          lastProfileBootstrapUserIdRef.current = bootstrapSession.user.id;
+          sessionRegistrationFingerprintRef.current = bootstrapSession.user.id;
+        }
         hydrate({
           token: bootstrapSession.access_token,
           refreshToken: bootstrapSession.refresh_token,
           user: appUser,
         });
+        persistPortalIntent(effectivePortalIntent);
         finalizeInitialization('AUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.bootstrap_complete', {
           origin,
           nextFingerprint,
           userId: nextSession.user.id,
+          portalIntent: effectivePortalIntent,
         });
       } catch (error) {
-        console.error('Failed to build authenticated ERP user from Supabase session.', error);
+        console.error(`[auth-sync] syncSession failed for intent=${effectivePortalIntent}`, error);
         if (!isMounted) return;
 
-        const errorMessage = error instanceof Error ? error.message : 'Failed to build ERP profile from Supabase session.';
-        const isProfileError = errorMessage.includes('profile') || errorMessage.includes('membership');
+        const errorMessage = error instanceof Error ? error.message : (error as any)?.message || 'Profile bootstrap failed.';
+        const isSessionLimit = (error as any)?.code === 'session_limit_exceeded';
+        const isDenial =
+          errorMessage.includes('No active student account') ||
+          errorMessage.includes('No active parent account') ||
+          errorMessage.includes('not authorized') ||
+          errorMessage.includes('Platform Admin');
+        const noMembershipError = errorMessage.includes('No active school membership');
 
-        if ((error as any)?.code === 'session_limit_exceeded') {
+        if (isSessionLimit) {
           setSession(nextSession);
           setSessionRegistrationReady(false);
           setSessionRegistrationError(errorMessage);
@@ -776,7 +961,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (!isProfileError && nextSession?.access_token) {
+        if (isDenial) {
+          setSession(nextSession);
+          setSessionRegistrationReady(false);
+          setSessionRegistrationError(errorMessage);
+          failedSessionFingerprintRef.current = nextFingerprint;
+          hydrate({
+            token: nextSession.access_token,
+            refreshToken: nextSession.refresh_token,
+            user: null,
+          });
+          finalizeInitialization('PORTAL_DENIED', errorMessage);
+          return;
+        }
+
+        if (noMembershipError && nextSession?.access_token) {
+          setSession(nextSession);
+          setSessionRegistrationReady(false);
+          failedSessionFingerprintRef.current = nextFingerprint;
+          hydrate({
+            token: nextSession.access_token,
+            refreshToken: nextSession.refresh_token,
+            user: null,
+          });
+          finalizeInitialization('UNAUTHENTICATED', errorMessage);
+          console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
+            origin,
+            nextFingerprint,
+            userId: nextSession.user.id,
+            portalIntent: effectivePortalIntent,
+          });
+          return;
+        }
+
+        if (nextSession?.access_token) {
           setSession(nextSession);
           setSessionRegistrationReady(false);
           setSessionRegistrationError(errorMessage);
@@ -793,23 +1011,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             userId: nextSession.user.id,
           });
         } else {
-          setSession(nextSession);
-          setSessionRegistrationReady(false);
-          failedSessionFingerprintRef.current = nextFingerprint;
-          hydrate({
-            token: nextSession.access_token,
-            refreshToken: nextSession.refresh_token,
-            user: null,
-          });
-          finalizeInitialization(
-            'UNAUTHENTICATED',
-            errorMessage,
-          );
-          console.debug('[auth-sync]', 'syncSession.bootstrap_failed', {
-            origin,
-            nextFingerprint,
-            userId: nextSession.user.id,
-          });
+          clearAuthState({ reason: errorMessage });
         }
       } finally {
         if (isMounted) {
@@ -892,29 +1094,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => {
       const schoolContextReady = hasResolvedSchoolContext(storeUser);
+      const effectivePortalIntent = portalIntentRef.current;
 
       return ({
       loading,
       initialized,
-      authReady: (authStatus === 'AUTHENTICATED' || authStatus === 'REGISTRATION_ERROR') && schoolContextReady && !!session,
+      authReady: (authStatus === 'AUTHENTICATED' || authStatus === 'REGISTRATION_ERROR') && !!session && (
+        effectivePortalIntent === 'platform_admin' || effectivePortalIntent === 'student_portal' || effectivePortalIntent === 'parent_portal' || schoolContextReady
+      ),
       sessionReady: initialized && authStatus !== 'INITIALIZING' && !!session,
       schoolContextReady,
       sessionRegistrationReady,
       sessionRegistrationError,
       authStatus,
+      portalIntent: effectivePortalIntent,
       user: storeUser,
       session,
       authError,
-      async signIn(identifier: string, password: string, _options?: { forceTakeover?: boolean }) {
+      async signIn(identifier: string, password: string, _options?: { forceTakeover?: boolean; portalIntent?: PortalIntent }) {
+        portalIntentRef.current = _options?.portalIntent || 'school_erp';
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+        }
         setLoading(true);
         setAuthStatus('INITIALIZING');
         AuthInitializationRegistry.reset('INITIALIZING');
         setAuthError(null);
         try {
           const trimmedIdentifier = identifier.trim();
+          if (!trimmedIdentifier) {
+            throw new Error('Email or username is required.');
+          }
           const loginEmail = isEmailIdentifier(trimmedIdentifier)
             ? trimmedIdentifier
-            : String((await apiService.resolveLoginIdentifier(trimmedIdentifier)).data?.email || trimmedIdentifier).trim();
+            : String((await apiService.resolveLoginIdentifier(trimmedIdentifier, portalIntentRef.current)).data?.email || trimmedIdentifier).trim();
           const { data, error } = await supabase.auth.signInWithPassword({
             email: loginEmail,
             password,
@@ -925,6 +1138,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           if (!data.session?.access_token) {
             throw new Error('Authenticated session not returned by Supabase.');
+          }
+
+          await AuthInitializationRegistry.readyPromise;
+
+          if (AuthInitializationRegistry.status !== 'AUTHENTICATED') {
+            const errorMessage = AuthInitializationRegistry.lastError || 'Authentication initialization failed.';
+            const error = new Error(errorMessage) as Error & { code?: string };
+            error.code = 'auth_init_failed';
+            throw error;
           }
         } catch (error: any) {
           if (error?.code === 'session_limit_exceeded') {
@@ -942,26 +1164,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       async signOut() {
+        if (signOutInProgressRef.current) return;
+        signOutInProgressRef.current = true;
+
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+
+        heartbeatActiveRef.current = false;
+        isSigningOutRef.current = true;
+        const sessionKey = getStoredActiveSessionKey();
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+        }
+        clearPersistedAuthArtifacts();
+        logoutStore();
+        setSession(null);
+        setSessionRegistrationReady(false);
+        setSessionRegistrationError(null);
+        setAuthStatus('UNAUTHENTICATED');
+        setAuthError(null);
+        AuthInitializationRegistry.resolve('UNAUTHENTICATED');
+        portalIntentRef.current = 'school_erp';
+
+        if (sessionKey) {
+          apiService.logoutCurrentSecuritySession(sessionKey).catch(() => {});
+        }
         try {
-          const sessionKey = getStoredActiveSessionKey();
-          if (sessionKey) {
-            try {
-              await apiService.logoutCurrentSecuritySession(sessionKey);
-            } catch {
-              // Session may already be gone; continue local sign-out.
-            }
-          }
           await supabase.auth.signOut();
-        } finally {
-          clearPersistedAuthArtifacts();
-          logoutStore();
-          setSession(null);
-          setSessionRegistrationReady(false);
-          setSessionRegistrationError(null);
-          setAuthStatus('UNAUTHENTICATED');
-          setAuthError(null);
-          AuthInitializationRegistry.resolve('UNAUTHENTICATED');
-          redirectToLogin();
+        } catch {
+          // Best-effort Supabase signOut
+        }
+        signOutInProgressRef.current = false;
+        isSigningOutRef.current = false;
+
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.replace('/login');
         }
       },
       reloadUserProfile,
@@ -1039,6 +1279,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal') {
+      return;
+    }
+
     const currentKey = getStoredActiveSessionKey();
     if (!currentKey) {
       return;
@@ -1084,22 +1328,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (authStatus !== 'AUTHENTICATED' || !storeUser?.id) {
       return;
     }
+    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal') {
+      return;
+    }
     const sessionKey = getStoredActiveSessionKey();
     if (!sessionKey) return;
     let active = true;
+    let scheduled = false;
+    heartbeatActiveRef.current = true;
     const scheduleNext = () => {
-      if (!active) return;
+      if (!active || !heartbeatActiveRef.current || isSigningOutRef.current) return;
+      if (scheduled) return;
+      scheduled = true;
       window.setTimeout(() => {
-        if (!active) return;
-        apiService.heartbeatSecuritySession(sessionKey).catch(() => {
-          // Ignore transient heartbeat failures; middleware validation will enforce revocations.
-        }).finally(() => {
+        scheduled = false;
+        if (!active || !heartbeatActiveRef.current || isSigningOutRef.current) return;
+        apiService.heartbeatSecuritySession(sessionKey).catch(() => {}).finally(() => {
           scheduleNext();
         });
       }, ACTIVE_SESSION_HEARTBEAT_MS);
     };
     scheduleNext();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      heartbeatActiveRef.current = false;
+    };
   }, [authStatus, storeUser?.id]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

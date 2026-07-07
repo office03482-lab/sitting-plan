@@ -2495,47 +2495,58 @@ def _profile_login_usernames(profile: dict[str, Any]) -> set[str]:
     return {candidate.lower() for candidate in candidates if candidate}
 
 
-def resolve_login_email(identifier: str, *, school_id: str | None = None) -> dict[str, Any]:
+def resolve_login_email(identifier: str, *, school_id: str | None = None, portal_intent: str | None = None) -> dict[str, Any]:
     normalized = _normalize(identifier)
     if not normalized:
         raise HTTPException(status_code=400, detail="Identifier is required")
     if "@" in normalized:
         return {"email": normalized.lower()}
-    normalized_school_id = _normalize(school_id)
-    if not normalized_school_id:
-        raise HTTPException(
-            status_code=400,
-            detail="School context is required for username login. Please use your login email.",
+    is_global_lookup = portal_intent in ("platform_admin", "student_portal", "parent_portal")
+    if is_global_lookup:
+        profile_rows = list(
+            _public_table("profiles")
+            .select("id,email,display_name,metadata")
+            .limit(500)
+            .execute()
+            .data
+            or []
         )
-    membership_rows = list(
-        _public_table("school_memberships")
-        .select("profile_id")
-        .eq("school_id", normalized_school_id)
-        .eq("is_active", True)
-        .eq("status", "active")
-        .limit(500)
-        .execute()
-        .data
-        or []
-    )
-    scoped_profile_ids = sorted(
-        {
-            _normalize(row.get("profile_id"))
-            for row in membership_rows
-            if _normalize(row.get("profile_id"))
-        }
-    )
-    if not scoped_profile_ids:
-        raise HTTPException(status_code=404, detail="Login account not found")
-    profile_rows = list(
-        _public_table("profiles")
-        .select("id,email,display_name,metadata")
-        .in_("id", scoped_profile_ids)
-        .limit(200)
-        .execute()
-        .data
-        or []
-    )
+    else:
+        normalized_school_id = _normalize(school_id)
+        if not normalized_school_id:
+            raise HTTPException(
+                status_code=400,
+                detail="School context is required for username login. Please use your login email.",
+            )
+        membership_rows = list(
+            _public_table("school_memberships")
+            .select("profile_id")
+            .eq("school_id", normalized_school_id)
+            .eq("is_active", True)
+            .eq("status", "active")
+            .limit(500)
+            .execute()
+            .data
+            or []
+        )
+        scoped_profile_ids = sorted(
+            {
+                _normalize(row.get("profile_id"))
+                for row in membership_rows
+                if _normalize(row.get("profile_id"))
+            }
+        )
+        if not scoped_profile_ids:
+            raise HTTPException(status_code=404, detail="Login account not found")
+        profile_rows = list(
+            _public_table("profiles")
+            .select("id,email,display_name,metadata")
+            .in_("id", scoped_profile_ids)
+            .limit(200)
+            .execute()
+            .data
+            or []
+        )
     normalized_lookup = normalized.lower()
     matches = [
         dict(row)

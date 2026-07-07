@@ -59,8 +59,9 @@ def require_access_control_user(
 async def api_resolve_login(
     identifier: str = Query(..., min_length=1),
     school_id: str | None = Query(default=None),
+    portal_intent: str | None = Query(default=None),
 ):
-    return resolve_login_email(identifier, school_id=school_id)
+    return resolve_login_email(identifier, school_id=school_id, portal_intent=portal_intent)
 
 
 @router.get("/templates")

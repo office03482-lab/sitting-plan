@@ -615,8 +615,10 @@ class ApiService {
     return this.api.post('/account-security/password/change-complete');
   }
 
-  async resolveLoginIdentifier(identifier: string) {
-    return this.api.get<{ email: string }>('/account-security/resolve-login', { params: { identifier } });
+  async resolveLoginIdentifier(identifier: string, portalIntent?: string) {
+    return this.api.get<{ email: string }>('/account-security/resolve-login', {
+      params: { identifier, portal_intent: portalIntent },
+    });
   }
 
   async createBulkActionRequest(data: {
