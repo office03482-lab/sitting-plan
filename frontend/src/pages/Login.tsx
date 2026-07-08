@@ -5,7 +5,7 @@ import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { PortalIntent, SchoolPublicBranding } from '@types';
-import CarromPortalBoard from './CarromPortalBoard';
+import InteractiveCompass from '@components/login/InteractiveCompass';
 
 const DEFAULT_BRANDING: SchoolPublicBranding = {
   school_name: 'School',
@@ -331,8 +331,8 @@ export default function Login() {
           </div>
         </div>
 
-        <div className="carrom-experience">
-          <CarromPortalBoard activePortal={portalIntent} />
+        <div className="compass-experience">
+          <InteractiveCompass activePortal={portalIntent} />
         </div>
       </div>
 
@@ -354,23 +354,20 @@ export default function Login() {
           inset: 0;
           background: linear-gradient(
             135deg,
-            #065f46 0%,
-            #047857 18%,
-            #166534 45%,
-            #15803d 60%,
-            #14532d 82%,
-            #0f3a24 100%
+            #071426 0%,
+            #10213d 38%,
+            #172554 66%,
+            #083344 100%
           );
-          opacity: 0.85;
         }
 
         .login-bg-radial {
           position: absolute;
           inset: 0;
           background:
-            radial-gradient(ellipse 70% 60% at 20% 30%, rgba(4, 120, 87, 0.3) 0%, transparent 70%),
-            radial-gradient(ellipse 60% 50% at 50% 40%, rgba(22, 101, 52, 0.25) 0%, transparent 65%),
-            radial-gradient(ellipse 50% 60% at 80% 50%, rgba(20, 83, 45, 0.2) 0%, transparent 60%);
+            radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
+            radial-gradient(circle at 82% 70%, rgba(20, 184, 166, 0.18) 0%, transparent 38%),
+            radial-gradient(circle at 60% 15%, rgba(139, 92, 246, 0.14) 0%, transparent 30%);
         }
 
         .login-bg-vignette {
@@ -395,7 +392,7 @@ export default function Login() {
           box-shadow:
             0 24px 80px rgba(0, 0, 0, 0.3),
             0 8px 32px rgba(0, 0, 0, 0.15),
-            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+             inset 0 1px 0 rgba(255, 255, 255, 0.08);
           overflow: hidden;
         }
 
@@ -703,7 +700,7 @@ export default function Login() {
           color: #94a3b8;
         }
 
-        .carrom-experience {
+        .compass-experience {
           flex: 1;
           display: flex;
           align-items: center;
@@ -712,164 +709,53 @@ export default function Login() {
           min-height: 560px;
         }
 
-        .carrom-stage {
+        .compass-shell {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
           width: 100%;
-          max-width: 600px;
+          max-width: 560px;
+          gap: 10px;
+          padding: 4px;
+        }
+
+        .compass-stage {
+          width: 100%;
           aspect-ratio: 1;
           position: relative;
+          border-radius: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
-        }
-
-        .carrom-frame {
-          position: relative;
-          width: 92%;
-          height: 92%;
-          border-radius: 28px;
-          background: linear-gradient(180deg, #1a1208 0%, #0f0a04 100%);
-          box-shadow:
-            0 12px 48px rgba(0, 0, 0, 0.5),
-            inset 0 1px 0 rgba(255, 255, 255, 0.04);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .carrom-outer-rim {
-          position: absolute;
-          inset: 4px;
-          border-radius: 24px;
-          background: linear-gradient(135deg, #2d1f0e, #1a1208);
-          box-shadow: inset 0 -2px 8px rgba(0, 0, 0, 0.4);
-        }
-
-        .carrom-inner-rim {
-          position: absolute;
-          inset: 8px;
-          border-radius: 20px;
-          background: linear-gradient(180deg, #3d2b14, #241a0a);
-          box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.05),
-            inset 0 -3px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        .carrom-surface {
-          position: relative;
-          width: calc(100% - 32px);
-          height: calc(100% - 32px);
-          border-radius: 14px;
-          background: linear-gradient(145deg, #065f46 0%, #047857 40%, #166534 100%);
-          box-shadow:
-            inset 0 3px 20px rgba(0, 0, 0, 0.35),
-            inset 0 -1px 2px rgba(255, 255, 255, 0.03);
           overflow: hidden;
-          z-index: 1;
+          border: 1px solid rgba(255, 255, 255, 0.75);
+          background: linear-gradient(145deg, rgba(255,255,255,0.96), rgba(242,246,250,0.96));
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.9),
+            0 18px 50px rgba(15, 23, 42, 0.16),
+            0 6px 18px rgba(255, 75, 35, 0.08);
         }
 
-        .carrom-surface::before {
-          content: '';
+        .compass-container {
+          display: none;
+        }
+        }
+
+        .compass-svg {
           position: absolute;
           inset: 0;
-          border-radius: 14px;
-          background:
-            radial-gradient(ellipse 60% 60% at 40% 40%, rgba(255, 255, 255, 0.03), transparent),
-            repeating-linear-gradient(
-              90deg,
-              transparent 0px,
-              transparent 28px,
-              rgba(255, 255, 255, 0.015) 28px,
-              rgba(255, 255, 255, 0.015) 29px
-            ),
-            repeating-linear-gradient(
-              0deg,
-              transparent 0px,
-              transparent 28px,
-              rgba(255, 255, 255, 0.015) 28px,
-              rgba(255, 255, 255, 0.015) 29px
-            );
+          width: 100%;
+          height: 100%;
+          filter: drop-shadow(0 8px 24px rgba(15, 23, 42, 0.14));
         }
 
-        .carrom-hole {
+        .compass-ball-layer {
           position: absolute;
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          background: radial-gradient(circle at 35% 35%, #052e16, #020a03 80%);
-          box-shadow:
-            inset 0 3px 8px rgba(0, 0, 0, 0.7),
-            0 0 0 4px rgba(0, 0, 0, 0.2),
-            0 1px 2px rgba(255, 255, 255, 0.03);
-          z-index: 2;
-          pointer-events: none;
+          inset: 0;
         }
 
-        .carrom-center-ring {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%);
-          width: 64px;
-          height: 64px;
-          border-radius: 50%;
-          border: 2px solid rgba(255, 255, 255, 0.06);
-          box-shadow:
-            0 0 0 8px rgba(255, 255, 255, 0.02),
-            inset 0 0 0 4px rgba(255, 255, 255, 0.02);
-          pointer-events: none;
-          z-index: 2;
-        }
-
-        .carrom-center-cross {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%);
-          width: 40px;
-          height: 2px;
-          background: rgba(255, 255, 255, 0.04);
-          pointer-events: none;
-          z-index: 2;
-        }
-
-        .carrom-center-cross::after {
-          content: '';
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%) rotate(90deg);
-          width: 40px;
-          height: 2px;
-          background: rgba(255, 255, 255, 0.04);
-        }
-
-        .carrom-baseline-top {
-          position: absolute;
-          left: 50%;
-          top: 28%;
-          transform: translateX(-50%);
-          width: 55%;
-          height: 1.5px;
-          background: rgba(255, 255, 255, 0.04);
-          border-radius: 1px;
-          pointer-events: none;
-          z-index: 2;
-        }
-
-        .carrom-baseline-bottom {
-          position: absolute;
-          left: 50%;
-          bottom: 28%;
-          transform: translateX(-50%);
-          width: 55%;
-          height: 1.5px;
-          background: rgba(255, 255, 255, 0.04);
-          border-radius: 1px;
-          pointer-events: none;
-          z-index: 2;
-        }
-
-        .carrom-piece {
+        .compass-ball {
           position: absolute;
           border-radius: 50%;
           display: flex;
@@ -882,10 +768,16 @@ export default function Login() {
           z-index: 5;
           user-select: none;
           -webkit-user-select: none;
+          touch-action: none;
           transition: box-shadow 0.3s ease, border-color 0.3s ease;
+          box-shadow:
+            0 4px 14px rgba(0, 0, 0, 0.35),
+            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
+            inset 0 2px 4px rgba(255, 255, 255, 0.12);
+          border: 2px solid rgba(255, 255, 255, 0.1);
         }
 
-        .carrom-piece::before {
+        .compass-ball::before {
           content: '';
           position: absolute;
           top: 14%;
@@ -897,103 +789,39 @@ export default function Login() {
           pointer-events: none;
         }
 
-        .carrom-piece--school {
-          width: 76px;
-          height: 76px;
-          background: radial-gradient(circle at 38% 32%, #3b82f6, #1e40af 70%);
-          color: #fff;
-          font-size: 11px;
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.35),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
-            inset 0 2px 4px rgba(255, 255, 255, 0.12),
-            0 0 0 3px rgba(59, 130, 246, 0.08);
-          border: 2px solid rgba(59, 130, 246, 0.15);
-        }
-
-        .carrom-piece--student {
-          width: 76px;
-          height: 76px;
-          background: radial-gradient(circle at 38% 32%, #facc15, #ca8a04 70%);
-          color: #1e293b;
-          font-size: 11px;
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.3),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.1),
-            inset 0 2px 4px rgba(255, 255, 255, 0.3),
-            0 0 0 3px rgba(250, 204, 21, 0.08);
-          border: 2px solid rgba(250, 204, 21, 0.15);
-        }
-
-        .carrom-piece--parent {
-          width: 76px;
-          height: 76px;
-          background: radial-gradient(circle at 38% 32%, #ef4444, #991b1b 70%);
-          color: #fff;
-          font-size: 11px;
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.35),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
-            inset 0 2px 4px rgba(255, 255, 255, 0.12),
-            0 0 0 3px rgba(239, 68, 68, 0.08);
-          border: 2px solid rgba(239, 68, 68, 0.15);
-        }
-
-        .carrom-piece-label {
+        .compass-ball-label {
           pointer-events: none;
           text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+          font-size: 10px;
         }
 
-        .carrom-piece--active {
-          box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.4), 0 0 20px rgba(13, 148, 136, 0.15) !important;
-          border-color: rgba(13, 148, 136, 0.5) !important;
-        }
-
-        .carrom-piece--school[data-active="true"] {
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.35),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
-            inset 0 2px 4px rgba(255, 255, 255, 0.12),
-            0 0 0 4px rgba(59, 130, 246, 0.4),
-            0 0 24px rgba(59, 130, 246, 0.15) !important;
-          border-color: rgba(59, 130, 246, 0.5) !important;
-        }
-
-        .carrom-piece--student[data-active="true"] {
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.3),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.1),
-            inset 0 2px 4px rgba(255, 255, 255, 0.3),
-            0 0 0 4px rgba(250, 204, 21, 0.4),
-            0 0 24px rgba(250, 204, 21, 0.12) !important;
-          border-color: rgba(250, 204, 21, 0.5) !important;
-        }
-
-        .carrom-piece--parent[data-active="true"] {
-          box-shadow:
-            0 4px 14px rgba(0, 0, 0, 0.35),
-            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
-            inset 0 2px 4px rgba(255, 255, 255, 0.12),
-            0 0 0 4px rgba(239, 68, 68, 0.4),
-            0 0 24px rgba(239, 68, 68, 0.15) !important;
-          border-color: rgba(239, 68, 68, 0.5) !important;
-        }
-
-        .carrom-striker {
-          position: absolute;
-          width: 96px;
-          height: 96px;
+        .compass-ball-logo-img {
+          width: 70%;
+          height: 70%;
+          object-fit: contain;
           border-radius: 50%;
-          will-change: transform;
-          z-index: 10;
-          user-select: none;
-          -webkit-user-select: none;
-          touch-action: none;
-          cursor: grab;
-          background-color: rgba(255, 255, 255, 0.92);
-          background-size: contain;
-          background-repeat: no-repeat;
-          background-position: center;
+          pointer-events: none;
+          z-index: 1;
+        }
+
+        .compass-ball[data-active="true"] {
+          box-shadow:
+            0 4px 14px rgba(0, 0, 0, 0.35),
+            inset 0 -4px 8px rgba(0, 0, 0, 0.2),
+            inset 0 2px 4px rgba(255, 255, 255, 0.12),
+            0 0 0 4px var(--ball-glow, rgba(59, 130, 246, 0.4)),
+            0 0 24px var(--ball-glow, rgba(59, 130, 246, 0.15)) !important;
+          border-color: var(--ball-glow, rgba(59, 130, 246, 0.5)) !important;
+        }
+
+        .compass-bearing-display,
+        .compass-bearing-text,
+        .compass-bearing-degrees {
+          /* removed - replaced by compass-heading-display */
+        }
+
+        .compass-ball[data-kind="logo"] {
+          background: rgba(255, 255, 255, 0.92);
           box-shadow:
             0 6px 28px rgba(0, 0, 0, 0.35),
             inset 0 -4px 12px rgba(0, 0, 0, 0.12),
@@ -1002,7 +830,7 @@ export default function Login() {
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
 
-        .carrom-striker::before {
+        .compass-ball[data-kind="logo"]::before {
           content: '';
           position: absolute;
           inset: 0;
@@ -1011,7 +839,7 @@ export default function Login() {
           pointer-events: none;
         }
 
-        .carrom-striker::after {
+        .compass-ball[data-kind="logo"]::after {
           content: '';
           position: absolute;
           top: 14%;
@@ -1023,7 +851,24 @@ export default function Login() {
           pointer-events: none;
         }
 
-        .carrom-striker[data-active="true"] {
+        .compass-heading-display {
+          text-align: center;
+          padding: 0 0 10px;
+          pointer-events: none;
+          white-space: nowrap;
+          width: 100%;
+        }
+
+        .compass-heading-degrees {
+          font-size: 30px;
+          font-weight: 800;
+          color: #FFFFFF;
+          letter-spacing: 0.8px;
+          font-family: 'Nunito', 'DM Sans', sans-serif;
+          text-shadow: 0 3px 16px rgba(0,0,0,0.28);
+        }
+
+        .compass-ball[data-kind="logo"][data-active="true"] {
           border-color: rgba(249, 115, 22, 0.5) !important;
           box-shadow:
             0 6px 28px rgba(0, 0, 0, 0.35),
@@ -1031,6 +876,54 @@ export default function Login() {
             inset 0 3px 8px rgba(255, 255, 255, 0.35),
             0 0 0 4px rgba(249, 115, 22, 0.3),
             0 0 24px rgba(249, 115, 22, 0.12) !important;
+        }
+
+        .compass-debug-overlay {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 30;
+        }
+
+        .compass-debug-center {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 8px;
+          height: 8px;
+          transform: translate(-50%, -50%);
+          border-radius: 50%;
+          background: red;
+        }
+
+        .compass-debug-circle {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          border: 1px solid rgba(255, 0, 0, 0.8);
+          border-radius: 50%;
+        }
+
+        .compass-debug-circle-playable {
+          width: calc(100% - 112px);
+          height: calc(100% - 112px);
+        }
+
+        .compass-debug-circle-outer {
+          width: calc(100% - 4px);
+          height: calc(100% - 4px);
+        }
+
+        .compass-debug-ball {
+          position: absolute;
+          transform: translate(-50%, -50%);
+          padding: 2px 4px;
+          border-radius: 4px;
+          background: rgba(255, 0, 0, 0.8);
+          color: white;
+          font-size: 10px;
+          white-space: nowrap;
         }
 
         @media (max-width: 1100px) {
@@ -1043,26 +936,21 @@ export default function Login() {
             width: 100%;
           }
 
-          .carrom-experience {
+          .compass-experience {
             min-height: 340px;
             padding: 12px;
           }
 
-          .carrom-stage {
+          .compass-shell {
             max-width: 420px;
           }
 
-          .carrom-piece--school,
-          .carrom-piece--student,
-          .carrom-piece--parent {
-            width: 64px;
-            height: 64px;
-            font-size: 10px;
+          .compass-heading-degrees {
+            font-size: 22px;
           }
 
-          .carrom-striker {
-            width: 80px;
-            height: 80px;
+          .compass-ball {
+            font-size: 10px;
           }
         }
 
@@ -1157,31 +1045,21 @@ export default function Login() {
             font-size: 12px;
           }
 
-          .carrom-experience {
+          .compass-experience {
             min-height: 240px;
             padding: 6px;
           }
 
-          .carrom-stage {
+          .compass-shell {
             max-width: 280px;
           }
 
-          .carrom-piece--school,
-          .carrom-piece--student,
-          .carrom-piece--parent {
-            width: 48px;
-            height: 48px;
+          .compass-heading-degrees {
+            font-size: 18px;
+          }
+
+          .compass-ball {
             font-size: 8px;
-          }
-
-          .carrom-striker {
-            width: 60px;
-            height: 60px;
-          }
-
-          .carrom-hole {
-            width: 18px;
-            height: 18px;
           }
         }
 
@@ -1233,31 +1111,21 @@ export default function Login() {
             font-size: 13px;
           }
 
-          .carrom-experience {
+          .compass-experience {
             min-height: 180px;
             padding: 4px;
           }
 
-          .carrom-stage {
+          .compass-shell {
             max-width: 200px;
           }
 
-          .carrom-piece--school,
-          .carrom-piece--student,
-          .carrom-piece--parent {
-            width: 36px;
-            height: 36px;
+          .compass-heading-degrees {
+            font-size: 14px;
+          }
+
+          .compass-ball {
             font-size: 7px;
-          }
-
-          .carrom-striker {
-            width: 44px;
-            height: 44px;
-          }
-
-          .carrom-hole {
-            width: 14px;
-            height: 14px;
           }
         }
       `}</style>
