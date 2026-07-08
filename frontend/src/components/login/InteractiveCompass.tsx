@@ -725,7 +725,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
 
               {/* Antique inner watch (white face) */}
               {(() => {
-                const watchR = innerFaceR - 5;
+                const watchR = Math.min(innerFaceR - 20, compassR * 0.36);
                 return <AntiqueInnerWatchFace cx={cX} cy={cY} watchR={watchR} realTime={realTime} />;
               })()}
 
