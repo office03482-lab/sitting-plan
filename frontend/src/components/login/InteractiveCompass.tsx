@@ -632,6 +632,12 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                 <filter id="compassShadow" x="-10%" y="-10%" width="120%" height="120%">
                   <feDropShadow dx={0} dy={2} stdDeviation={5} floodColor="rgba(0,0,0,0.18)" />
                 </filter>
+                <linearGradient id="compassBackGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#9EE8E3" />
+                  <stop offset="38%" stopColor="#B7DDF4" />
+                  <stop offset="65%" stopColor="#C9DFE4" />
+                  <stop offset="100%" stopColor="#D6EEF2" />
+                </linearGradient>
                 <radialGradient id="faceGrad" cx="50%" cy="50%" r="50%">
                   <stop offset="0%" stopColor="#FFFFFF" />
                   <stop offset="65%" stopColor="#F4F6F8" />
@@ -641,15 +647,15 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
 
               <circle
                 cx={cX} cy={cY} r={compassR}
-                fill="url(#faceGrad)" stroke="#FF4B23" strokeWidth={2}
+                fill="url(#compassBackGrad)" stroke="#FF4B23" strokeWidth={2}
                 filter="url(#compassShadow)"
               />
 
               <circle
                 cx={cX} cy={cY} r={innerFaceR}
-                fill="url(#faceGrad)" stroke="rgba(200,208,220,0.25)" strokeWidth={0.5}
+                fill="url(#compassBackGrad)" stroke="rgba(200,208,220,0.25)" strokeWidth={0.5}
               />
-              <circle cx={cX} cy={cY} r={innerFaceR} fill="url(#faceGrad)" />
+              <circle cx={cX} cy={cY} r={innerFaceR} fill="url(#compassBackGrad)" />
               <circle cx={cX} cy={cY} r={compassR - 10} fill="none" stroke="rgba(255,75,35,0.16)" strokeWidth={8} />
               <circle cx={cX} cy={cY} r={compassR - 34} fill="none" stroke="rgba(15,23,42,0.08)" strokeWidth={1} />
 
