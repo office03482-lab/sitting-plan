@@ -567,7 +567,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const minorTickInnerR = compassR - 20;
   const degreeLabelR = compassR - 30;
   const cardinalR = compassR - 42;
-  const watchR = compassR - 4;
+  const watchR = compassR * 0.3;
   const crosshairHalf = 16;
   const ballPlayableR = compassR - INSTRUMENT_BAND;
 
