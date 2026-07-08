@@ -185,13 +185,13 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
         </linearGradient>
       </defs>
 
-      <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#2b180d" strokeWidth="5" />
-      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="url(#thinBronze)" strokeWidth="4" />
+      <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#2b180d" strokeWidth="5" strokeOpacity={0.18} />
+      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="url(#thinBronze)" strokeWidth="4" strokeOpacity={0.28} />
 
-      <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#4a3825" strokeWidth="1.5" />
+      <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#4a3825" strokeWidth="1.5" strokeOpacity={0.32} />
 
-      <circle cx={cx} cy={cy} r={watchR - 12} fill="none" stroke="#2b241c" strokeWidth="1.2" opacity="0.9" />
-      <circle cx={cx} cy={cy} r={watchR - 31} fill="none" stroke="#3c3328" strokeWidth="1" opacity="0.85" />
+      <circle cx={cx} cy={cy} r={watchR - 12} fill="none" stroke="#2b241c" strokeWidth="1.2" strokeOpacity={0.55} />
+      <circle cx={cx} cy={cy} r={watchR - 31} fill="none" stroke="#3c3328" strokeWidth="1" strokeOpacity={0.45} />
 
       <g>
         {outerTicks.map((t) => (
@@ -567,6 +567,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const minorTickInnerR = compassR - 20;
   const degreeLabelR = compassR - 30;
   const cardinalR = compassR - 42;
+  const watchR = compassR - 4;
   const crosshairHalf = 16;
   const ballPlayableR = compassR - INSTRUMENT_BAND;
 
@@ -724,11 +725,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
               </g>
 
               {/* Antique inner watch (white face) */}
-              {(() => {
-                const watchR = Math.min(innerFaceR - 20, compassR * 0.36);
-                return <AntiqueInnerWatchFace cx={cX} cy={cY} watchR={watchR} realTime={realTime} />;
-              })()}
-
+              <AntiqueInnerWatchFace cx={cX} cy={cY} watchR={watchR} realTime={realTime} />
               {/* Crosshair (fixed) */}
               <line x1={cX - crosshairHalf} y1={cY} x2={cX + crosshairHalf} y2={cY}
                 stroke="#4A4F57" strokeWidth={1} opacity={0.3} />
