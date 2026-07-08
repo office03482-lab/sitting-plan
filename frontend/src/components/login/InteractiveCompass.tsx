@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 import type { PortalIntent } from '@types';
 import {
@@ -98,6 +98,170 @@ const INSTRUMENT_BAND = 58;
 const COLLISION_PADDING = 2;
 
 type GeometryState = 'UNMEASURED' | 'MEASURED' | 'READY';
+
+const WATCH_SCALE_BASE = 174;
+const ROMANS = [
+  'XII', 'I', 'II', 'III', 'IV', 'V',
+  'VI', 'VII', 'VIII', 'IX', 'X', 'XI',
+];
+
+const RED_LABELS = [
+  '60', '5', '10', '15', '20', '25',
+  '30', '35', '40', '45', '50', '55',
+];
+
+type AntiqueInnerWatchFaceProps = {
+  cx: number;
+  cy: number;
+  watchR: number;
+  realTime: Date;
+};
+
+function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFaceProps) {
+  const scale = watchR / WATCH_SCALE_BASE;
+
+  const polar = (radius: number, angleDeg: number) => {
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
+  };
+
+  const outerTicks = useMemo(
+    () =>
+      Array.from({ length: 60 }, (_, i) => {
+        const angle = i * 6;
+        const major = i % 5 === 0;
+
+        return {
+          i,
+          major,
+          p1: polar(watchR - 7, angle),
+          p2: polar(watchR - (major ? 18 : 13), angle),
+        };
+      }),
+    [watchR]
+  );
+
+  const innerTicks = useMemo(
+    () =>
+      Array.from({ length: 60 }, (_, i) => {
+        const angle = i * 6;
+        const major = i % 5 === 0;
+
+        return {
+          i,
+          major,
+          p1: polar(111 * scale, angle),
+          p2: polar(major ? 101 * scale : 105 * scale, angle),
+        };
+      }),
+    [watchR]
+  );
+
+  const hourAngleDeg = ((realTime.getHours() % 12 + realTime.getMinutes() / 60 + realTime.getSeconds() / 3600) / 12) * 360;
+  const minuteAngleDeg = ((realTime.getMinutes() + realTime.getSeconds() / 60) / 60) * 360;
+  const secondAngleDeg = (realTime.getSeconds() / 60) * 360;
+
+  const hourHandR = watchR * 0.60;
+  const minuteHandR = watchR * 0.77;
+  const secondHandR = watchR * 0.86;
+
+  const hourTip = polar(hourHandR, hourAngleDeg);
+  const minuteTip = polar(minuteHandR, minuteAngleDeg);
+  const secondTip = polar(secondHandR, secondAngleDeg);
+
+  return (
+    <g id="antique-inner-watch" pointerEvents="none">
+      <defs>
+        <radialGradient id="oldPaper" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#ffffff" />
+        </radialGradient>
+
+        <linearGradient id="thinBronze" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#65401f" />
+          <stop offset="30%" stopColor="#2b180d" />
+          <stop offset="60%" stopColor="#5a3d24" />
+          <stop offset="100%" stopColor="#24130b" />
+        </linearGradient>
+      </defs>
+
+      <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#2b180d" strokeWidth="5" />
+      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="url(#thinBronze)" strokeWidth="4" />
+
+      <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#4a3825" strokeWidth="1.5" />
+
+      <circle cx={cx} cy={cy} r={watchR - 12} fill="none" stroke="#2b241c" strokeWidth="1.2" opacity="0.9" />
+      <circle cx={cx} cy={cy} r={watchR - 31} fill="none" stroke="#3c3328" strokeWidth="1" opacity="0.85" />
+
+      <g>
+        {outerTicks.map((t) => (
+          <line
+            key={t.i}
+            x1={t.p1.x}
+            y1={t.p1.y}
+            x2={t.p2.x}
+            y2={t.p2.y}
+            stroke="#211c17"
+            strokeWidth={t.major ? 1.8 : 0.85}
+            opacity={t.major ? 0.92 : 0.72}
+          />
+        ))}
+      </g>
+
+      <g fill="#a64a3a" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="600">
+        {RED_LABELS.map((label, i) => {
+          const angle = i * 30;
+          const p = polar(139 * scale, angle);
+          return (
+            <text key={label} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="11" opacity="0.88" transform={`rotate(${angle} ${p.x} ${p.y})`}>
+              {label}
+            </text>
+          );
+        })}
+      </g>
+
+      <circle cx={cx} cy={cy} r={127 * scale} fill="none" stroke="#292219" strokeWidth="1.2" />
+
+      <g fill="#211c17" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="700">
+        {ROMANS.map((roman, i) => {
+          const angle = i * 30;
+          const p = polar(119 * scale, angle);
+          return (
+            <text key={roman} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize={roman.length >= 4 ? 15 : 18} transform={`rotate(${angle} ${p.x} ${p.y})`}>
+              {roman}
+            </text>
+          );
+        })}
+      </g>
+
+      <circle cx={cx} cy={cy} r={112 * scale} fill="none" stroke="#2b241c" strokeWidth="1.2" />
+
+      <g>
+        {innerTicks.map((t) => (
+          <line
+            key={t.i}
+            x1={t.p1.x}
+            y1={t.p1.y}
+            x2={t.p2.x}
+            y2={t.p2.y}
+            stroke="#332a20"
+            strokeWidth={t.major ? 1.25 : 0.65}
+            opacity={t.major ? 0.86 : 0.6}
+          />
+        ))}
+      </g>
+
+      <circle cx={cx} cy={cy} r={97 * scale} fill="none" stroke="#594a38" strokeWidth="0.8" opacity="0.8" />
+      <circle cx={cx} cy={cy} r={84 * scale} fill="none" stroke="#665642" strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.65" />
+
+      <path d={`M ${cx} ${cy} L ${hourTip.x} ${hourTip.y}`} fill="none" stroke="#211c17" strokeWidth={4} strokeLinecap="round" />
+      <path d={`M ${cx} ${cy} L ${minuteTip.x} ${minuteTip.y}`} fill="none" stroke="#463d31" strokeWidth={2.4} strokeLinecap="round" />
+      <path d={`M ${cx} ${cy} L ${secondTip.x} ${secondTip.y}`} fill="none" stroke="#a64a3a" strokeWidth={1.4} strokeLinecap="round" />
+      <circle cx={cx} cy={cy} r={3.6 * scale} fill="#2b180d" />
+      <circle cx={cx} cy={cy} r={2.1 * scale} fill="#d8d0ad" />
+    </g>
+  );
+}
 
 export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -559,21 +723,11 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                 ))}
               </g>
 
-              {/* Live anti-cheat watch */}
-              <circle cx={cX} cy={cY} r={watchOuterR} fill="rgba(255,255,255,0.96)" stroke="rgba(15,23,42,0.14)" strokeWidth={1.2} />
-              <circle cx={cX} cy={cY} r={watchInnerR} fill="none" stroke="rgba(255,75,35,0.18)" strokeWidth={1.2} />
-              {Array.from({ length: 12 }).map((_, index) => {
-                const tickAngle = (index / 12) * Math.PI * 2 - Math.PI / 2;
-                const x1 = cX + (watchOuterR - 10) * Math.cos(tickAngle);
-                const y1 = cY + (watchOuterR - 10) * Math.sin(tickAngle);
-                const x2 = cX + watchOuterR * Math.cos(tickAngle);
-                const y2 = cY + watchOuterR * Math.sin(tickAngle);
-                return <line key={`watch-tick-${index}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(15,23,42,0.32)" strokeWidth={index % 3 === 0 ? 1.6 : 1} />;
-              })}
-              <line x1={cX} y1={cY} x2={cX + watchHourHandR * Math.cos((hourAngleDeg * Math.PI) / 180)} y2={cY + watchHourHandR * Math.sin((hourAngleDeg * Math.PI) / 180)} stroke="#1F2937" strokeWidth={4.2} strokeLinecap="round" />
-              <line x1={cX} y1={cY} x2={cX + watchMinuteHandR * Math.cos((minuteAngleDeg * Math.PI) / 180)} y2={cY + watchMinuteHandR * Math.sin((minuteAngleDeg * Math.PI) / 180)} stroke="#334155" strokeWidth={3.2} strokeLinecap="round" />
-              <line x1={cX} y1={cY} x2={cX + watchSecondHandR * Math.cos((secondAngleDeg * Math.PI) / 180)} y2={cY + watchSecondHandR * Math.sin((secondAngleDeg * Math.PI) / 180)} stroke="#FF4B23" strokeWidth={1.8} strokeLinecap="round" />
-              <circle cx={cX} cy={cY} r={4.2} fill="#FF4B23" />
+              {/* Antique inner watch (white face) */}
+              {(() => {
+                const watchR = innerFaceR - 5;
+                return <AntiqueInnerWatchFace cx={cX} cy={cY} watchR={watchR} realTime={realTime} />;
+              })()}
 
               {/* Crosshair (fixed) */}
               <line x1={cX - crosshairHalf} y1={cY} x2={cX + crosshairHalf} y2={cY}
