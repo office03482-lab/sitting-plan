@@ -185,7 +185,7 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
       </defs>
 
       <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#2b180d" strokeWidth="5" strokeOpacity={0.18} />
-      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="url(#thinBronze)" strokeWidth="4" strokeOpacity={0.28} />
+      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="#FF4B23" strokeWidth="2.5" strokeOpacity={0.5} />
 
       <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#4a3825" strokeWidth="1.5" strokeOpacity={0.32} />
 
