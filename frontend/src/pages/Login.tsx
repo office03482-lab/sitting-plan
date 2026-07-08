@@ -706,6 +706,13 @@ export default function Login() {
           justify-content: center;
           padding: 16px;
           min-height: 560px;
+          position: relative;
+          background:
+            linear-gradient(135deg, #071426 0%, #10213d 38%, #172554 66%, #083344 100%),
+            radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
+            radial-gradient(circle at 82% 70%, rgba(20, 184, 166, 0.18) 0%, transparent 38%),
+            radial-gradient(circle at 60% 15%, rgba(139, 92, 246, 0.14) 0%, transparent 30%);
+          background-blend-mode: normal, normal, normal, normal;
         }
 
         .compass-shell {
@@ -714,7 +721,7 @@ export default function Login() {
           align-items: center;
           justify-content: center;
           width: 100%;
-          max-width: 560px;
+          max-width: 800px;
           gap: 10px;
           padding: 4px;
         }

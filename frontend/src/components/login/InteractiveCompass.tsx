@@ -708,10 +708,10 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                 ))}
 
                 {/* Cardinal letters */}
-                {cardinalPositions.map(({ label, x, y, isNorth }) => (
+                {cardinalPositions.map(({ label, x, y }) => (
                   <text key={`c-${label}`} x={x} y={y} textAnchor="middle" dominantBaseline="central"
-                    fill={isNorth ? '#FF4B23' : '#4A4F57'}
-                    fontSize={22} fontWeight={800}
+                    fill="#FF4B23"
+                    fontSize={14} fontWeight={800}
                     fontFamily="'Nunito', 'DM Sans', sans-serif"
                     letterSpacing="0.5">
                     {label}
