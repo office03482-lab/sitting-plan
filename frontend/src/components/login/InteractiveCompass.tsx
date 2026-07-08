@@ -641,7 +641,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
 
               <circle
                 cx={cX} cy={cY} r={compassR}
-                fill="url(#faceGrad)" stroke="rgba(180,190,210,0.35)" strokeWidth={1}
+                fill="url(#faceGrad)" stroke="#FF4B23" strokeWidth={2}
                 filter="url(#compassShadow)"
               />
 
