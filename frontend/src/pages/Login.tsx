@@ -724,22 +724,9 @@ export default function Login() {
           width: 100%;
           aspect-ratio: 1;
           position: relative;
-          border-radius: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
-          overflow: hidden;
-          border: 1px solid rgba(255, 255, 255, 0.75);
-          background: linear-gradient(145deg, rgba(255,255,255,0.96), rgba(242,246,250,0.96));
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.9),
-            0 18px 50px rgba(15, 23, 42, 0.16),
-            0 6px 18px rgba(255, 75, 35, 0.08);
-        }
-
-        .compass-container {
-          display: none;
-        }
         }
 
         .compass-svg {
