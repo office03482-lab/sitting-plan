@@ -3,7 +3,6 @@ import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
 import type { PortalIntent } from '@types';
 import {
   bearingFromPoint,
-  formatHeadingDisplay,
   reflectOffCircle,
 } from './compassMath';
 
@@ -567,7 +566,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const minorTickInnerR = compassR - 20;
   const degreeLabelR = compassR - 30;
   const cardinalR = compassR - 42;
-  const watchR = compassR * 0.3;
+  const watchR = compassR * 0.8;
   const crosshairHalf = 16;
   const ballPlayableR = compassR - INSTRUMENT_BAND;
 
@@ -603,7 +602,6 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const markerPoints = `${cX},${markerTipY} ${cX - markerHalf},${markerBaseY} ${cX + markerHalf},${markerBaseY}`;
 
   const heading = headingDegrees;
-  const headingDisplay = formatHeadingDisplay(heading);
 
   const secondAngleDeg = (realTime.getSeconds() / 60) * 360 - 90;
   const minuteAngleDeg = ((realTime.getMinutes() + realTime.getSeconds() / 60) / 60) * 360 - 90;
@@ -616,9 +614,6 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
 
   return (
     <div className="compass-shell">
-      <div className="compass-heading-display" aria-live="polite">
-        <span className="compass-heading-degrees">{rendered ? headingDisplay.full : ''}</span>
-      </div>
       <div
         ref={stageRef}
         className="compass-stage"
