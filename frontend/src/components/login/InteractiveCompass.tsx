@@ -565,7 +565,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const minorTickOuterR = compassR - 12;
   const minorTickInnerR = compassR - 20;
   const degreeLabelR = compassR - 30;
-  const cardinalR = compassR - 42;
+  const cardinalR = compassR + 22;
   const watchR = compassR * 0.8;
   const crosshairHalf = 16;
   const ballPlayableR = compassR - INSTRUMENT_BAND;
@@ -624,7 +624,7 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
           <>
             <svg
               className="compass-svg"
-              viewBox={`0 0 ${size} ${size}`}
+              viewBox={`${-28} ${-28} ${size + 56} ${size + 56}`}
               width={size}
               height={size}
             >
