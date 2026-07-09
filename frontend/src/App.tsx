@@ -83,18 +83,14 @@ import SchoolSmsTemplatesPage from '@pages/SchoolSmsTemplatesPage';
 import SchoolStorageCenterPage from '@pages/SchoolStorageCenterPage';
 
 function SchoolAdminRoute({ children }: { children: JSX.Element }) {
-  const { user, getDefaultRoute } = useAuth();
+  const { user } = useAuth();
 
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role_key === 'platform_admin') {
-    return <Navigate to={getDefaultRoute(user)} replace />;
-  }
-
   return (
-    <ProtectedRoute allowedRoles={['admin', 'school_admin']} requiredPermissions={['settings']}>
+    <ProtectedRoute allowedRoles={['admin', 'school_admin', 'platform_admin']} requiredPermissions={['settings']}>
       {children}
     </ProtectedRoute>
   );

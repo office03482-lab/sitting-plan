@@ -16,6 +16,7 @@ import type {
   CampusPredictionsDashboard, FinancePredictionsDashboard, StudentPredictionsDashboard,
   AiAgentDashboard, AiAgentRecommendation, AiAgentRunResponse,
 } from '@types';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 
 type RetriableAxiosConfig = {
   __retryCount?: number;
@@ -140,7 +141,19 @@ export function getStoredDeviceId(): string {
   }
 }
 
+function getPlatformAdminActiveSchoolId(): string | null {
+  try {
+    return usePlatformAdminSchoolStore.getState().activeSchoolId;
+  } catch {
+    return null;
+  }
+}
+
 function resolveStoredSchoolId(user: any): string | null {
+  const paScope = getPlatformAdminActiveSchoolId();
+  if (paScope && typeof paScope === 'string' && paScope.trim()) {
+    return paScope.trim();
+  }
   const candidate = String(
     user?.school_id
     || user?.default_school_id
@@ -157,9 +170,10 @@ function normalizeRequestSchoolId(
   const currentSchoolId = String(params.school_id ?? '').trim();
 
   if (resolvedSchoolId) {
-    if (!currentSchoolId || currentSchoolId === '1') {
-      params.school_id = resolvedSchoolId;
-    }
+    // PA school scope always wins — replace whatever the page set.
+    // For non-PA users, resolvedSchoolId comes from user.school_id (membership),
+    // which should also take precedence over placeholder '1'.
+    params.school_id = resolvedSchoolId;
     return;
   }
 
@@ -241,7 +255,12 @@ class ApiService {
         headers['X-Active-Session'] = activeSessionKey;
       }
       headers['X-Device-Id'] = getStoredDeviceId();
-      normalizeRequestSchoolId(params, resolvedSchoolId, Boolean(token));
+
+      const requestUrl = `${config.baseURL || ''}${config.url || ''}`;
+      const isPlatformRoute = /^\/api\/platform\//.test(requestUrl);
+      if (!isPlatformRoute) {
+        normalizeRequestSchoolId(params, resolvedSchoolId, Boolean(token));
+      }
 
       // Ensure multipart uploads do not send a JSON content type header.
       if (config.data instanceof FormData) {
@@ -249,9 +268,8 @@ class ApiService {
         delete headers['content-type'];
       }
 
-      const requestUrl = `${config.baseURL || ''}${config.url || ''}`;
       console.debug('[api-auth-trace]', {
-        url: requestUrl,
+        url: `${config.baseURL || ''}${config.url || ''}`,
         method: String(config.method || 'get').toUpperCase(),
         hasAuthorization: Boolean(headers.Authorization),
         hasUserRole: Boolean(headers['X-User-Role']),

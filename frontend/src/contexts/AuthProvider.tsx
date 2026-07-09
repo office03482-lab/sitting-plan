@@ -13,6 +13,7 @@ import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSIO
 import { supabase } from '@/lib/supabase';
 import { runtimeConfig } from '@/lib/runtimeConfig';
 import type { PortalIntent, User, UserRole, UserType } from '@types';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 import { useAuthStore, isJwtActive } from '@store/auth';
 
 type MembershipRole = {
@@ -285,7 +286,10 @@ export function isRouteCompatibleWithPortal(pathname: string, portalIntent: Port
   return true;
 }
 
-function hasResolvedSchoolContext(user?: User | null): boolean {
+function hasResolvedSchoolContext(user?: User | null, paActiveSchoolId?: string | null): boolean {
+  if (user?.role_key === 'platform_admin') {
+    return Boolean(paActiveSchoolId);
+  }
   return Boolean(
     user?.role &&
     String(user?.school_id || '').trim() &&
@@ -541,6 +545,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('IDLE');
   const [sessionRegistrationReady, setSessionRegistrationReady] = useState(false);
   const [sessionRegistrationError, setSessionRegistrationError] = useState<string | null>(null);
+  const [paActiveSchoolId, setPaActiveSchoolId] = useState<string | null>(
+    () => usePlatformAdminSchoolStore.getState().activeSchoolId,
+  );
 
   const storeUserRef = useRef(storeUser);
   const authErrorRef = useRef(authError);
@@ -562,6 +569,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     storeUserRef.current = storeUser;
   }, [storeUser]);
+
+  useEffect(() => {
+    const unsub = usePlatformAdminSchoolStore.subscribe((state) => {
+      setPaActiveSchoolId(state.activeSchoolId);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     authErrorRef.current = authError;
@@ -747,6 +761,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const clearAuthState = (options?: { redirectToLogin?: boolean; reason?: string | null }) => {
       if (!isMounted) return;
       clearPersistedAuthArtifacts();
+      usePlatformAdminSchoolStore.getState().clearActiveSchool();
       setSession(null);
       setSessionRegistrationReady(false);
       setSessionRegistrationError(null);
@@ -1116,7 +1131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(
     () => {
-      const schoolContextReady = hasResolvedSchoolContext(storeUser);
+      const schoolContextReady = hasResolvedSchoolContext(storeUser, paActiveSchoolId);
       const effectivePortalIntent = portalIntentRef.current;
 
       return ({
@@ -1276,7 +1291,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       canAccess(options) {
         if (!storeUser?.is_active) return false;
-        const roleOk = !options?.roles?.length || options.roles.includes(storeUser.role);
+        const roleOk = !options?.roles?.length || options.roles.includes(storeUser.role) || storeUser.role_key === 'platform_admin';
         const permissionOk =
           !options?.permissions?.length ||
           options.permissions.some(
@@ -1293,7 +1308,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     },
-    [authError, authStatus, initialized, loading, logoutStore, session, sessionRegistrationError, sessionRegistrationReady, storeUser],
+    [authError, authStatus, initialized, loading, logoutStore, paActiveSchoolId, session, sessionRegistrationError, sessionRegistrationReady, storeUser],
   );
 
   useEffect(() => {

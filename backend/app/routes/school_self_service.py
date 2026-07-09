@@ -44,8 +44,9 @@ def _role_key(user: User) -> str:
 
 
 def require_school_admin_user(user: User = Depends(get_authenticated_user)) -> User:
+    from app.services.bulk_action_requests import is_platform_admin_user
     role_key = _role_key(user)
-    if role_key == "school_admin" or (getattr(user, "role", None) == UserRole.ADMIN and role_key != "platform_admin"):
+    if is_platform_admin_user(user) or role_key == "school_admin" or (getattr(user, "role", None) == UserRole.ADMIN and role_key != "platform_admin"):
         return user
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only School Admin can manage school self-service settings")
 

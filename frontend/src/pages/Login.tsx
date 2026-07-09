@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, GraduationCap, Lock, Mail, Monitor, School, Users } from 'lucide-react';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
@@ -383,7 +383,7 @@ export default function Login() {
           display: flex;
           width: 100%;
           max-width: 1200px;
-          min-height: 600px;
+          max-height: min(600px, calc(100dvh - 48px));
           border-radius: 28px;
           border: 1px solid rgba(255, 255, 255, 0.25);
           background: rgba(255, 255, 255, 0.12);
@@ -396,7 +396,7 @@ export default function Login() {
         }
 
         .auth-panel {
-          width: 420px;
+          width: clamp(320px, 35%, 420px);
           flex-shrink: 0;
           background: transparent;
           padding: 12px;
@@ -408,6 +408,7 @@ export default function Login() {
           height: 100%;
           display: flex;
           flex-direction: column;
+          justify-content: center;
           background: linear-gradient(135deg, #99f6e4 0%, #bae6fd 30%, #bfdbfe 55%, #fde68a 100%);
         }
 
@@ -707,6 +708,7 @@ export default function Login() {
           padding: 16px;
           min-height: 560px;
           position: relative;
+          overflow: hidden;
           background:
             linear-gradient(135deg, #071426 0%, #10213d 38%, #172554 66%, #083344 100%),
             radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
@@ -721,7 +723,7 @@ export default function Login() {
           align-items: center;
           justify-content: center;
           width: 100%;
-          max-width: 800px;
+          max-width: 560px;
           gap: 10px;
           padding: 4px;
         }
@@ -924,6 +926,7 @@ export default function Login() {
           .login-shell {
             flex-direction: column;
             max-width: 520px;
+            max-height: none;
           }
 
           .auth-panel {

@@ -716,6 +716,10 @@ def get_authenticated_actor_context(
     return actor
 
 
+def _is_platform_admin_user(user: User) -> bool:
+    return str(getattr(user, "role_key", "") or "").strip().lower() == "platform_admin"
+
+
 def decode_user_permissions(user: User) -> list[str]:
     raw = (user.permissions or "").strip()
     if not raw:
@@ -732,6 +736,8 @@ def decode_user_permissions(user: User) -> list[str]:
 
 
 def user_has_permission(user: User, permission: str) -> bool:
+    if _is_platform_admin_user(user):
+        return True
     if user.role == UserRole.ADMIN:
         return True
 
@@ -754,6 +760,8 @@ def require_permissions(*permissions: str) -> Callable[[User], User]:
 
     def dependency(request: Request, user: User = Depends(get_authenticated_user)) -> User:
         if request.method == "OPTIONS":
+            return user
+        if _is_platform_admin_user(user):
             return user
         granted_permissions = decode_user_permissions(user)
         logger.info(
@@ -801,6 +809,8 @@ def require_admin_actor(
     request: Request,
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ) -> Dict[str, str]:
+    if "platform_admin" in str(actor.get("role", "")).strip().lower():
+        return actor
     if actor["role"] != UserRole.ADMIN.value:
         logger.warning(
             "auth.admin_actor_denied",

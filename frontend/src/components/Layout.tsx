@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScopeBanner';
 import {
   Activity,
   BookOpen,
@@ -361,15 +362,15 @@ export default function Layout({ children }: LayoutProps) {
       icon: Settings,
       iconBackground: 'linear-gradient(180deg, #86efac 0%, #0f766e 100%)',
       permission: 'settings',
-      roles: ['admin', 'school_admin'],
+      roles: ['admin', 'school_admin', 'platform_admin'],
       children: [
-        { name: 'School Branding', path: '/school-self-service/branding', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'School Preferences', path: '/school-self-service/preferences', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'Portal Settings', path: '/school-self-service/portal-settings', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'Email Templates', path: '/school-self-service/email-templates', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'SMS / WhatsApp', path: '/school-self-service/messaging-templates', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'Storage Center', path: '/school-self-service/storage', permission: 'settings', roles: ['admin', 'school_admin'] },
-        { name: 'Backup Center', path: '/school-self-service/backups', permission: 'settings', roles: ['admin', 'school_admin'] },
+        { name: 'School Branding', path: '/school-self-service/branding', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'School Preferences', path: '/school-self-service/preferences', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'Portal Settings', path: '/school-self-service/portal-settings', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'Email Templates', path: '/school-self-service/email-templates', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'SMS / WhatsApp', path: '/school-self-service/messaging-templates', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'Storage Center', path: '/school-self-service/storage', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'Backup Center', path: '/school-self-service/backups', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
       ],
     },
     {
@@ -402,7 +403,6 @@ export default function Layout({ children }: LayoutProps) {
     return rawSections
       .map((section) => {
         if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
-        if (section.key === 'school-self-service' && isPlatformAdmin) return null;
         const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission, child.roles));
         const sectionVisible =
           section.path
@@ -774,6 +774,7 @@ export default function Layout({ children }: LayoutProps) {
           </button>
         </div>
 
+        <PlatformAdminSchoolScopeBanner />
         <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">{children}</div>
       </div>
     </div>

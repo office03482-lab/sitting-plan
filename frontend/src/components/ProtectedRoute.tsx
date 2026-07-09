@@ -4,6 +4,8 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { getMissingSchoolContextMessage } from '@services/api';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
+import PlatformAdminSchoolSelector from '@components/PlatformAdminSchoolSelector';
 import type { UserRole } from '@types';
 
 type ProtectedRouteProps = {
@@ -15,10 +17,13 @@ type ProtectedRouteProps = {
 export function ProtectedRoute({ children, allowedRoles, requiredPermissions }: ProtectedRouteProps) {
   const location = useLocation();
   const { loading, initialized, user, canAccess, getDefaultRoute, schoolContextReady } = useAuth();
+  const paActiveSchoolId = usePlatformAdminSchoolStore((s) => s.activeSchoolId);
   const isPlatformRoute = location.pathname.startsWith('/platform');
   const isForcePasswordRoute = location.pathname === '/force-password-change';
   const isPlatformUser = user?.role_key === 'platform_admin';
-  const requiresSchoolContext = !isPlatformRoute && !isForcePasswordRoute && !isPlatformUser;
+  const isNonPlatformRoute = !isPlatformRoute && !isForcePasswordRoute;
+  const requiresSchoolContext = isNonPlatformRoute && !isPlatformUser;
+  const paNeedsSchoolSelection = isPlatformUser && isNonPlatformRoute && !paActiveSchoolId;
 
   if (loading || !initialized) {
     return (
@@ -36,8 +41,14 @@ export function ProtectedRoute({ children, allowedRoles, requiredPermissions }: 
     return <Navigate to="/force-password-change" replace />;
   }
 
-  if (isPlatformUser && !isPlatformRoute && !isForcePasswordRoute) {
-    return <Navigate to={getDefaultRoute(user)} replace />;
+  if (paNeedsSchoolSelection) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-lg">
+          <PlatformAdminSchoolSelector returnPath={location.pathname} />
+        </div>
+      </div>
+    );
   }
 
   if (requiresSchoolContext && !schoolContextReady) {
