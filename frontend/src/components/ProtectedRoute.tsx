@@ -17,7 +17,8 @@ export function ProtectedRoute({ children, allowedRoles, requiredPermissions }: 
   const { loading, initialized, user, canAccess, getDefaultRoute, schoolContextReady } = useAuth();
   const isPlatformRoute = location.pathname.startsWith('/platform');
   const isForcePasswordRoute = location.pathname === '/force-password-change';
-  const requiresSchoolContext = !isPlatformRoute && !isForcePasswordRoute;
+  const isPlatformUser = user?.role_key === 'platform_admin';
+  const requiresSchoolContext = !isPlatformRoute && !isForcePasswordRoute && !isPlatformUser;
 
   if (loading || !initialized) {
     return (
@@ -33,6 +34,10 @@ export function ProtectedRoute({ children, allowedRoles, requiredPermissions }: 
 
   if (user.must_change_password && location.pathname !== '/force-password-change') {
     return <Navigate to="/force-password-change" replace />;
+  }
+
+  if (isPlatformUser && !isPlatformRoute && !isForcePasswordRoute) {
+    return <Navigate to={getDefaultRoute(user)} replace />;
   }
 
   if (requiresSchoolContext && !schoolContextReady) {

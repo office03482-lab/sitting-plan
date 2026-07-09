@@ -247,11 +247,12 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
   return 'non_teaching';
 }
 
-function getDefaultRouteForUser(user?: User | null) {
+export function getDefaultRouteForUser(user?: User | null, portalIntent?: PortalIntent): string {
+  console.debug('[auth-debug] getDefaultRouteForUser', { userId: user?.id, role: user?.role, role_key: user?.role_key, portalIntent });
   if (!user) return '/login';
   if (user.role_key === 'platform_admin') return PLATFORM_HOME_ROUTE;
-  if (user.role === 'student') return '/student/dashboard';
-  if (user.role === 'parent') return '/parent/dashboard';
+  if (portalIntent === 'student_portal' || user.role === 'student') return '/student/dashboard';
+  if (portalIntent === 'parent_portal' || user.role === 'parent') return '/parent/dashboard';
   if (user.role_key === 'school_admin' || user.role === 'admin') return DEFAULT_HOME_ROUTE;
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
   if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
@@ -269,6 +270,19 @@ function getDefaultRouteForUser(user?: User | null) {
   if (user.permissions?.includes('timetable') || user.permissions?.includes('timetable.view')) return '/timetable';
   if (user.permissions?.includes('edupay')) return '/edupay';
   return '/';
+}
+
+export function isRouteCompatibleWithPortal(pathname: string, portalIntent: PortalIntent): boolean {
+  if (portalIntent === 'platform_admin') {
+    return pathname.startsWith('/platform') || pathname === '/';
+  }
+  if (portalIntent === 'student_portal') {
+    return pathname.startsWith('/student') || pathname === '/';
+  }
+  if (portalIntent === 'parent_portal') {
+    return pathname.startsWith('/parent') || pathname === '/';
+  }
+  return true;
 }
 
 function hasResolvedSchoolContext(user?: User | null): boolean {
@@ -928,13 +942,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: appUser,
         });
         persistPortalIntent(effectivePortalIntent);
+        // Debug: record the bootstrap outcome and the default route chosen for this user
+        try {
+          const defaultRoute = getDefaultRouteForUser(appUser);
+          console.debug('[auth-debug] syncSession.bootstrap_complete', {
+            origin,
+            nextFingerprint,
+            userId: nextSession.user.id,
+            portalIntent: effectivePortalIntent,
+            appUser: { id: appUser.id, role: appUser.role, role_key: appUser.role_key, school_id: appUser.school_id },
+            defaultRoute,
+            locationPathname: typeof window !== 'undefined' ? window.location.pathname : null,
+          });
+        } catch (e) {
+          console.debug('[auth-debug] syncSession.bootstrap_complete - logging failed', e);
+        }
         finalizeInitialization('AUTHENTICATED');
-        console.debug('[auth-sync]', 'syncSession.bootstrap_complete', {
-          origin,
-          nextFingerprint,
-          userId: nextSession.user.id,
-          portalIntent: effectivePortalIntent,
-        });
       } catch (error) {
         console.error(`[auth-sync] syncSession failed for intent=${effectivePortalIntent}`, error);
         if (!isMounted) return;
@@ -1232,7 +1255,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           AuthInitializationRegistry.fail(errorMessage, 'REGISTRATION_ERROR');
         }
       },
-      getDefaultRoute: getDefaultRouteForUser,
+      getDefaultRoute: (user?: User | null) => getDefaultRouteForUser(user, portalIntentRef.current),
       hasRole(roles) {
         if (!storeUser?.role) return false;
         const allowedRoles = Array.isArray(roles) ? roles : [roles];

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { getDefaultRouteForUser, isRouteCompatibleWithPortal, DEFAULT_HOME_ROUTE, PLATFORM_HOME_ROUTE } from '@/contexts/AuthProvider';
 
 /**
  * Login & Logout Regression Tests
@@ -426,14 +427,115 @@ describe('Route Guard — Manual URL Navigation', () => {
   });
 });
 
+const mockPlatformAdminUser = {
+  id: 'pa-1', role: 'admin' as const, role_key: 'platform_admin', email: 'pa@test.com',
+  full_name: 'Platform Admin', school_id: '', is_active: true, permissions: [],
+};
+const mockSchoolAdminUser = {
+  id: 'sa-1', role: 'admin' as const, role_key: 'school_admin', email: 'sa@test.com',
+  full_name: 'School Admin', school_id: 'school-1', is_active: true, permissions: [],
+};
+const mockStudentUser = {
+  id: 'st-1', role: 'student' as const, role_key: 'student', email: 'st@test.com',
+  full_name: 'Student', school_id: 'school-1', is_active: true, permissions: [],
+};
+const mockParentUser = {
+  id: 'pr-1', role: 'parent' as const, role_key: 'parent', email: 'pr@test.com',
+  full_name: 'Parent', school_id: 'school-1', is_active: true, permissions: [],
+};
+
+const PLATFORM_ROUTE_PATHS = [
+  '/platform/dashboard',
+  '/platform/schools',
+  '/platform/schools/:schoolId',
+  '/platform/subscriptions',
+  '/platform/usage',
+  '/platform/health',
+  '/platform/search',
+  '/platform/analytics',
+  '/platform/support',
+  '/platform/notifications',
+  '/platform/onboarding',
+  '/platform/workflow',
+  '/platform/audit-logs',
+];
+
 describe('Portal Redirect Logic', () => {
-  it('18. Student portal routes to /student/dashboard', () => {
-    const getDefaultRouteForUser = (user: { role: string }) => {
-      if (user.role === 'student') return '/student/dashboard';
-      if (user.role === 'parent') return '/parent/dashboard';
-      return '/overview';
-    };
-    expect(getDefaultRouteForUser({ role: 'student' })).toBe('/student/dashboard');
-    expect(getDefaultRouteForUser({ role: 'parent' })).toBe('/parent/dashboard');
+  it('18. getDefaultRouteForUser with no user returns /login', () => {
+    expect(getDefaultRouteForUser(null)).toBe('/login');
+    expect(getDefaultRouteForUser(undefined)).toBe('/login');
+  });
+
+  it('19. getDefaultRouteForUser platform_admin returns PLATFORM_HOME_ROUTE regardless of portalIntent', () => {
+    expect(getDefaultRouteForUser(mockPlatformAdminUser)).toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockPlatformAdminUser, undefined)).toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockPlatformAdminUser, 'school_erp')).toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockPlatformAdminUser, 'student_portal')).toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockPlatformAdminUser, 'parent_portal')).toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockPlatformAdminUser, 'platform_admin')).toBe(PLATFORM_HOME_ROUTE);
+  });
+
+  it('20. portalIntent=platform_admin alone must not grant platform home for non-platform users', () => {
+    const nonPlatformUser = { ...mockSchoolAdminUser, role_key: undefined };
+    expect(getDefaultRouteForUser(nonPlatformUser, 'platform_admin')).not.toBe(PLATFORM_HOME_ROUTE);
+    expect(getDefaultRouteForUser(nonPlatformUser, 'platform_admin')).toBe(DEFAULT_HOME_ROUTE);
+  });
+
+  it('21. getDefaultRouteForUser with portalIntent=student_portal returns /student/dashboard', () => {
+    expect(getDefaultRouteForUser(mockStudentUser, 'student_portal')).toBe('/student/dashboard');
+  });
+
+  it('22. getDefaultRouteForUser with portalIntent=parent_portal returns /parent/dashboard', () => {
+    expect(getDefaultRouteForUser(mockParentUser, 'parent_portal')).toBe('/parent/dashboard');
+  });
+
+  it('23. getDefaultRouteForUser school_admin returns DEFAULT_HOME_ROUTE', () => {
+    expect(getDefaultRouteForUser(mockSchoolAdminUser)).toBe(DEFAULT_HOME_ROUTE);
+    expect(getDefaultRouteForUser(mockSchoolAdminUser, 'school_erp')).toBe(DEFAULT_HOME_ROUTE);
+  });
+
+  it('24. getDefaultRouteForUser student role returns student dashboard', () => {
+    expect(getDefaultRouteForUser(mockStudentUser)).toBe('/student/dashboard');
+  });
+
+  it('25. getDefaultRouteForUser parent role returns parent dashboard', () => {
+    expect(getDefaultRouteForUser(mockParentUser)).toBe('/parent/dashboard');
+  });
+
+  it('26. platform home route is mounted in route registry', () => {
+    expect(PLATFORM_ROUTE_PATHS).toContain(PLATFORM_HOME_ROUTE);
+  });
+
+  it('27. platform_admin default route maps to a mounted platform route', () => {
+    expect(PLATFORM_ROUTE_PATHS).toContain(getDefaultRouteForUser(mockPlatformAdminUser, 'platform_admin'));
+  });
+});
+
+describe('isRouteCompatibleWithPortal', () => {
+  it('26. platform_admin portal only allows /platform/* and / routes', () => {
+    expect(isRouteCompatibleWithPortal('/platform/dashboard', 'platform_admin')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/platform/schools', 'platform_admin')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/', 'platform_admin')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/overview', 'platform_admin')).toBe(false);
+    expect(isRouteCompatibleWithPortal('/student/dashboard', 'platform_admin')).toBe(false);
+  });
+
+  it('27. student_portal portal allows /student/* and / routes', () => {
+    expect(isRouteCompatibleWithPortal('/student/dashboard', 'student_portal')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/', 'student_portal')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/parent/dashboard', 'student_portal')).toBe(false);
+    expect(isRouteCompatibleWithPortal('/overview', 'student_portal')).toBe(false);
+  });
+
+  it('28. parent_portal portal allows /parent/* and / routes', () => {
+    expect(isRouteCompatibleWithPortal('/parent/dashboard', 'parent_portal')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/', 'parent_portal')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/student/dashboard', 'parent_portal')).toBe(false);
+  });
+
+  it('29. school_erp portal allows all routes', () => {
+    expect(isRouteCompatibleWithPortal('/overview', 'school_erp')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/student/dashboard', 'school_erp')).toBe(true);
+    expect(isRouteCompatibleWithPortal('/platform/dashboard', 'school_erp')).toBe(true);
   });
 });

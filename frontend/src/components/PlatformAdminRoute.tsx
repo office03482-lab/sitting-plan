@@ -1,17 +1,14 @@
 import { Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { DEFAULT_HOME_ROUTE } from '@/contexts/AuthProvider';
-import { useAuthStore } from '@store/auth';
+import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 
 type PlatformAdminRouteProps = {
   children: ReactNode;
 };
 
 export function PlatformAdminRoute({ children }: PlatformAdminRouteProps) {
-  const user = useAuthStore((state) => state.user);
-  const authLoading = useAuthStore((state) => state.auth_loading);
-  const authInitialized = useAuthStore((state) => state.auth_initialized);
+  const { user, loading: authLoading, initialized: authInitialized } = useAuth();
 
   if (authLoading || !authInitialized) {
     return (
