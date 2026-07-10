@@ -21,7 +21,7 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (trigger && !open) return;
     let cancelled = false;
     const load = async () => {
       setLoading(true);
@@ -41,7 +41,7 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
     };
     void load();
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, trigger]);
 
   useEffect(() => {
     if (!open) return;
