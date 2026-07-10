@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, GraduationCap, Lock, Mail, Monitor, School, Users } from 'lucide-react';
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
@@ -73,6 +73,39 @@ export default function Login() {
   const [sessionConflict, setSessionConflict] = useState<any | null>(null);
   const [branding, setBranding] = useState<SchoolPublicBranding>(DEFAULT_BRANDING);
   const [portalIntent, setPortalIntent] = useState<PortalIntent>('school_erp');
+
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [masterScale, setMasterScale] = useState(1);
+
+  useEffect(() => {
+    function compute() {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const availW = Math.max(vw - 48, 200);
+      const availH = Math.max(vh - 48, 200);
+
+      // Stacked mode for narrower viewports — no zoom needed
+      const isStacked = vw < 1000;
+      if (isStacked) {
+        setMasterScale(1);
+        return;
+      }
+
+      // Side-by-side mode — scale to fit both width and height
+      const scaleW = availW / 1200;
+      const scaleH = availH / 600;
+      const scale = Math.min(scaleW, scaleH, 1);
+      setMasterScale(scale);
+    }
+    compute();
+    const vis = window.visualViewport;
+    window.addEventListener('resize', compute);
+    if (vis) vis.addEventListener('resize', compute);
+    return () => {
+      window.removeEventListener('resize', compute);
+      if (vis) vis.removeEventListener('resize', compute);
+    };
+  }, []);
 
   const portalDetail = PORTAL_DETAILS[portalIntent];
 
@@ -173,7 +206,7 @@ export default function Login() {
       <div className="login-bg-radial" />
       <div className="login-bg-vignette" />
 
-      <div className="login-shell">
+      <div ref={shellRef} className="login-shell" style={{ '--master-scale': masterScale } as React.CSSProperties}>
         <div className="auth-panel">
           <div className="auth-panel-inner">
             <div className="auth-logo-wrap">
@@ -343,8 +376,13 @@ export default function Login() {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 24px 20px;
-          overflow: hidden;
+          padding:
+            max(24px, env(safe-area-inset-top, 0px))
+            max(20px, env(safe-area-inset-right, 0px))
+            max(24px, env(safe-area-inset-bottom, 0px))
+            max(20px, env(safe-area-inset-left, 0px));
+          overflow-x: hidden;
+          overflow-y: auto;
           background: #0b1120;
           font-family: 'Nunito', 'DM Sans', sans-serif;
         }
@@ -383,7 +421,8 @@ export default function Login() {
           display: flex;
           width: 100%;
           max-width: 1200px;
-          max-height: min(600px, calc(100dvh - 48px));
+          max-height: 600px;
+          zoom: var(--master-scale, 1);
           border-radius: 28px;
           border: 1px solid rgba(255, 255, 255, 0.25);
           background: rgba(255, 255, 255, 0.12);
@@ -706,7 +745,6 @@ export default function Login() {
           align-items: center;
           justify-content: center;
           padding: 16px;
-          min-height: 560px;
           position: relative;
           overflow: hidden;
           background:
@@ -922,7 +960,182 @@ export default function Login() {
           white-space: nowrap;
         }
 
-        @media (max-width: 1100px) {
+        @media (max-height: 720px) {
+          .auth-panel-inner {
+            padding: 24px 28px 20px;
+          }
+          .auth-logo {
+            height: 60px;
+            margin-bottom: 16px;
+          }
+          .auth-heading {
+            font-size: 20px;
+          }
+          .auth-subtitle {
+            margin-bottom: 16px;
+          }
+          .auth-field {
+            margin-bottom: 12px;
+          }
+          .auth-submit-btn {
+            padding: 12px 22px;
+            margin-bottom: 12px;
+          }
+        }
+
+        @media (max-height: 660px) {
+          .auth-panel-inner {
+            padding: 18px 22px 16px;
+          }
+          .auth-logo {
+            height: 52px;
+            margin-bottom: 12px;
+          }
+          .auth-portal-label {
+            font-size: 10px;
+            margin-bottom: 10px;
+          }
+          .portal-selector {
+            padding: 5px;
+            gap: 5px;
+            margin-bottom: 14px;
+          }
+          .portal-tab {
+            padding: 8px 4px 6px;
+          }
+          .portal-tab-icon {
+            padding: 5px;
+          }
+          .portal-tab-icon-svg {
+            width: 14px;
+            height: 14px;
+          }
+          .auth-heading {
+            font-size: 18px;
+          }
+          .auth-subtitle {
+            font-size: 12px;
+            margin-bottom: 14px;
+          }
+          .auth-field {
+            margin-bottom: 10px;
+          }
+          .auth-field-label {
+            font-size: 11px;
+          }
+          .auth-input {
+            padding: 10px 0 10px 8px;
+            font-size: 13px;
+          }
+          .auth-submit-btn {
+            padding: 11px 20px;
+            font-size: 14px;
+            margin-bottom: 10px;
+          }
+          .auth-helper {
+            font-size: 11px;
+          }
+          .compass-experience {
+            min-height: 340px;
+          }
+          .compass-shell {
+            max-width: 340px;
+          }
+        }
+
+        @media (max-height: 600px) {
+          .auth-panel-inner {
+            padding: 14px 18px 12px;
+          }
+          .auth-logo {
+            height: 44px;
+            margin-bottom: 10px;
+          }
+          .auth-portal-label {
+            font-size: 9px;
+            margin-bottom: 8px;
+          }
+          .portal-selector {
+            padding: 4px;
+            gap: 4px;
+            margin-bottom: 10px;
+            border-radius: 12px;
+          }
+          .portal-tab {
+            padding: 6px 3px;
+            font-size: 9px;
+            min-height: 38px;
+            border-radius: 10px;
+          }
+          .portal-tab-icon {
+            padding: 4px;
+          }
+          .portal-tab-icon-svg {
+            width: 12px;
+            height: 12px;
+          }
+          .auth-heading {
+            font-size: 15px;
+          }
+          .auth-subtitle {
+            font-size: 11px;
+            margin-bottom: 10px;
+          }
+          .auth-field {
+            margin-bottom: 8px;
+          }
+          .auth-field-label {
+            font-size: 10px;
+            margin-bottom: 4px;
+          }
+          .auth-input-wrap {
+            border-radius: 10px;
+            padding: 0 10px;
+          }
+          .auth-input {
+            padding: 8px 0 8px 6px;
+            font-size: 12px;
+          }
+          .auth-input-icon {
+            width: 14px;
+            height: 14px;
+          }
+          .auth-submit-btn {
+            padding: 9px 16px;
+            font-size: 12px;
+            border-radius: 999px;
+            margin-bottom: 8px;
+          }
+          .auth-helper {
+            font-size: 10px;
+          }
+          .auth-error {
+            font-size: 11px;
+            margin-bottom: 6px;
+          }
+          .auth-session-conflict,
+          .auth-error-detail {
+            padding: 8px 10px;
+            font-size: 11px;
+            margin-bottom: 8px;
+          }
+          .compass-experience {
+            min-height: 260px;
+            padding: 8px;
+          }
+          .compass-shell {
+            max-width: 260px;
+            gap: 6px;
+          }
+          .compass-heading-degrees {
+            font-size: 16px;
+          }
+          .compass-ball {
+            font-size: 8px;
+          }
+        }
+
+        @media (max-width: 1000px) {
           .login-shell {
             flex-direction: column;
             max-width: 520px;
