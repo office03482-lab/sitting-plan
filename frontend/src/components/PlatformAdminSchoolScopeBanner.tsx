@@ -4,7 +4,7 @@ import PlatformAdminSchoolSelector from './PlatformAdminSchoolSelector';
 
 export default function PlatformAdminSchoolScopeBanner() {
   const location = useLocation();
-  const { activeSchoolId, activeSchoolName, clearActiveSchool, setActiveSchool } =
+  const { activeSchoolId, activeSchoolName, clearActiveSchool } =
     usePlatformAdminSchoolStore();
   const isPlatformRoute = location.pathname.startsWith('/platform');
 

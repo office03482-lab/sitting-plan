@@ -174,7 +174,8 @@ describe('Auth State Machine', () => {
   it('15. fire-and-forget registration does not block authReady', () => {
     // registration is fired but NOT awaited → AUTHENTICATED proceeds immediately
     let authBlockedByRegistration = false;
-    const registrationPromise = new Promise<never>(() => {
+    /* registration is fired but NOT awaited — simulates timeout */
+    new Promise<never>(() => {
       /* never resolves — simulates timeout */
     });
     const authReadyAfterFireAndForget = true; // authReady is true because we don't await

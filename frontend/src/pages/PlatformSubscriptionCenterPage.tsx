@@ -12,10 +12,14 @@ export default function PlatformSubscriptionCenterPage() {
 
   useEffect(() => {
     const loadSchools = async () => {
-      const response = await apiService.listPlatformSchools();
-      setSchools(response.data.items || []);
-      const firstSchoolId = selectedSchoolId || response.data.items?.[0]?.id || '';
-      setSelectedSchoolId(firstSchoolId);
+      try {
+        const response = await apiService.listPlatformSchools();
+        setSchools(response.data.items || []);
+        const firstSchoolId = selectedSchoolId || response.data.items?.[0]?.id || '';
+        setSelectedSchoolId(firstSchoolId);
+      } catch (err: any) {
+        setError(getRequestErrorMessage(err, 'Schools list load nahi ho paayi.'));
+      }
     };
     void loadSchools();
   }, []);

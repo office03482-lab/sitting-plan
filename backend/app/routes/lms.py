@@ -102,7 +102,6 @@ def require_lms_manage_user(
 
 
 def require_lms_view_user(
-    _: User = Depends(require_permissions("lms.view", "lms.progress", "lms.assignments", "lms.manage", "edupay.parent_portal")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if _is_teacher_user(user) or _is_student_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user) or _is_parent_portal_user(user):
@@ -111,7 +110,6 @@ def require_lms_view_user(
 
 
 def require_lms_progress_user(
-    _: User = Depends(require_permissions("lms.progress", "lms.view", "edupay.parent_portal")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if _is_student_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user) or _is_parent_portal_user(user):

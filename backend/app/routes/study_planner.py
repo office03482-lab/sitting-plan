@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
 from app.models import User, UserRole
 from app.schemas import LearningGoalCreate, LearningGoalResponse
 from app.services.bulk_action_requests import is_platform_admin_user
@@ -38,12 +38,16 @@ def _is_school_admin_user(user: User) -> bool:
 
 
 def _is_parent_user(user: User) -> bool:
-    permissions = [str(item or "").strip().lower() for item in (getattr(user, "permissions", None) or [])]
-    return _role_key(user) == "parent" or "edupay.parent_portal" in permissions
+    if _role_key(user) == "parent":
+        return True
+    role_metadata = getattr(user, "role_metadata", None)
+    if isinstance(role_metadata, dict) and str(role_metadata.get("role_key") or "").strip().lower() == "parent":
+        return True
+    permissions_raw = str(getattr(user, "permissions", "") or "").lower()
+    return "edupay.parent_portal" in [p.strip() for p in permissions_raw.split(",")]
 
 
 def require_study_planner_view_user(
-    _: User = Depends(require_permissions("study_planner.view", "study_planner.goals", "study_planner.reports", "edupay.parent_portal")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if _is_student_user(user) or _is_teacher_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user) or _is_parent_user(user):
@@ -52,7 +56,6 @@ def require_study_planner_view_user(
 
 
 def require_study_planner_goals_user(
-    _: User = Depends(require_permissions("study_planner.goals", "study_planner.reports", "edupay.parent_portal")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if _is_student_user(user) or _is_teacher_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user) or _is_parent_user(user):

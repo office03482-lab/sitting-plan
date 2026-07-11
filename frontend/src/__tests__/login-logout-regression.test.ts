@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { getDefaultRouteForUser, isRouteCompatibleWithPortal, DEFAULT_HOME_ROUTE, PLATFORM_HOME_ROUTE } from '@/contexts/AuthProvider';
 
 /**
@@ -100,7 +100,6 @@ describe('Login — Profile + Memberships Parallelization', () => {
   });
 
   it('8. Profile error propagates correctly when parallel', async () => {
-    const userId = 'test-user-123';
     const profilePromise = Promise.resolve({
       data: null,
       error: new Error('Profile not found'),
@@ -270,7 +269,7 @@ describe('Logout — No Heartbeat or Request Restart', () => {
     const storeUser = { id: 'test' };
 
     // Guard from the effect
-    const shouldSkip = !session?.access_token || !storeUser?.id || authStatus !== 'AUTHENTICATED';
+    const shouldSkip: boolean = !session?.access_token || !storeUser?.id || (authStatus as string) !== 'AUTHENTICATED';
     expect(shouldSkip).toBe(true);
   });
 
@@ -340,13 +339,13 @@ describe('Student Portal — Bootstrap Logic', () => {
   });
 
   it('7. Student bootstrap skips staff session registration', () => {
-    const portalIntent = 'student_portal';
+    const portalIntent: string = 'student_portal';
     const shouldRegisterSession = portalIntent === 'school_erp';
     expect(shouldRegisterSession).toBe(false);
   });
 
   it('8. Student does not start staff heartbeat', () => {
-    const portalIntent = 'student_portal';
+    const portalIntent: string = 'student_portal';
     const shouldHeartbeat = portalIntent === 'school_erp';
     expect(shouldHeartbeat).toBe(false);
   });
@@ -373,13 +372,13 @@ describe('Parent Portal — Bootstrap Logic', () => {
   });
 
   it('11. Parent bootstrap skips staff session registration', () => {
-    const portalIntent = 'parent_portal';
+    const portalIntent: string = 'parent_portal';
     const shouldRegisterSession = portalIntent === 'school_erp';
     expect(shouldRegisterSession).toBe(false);
   });
 
   it('12. Parent does not start staff heartbeat', () => {
-    const portalIntent = 'parent_portal';
+    const portalIntent: string = 'parent_portal';
     const shouldHeartbeat = portalIntent === 'school_erp';
     expect(shouldHeartbeat).toBe(false);
   });
@@ -387,7 +386,6 @@ describe('Parent Portal — Bootstrap Logic', () => {
 
 describe('Cross-Portal State Isolation', () => {
   it('13. Student state clears on logout', () => {
-    const stateBefore = { role: 'student', selectedStudentId: 's1', schoolId: 'school1' };
     // On logout, clear all auth state
     const stateAfter = { role: null as string | null, selectedStudentId: null, schoolId: null };
     expect(stateAfter.role).toBeNull();
@@ -395,7 +393,6 @@ describe('Cross-Portal State Isolation', () => {
   });
 
   it('14. Parent state clears on logout', () => {
-    const stateBefore = { role: 'parent', selectedStudentId: 's2', linkedStudentIds: ['s2', 's3'] };
     const stateAfter = { role: null as string | null, selectedStudentId: null, linkedStudentIds: null as string[] | null };
     expect(stateAfter.role).toBeNull();
     expect(stateAfter.selectedStudentId).toBeNull();
@@ -412,15 +409,13 @@ describe('Cross-Portal State Isolation', () => {
 
 describe('Route Guard — Manual URL Navigation', () => {
   it('16. Student URL cannot be accessed by non-student', () => {
-    const userRole = 'teacher';
-    const targetRoute = '/student/dashboard';
+    const userRole: string = 'teacher';
     const isBlocked = userRole !== 'student';
     expect(isBlocked).toBe(true);
   });
 
   it('17. Parent URL cannot be accessed by non-parent', () => {
-    const userRole = 'student';
-    const targetRoute = '/parent/dashboard';
+    const userRole: string = 'student';
     const hasParentPermission = false;
     const isBlocked = userRole !== 'parent' && !hasParentPermission;
     expect(isBlocked).toBe(true);

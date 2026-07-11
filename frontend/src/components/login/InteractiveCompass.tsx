@@ -603,15 +603,6 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
 
   const heading = headingDegrees;
 
-  const secondAngleDeg = (realTime.getSeconds() / 60) * 360 - 90;
-  const minuteAngleDeg = ((realTime.getMinutes() + realTime.getSeconds() / 60) / 60) * 360 - 90;
-  const hourAngleDeg = ((realTime.getHours() % 12 + realTime.getMinutes() / 60 + realTime.getSeconds() / 3600) / 12) * 360 - 90;
-  const watchOuterR = compassR - 84;
-  const watchInnerR = compassR - 120;
-  const watchHourHandR = watchOuterR - 24;
-  const watchMinuteHandR = watchOuterR - 12;
-  const watchSecondHandR = watchOuterR - 8;
-
   return (
     <div className="compass-shell">
       <div

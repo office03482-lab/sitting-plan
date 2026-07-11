@@ -6,7 +6,6 @@ import {
   reflectOffCircle,
   clampBallToCircle,
   shortestAngleDelta,
-  interpolateAngle,
   formatHeadingDisplay,
   createCompassGeometry,
   projectBallInsidePlayableCircle,

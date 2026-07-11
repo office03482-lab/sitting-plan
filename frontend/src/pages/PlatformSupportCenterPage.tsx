@@ -23,9 +23,13 @@ export default function PlatformSupportCenterPage() {
 
   useEffect(() => {
     const load = async () => {
-      const response = await apiService.listPlatformSchools();
-      setSchools(response.data.items || []);
-      setSelectedSchoolId((current) => current || response.data.items?.[0]?.id || '');
+      try {
+        const response = await apiService.listPlatformSchools();
+        setSchools(response.data.items || []);
+        setSelectedSchoolId((current) => current || response.data.items?.[0]?.id || '');
+      } catch (requestError: any) {
+        setError(getRequestErrorMessage(requestError, 'Schools list load nahi ho paayi.'));
+      }
     };
     void load();
   }, []);

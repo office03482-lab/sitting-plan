@@ -118,6 +118,47 @@ function readStoredAuthUser(): any | null {
 export const ACTIVE_SESSION_STORAGE_KEY = 'active_session_key';
 export const ACTIVE_DEVICE_STORAGE_KEY = 'active_device_id';
 
+/**
+ * Single source of truth for the *currently registered* active session key.
+ *
+ * A key is attached to outgoing requests ONLY when it has been successfully
+ * registered with the backend for the current authenticated session. We
+ * deliberately do NOT attach a key merely because it exists in localStorage:
+ * a stale or not-yet-registered key causes the backend to reject the request
+ * with 401 "Session is not registered".
+ *
+ * `null` means "no registered key for the current session" — the interceptor
+ * then omits the X-Active-Session header. The backend treats a missing header
+ * as "no active-session check", which is safe and returns 200.
+ *
+ * Persistence to localStorage is best-effort and mirrors the in-memory value
+ * so a reload can re-register the same key; it is NOT, by itself, proof that a
+ * key is registered.
+ */
+let registeredActiveSessionKey: string | null = null;
+
+export function setRegisteredActiveSessionKey(key: string | null): void {
+  const normalized = key ? key.trim() || null : null;
+  registeredActiveSessionKey = normalized;
+  try {
+    if (normalized) {
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, normalized);
+    } else {
+      localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Persistence is best-effort; the in-memory value is authoritative.
+  }
+}
+
+export function getRegisteredActiveSessionKey(): string | null {
+  return registeredActiveSessionKey;
+}
+
+export function clearRegisteredActiveSessionKey(): void {
+  setRegisteredActiveSessionKey(null);
+}
+
 export function getStoredActiveSessionKey(): string | null {
   try {
     const value = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
@@ -250,7 +291,7 @@ class ApiService {
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
-      const activeSessionKey = getStoredActiveSessionKey();
+      const activeSessionKey = getRegisteredActiveSessionKey();
       if (activeSessionKey) {
         headers['X-Active-Session'] = activeSessionKey;
       }

@@ -9,7 +9,7 @@ import {
 } from 'react';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
-import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSION_STORAGE_KEY } from '@services/api';
+import { apiService, getStoredActiveSessionKey, getStoredDeviceId, ACTIVE_SESSION_STORAGE_KEY, setRegisteredActiveSessionKey, getRegisteredActiveSessionKey, clearRegisteredActiveSessionKey } from '@services/api';
 import { supabase } from '@/lib/supabase';
 import { runtimeConfig } from '@/lib/runtimeConfig';
 import type { PortalIntent, User, UserRole, UserType } from '@types';
@@ -146,13 +146,17 @@ export const DEFAULT_HOME_ROUTE = '/overview';
 export const PLATFORM_HOME_ROUTE = '/platform/dashboard';
 
 function clearPersistedAuthArtifacts() {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    clearRegisteredActiveSessionKey();
+    return;
+  }
   for (const key of AUTH_STORAGE_KEYS) {
     window.localStorage.removeItem(key);
     window.sessionStorage.removeItem(key);
   }
   window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
   window.sessionStorage.removeItem(PORTAL_INTENT_STORAGE_KEY);
+  clearRegisteredActiveSessionKey();
 }
 
 function generateActiveSessionKey() {
@@ -257,7 +261,6 @@ export function getDefaultRouteForUser(user?: User | null, portalIntent?: Portal
   if (user.role_key === 'school_admin' || user.role === 'admin') return DEFAULT_HOME_ROUTE;
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
   if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
-  if (user.role === 'student' && (user.permissions?.includes('doubt_solver.solve') || user.permissions?.includes('study_planner.view'))) return '/ai-study-assistant';
   if (user.permissions?.includes('doubt_solver.solve')) return '/ai-study-assistant';
   if (user.role === 'store_manager') return '/inventory';
   if (user.role === 'teacher') return user.permissions?.includes('attendance') ? '/attendance-management' : '/timetable';
@@ -266,7 +269,6 @@ export function getDefaultRouteForUser(user?: User | null, portalIntent?: Portal
     if (user.permissions?.includes('attendance')) return '/attendance-management';
     return '/';
   }
-  if (user.role === 'student') return '/ai-study-assistant';
   if (user.permissions?.includes('attendance')) return '/attendance-management';
   if (user.permissions?.includes('timetable') || user.permissions?.includes('timetable.view')) return '/timetable';
   if (user.permissions?.includes('edupay')) return '/edupay';
@@ -289,6 +291,14 @@ export function isRouteCompatibleWithPortal(pathname: string, portalIntent: Port
 function hasResolvedSchoolContext(user?: User | null, paActiveSchoolId?: string | null): boolean {
   if (user?.role_key === 'platform_admin') {
     return Boolean(paActiveSchoolId);
+  }
+  // Parents and students resolve school context from their linked entity
+  // (guardian/student school_id), not a staff membership_id. Their portal
+  // routes derive scope from this context, so treat a resolved school_id as
+  // ready. Without this, schoolContextReady is permanently false and every
+  // Parent/Student page hangs on its loading spinner.
+  if (user?.role_key === 'parent' || user?.role === 'student') {
+    return Boolean(String(user?.school_id || '').trim());
   }
   return Boolean(
     user?.role &&
@@ -502,6 +512,39 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
     nonPaMemberships[0];
 
   if (!activeMembership) {
+    const { data: guardianData } = await supabase
+      .schema('academic')
+      .from('guardians')
+      .select('id, school_id, full_name, is_active')
+      .eq('profile_id', userId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (guardianData) {
+      return {
+        id: profile.id,
+        email: profile.email || session.user.email || '',
+        full_name: profile.full_name || profile.display_name || guardianData.full_name || session.user.email || 'User',
+        role: 'parent' as const,
+        role_key: 'parent',
+        user_type: 'non_teaching' as const,
+        permissions: [],
+        school_id: guardianData.school_id,
+        membership_id: undefined,
+        default_school_id: profile.default_school_id,
+        is_active: Boolean(profile.is_active),
+        username:
+          profile.metadata?.portal_access?.username ||
+          profile.metadata?.username ||
+          profile.display_name ||
+          profile.email ||
+          session.user.email ||
+          undefined,
+        must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
+        first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
+      };
+    }
+
     throw new Error('No active school membership found for this user.');
   }
 
@@ -647,7 +690,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         window.clearTimeout(timeoutId);
         if (typeof window !== 'undefined') {
-          window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionKey);
+          setRegisteredActiveSessionKey(sessionKey);
         }
         return sessionKey;
       } catch (error) {
@@ -677,7 +720,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+      clearRegisteredActiveSessionKey();
     }
     throw lastError || new Error('Session registration failed');
   };
@@ -688,7 +731,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ) => {
     const userId = nextSession.user.id;
     if (sessionRegistrationReady && sessionRegistrationFingerprintRef.current === userId) {
-      return getStoredActiveSessionKey() || '';
+      return getRegisteredActiveSessionKey() || '';
     }
     const inFlight = sessionRegistrationInFlightRef.current;
     if (inFlight?.fingerprint === userId) {
@@ -841,7 +884,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: storeUserRef.current,
         });
         setSession(nextSession);
-        setSessionRegistrationReady(Boolean(getStoredActiveSessionKey()));
+        setSessionRegistrationReady(Boolean(getRegisteredActiveSessionKey()));
         finalizeInitialization('AUTHENTICATED');
         console.debug('[auth-sync]', 'syncSession.silent_refresh_applied', {
           origin,
@@ -858,7 +901,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         !shouldBootstrapProfile &&
         hasResolvedUserContext(storeUserRef.current)
       ) {
-        setSessionRegistrationReady(Boolean(getStoredActiveSessionKey()));
+        setSessionRegistrationReady(Boolean(getRegisteredActiveSessionKey()));
         finalizeInitialization(storeUserRef.current ? 'AUTHENTICATED' : 'UNAUTHENTICATED', authErrorRef.current);
         console.debug('[auth-sync]', 'syncSession.noop_same_fingerprint', {
           origin,
@@ -876,7 +919,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: nextSession.refresh_token,
           user: storeUserRef.current,
         });
-        if (!getStoredActiveSessionKey()) {
+        if (!getRegisteredActiveSessionKey()) {
           await registerPortalSession(nextSession);
         }
         if (!isMounted) return;
@@ -925,10 +968,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const appUser = await buildAppUserFromSession(bootstrapSession, effectivePortalIntent);
         if (!isMounted) return;
 
+        let resolvedPortalIntent = effectivePortalIntent;
+        if (appUser.role_key === 'parent' && portalIntentRef.current !== 'parent_portal') {
+          portalIntentRef.current = 'parent_portal';
+          persistPortalIntent('parent_portal');
+          resolvedPortalIntent = 'parent_portal';
+        }
+
         setSession(bootstrapSession);
         setAuthError(null);
 
-        if (effectivePortalIntent === 'platform_admin' || effectivePortalIntent === 'student_portal' || effectivePortalIntent === 'parent_portal') {
+        if (resolvedPortalIntent === 'platform_admin' || resolvedPortalIntent === 'student_portal' || resolvedPortalIntent === 'parent_portal') {
           setSessionRegistrationReady(false);
         } else {
           registerPortalSession(bootstrapSession, {
@@ -956,7 +1006,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshToken: bootstrapSession.refresh_token,
           user: appUser,
         });
-        persistPortalIntent(effectivePortalIntent);
+        persistPortalIntent(resolvedPortalIntent);
         // Debug: record the bootstrap outcome and the default route chosen for this user
         try {
           const defaultRoute = getDefaultRouteForUser(appUser);
@@ -964,7 +1014,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             origin,
             nextFingerprint,
             userId: nextSession.user.id,
-            portalIntent: effectivePortalIntent,
+            portalIntent: resolvedPortalIntent,
             appUser: { id: appUser.id, role: appUser.role, role_key: appUser.role_key, school_id: appUser.school_id },
             defaultRoute,
             locationPathname: typeof window !== 'undefined' ? window.location.pathname : null,
@@ -1153,6 +1203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         portalIntentRef.current = _options?.portalIntent || 'school_erp';
         if (typeof window !== 'undefined') {
           window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+          clearRegisteredActiveSessionKey();
         }
         setLoading(true);
         setAuthStatus('INITIALIZING');
@@ -1216,6 +1267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (typeof window !== 'undefined') {
           window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+          clearRegisteredActiveSessionKey();
         }
         clearPersistedAuthArtifacts();
         logoutStore();

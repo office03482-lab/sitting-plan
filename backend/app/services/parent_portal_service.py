@@ -890,15 +890,18 @@ def get_children(school_id: str, *, profile_id: str | None, user_email: str | No
 
 def _load_attendance_rows(school_id: str, student_id: str, *, days: int = 365) -> list[dict[str, Any]]:
     start = (_today() - timedelta(days=max(days, 1) - 1)).isoformat()
-    rows = list(
-        _schema_table(ATTENDANCE_SCHEMA, "student_attendance")
-        .select("attendance_date,status")
-        .eq("school_id", school_id)
-        .eq("student_id", student_id)
-        .gte("attendance_date", start)
-        .execute()
-        .data or []
-    )
+    try:
+        rows = list(
+            _schema_table(ATTENDANCE_SCHEMA, "student_attendance")
+            .select("attendance_date,status")
+            .eq("school_id", school_id)
+            .eq("student_id", student_id)
+            .gte("attendance_date", start)
+            .execute()
+            .data or []
+        )
+    except Exception:
+        return []
     return [dict(r) for r in rows]
 
 
@@ -908,7 +911,10 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
     class_name = _normalize(student.get("class_name")) or ""
     section = _normalize(student.get("section")) or ""
 
-    att_rows = _load_attendance_rows(school_id, sid, days=180)
+    try:
+        att_rows = _load_attendance_rows(school_id, sid, days=180)
+    except Exception:
+        att_rows = []
     total = len(att_rows)
     present = len([r for r in att_rows if _normalize(r.get("status")).lower() == "present"])
     absent = total - present
@@ -916,7 +922,10 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
 
     fee_status = _get_fee_status(school_id, sid)
 
-    all_assignments = list_assignments(school_id, student=student)
+    try:
+        all_assignments = list_assignments(school_id, student=student)
+    except Exception:
+        all_assignments = []
     pending_assignments = len([
         a for a in all_assignments
         if not a.get("submission") and _normalize(a.get("status")).lower() != "closed"
@@ -925,7 +934,10 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
 
     upcoming = _get_upcoming_tests(school_id, _normalize(student.get("batch_id")) or None)
 
-    results = list_results(school_id, student_id=sid, limit=5)
+    try:
+        results = list_results(school_id, student_id=sid, limit=5)
+    except Exception:
+        results = []
     latest_result = results[0] if results else None
     latest_test = {
         "title": _normalize(latest_result.get("test_title") or latest_result.get("title") or ""),
@@ -935,7 +947,10 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
         "rank": _safe_int(latest_result.get("rank") or 0),
     } if latest_result else None
 
-    progress = get_progress_dashboard(school_id, student=student)
+    try:
+        progress = get_progress_dashboard(school_id, student=student)
+    except Exception:
+        progress = {}
     progress_items = list(progress.get("progress_items") or [])
     course_progress = round(
         sum(_safe_float(p.get("watch_percentage") or 0) for p in progress_items) / max(len(progress_items), 1), 1

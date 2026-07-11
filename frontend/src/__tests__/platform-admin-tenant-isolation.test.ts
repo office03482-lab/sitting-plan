@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 
 describe('Platform Admin School Scope Store', () => {
@@ -93,21 +93,21 @@ describe('canAccess for PA bypasses role check', () => {
 
   it('regular admin does not bypass role check', () => {
     const allowedRoles = ['admin'];
-    const userRole = 'admin';
+    const userRole: string = 'admin';
     const roleOk = !allowedRoles?.length || allowedRoles.includes(userRole as any) || userRole === 'platform_admin';
     expect(roleOk).toBe(true);
   });
 
   it('teacher does not bypass for admin-only routes', () => {
     const allowedRoles = ['admin'];
-    const userRole = 'teacher';
+    const userRole: string = 'teacher';
     const roleOk = !allowedRoles?.length || allowedRoles.includes(userRole as any) || userRole === 'platform_admin';
     expect(roleOk).toBe(false);
   });
 
   it('student does not bypass for admin-only routes', () => {
     const allowedRoles = ['admin'];
-    const userRole = 'student';
+    const userRole: string = 'student';
     const roleOk = !allowedRoles?.length || allowedRoles.includes(userRole as any) || userRole === 'platform_admin';
     expect(roleOk).toBe(false);
   });
@@ -140,7 +140,7 @@ describe('normalizeRequestSchoolId parameter precedence', () => {
 
 describe('globa vs school-scoped route classification', () => {
   it('platform routes do not require school selection', () => {
-    const path = '/platform/dashboard';
+    const path: string = '/platform/dashboard';
     const isPlatformRoute = path.startsWith('/platform');
     const isForcePasswordRoute = path === '/force-password-change';
     const isNonPlatformRoute = !isPlatformRoute && !isForcePasswordRoute;
@@ -151,7 +151,7 @@ describe('globa vs school-scoped route classification', () => {
   });
 
   it('school-scoped routes require school selection for PA without scope', () => {
-    const path = '/students';
+    const path: string = '/students';
     const isPlatformRoute = path.startsWith('/platform');
     const isForcePasswordRoute = path === '/force-password-change';
     const isNonPlatformRoute = !isPlatformRoute && !isForcePasswordRoute;
@@ -163,7 +163,7 @@ describe('globa vs school-scoped route classification', () => {
 
   it('nested platform routes do not require school selection', () => {
     const path = '/platform/schools/school-a/details';
-    const isPlatformRoute = path.startsWith('/platform');
+    void path.startsWith('/platform');
     const paNeedsSchoolSelection = false;
     expect(paNeedsSchoolSelection).toBe(false);
   });
@@ -172,7 +172,7 @@ describe('globa vs school-scoped route classification', () => {
     const path = '/force-password-change';
     const isPlatformRoute = path.startsWith('/platform');
     const isForcePasswordRoute = path === '/force-password-change';
-    const isNonPlatformRoute = !isPlatformRoute && !isForcePasswordRoute;
+    void (!isPlatformRoute && !isForcePasswordRoute);
     const paNeedsSchoolSelection = false;
     expect(paNeedsSchoolSelection).toBe(false);
   });

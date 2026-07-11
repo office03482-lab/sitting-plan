@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
 from app.models import User
 from app.services.scope_engine import PermissionScopeContext, build_scope_context
 from app.services.bulk_action_requests import is_platform_admin_user
@@ -38,8 +38,13 @@ def _role_key(user: User) -> str:
 
 
 def _is_parent_user(user: User) -> bool:
-    permissions = [str(item or "").strip().lower() for item in (getattr(user, "permissions", None) or [])]
-    return _role_key(user) == "parent" or "edupay.parent_portal" in permissions
+    if _role_key(user) == "parent":
+        return True
+    role_metadata = getattr(user, "role_metadata", None)
+    if isinstance(role_metadata, dict) and str(role_metadata.get("role_key") or "").strip().lower() == "parent":
+        return True
+    permissions_raw = str(getattr(user, "permissions", "") or "").lower()
+    return "edupay.parent_portal" in [p.strip() for p in permissions_raw.split(",")]
 
 
 def _is_school_admin_user(user: User) -> bool:
@@ -47,7 +52,6 @@ def _is_school_admin_user(user: User) -> bool:
 
 
 def require_parent_view_user(
-    _: User = Depends(require_permissions("parent_intelligence.view", "parent_intelligence.reports", "edupay.parent_portal")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
     if _is_parent_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user):
@@ -206,11 +210,9 @@ async def api_get_dashboard(
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
-    visible_students = _load_visible_students(school_id, scope_context, actor, user)
-    return {
-        "children": [parent_portal_service._build_child_dashboard(school_id, student) for student in visible_students],  # type: ignore[attr-defined]
-        "children_count": len(visible_students),
-    }
+    profile_id = str(actor.get("profile_id") or "").strip() or None
+    user_email = str(getattr(user, "email", "") or actor.get("email") or "").strip() or None
+    return parent_portal_service.get_dashboard(school_id, profile_id=profile_id, user_email=user_email)
 
 
 # ─── Academic Progress (Phase 2) ───────────────────────────────────────

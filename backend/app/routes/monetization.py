@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.middleware.auth import get_authenticated_actor_context, require_permissions
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.models import User
 from app.schemas import (
     CouponApplyRequest,
     CouponApplyResponse,
@@ -28,6 +29,20 @@ from app.services.supabase_monetization import (
 )
 
 router = APIRouter(tags=["Monetization"])
+
+
+def _role_key(user: User) -> str:
+    return str(getattr(user, "role_key", "") or "").strip().lower()
+
+
+def _is_parent_user(user: User) -> bool:
+    if _role_key(user) == "parent":
+        return True
+    role_metadata = getattr(user, "role_metadata", None)
+    if isinstance(role_metadata, dict) and str(role_metadata.get("role_key") or "").strip().lower() == "parent":
+        return True
+    permissions_raw = str(getattr(user, "permissions", "") or "").lower()
+    return "edupay.parent_portal" in [p.strip() for p in permissions_raw.split(",")]
 
 
 @router.post("/api/payments/create-order", response_model=PaymentCreateOrderResponse)
@@ -98,8 +113,14 @@ def _utc_now_iso_helper() -> str:
 async def api_apply_coupon(
     payload: CouponApplyRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
-    _: dict = Depends(require_permissions("edupay.commerce", "edupay.subscriptions", "edupay.parent_portal")),
+    user: User = Depends(get_authenticated_user),
 ):
+    if not _is_parent_user(user):
+        from app.middleware.auth import decode_user_permissions, user_has_permission
+        granted = decode_user_permissions(user)
+        required = ["edupay.commerce", "edupay.subscriptions"]
+        if not any(user_has_permission(user, p) for p in required):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to apply coupons")
     return apply_coupon(school_id, code=payload.code, order_amount=payload.order_amount)
 
 
