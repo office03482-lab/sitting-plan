@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
+from app.middleware.request_profiler import RequestProfilerMiddleware
 
 from app.services.timetable_schema_checks import verify_timetable_schema
 
@@ -56,6 +57,7 @@ app = FastAPI(
 )
 
 app.add_middleware(SystemObservabilityEngine)
+app.add_middleware(RequestProfilerMiddleware, slow_threshold_ms=800)
 
 # Add CORS middleware (strict configuration)
 app.add_middleware(

@@ -533,11 +533,20 @@ def _resolve_authorization_header(request: Request, di_header: Optional[str]) ->
     return di if di else None
 
 
+def _prof(request: Request):
+    """Return the request profiler if present, else a no-op."""
+    return getattr(getattr(request, "state", None), "profiler", None)
+
+
 def get_authenticated_user(
     request: Request,
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> User:
+    prof = _prof(request)
+    if prof:
+        prof.hit("auth_start")
+
     if request.method == "OPTIONS":
         return User(
             id=0,
@@ -597,7 +606,8 @@ def get_authenticated_user(
         )
 
     token = parts[1]
-    logger.info("auth.token_extracted", extra={"preview": token[:30] + "..."})
+    if prof:
+        prof.hit("token_extracted")
 
     payload = getattr(request.state, "decoded_auth_payload", None)
     if payload is None:
@@ -610,7 +620,8 @@ def get_authenticated_user(
             detail="Invalid or expired authentication token",
         )
 
-    logger.info("auth.decode_succeeded", extra={"sub": str(payload.get("sub") or ""), "email": str(payload.get("email") or "")[:40]})
+    if prof:
+        prof.hit("token_decoded")
 
     if payload.get("type") not in {None, "access"}:
         logger.warning("auth.wrong_token_type", extra={"type": str(payload.get("type"))})
@@ -622,7 +633,8 @@ def get_authenticated_user(
     principal = _resolve_request_principal(request, payload, db)
     user = principal["user"]
 
-    logger.info("auth.user_found", extra={"user_id": str(getattr(user, "id", "")), "email": str(getattr(user, "email", ""))[:40]})
+    if prof:
+        prof.hit("principal_resolved")
 
     if not user.is_active:
         logger.warning(
@@ -646,6 +658,9 @@ def get_authenticated_user(
         raise
     except Exception:
         pass
+
+    if prof:
+        prof.hit("session_validated")
 
     return user
 

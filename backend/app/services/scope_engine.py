@@ -207,7 +207,9 @@ def build_scope_context(
     include_students: bool = False,
     include_staff: bool = False,
     include_teacher_batches: bool = False,
+    request: Any = None,
 ) -> PermissionScopeContext:
+    prof = getattr(getattr(request, "state", None), "profiler", None) if request else None
     context = PermissionScopeContext(
         user=user,
         permission_key=_normalize(permission_key).lower(),
@@ -219,6 +221,8 @@ def build_scope_context(
         name=_normalize(actor.get("name")) or None,
     )
     if context.is_school_wide:
+        if prof:
+            prof.hit("scope_wide_early_return")
         return context
 
     if include_students:
@@ -232,6 +236,9 @@ def build_scope_context(
 
     if include_teacher_batches and context.staff_member_id:
         context.assigned_batches = _resolve_teacher_batches(school_id, context.staff_member_id)
+
+    if prof:
+        prof.hit("scope_resolved")
 
     return context
 

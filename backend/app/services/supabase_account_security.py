@@ -2384,11 +2384,26 @@ def heartbeat_active_session(profile_id: str, session_key: str) -> dict[str, Any
     return {"status": "ok", "session_id": row["id"]}
 
 
+_validate_session_cache: dict[str, tuple[float, bool]] = {}
+_VALIDATE_SESSION_CACHE_TTL = 30  # seconds
+
+
 def validate_active_session(profile_id: str, session_key: str | None) -> None:
+    import time as _time
+
     normalized_profile_id = _normalize(profile_id)
     normalized_session_key = _normalize(session_key)
     if not normalized_profile_id or not normalized_session_key:
         return
+
+    cache_key = f"{normalized_profile_id}|{normalized_session_key}"
+    now = _time.time()
+    cached = _validate_session_cache.get(cache_key)
+    if cached and (now - cached[0]) < _VALIDATE_SESSION_CACHE_TTL:
+        if not cached[1]:
+            raise HTTPException(status_code=401, detail="Session has been terminated")
+        return
+
     rows = list(
         _schema_table(ACTIVE_SESSIONS_SCHEMA, "active_sessions")
         .select("id,is_active")
@@ -2400,9 +2415,13 @@ def validate_active_session(profile_id: str, session_key: str | None) -> None:
         or []
     )
     if not rows:
+        _validate_session_cache[cache_key] = (now, False)
         raise HTTPException(status_code=401, detail="Session is not registered")
     if not rows[0].get("is_active", True):
+        _validate_session_cache[cache_key] = (now, False)
         raise HTTPException(status_code=401, detail="Session has been terminated")
+
+    _validate_session_cache[cache_key] = (now, True)
 
 
 def logout_session(profile_id: str, session_key: str) -> None:
