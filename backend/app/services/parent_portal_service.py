@@ -156,17 +156,33 @@ def _batch_load_fees(school_id: str, student_ids: list[str]) -> dict[str, dict[s
 def _batch_load_test_results(school_id: str, student_ids: list[str], limit: int = 50) -> dict[str, list[dict[str, Any]]]:
     if not student_ids:
         return {}
-    rows = list(
-        _client().schema("online_tests").table("test_results")
-        .select("*")
-        .eq("school_id", school_id)
-        .in_("student_id", student_ids)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-        .limit(max(len(student_ids) * limit, 200))
-        .execute()
-        .data or []
-    )
+    try:
+        rows = list(
+            _client().schema("online_tests").table("test_results")
+            .select("*")
+            .eq("school_id", school_id)
+            .in_("student_id", student_ids)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
+            .limit(max(len(student_ids) * limit, 200))
+            .execute()
+            .data or []
+        )
+    except Exception:
+        try:
+            rows = list(
+                _public_table("online_test_results")
+                .select("*")
+                .eq("school_id", school_id)
+                .in_("student_id", student_ids)
+                .is_("deleted_at", "null")
+                .order("created_at", desc=True)
+                .limit(max(len(student_ids) * limit, 200))
+                .execute()
+                .data or []
+            )
+        except Exception:
+            return {}
     result: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
         sid = _normalize(r.get("student_id"))
@@ -259,7 +275,19 @@ def _load_shared_tests(school_id: str) -> list[dict[str, Any]]:
         )
         return [dict(r) for r in rows]
     except Exception:
-        return []
+        try:
+            rows = list(
+                _public_table("test_sessions")
+                .select("*")
+                .eq("school_id", school_id)
+                .in_("status", ["published", "in_progress", "completed", "closed"])
+                .is_("deleted_at", "null")
+                .execute()
+                .data or []
+            )
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
 
 
 # ─── Dashboard (Phase 1) ───────────────────────────────────────────────

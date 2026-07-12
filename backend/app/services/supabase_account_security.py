@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from openpyxl import Workbook
 
-from app.services.supabase_admin import create_supabase_admin_client
+from app.services.supabase_admin import get_supabase_admin_client
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ PORTAL_PERMISSION_TEMPLATES = {
 
 
 def _client():
-    return create_supabase_admin_client()
+    return get_supabase_admin_client()
 
 
 def _public_table(name: str, *, supabase: Any | None = None):

@@ -203,6 +203,55 @@ def _load_supabase_principal(payload: dict[str, Any], *, profile_id: str, email:
     memberships = list(memberships_response.data or [])
     if not memberships:
         logger.info("auth.supabase_membership_not_found", extra={"profile_id": resolved_profile_id})
+
+        guardian_response = None
+        try:
+            guardian_response = (
+                supabase.schema("academic")
+                .table("guardians")
+                .select("id, school_id, full_name, is_active")
+                .eq("profile_id", resolved_profile_id)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            logger.debug("auth.guardian_lookup_failed", extra={"profile_id": resolved_profile_id})
+
+        guardians = list(guardian_response.data or []) if guardian_response else []
+        if guardians:
+            guardian = guardians[0]
+            guardian_school_id = _normalize_school_id(guardian.get("school_id"))
+            _t1 = time.monotonic()
+            logger.info("auth.load_supabase_principal.timing", extra={
+                "profile_id": profile_id,
+                "duration_ms": round((_t1 - _t0) * 1000),
+                "has_profile": True,
+                "has_membership": False,
+                "has_guardian": True,
+                "membership_count": 0,
+                "permission_count": 0,
+            })
+            return {
+                "profile_id": resolved_profile_id,
+                "membership_id": "",
+                "school_id": guardian_school_id,
+                "default_school_id": _normalize_school_id(profile.get("default_school_id")),
+                "email": str(profile.get("email") or payload.get("email") or "").strip(),
+                "full_name": str(
+                    profile.get("full_name") or profile.get("display_name") or guardian.get("full_name") or payload.get("email") or "User"
+                ).strip(),
+                "username": str(profile.get("display_name") or profile.get("email") or payload.get("email") or "").strip(),
+                "is_active": bool(profile.get("is_active")),
+                "role_key": "parent",
+                "role": UserRole.VIEWER,
+                "user_type": "non_teaching",
+                "permissions": ["edupay.parent_portal", "parent_intelligence"],
+                "role_metadata": {"role_key": "parent"},
+                "scope_assignments": {},
+                "auth_source": "supabase",
+            }
+
         return None
 
     default_school_id = _normalize_school_id(profile.get("default_school_id"))

@@ -179,24 +179,27 @@ def _load_live_attendance_rows(school_id: str, student_id: str, *, days: int) ->
 
 
 def _load_recent_timetable_rows(school_id: str, student: dict[str, Any]) -> list[dict[str, Any]]:
-    query = (
-        _schema_table(SCHEDULING_SCHEMA, "timetable_entries")
-        .select("id,class_name,subject,teacher_name,start_time,end_time,day_of_week")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-    )
-    class_name = _normalize(student.get("class_name"))
-    if class_name:
-        query = query.ilike("class_name", f"%{class_name}%")
-    rows = list(query.limit(12).execute().data or [])
-    return [dict(row) for row in rows]
+    try:
+        query = (
+            _schema_table(SCHEDULING_SCHEMA, "timetable_entries")
+            .select("id,class_name,subject_id,teacher_name,start_time,end_time,day_of_week")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+        )
+        class_name = _normalize(student.get("class_name"))
+        if class_name:
+            query = query.ilike("class_name", f"%{class_name}%")
+        rows = list(query.limit(12).execute().data or [])
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
 
 
 def _load_study_plans(school_id: str, student_id: str, *, days: int = 30) -> list[dict[str, Any]]:
     start_date = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
     rows = list(
         _analytics_table("study_plans")
-        .select("scope,plan_date,completion_percentage,summary,generated_at")
+            .select("scope,plan_date,completion_percentage,summary")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
         .is_("deleted_at", "null")
@@ -559,17 +562,20 @@ def _load_study_plans_batch(school_id: str, student_ids: list[str], *, days: int
     if not student_ids:
         return {}
     start_date = (_today_local() - timedelta(days=max(days, 1) - 1)).isoformat()
-    rows = list(
-        _analytics_table("study_plans")
-        .select("scope,plan_date,completion_percentage,summary,generated_at,student_id")
-        .eq("school_id", school_id)
-        .in_("student_id", student_ids)
-        .is_("deleted_at", "null")
-        .gte("plan_date", start_date)
-        .execute()
-        .data
-        or []
-    )
+    try:
+        rows = list(
+            _analytics_table("study_plans")
+            .select("*")
+            .eq("school_id", school_id)
+            .in_("student_id", student_ids)
+            .is_("deleted_at", "null")
+            .gte("plan_date", start_date)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return {}
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         sid = _normalize(row.get("student_id"))
