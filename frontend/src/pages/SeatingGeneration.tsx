@@ -4,6 +4,7 @@ import { Zap, PlusCircle, Pencil, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAppStore } from '@store/app';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import {
   apiService,
   getRequestErrorMessage,
@@ -172,11 +173,12 @@ export default function SeatingGeneration() {
 
     setLoading(true);
     try {
+      const { getRooms, getBatches, getStudents } = useRefDataStore.getState();
       const dataSources = [
-        { key: 'rooms', required: true, request: apiService.listRooms() },
+        { key: 'rooms', required: true, request: getRooms(currentSchoolId) },
         { key: 'exams', required: true, request: apiService.listExams() },
-        { key: 'batches', required: true, request: apiService.listBatches(currentSchoolId) },
-        { key: 'students', required: true, request: apiService.listStudents(currentSchoolId, 0, 10000) },
+        { key: 'batches', required: true, request: getBatches(currentSchoolId) },
+        { key: 'students', required: true, request: getStudents(currentSchoolId) },
       ] as const;
 
       const results = await Promise.allSettled(dataSources.map((item) => item.request));
@@ -184,10 +186,10 @@ export default function SeatingGeneration() {
         dataSources.map((item, index) => [item.key, results[index]])
       ) as Record<string, PromiseSettledResult<any>>;
 
-      const roomsData = resultMap.rooms?.status === 'fulfilled' ? toArray<Room>(resultMap.rooms.value.data) : [];
+      const roomsData = resultMap.rooms?.status === 'fulfilled' ? toArray<Room>(resultMap.rooms.value) : [];
       const examsData = resultMap.exams?.status === 'fulfilled' ? toArray<Exam>(resultMap.exams.value.data) : [];
-      const batchesData = resultMap.batches?.status === 'fulfilled' ? toArray<Batch>(resultMap.batches.value.data) : [];
-      const studentsData = resultMap.students?.status === 'fulfilled' ? toArray<Student>(resultMap.students.value.data) : [];
+      const batchesData = resultMap.batches?.status === 'fulfilled' ? toArray<Batch>(resultMap.batches.value) : [];
+      const studentsData = resultMap.students?.status === 'fulfilled' ? toArray<Student>(resultMap.students.value) : [];
 
       const batchByName = new Map<string, Batch>();
       batchesData.forEach((batch: Batch) => batchByName.set(batch.name, batch));

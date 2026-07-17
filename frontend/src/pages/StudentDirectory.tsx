@@ -4,6 +4,7 @@ import { Eye, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import { useAuth } from '@/contexts/AuthProvider';
 import type { Batch, Student } from '@types';
 import {
@@ -115,9 +116,9 @@ export default function StudentDirectory() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const response = await apiService.listStudents(currentSchoolId);
-      const nextStudents = Array.isArray(response.data)
-        ? response.data.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.full_name || student.roll_number))
+      const rawStudents = await useRefDataStore.getState().getStudents(currentSchoolId);
+      const nextStudents = Array.isArray(rawStudents)
+        ? rawStudents.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.full_name || student.roll_number))
         : [];
       setStudents(nextStudents);
       return nextStudents;
@@ -131,8 +132,8 @@ export default function StudentDirectory() {
 
   const loadClassBatches = async () => {
     try {
-      const classResponse = await apiService.listBatches(currentSchoolId, undefined, 'class');
-      setClassBatches(Array.isArray(classResponse.data) ? classResponse.data : []);
+      const classBatchesData = await useRefDataStore.getState().getBatches(currentSchoolId, 'class');
+      setClassBatches(Array.isArray(classBatchesData) ? classBatchesData : []);
     } catch {
       setClassBatches([]);
     }

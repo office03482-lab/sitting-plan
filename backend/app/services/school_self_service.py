@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,32 @@ from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_storage import upload_file_to_supabase_storage
 
 MODULE_KEY = "school_self_service"
+
+_BRANDING_CACHE_TTL_SECONDS = 60
+_branding_cache_lock = threading.Lock()
+_branding_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _get_branding_cache(key: str) -> dict[str, Any] | None:
+    with _branding_cache_lock:
+        entry = _branding_cache.get(key)
+        if entry is None:
+            return None
+        ts, data = entry
+        if time.monotonic() - ts > _BRANDING_CACHE_TTL_SECONDS:
+            _branding_cache.pop(key, None)
+            return None
+        return data
+
+
+def _set_branding_cache(key: str, data: dict[str, Any]) -> None:
+    with _branding_cache_lock:
+        _branding_cache[key] = (time.monotonic(), data)
+
+
+def invalidate_branding_cache() -> None:
+    with _branding_cache_lock:
+        _branding_cache.clear()
 
 DEFAULT_BRANDING = {
     "school_name": "",
@@ -370,7 +398,9 @@ def _update_profile_section(
 
 
 def update_school_branding(school_id: str, payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
-    return _update_profile_section(school_id, "branding", payload, actor_profile_id=actor_profile_id, action="school.branding.updated")
+    result = _update_profile_section(school_id, "branding", payload, actor_profile_id=actor_profile_id, action="school.branding.updated")
+    invalidate_branding_cache()
+    return result
 
 
 def update_school_preferences(school_id: str, payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
@@ -393,6 +423,7 @@ def update_school_domain_settings(school_id: str, payload: dict[str, Any], *, ac
     metadata = _json_dict(school.get("metadata"))
     metadata["school_domain"] = payload.get("custom_domain") or payload.get("subdomain") or metadata.get("school_domain")
     _public_table("schools").update({"metadata": metadata}).eq("id", school_id).execute()
+    invalidate_branding_cache()
     return get_school_self_service_profile(school_id, actor_profile_id=actor_profile_id)
 
 
@@ -518,6 +549,16 @@ def request_restore(school_id: str, notes: str | None, *, actor_profile_id: str 
 
 
 def get_public_school_branding(*, school_hint: str | None = None, hostname: str | None = None) -> dict[str, Any]:
+    cache_key = f"{_normalize(school_hint).lower()}|{_normalize_hostname(hostname).lower()}"
+    cached = _get_branding_cache(cache_key)
+    if cached is not None:
+        return cached
+    result = _get_public_school_branding_uncached(school_hint=school_hint, hostname=hostname)
+    _set_branding_cache(cache_key, result)
+    return result
+
+
+def _get_public_school_branding_uncached(*, school_hint: str | None = None, hostname: str | None = None) -> dict[str, Any]:
     normalized_hint = _normalize(school_hint).lower()
     normalized_host = _normalize_hostname(hostname)
     query = _public_table("schools").select("id,name,slug,school_code,metadata,timezone,contact_email,contact_phone")

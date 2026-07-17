@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiService } from '@services/api';
+import { useRefDataStore } from '@store/referenceData';
 import type { Batch, Student } from '@types';
 import { Plus, Pencil, Trash2, AlertCircle, Search, Filter, X, ArrowUp, ArrowDown, ListOrdered } from 'lucide-react';
 
@@ -304,15 +305,14 @@ const BatchManagement: React.FC = () => {
   const loadBatches = async () => {
     try {
       setLoading(true);
-      const [selectedResponse, otherCategoryResponse, studentsResponse] = await Promise.all([
-        apiService.listBatches(schoolId, undefined, selectedCategory),
-        apiService.listBatches(schoolId, undefined, selectedCategory === 'batch' ? 'class' : 'batch'),
-        apiService.listStudents(schoolId, 0, 10000),
+      const { getBatches, getStudents } = useRefDataStore.getState();
+      const [selectedItems, otherItems, rawStudents] = await Promise.all([
+        getBatches(schoolId, selectedCategory),
+        getBatches(schoolId, selectedCategory === 'batch' ? 'class' : 'batch'),
+        getStudents(schoolId),
       ]);
-      const selectedItems = Array.isArray(selectedResponse.data) ? selectedResponse.data : [];
-      const otherItems = Array.isArray(otherCategoryResponse.data) ? otherCategoryResponse.data : [];
-      const students = Array.isArray(studentsResponse.data)
-        ? studentsResponse.data
+      const students = Array.isArray(rawStudents)
+        ? rawStudents
             .map(normalizeStudent)
             .filter((student) => String(student.id || '').trim() && (student.name || student.roll_number))
         : [];

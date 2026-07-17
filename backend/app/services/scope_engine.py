@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +11,27 @@ from app.models import User
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_lms import _get_student_by_profile_id, _list_parent_linked_students
+
+_SCOPE_CACHE_TTL_SECONDS = 60
+_scope_cache_lock = threading.Lock()
+_scope_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _scope_cache_get(key: str) -> Any | None:
+    with _scope_cache_lock:
+        entry = _scope_cache.get(key)
+        if entry is None:
+            return None
+        ts, data = entry
+        if time.monotonic() - ts > _SCOPE_CACHE_TTL_SECONDS:
+            _scope_cache.pop(key, None)
+            return None
+        return data
+
+
+def _scope_cache_set(key: str, data: Any) -> None:
+    with _scope_cache_lock:
+        _scope_cache[key] = (time.monotonic(), data)
 
 
 def _normalize(value: Any) -> str:
@@ -105,6 +128,18 @@ def _expand_batch_labels(value: Any) -> list[tuple[str, str | None]]:
 def _resolve_staff_member(school_id: str, actor: dict[str, Any]) -> dict[str, Any] | None:
     profile_id = _normalize(actor.get("profile_id"))
     email = _normalize(actor.get("email")).lower()
+    cache_key = f"staff|{school_id}|{profile_id}|{email}"
+    cached = _scope_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    result = _resolve_staff_member_uncached(school_id, actor)
+    _scope_cache_set(cache_key, result)
+    return result
+
+
+def _resolve_staff_member_uncached(school_id: str, actor: dict[str, Any]) -> dict[str, Any] | None:
+    profile_id = _normalize(actor.get("profile_id"))
+    email = _normalize(actor.get("email")).lower()
     name = _normalize(actor.get("name"))
     query = (
         get_supabase_admin_client()
@@ -129,6 +164,19 @@ def _resolve_staff_member(school_id: str, actor: dict[str, Any]) -> dict[str, An
 
 
 def _resolve_student_ids(school_id: str, actor: dict[str, Any], user: User) -> list[str]:
+    profile_id = _normalize(actor.get("profile_id"))
+    email = _normalize(getattr(user, "email", None) or actor.get("email")).lower()
+    role_key = _role_key(user)
+    cache_key = f"students|{school_id}|{profile_id}|{email}|{role_key}"
+    cached = _scope_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    result = _resolve_student_ids_uncached(school_id, actor, user)
+    _scope_cache_set(cache_key, result)
+    return result
+
+
+def _resolve_student_ids_uncached(school_id: str, actor: dict[str, Any], user: User) -> list[str]:
     profile_id = _normalize(actor.get("profile_id"))
     email = _normalize(getattr(user, "email", None) or actor.get("email")).lower()
     role_key = _role_key(user)

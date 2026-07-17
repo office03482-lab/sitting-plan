@@ -6,6 +6,7 @@ import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useRefDataStore } from '@store/referenceData';
 import type { Batch, OnlineTest, OnlineTestQuestion } from '@types';
 import {
   createDefaultTestForm,
@@ -73,11 +74,11 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
 
   const loadBatches = async () => {
     try {
-      const [batchResponse, questionBankResponse] = await Promise.all([
-        apiService.listBatches(1, true, 'batch'),
+      const [batchData, questionBankResponse] = await Promise.all([
+        useRefDataStore.getState().getBatches(1, 'batch'),
         apiService.listOnlineTestQuestionBank({ limit: 200 }),
       ]);
-      setBatches(batchResponse.data || []);
+      setBatches(batchData || []);
       const count = Number((questionBankResponse.data || []).length || 0);
       setQuestionBankCount(count);
     } catch {

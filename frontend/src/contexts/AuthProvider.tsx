@@ -1143,6 +1143,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // A fresh sign-in must always start in the Platform Workspace ("Managing
+      // All Schools") for platform admins. Any school workspace context left
+      // over from a previous session (persisted in localStorage) is cleared so
+      // no individual school appears immediately after login. This only affects
+      // the workspace-context UI, not auth/permissions/routes/APIs.
+      if (event === 'SIGNED_IN') {
+        usePlatformAdminSchoolStore.getState().clearActiveSchool();
+      }
+
       if (event === 'TOKEN_REFRESHED') {
         if (nextSession?.access_token) {
           useAuthStore.getState().setToken(nextSession.access_token);

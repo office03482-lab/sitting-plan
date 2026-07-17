@@ -16,7 +16,7 @@ export default function PlatformAdminSchoolScopeBanner() {
     <div className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
       <div className="flex items-center gap-2">
         <span className="text-emerald-800">
-          Managing: <span className="font-semibold">{activeSchoolName || activeSchoolId}</span>
+          School Workspace: <span className="font-semibold">{activeSchoolName || activeSchoolId}</span>
         </span>
       </div>
       <div className="flex items-center gap-2">
@@ -26,7 +26,7 @@ export default function PlatformAdminSchoolScopeBanner() {
               type="button"
               className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
             >
-              Switch School
+              Change School
             </button>
           }
         />
@@ -35,7 +35,7 @@ export default function PlatformAdminSchoolScopeBanner() {
           onClick={() => clearActiveSchool()}
           className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
         >
-          Exit School Scope
+          Exit Workspace
         </button>
       </div>
     </div>

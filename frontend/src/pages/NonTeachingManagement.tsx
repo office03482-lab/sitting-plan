@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Clock3, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import type { Invigilator } from '@types';
 
 export default function NonTeachingManagement() {
@@ -32,11 +33,11 @@ export default function NonTeachingManagement() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [staffRes, settingsRes] = await Promise.all([
-        apiService.listInvigilators(currentSchoolId, undefined, 0, 500),
+      const [staffData, settingsRes] = await Promise.all([
+        useRefDataStore.getState().getInvigilators(currentSchoolId),
         apiService.getAttendanceSettings(currentSchoolId),
       ]);
-      setStaff(staffRes.data);
+      setStaff(staffData);
       setShiftForm({
         working_hours_start: settingsRes.data.working_hours_start,
         working_hours_end: settingsRes.data.working_hours_end,

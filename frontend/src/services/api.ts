@@ -510,7 +510,7 @@ class ApiService {
   }
 
   async getPortalOverview(params: {
-    entity_type: 'student' | 'parent' | 'staff';
+    entity_type: 'student' | 'parent' | 'staff' | 'school';
     batch_id?: string | number;
     class_name?: string;
     staff_type?: string;
@@ -678,6 +678,14 @@ class ApiService {
     return this.api.get<{ email: string }>('/account-security/resolve-login', {
       params: { identifier, portal_intent: portalIntent },
     });
+  }
+
+  async setSchoolStatus(schoolId: string, status: 'active' | 'suspended' | 'archived', reason?: string) {
+    return this.api.post(`/platform/schools/${schoolId}/status`, { status, reason });
+  }
+
+  async resetSchoolPortalPassword(schoolId: string) {
+    return this.api.post(`/account-security/schools/${schoolId}/reset-password`);
   }
 
   async createBulkActionRequest(data: {

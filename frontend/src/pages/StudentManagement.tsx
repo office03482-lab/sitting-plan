@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
 import { useAuthStore } from '@store/auth';
 import { apiService } from '@services/api';
+import { useRefDataStore } from '@store/referenceData';
 import { useAuth } from '@/contexts/AuthProvider';
 import type {
   Student,
@@ -605,8 +606,8 @@ export default function StudentManagement() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const response = await apiService.listStudents(currentSchoolId);
-      const normalizedStudents = Array.isArray(response.data) ? response.data.map(normalizeStudent) : [];
+      const rawStudents = await useRefDataStore.getState().getStudents(currentSchoolId);
+      const normalizedStudents = Array.isArray(rawStudents) ? rawStudents.map(normalizeStudent) : [];
       setStudents(normalizedStudents);
       const sessions = normalizedStudents
         .map((student) => (typeof student?.academic_session === 'string' ? student.academic_session.trim() : ''))
@@ -633,8 +634,8 @@ export default function StudentManagement() {
 
   const loadBatches = async () => {
     try {
-      const response = await apiService.listBatches(currentSchoolId);
-      setBatches(response.data);
+      const batches = await useRefDataStore.getState().getBatches(currentSchoolId);
+      setBatches(batches);
     } catch (error) {
       console.error('Failed to load batches:', error);
     }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useRefDataStore } from '@store/referenceData';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
 type StaffType = 'teaching' | 'non_teaching';
@@ -97,17 +98,18 @@ export default function InvigilatorManagement() {
   const loadData = async () => {
     try {
       setLoading(true);
+      const { getInvigilators, getRooms, getTeachers } = useRefDataStore.getState();
       const [invRes, roomRes, assignRes, teachingRes] = await Promise.allSettled([
-        apiService.listInvigilators(schoolId),
-        apiService.listRooms(schoolId),
+        getInvigilators(schoolId),
+        getRooms(schoolId),
         apiService.listRoomAssignments(schoolId),
-        apiService.listTeachers(schoolId, 0, 500),
+        getTeachers(schoolId),
       ]);
 
-      const invigilatorsData = invRes.status === 'fulfilled' ? toArray<Invigilator>(invRes.value.data) : [];
-      const roomsData = roomRes.status === 'fulfilled' ? toArray<Room>(roomRes.value.data) : [];
+      const invigilatorsData = invRes.status === 'fulfilled' ? toArray<Invigilator>(invRes.value) : [];
+      const roomsData = roomRes.status === 'fulfilled' ? toArray<Room>(roomRes.value) : [];
       const assignmentsData = assignRes.status === 'fulfilled' ? toArray<RoomInvigilator>(assignRes.value.data) : [];
-      const teachingData = teachingRes.status === 'fulfilled' ? toArray<Teacher>(teachingRes.value.data) : [];
+      const teachingData = teachingRes.status === 'fulfilled' ? toArray<Teacher>(teachingRes.value) : [];
 
       setInvigilators(invigilatorsData);
       setRooms(roomsData);

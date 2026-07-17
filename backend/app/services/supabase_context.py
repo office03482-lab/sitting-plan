@@ -9,6 +9,7 @@ No legacy SQLite mode.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,20 @@ from app.middleware.auth import get_authenticated_actor_context
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_SCHOOL_IDS = {"", "1", "none", "null", "undefined"}
+_SCHOOL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SCHOOL_CACHE_TTL = 300  # 5 minutes
+
+
+def _get_cached_school(school_id: str) -> dict[str, Any] | None:
+    entry = _SCHOOL_CACHE.get(school_id)
+    if entry and (time.monotonic() - entry[0]) < _SCHOOL_CACHE_TTL:
+        return entry[1]
+    _SCHOOL_CACHE.pop(school_id, None)
+    return None
+
+
+def _set_cached_school(school_id: str, data: dict[str, Any]) -> None:
+    _SCHOOL_CACHE[school_id] = (time.monotonic(), data)
 
 
 def is_legacy_sqlite_mode() -> bool:
@@ -76,20 +91,46 @@ def _get_actor_role_key(actor: dict[str, Any]) -> str:
 
 
 def _ensure_supabase_school_exists(school_id: str) -> dict[str, Any]:
-    from app.services.supabase_admin import get_supabase_admin_client
-    supabase = get_supabase_admin_client()
-    response = (
-        supabase
-        .table("schools")
-        .select("id, name")
-        .eq("id", school_id)
-        .limit(1)
-        .execute()
-    )
-    rows = list(response.data or [])
-    if rows:
-        return rows[0]
-    raise HTTPException(status_code=404, detail="School not found")
+    cached = _get_cached_school(school_id)
+    if cached:
+        return cached
+
+    from app.services.supabase_admin import get_supabase_admin_client, _invalidate_admin_client_cache
+
+    def _query_school(client: Any) -> dict[str, Any]:
+        response = (
+            client
+            .table("schools")
+            .select("id, name")
+            .eq("id", school_id)
+            .limit(1)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if rows:
+            return rows[0]
+        raise HTTPException(status_code=404, detail="School not found")
+
+    try:
+        supabase = get_supabase_admin_client()
+        result = _query_school(supabase)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        error_name = type(exc).__name__
+        if "RemoteProtocol" in error_name or "RemoteProtocol" in str(exc):
+            logger.warning(
+                "school_exists.remote_protocol_error_retrying",
+                extra={"school_id": school_id, "error": str(exc)},
+            )
+            _invalidate_admin_client_cache()
+            supabase = get_supabase_admin_client()
+            result = _query_school(supabase)
+        else:
+            raise
+
+    _set_cached_school(school_id, result)
+    return result
 
 
 def _validate_school_membership(actor: dict[str, Any], school_id: str) -> bool:
@@ -130,8 +171,21 @@ def _role_aware_resolve_school_id(
                 _ensure_supabase_school_exists(candidate)
             except HTTPException:
                 raise
-            except Exception:
-                raise HTTPException(status_code=403, detail="Target school validation failed")
+            except Exception as exc:
+                logger.exception(
+                    "school_validation_unexpected_error",
+                    extra={
+                        "school_id": candidate,
+                        "actor_user_id": str(actor.get("user_id") or ""),
+                        "actor_profile_id": str(actor.get("profile_id") or ""),
+                        "error_type": type(exc).__name__,
+                        "error_detail": str(exc),
+                    },
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"School validation failed due to a server error ({type(exc).__name__}). Please check server logs.",
+                )
             return candidate
         raise HTTPException(status_code=403, detail="Platform Admin requires an explicit school_id")
 

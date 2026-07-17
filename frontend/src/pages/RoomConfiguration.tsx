@@ -6,6 +6,7 @@ import {
   logIfUnexpectedRequestError,
 } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useRefDataStore } from '@store/referenceData';
 import type { Room } from '@types';
 
 interface FormData {
@@ -79,8 +80,8 @@ export default function RoomConfiguration() {
   const loadRooms = async () => {
     setLoading(true);
     try {
-      const response = await apiService.listRooms();
-      setRooms(response.data);
+      const roomsData = await useRefDataStore.getState().getRooms(1);
+      setRooms(roomsData);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);
     } finally {

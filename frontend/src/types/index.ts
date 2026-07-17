@@ -183,6 +183,20 @@ export interface PortalOverviewRecord extends PortalAccessStatus {
   department?: string | null;
   designation?: string | null;
   permission_count?: number;
+  school_code?: string | null;
+  slug?: string | null;
+  plan_tier?: string | null;
+  subscription_status?: string | null;
+  student_limit?: number | null;
+  teacher_limit?: number | null;
+  parent_limit?: number | null;
+  storage_limit_gb?: number | null;
+  ai_credit_limit?: number | null;
+  students_used?: number;
+  teachers_used?: number;
+  parents_used?: number;
+  storage_used?: number;
+  ai_credits_used?: number;
 }
 
 export interface PortalOverviewResponse {
@@ -195,6 +209,9 @@ export interface PortalOverviewResponse {
     portal_disabled?: number;
     portal_not_created?: number;
     total_students?: number;
+    total_schools?: number;
+    active_schools?: number;
+    disabled_schools?: number;
     total_records: number;
   };
   records: PortalOverviewRecord[];

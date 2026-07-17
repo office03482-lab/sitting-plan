@@ -39,6 +39,11 @@ def _build_supabase_admin_client(url: str, service_role_key: str) -> Client:
     return create_client(url, service_role_key)
 
 
+def _invalidate_admin_client_cache() -> None:
+    """Clear the cached Supabase admin client so the next call creates a fresh one."""
+    _build_supabase_admin_client.cache_clear()
+
+
 def _resolve_supabase_admin_config() -> tuple[str, str]:
     url = (
         os.getenv("SUPABASE_URL")

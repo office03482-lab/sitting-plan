@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
+import { DEFAULT_HOME_ROUTE } from '@/contexts/AuthProvider';
 import type { PlatformSchoolSummary } from '@types';
 
 export default function PlatformSchoolsPage() {
+  const navigate = useNavigate();
+  const setActiveSchool = usePlatformAdminSchoolStore((s) => s.setActiveSchool);
   const [schools, setSchools] = useState<PlatformSchoolSummary[]>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const enterSchoolWorkspace = (school: PlatformSchoolSummary) => {
+    // Explicitly enter the selected school's workspace. This is the only
+    // supported entry point that switches a platform admin from the Platform
+    // Workspace into a School Workspace.
+    setActiveSchool(school.id, school.name);
+    navigate(DEFAULT_HOME_ROUTE);
+  };
 
   const loadSchools = async () => {
     try {
@@ -71,6 +83,7 @@ export default function PlatformSchoolsPage() {
               <div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-500">Staff</p><p className="mt-1 text-xl font-bold text-slate-900">{school.staff_count}</p></div>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
+              <button onClick={() => enterSchoolWorkspace(school)} className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Manage School</button>
               <Link to={`/platform/schools/${school.id}`} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Open Details</Link>
               <Link to={`/platform/subscriptions?school_id=${school.id}`} className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Subscription</Link>
               <Link to={`/platform/support?school_id=${school.id}`} className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Support</Link>

@@ -8,6 +8,7 @@ import {
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useRefDataStore } from '@store/referenceData';
 import type { Teacher } from '../types';
 
 const TeacherManagement: React.FC = () => {
@@ -40,8 +41,8 @@ const TeacherManagement: React.FC = () => {
   const loadTeachers = async () => {
     try {
       setLoading(true);
-      const response = await apiService.listTeachers();
-      setTeachers(response.data);
+      const data = await useRefDataStore.getState().getTeachers(1);
+      setTeachers(data);
     } catch (error) {
       logIfUnexpectedRequestError('Error loading teachers:', error);
       setAlert({

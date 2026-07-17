@@ -5,6 +5,7 @@ import {
   isTemporarilyUnavailableDataError,
   logIfUnexpectedRequestError,
 } from '@services/api';
+import { useRefDataStore } from '@store/referenceData';
 import { UnavailableStatCard } from '@components/UnavailableStatCard';
 import type { Batch, Room, SeatingPlan } from '@types';
 
@@ -88,9 +89,9 @@ export default function SeatingPlanManagement() {
   const loadSummary = async () => {
     setUploading(true);
     try {
-      const [studentsRes, batchesRes] = await Promise.allSettled([
+      const [studentsRes, batchesData] = await Promise.allSettled([
         apiService.getStudentsCount(),
-        apiService.listBatches(),
+        useRefDataStore.getState().getBatches(1),
       ]);
 
       if (studentsRes.status === 'fulfilled') {
@@ -104,8 +105,8 @@ export default function SeatingPlanManagement() {
         }));
       }
 
-      if (batchesRes.status === 'fulfilled') {
-        const rows = Array.isArray(batchesRes.value.data) ? batchesRes.value.data : [];
+      if (batchesData.status === 'fulfilled') {
+        const rows = Array.isArray(batchesData.value) ? batchesData.value : [];
         const uniqueBatchNames = new Set(
           rows
             .filter((batch: Batch) => batch.is_active !== false)
@@ -115,10 +116,10 @@ export default function SeatingPlanManagement() {
         setBatchCount(uniqueBatchNames.size);
         setSummaryUnavailable((current) => ({ ...current, batches: false }));
       } else {
-        logIfUnexpectedRequestError('Failed to load batches summary:', batchesRes.reason);
+        logIfUnexpectedRequestError('Failed to load batches summary:', batchesData.reason);
         setSummaryUnavailable((current) => ({
           ...current,
-          batches: isTemporarilyUnavailableDataError(batchesRes.reason),
+          batches: isTemporarilyUnavailableDataError(batchesData.reason),
         }));
       }
     } catch (error) {
@@ -140,8 +141,8 @@ export default function SeatingPlanManagement() {
 
   const loadRooms = async () => {
     try {
-      const response = await apiService.listRooms();
-      setRooms(Array.isArray(response.data) ? response.data : []);
+      const roomsData = await useRefDataStore.getState().getRooms(1);
+      setRooms(Array.isArray(roomsData) ? roomsData : []);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);
       setRooms([]);

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException
+from postgrest.exceptions import APIError as PostgrestAPIError
 
 from app.services.supabase_account_security import (
     _create_or_update_auth_user,
@@ -105,7 +106,28 @@ def _resolve_school_code(payload: dict[str, Any]) -> str:
     if provided:
         return provided
     derived = re.sub(r"[^A-Z0-9]+", "", _normalize(payload.get("name")).upper())[:8]
-    return derived or f"SCH{_utc_now().strftime('%m%d%H')}"
+    base = derived or f"SCH{_utc_now().strftime('%m%d%H')}"
+    return _ensure_unique_school_code(base)
+
+
+def _ensure_unique_school_code(base: str) -> str:
+    candidate = base
+    for attempt in range(50):
+        existing = (
+            _public_table("schools")
+            .select("id")
+            .eq("school_code", candidate)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not existing:
+            return candidate
+        suffix = _utc_now().strftime("%H%M") + str(attempt)
+        candidate = base[:6] + suffix[-(10 - len(base[:6])):]
+    import time as _time
+    return f"SCH{int(_time.time()) % 100000}"
 
 
 def _school_admin_username(school_code: str, school_name: str) -> str:
@@ -513,7 +535,13 @@ def create_school(payload: dict[str, Any], *, actor_profile_id: str | None) -> d
         "metadata": metadata,
         "is_active": True,
     }
-    rows = _public_table("schools").insert(insert_payload).execute().data or []
+    try:
+        rows = _public_table("schools").insert(insert_payload).execute().data or []
+    except PostgrestAPIError as exc:
+        detail = str(exc).strip()
+        if "23505" in detail or "duplicate" in detail.lower():
+            raise HTTPException(status_code=409, detail=f"A school with code '{resolved_school_code}' already exists.") from exc
+        raise HTTPException(status_code=500, detail=detail or "Failed to create school") from exc
     if not rows:
         raise HTTPException(status_code=400, detail="Unable to create school")
     created = dict(rows[0])
@@ -634,7 +662,10 @@ def copy_academic_structure(source_school_id: str, target_school_id: str, *, act
             "metadata": dict(batch.get("metadata") or {}),
             "is_active": batch.get("is_active", True),
         }
-        created = _public_table("batches").insert(insert_payload).execute().data or []
+        try:
+            created = _public_table("batches").insert(insert_payload).execute().data or []
+        except PostgrestAPIError:
+            continue
         if created:
             created_batches += 1
             target_batches_by_code[batch_code] = str(created[0].get("id") or "")
@@ -982,6 +1013,12 @@ def create_notification(payload: dict[str, Any], *, actor_profile_id: str | None
 
 
 def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> dict[str, Any]:
+    school_name = _normalize(payload.get("name"))
+    admin_email = _normalize(payload.get("admin_email"))
+    if not school_name:
+        raise HTTPException(status_code=400, detail="School name is required")
+    if not admin_email:
+        raise HTTPException(status_code=400, detail="Admin email is required")
     audit_events = ["platform.school.created", "platform.onboarding.started"]
     _audit(school_id=None, profile_id=actor_profile_id, action="platform.onboarding.started", payload={"school_name": payload.get("name"), "admin_email": payload.get("admin_email")})
     school = create_school(payload, actor_profile_id=actor_profile_id)
@@ -1041,18 +1078,21 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
             {"batch_code": "CLASS-1", "name": "Class 1", "class_name": "1", "section": "A"},
             {"batch_code": "CLASS-2", "name": "Class 2", "class_name": "2", "section": "A"},
         ):
-            _public_table("batches").insert(
-                {
-                    "school_id": school_id,
-                    "batch_code": batch["batch_code"],
-                    "name": batch["name"],
-                    "class_name": batch["class_name"],
-                    "section": batch["section"],
-                    "academic_session": payload.get("academic_session"),
-                    "metadata": {"created_by": "platform_onboarding"},
-                }
-            ).execute()
-            batches_created += 1
+            try:
+                _public_table("batches").insert(
+                    {
+                        "school_id": school_id,
+                        "batch_code": batch["batch_code"],
+                        "name": batch["name"],
+                        "class_name": batch["class_name"],
+                        "section": batch["section"],
+                        "academic_session": payload.get("academic_session"),
+                        "metadata": {"created_by": "platform_onboarding"},
+                    }
+                ).execute()
+                batches_created += 1
+            except PostgrestAPIError:
+                pass
     provisioning.update(_provision_school_defaults(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id))
     admin_account = _provision_school_admin(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id)
     audit_events.append("platform.onboarding.credentials_generated")

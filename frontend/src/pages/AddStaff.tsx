@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Upload, Camera, Plus, FileText, Trash2, ExternalLink, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import {
   findStaffDirectoryNameMatches,
   type StaffDirectoryRecord,
@@ -232,12 +233,13 @@ export default function AddStaff() {
   const categoryOptions = formData.staffType === 'teaching' ? teachingCategoryOptions : nonTeachingCategoryOptions;
 
   const loadLiveDirectoryRecords = async (): Promise<StaffDirectoryRecord[]> => {
-    const [teachersRes, invigilatorsRes] = await Promise.all([
-      apiService.listTeachers(currentSchoolId, 0, 1000),
-      apiService.listInvigilators(currentSchoolId, undefined, 0, 1000),
+    const { getTeachers, getInvigilators } = useRefDataStore.getState();
+    const [teachersData, invigilatorsData] = await Promise.all([
+      getTeachers(currentSchoolId),
+      getInvigilators(currentSchoolId),
     ]);
 
-    const teacherRecords = (teachersRes.data || []).map((teacher: any) => ({
+    const teacherRecords = (teachersData || []).map((teacher: any) => ({
       id: `teaching:${teacher.id}`,
       backendId: teacher.id,
       backendType: 'teaching' as const,
@@ -248,7 +250,7 @@ export default function AddStaff() {
       createdAt: '',
       fullName: String(teacher.name || '').trim(),
     }));
-    const invigilatorRecords = (invigilatorsRes.data || []).map((staff: any) => ({
+    const invigilatorRecords = (invigilatorsData || []).map((staff: any) => ({
       id: `non_teaching:${staff.id}`,
       backendId: staff.id,
       backendType: 'non_teaching' as const,

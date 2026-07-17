@@ -9,6 +9,7 @@ import {
   getRequestErrorMessage,
   logIfUnexpectedRequestError,
 } from '@services/api';
+import { useRefDataStore } from '@store/referenceData';
 import {
   findStaffDirectoryNameMatches,
   getStaffDirectoryDuplicateGroups,
@@ -198,18 +199,19 @@ export default function StaffDirectory() {
 
   const loadRecords = async () => {
     try {
+      const { getTeachers, getInvigilators } = useRefDataStore.getState();
       const [teachersRes, invigilatorsRes] = await Promise.allSettled([
-        apiService.listTeachers(currentSchoolId, 0, 1000),
-        apiService.listInvigilators(currentSchoolId, undefined, 0, 1000),
+        getTeachers(currentSchoolId),
+        getInvigilators(currentSchoolId),
       ]);
 
       const teacherRows =
-        teachersRes.status === 'fulfilled' && Array.isArray(teachersRes.value.data)
-          ? teachersRes.value.data.map(mapTeacherToDirectoryRecord)
+        teachersRes.status === 'fulfilled' && Array.isArray(teachersRes.value)
+          ? teachersRes.value.map(mapTeacherToDirectoryRecord)
           : [];
       const invigilatorRows =
-        invigilatorsRes.status === 'fulfilled' && Array.isArray(invigilatorsRes.value.data)
-          ? invigilatorsRes.value.data.map(mapInvigilatorToDirectoryRecord)
+        invigilatorsRes.status === 'fulfilled' && Array.isArray(invigilatorsRes.value)
+          ? invigilatorsRes.value.map(mapInvigilatorToDirectoryRecord)
           : [];
 
       if (teachersRes.status === 'rejected') {

@@ -12,6 +12,7 @@ import {
   isTemporarilyUnavailableDataError,
   logIfUnexpectedRequestError,
 } from '../services/api';
+import { useRefDataStore } from '@store/referenceData';
 import type { Student, Teacher } from '../types';
 
 const getRequestErrorMessage = (error: any, fallback: string) =>
@@ -94,10 +95,10 @@ const Reports: React.FC = () => {
     if (availability.teachers) {
       throw new Error('Teachers report data is temporarily unavailable.');
     }
-    const response = await apiService.listTeachers();
-    console.log('[Reports][Teachers]', 'API_ROWS', response.data?.length, response.data);
-    setTeachers(response.data);
-    return response.data;
+    const data = await useRefDataStore.getState().getTeachers(1);
+    console.log('[Reports][Teachers]', 'API_ROWS', data?.length, data);
+    setTeachers(data);
+    return data;
   };
 
   const ensureStudentsLoaded = async () => {
@@ -105,10 +106,10 @@ const Reports: React.FC = () => {
     if (availability.students) {
       throw new Error('Students report data is temporarily unavailable.');
     }
-    const response = await apiService.listStudents();
-    console.log('[Reports][Students]', 'API_ROWS', response.data?.length, response.data);
-    setStudents(response.data);
-    return response.data;
+    const data = await useRefDataStore.getState().getStudents(1);
+    console.log('[Reports][Students]', 'API_ROWS', data?.length, data);
+    setStudents(data);
+    return data;
   };
 
   const downloadBlob = (blob: Blob, filename: string) => {

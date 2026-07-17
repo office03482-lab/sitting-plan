@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, Pencil, Plus, RefreshCw, Search, Shield, Users, X } from 'lucide-react';
 
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useAuthStore } from '@store/auth';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 import type {
   AccountHistoryItem,
   ActiveSessionRecord,
@@ -54,6 +56,13 @@ const toTitle = (value?: string | null) =>
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ') || 'User';
+
+const adminRoleLabel = (role?: string | null) => {
+  const r = String(role || '').toLowerCase();
+  if (r === 'platform_admin') return 'Platform Administrator';
+  if (r === 'school_admin') return 'School Administrator';
+  return toTitle(role);
+};
 
 const permissionLabel = (key: string) =>
   key
@@ -709,6 +718,10 @@ export default function PortalAccessManager() {
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [historySearch, setHistorySearch] = useState('');
 
+  const currentUser = useAuthStore((state) => state.user);
+  const { activeSchoolId, activeSchoolName } = usePlatformAdminSchoolStore();
+  const isPlatformWorkspace = Boolean(currentUser?.role_key === 'platform_admin' && !activeSchoolId);
+
   const templateMap = useMemo(
     () => new Map(permissionTemplates.map((template) => [template.key, template])),
     [permissionTemplates],
@@ -837,10 +850,12 @@ export default function PortalAccessManager() {
     });
   }, [staffOverview?.records, staffSearch]);
 
-  const adminUsers = useMemo(
-    () => roleUsers.filter((user) => ['school_admin', 'platform_admin', 'store_manager', 'viewer'].includes(String(user.role || '').toLowerCase())),
-    [roleUsers],
-  );
+  const adminUsers = useMemo(() => {
+    if (isPlatformWorkspace) {
+      return roleUsers.filter((user) => String(user.role || '').toLowerCase() === 'platform_admin');
+    }
+    return roleUsers.filter((user) => String(user.role || '').toLowerCase() === 'school_admin');
+  }, [roleUsers, isPlatformWorkspace]);
 
   const summary = useMemo(() => {
     const studentTotal = studentOverview?.summary.total_records || 0;
@@ -1499,7 +1514,10 @@ export default function PortalAccessManager() {
                 Create Administrator
               </button>
             </SectionCard>
-            <SectionCard title="Existing Administrators" subtitle="Current administrator accounts in this school.">
+            <SectionCard
+              title={isPlatformWorkspace ? 'Platform Administrators' : 'School Administrators'}
+              subtitle={isPlatformWorkspace ? 'Current platform administrator accounts.' : `Current administrators for ${activeSchoolName || 'this school'}.`}
+            >
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead className="bg-slate-50">
@@ -1513,7 +1531,7 @@ export default function PortalAccessManager() {
                     {adminUsers.map((user) => (
                       <tr key={String(user.id)}>
                         <td className="px-4 py-3 font-semibold text-slate-900">{user.full_name}</td>
-                        <td className="px-4 py-3 text-slate-700">{toTitle(user.role)}</td>
+                        <td className="px-4 py-3 text-slate-700">{adminRoleLabel(user.role)}</td>
                         <td className="px-4 py-3 text-slate-700">{user.username}</td>
                       </tr>
                     ))}

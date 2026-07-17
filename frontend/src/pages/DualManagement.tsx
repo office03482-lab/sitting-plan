@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Search, Plus, Edit, Trash2, Mail, Phone } from 'lucide-react';
 import { apiService } from '../services/api';
+import { useRefDataStore } from '@store/referenceData';
 import { Teacher } from '../types';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -28,8 +29,8 @@ const DualManagement: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const response = await apiService.listTeachers();
-      setTeachers(response.data);
+      const data = await useRefDataStore.getState().getTeachers(1);
+      setTeachers(data);
     } catch (error) {
       console.error('Error loading teachers:', error);
       setAlert({ type: 'error', message: 'Failed to load teachers' });

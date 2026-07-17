@@ -19,6 +19,7 @@ import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import type {
   Batch,
   InventoryCatalogSubject,
@@ -507,8 +508,8 @@ export default function InventoryManagement() {
         addRequest('sets', apiService.listInventorySets({ school_id: currentSchoolId }));
         addRequest('volumes', apiService.listInventoryVolumes({ school_id: currentSchoolId }));
         addRequest('catalog', apiService.getInventoryCatalog({ school_id: currentSchoolId, include_inactive: true }));
-        addRequest('batches', apiService.listBatches(currentSchoolId));
-        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
+        addRequest('batches', useRefDataStore.getState().getBatches(currentSchoolId).then((d) => ({ data: d })));
+        addRequest('students', useRefDataStore.getState().getStudents(currentSchoolId).then((d) => ({ data: d })));
       }
 
       if (targetTab === 'suppliers') {
@@ -526,15 +527,15 @@ export default function InventoryManagement() {
         addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
         addRequest('stockOut', apiService.listStockOut({ school_id: currentSchoolId }));
         addRequest('studentIssues', apiService.listStudentIssues({ school_id: currentSchoolId }));
-        addRequest('batches', apiService.listBatches(currentSchoolId));
-        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
+        addRequest('batches', useRefDataStore.getState().getBatches(currentSchoolId).then((d) => ({ data: d })));
+        addRequest('students', useRefDataStore.getState().getStudents(currentSchoolId).then((d) => ({ data: d })));
       }
 
       if (targetTab === 'reports') {
         addRequest('materials', apiService.listMaterials({ school_id: currentSchoolId }));
         addRequest('suppliers', apiService.listSuppliers({ school_id: currentSchoolId }));
-        addRequest('batches', apiService.listBatches(currentSchoolId));
-        addRequest('students', apiService.listStudents(currentSchoolId, 0, 10000));
+        addRequest('batches', useRefDataStore.getState().getBatches(currentSchoolId).then((d) => ({ data: d })));
+        addRequest('students', useRefDataStore.getState().getStudents(currentSchoolId).then((d) => ({ data: d })));
       }
 
       const results = await Promise.allSettled(requests.map((entry) => entry.request));

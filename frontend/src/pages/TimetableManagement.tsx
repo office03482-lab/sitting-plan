@@ -9,6 +9,7 @@ import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
+import { useRefDataStore } from '@store/referenceData';
 import type {
   Batch,
   DayOfWeek,
@@ -265,10 +266,11 @@ const TimetableManagement: React.FC = () => {
     if (!canRunRequests) {
       return;
     }
+    const { getTeachers, getRooms, getBatches } = useRefDataStore.getState();
     if (isTeacherSelfView) {
       try {
-        const teachersResponse = await apiService.listTeachers(currentSchoolId);
-        setTeachers(ensureArray<Teacher>(teachersResponse.data));
+        const teachers = await getTeachers(currentSchoolId);
+        setTeachers(teachers);
         setReferenceUnavailable({ teachers: false, rooms: false, batches: false, students: false });
       } catch (error) {
         setTeachers([]);
@@ -280,35 +282,35 @@ const TimetableManagement: React.FC = () => {
       return;
     }
 
-    const [teachersResponse, roomsResponse, batchResponse, classResponse] = await Promise.allSettled([
-      apiService.listTeachers(currentSchoolId),
-      apiService.listRooms(currentSchoolId),
-      apiService.listBatches(currentSchoolId, undefined, 'batch'),
-      apiService.listBatches(currentSchoolId, undefined, 'class'),
+    const [teachersResult, roomsResult, batchResult, classResult] = await Promise.allSettled([
+      getTeachers(currentSchoolId),
+      getRooms(currentSchoolId),
+      getBatches(currentSchoolId, 'batch'),
+      getBatches(currentSchoolId, 'class'),
     ]);
 
-    setTeachers(teachersResponse.status === 'fulfilled' ? ensureArray<Teacher>(teachersResponse.value.data) : []);
-    setRooms(roomsResponse.status === 'fulfilled' ? ensureArray<Room>(roomsResponse.value.data) : []);
+    setTeachers(teachersResult.status === 'fulfilled' ? teachersResult.value : []);
+    setRooms(roomsResult.status === 'fulfilled' ? roomsResult.value : []);
     setStudents([]);
     const nextUnavailable = {
       teachers: false,
       rooms: false,
       batches:
-        (batchResponse.status === 'rejected' && isTemporarilyUnavailableDataError(batchResponse.reason))
-        || (classResponse.status === 'rejected' && isTemporarilyUnavailableDataError(classResponse.reason)),
+        (batchResult.status === 'rejected' && isTemporarilyUnavailableDataError(batchResult.reason))
+        || (classResult.status === 'rejected' && isTemporarilyUnavailableDataError(classResult.reason)),
       students: false,
     };
     const managedOptions = [
-      ...ensureArray<Batch>(batchResponse.status === 'fulfilled' ? batchResponse.value.data : []),
-      ...ensureArray<Batch>(classResponse.status === 'fulfilled' ? classResponse.value.data : []),
+      ...ensureArray<Batch>(batchResult.status === 'fulfilled' ? batchResult.value : []),
+      ...ensureArray<Batch>(classResult.status === 'fulfilled' ? classResult.value : []),
     ]
       .map((item: Batch) => String(item.name || '').trim())
       .filter(Boolean);
     setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
     setReferenceUnavailable(nextUnavailable);
-    apiService.listStudents(currentSchoolId)
-      .then((response) => {
-        setStudents(ensureArray<Student>(response.data));
+    useRefDataStore.getState().getStudents(currentSchoolId)
+      .then((students) => {
+        setStudents(students);
         setReferenceUnavailable((current) => ({ ...current, students: false }));
       })
       .catch(() => {

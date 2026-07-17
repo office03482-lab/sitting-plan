@@ -1,16 +1,20 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScopeBanner';
+import type { LucideIcon } from 'lucide-react';
 import {
-  Activity,
+  BarChart3,
   BookOpen,
   Building,
-  Bus,
+  Building2,
+  CalendarClock,
   CalendarDays,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Contact,
+  DoorOpen,
   FileBarChart2,
+  FileQuestion,
   GraduationCap,
   Home,
   Landmark,
@@ -21,13 +25,20 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  TrendingUp,
+  UserCheck,
+  UserCog,
   Users,
   Video,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '@store/auth';
+import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
+import PlatformAdminSchoolSelector from '@components/PlatformAdminSchoolSelector';
+import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScopeBanner';
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { UserRole } from '@types';
@@ -47,13 +58,78 @@ type MenuChild = {
 type MenuSection = {
   key: string;
   name: string;
-  icon: typeof LayoutDashboard;
-  iconBackground: string;
+  icon: LucideIcon;
   permission?: string;
   roles?: UserRole[];
   path?: string;
   children?: MenuChild[];
 };
+
+/* ── premium design tokens ─────────────────────────────────────────────── */
+const SIDEBAR_BG = 'linear-gradient(180deg, #1D4ED8 0%, #2563EB 50%, #0F3D91 100%)';
+const SIDEBAR_FONT = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+const IconChip = ({ icon: Icon, color }: { icon: LucideIcon; color: string }) => (
+  <span
+    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl shadow-sm ring-1 ring-white/20"
+    style={{ background: color }}
+  >
+    <Icon className="h-[18px] w-[18px] text-white" />
+  </span>
+);
+
+const itemBase = (active: boolean) =>
+  `group relative flex w-full items-center gap-3 rounded-2xl pl-2 pr-3 text-left transition-all duration-200 h-[48px] ${
+    active
+      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/40 ring-1 ring-white/25'
+      : 'bg-white/5 text-blue-100 hover:bg-white/10 hover:text-white hover:shadow-lg hover:-translate-y-px'
+  }`;
+
+const childBase = (active: boolean) =>
+  `group relative flex w-full items-center gap-3 rounded-xl pl-3 pr-3 text-left text-[13px] transition-all duration-200 h-[40px] ${
+    active
+      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30 font-semibold'
+      : 'text-blue-200 hover:bg-white/10 hover:text-white'
+  }`;
+
+const labelCls = (active: boolean) =>
+  `min-w-0 flex-1 truncate text-[14px] ${active ? 'font-bold text-white' : 'font-semibold text-blue-100'}`;
+
+const LeftAccent = () => <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-full bg-white" />;
+
+/* Per-category accent colours (rounded icon containers + category headers) */
+
+
+const SECTION_COLOR: Record<string, string> = {
+  dashboard: '#3b82f6',
+  academic: '#10b981',
+  attendance: '#f59e0b',
+  timetable: '#06b6d4',
+  lms: '#8b5cf6',
+  'online-tests': '#ec4899',
+  'live-classes': '#14b8a6',
+  'exam-planner': '#f97316',
+  staff: '#6366f1',
+  hostels: '#0ea5e9',
+  inventory: '#84cc16',
+  'admin-office': '#eab308',
+  rooms: '#a855f7',
+  invigilators: '#ef4444',
+  fees: '#f43f5e',
+  'school-self-service': '#22d3ee',
+  'parent-portal': '#d946ef',
+  'student-portal': '#fb7185',
+  'ai-assistants': '#7c3aed',
+  predictions: '#c026d3',
+  'enterprise-bi': '#0891b2',
+  reports: '#0d9488',
+  settings: '#64748b',
+  security: '#475569',
+};
+
+
+
+
 
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
@@ -61,8 +137,9 @@ export default function Layout({ children }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [openSections, setOpenSections] = useState<string[]>(['dashboard']);
+  const [openSections, setOpenSections] = useState<string[]>([]);
   const [hoveredCollapsedKey, setHoveredCollapsedKey] = useState<string | null>(null);
+  const [totalSchools, setTotalSchools] = useState<number | null>(null);
   const [schoolBranding, setSchoolBranding] = useState<{
     logo_url?: string | null;
     favicon_url?: string | null;
@@ -74,6 +151,7 @@ export default function Layout({ children }: LayoutProps) {
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const { signOut } = useAuth();
+  const { activeSchoolId, activeSchoolName, clearActiveSchool } = usePlatformAdminSchoolStore();
   const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = user?.role_key === 'platform_admin';
   const roleKey = String(user?.role_key || '').toLowerCase();
@@ -81,34 +159,24 @@ export default function Layout({ children }: LayoutProps) {
   const isTeacherAiUser = roleKey === 'teacher' || user?.role === 'teacher';
   const isSchoolAiUser = isAdmin || roleKey === 'school_admin' || roleKey === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
-  const brandPrimary = schoolBranding?.primary_color || '#1e3a8a';
-  const brandSecondary = schoolBranding?.secondary_color || '#2563eb';
+
   const brandAccent = schoolBranding?.accent_color || '#22d3ee';
-  const sidebarGradient = `linear-gradient(180deg, ${brandPrimary} 0%, ${brandSecondary} 48%, ${brandAccent} 100%)`;
   const shellBackground = `linear-gradient(180deg, color-mix(in srgb, ${brandAccent} 12%, white) 0%, #eef3fa 40%, white 100%)`;
 
-  useEffect(() => {
-    if (!user?.school_id || isPlatformAdmin) {
-      setSchoolBranding(null);
-      return;
-    }
-    let active = true;
-    (async () => {
-      try {
-        const response = await apiService.getPublicSchoolBranding({ school: user.school_id });
-        if (active) {
-          setSchoolBranding(response.data);
-        }
-      } catch {
-        if (active) {
-          setSchoolBranding(null);
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [user?.school_id, isPlatformAdmin]);
+  const PLATFORM_ITEMS: Record<string, { name: string; path: string }> = {
+    'platform-dashboard': { name: 'Platform Dashboard', path: '/platform/dashboard' },
+    'platform-schools': { name: 'Schools', path: '/platform/schools' },
+    'platform-analytics': { name: 'Platform Analytics', path: '/platform/analytics' },
+    'platform-health': { name: 'Platform Health', path: '/platform/health' },
+    'platform-subscriptions': { name: 'Subscriptions', path: '/platform/subscriptions' },
+    'platform-usage': { name: 'Usage', path: '/platform/usage' },
+    'platform-search': { name: 'Global Search', path: '/platform/search' },
+    'platform-support': { name: 'Support Center', path: '/platform/support' },
+    'platform-notifications': { name: 'Notifications', path: '/platform/notifications' },
+    'platform-onboarding': { name: 'Onboarding', path: '/platform/onboarding' },
+    'platform-workflow': { name: 'Workflow Queue', path: '/platform/workflow' },
+    'platform-audit': { name: 'Audit Logs', path: '/platform/audit-logs' },
+  };
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -123,6 +191,30 @@ export default function Layout({ children }: LayoutProps) {
     favicon.href = schoolBranding?.logo_url || schoolBranding?.favicon_url || faviconHref;
   }, [schoolBranding]);
 
+  // Platform Workspace metric: total number of schools managed by the platform.
+  // Only fetched for platform admins so the default "Managing All Schools" panel
+  // can surface a live count. No school context is entered by this call.
+  useEffect(() => {
+    if (!isPlatformAdmin) {
+      setTotalSchools(null);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const response = await apiService.listPlatformSchools();
+        if (active) {
+          setTotalSchools(response.data.total_count ?? response.data.items?.length ?? 0);
+        }
+      } catch {
+        if (active) setTotalSchools(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isPlatformAdmin]);
+
   const canAccess = (permission?: string, roles?: UserRole[]) => {
     const roleAllowed = !roles?.length || Boolean(user?.role && roles.includes(user.role));
     const permissionAllowed = !permission || isAdmin || hasPermission(permission);
@@ -132,77 +224,26 @@ export default function Layout({ children }: LayoutProps) {
   const rawSections: MenuSection[] = [
     {
       key: 'dashboard',
-      name: 'Overview',
+      name: 'Dashboard',
       icon: LayoutDashboard,
-      iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #60a5fa 100%)',
       path: DEFAULT_HOME_ROUTE,
     },
     {
-      key: 'parent-portal',
-      name: 'Parent Portal',
-      icon: LayoutDashboard,
-      iconBackground: 'linear-gradient(180deg, #e0e7ff 0%, #6366f1 100%)',
-      permission: 'edupay.parent_portal',
-      roles: ['parent', 'admin'],
+      key: 'academic',
+      name: 'Student Management',
+      icon: Users,
+      permission: 'admin_office.students',
       children: [
-        { name: 'Dashboard', path: '/parent/dashboard', permission: 'parent_intelligence.view' },
-        { name: 'Attendance', path: '/parent/attendance', permission: 'parent_intelligence.view' },
-        { name: 'Progress', path: '/parent/progress', permission: 'parent_intelligence.view' },
-        { name: 'Assignments', path: '/parent/assignments', permission: 'parent_intelligence.view' },
-        { name: 'Tests', path: '/parent/tests', permission: 'parent_intelligence.view' },
-        { name: 'Fees', path: '/edupay', permission: 'edupay.parent_portal' },
-        { name: 'Parent AI Assistant', path: '/parent/ai', permission: 'parent_intelligence.view' },
-      ],
-    },
-    {
-      key: 'platform-admin',
-      name: 'Platform Administration',
-      icon: ShieldCheck,
-      iconBackground: 'linear-gradient(180deg, #bae6fd 0%, #0f766e 100%)',
-      children: [
-        { name: 'Platform Dashboard', path: '/platform/dashboard' },
-        { name: 'Schools', path: '/platform/schools' },
-        { name: 'Subscriptions', path: '/platform/subscriptions' },
-        { name: 'Usage', path: '/platform/usage' },
-        { name: 'Health', path: '/platform/health' },
-        { name: 'Global Search', path: '/platform/search' },
-        { name: 'Analytics', path: '/platform/analytics' },
-        { name: 'Support Center', path: '/platform/support' },
-        { name: 'Notifications', path: '/platform/notifications' },
-        { name: 'Onboarding Wizard', path: '/platform/onboarding' },
-        { name: 'Workflow Queue', path: '/platform/workflow' },
-        { name: 'Audit Logs', path: '/platform/audit-logs' },
-        { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
-      ],
-    },
-    {
-      key: 'enterprise-bi',
-      name: 'Enterprise BI',
-      icon: Activity,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #0f766e 100%)',
-      children: [
-        { name: 'BI Dashboard', path: '/bi', permission: 'bi.academic' },
-      ],
-    },
-    {
-      key: 'admin-office',
-      name: 'Exam Planner',
-      icon: Building,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #3b82f6 100%)',
-      permission: 'admin_office',
-      children: [
-        { name: 'Admin Office Dashboard', path: '/admin-office', permission: 'admin_office' },
-        { name: 'Room Configuration', path: '/rooms', permission: 'admin_office.rooms' },
-        { name: 'Seating Generation', path: '/seating/generate', permission: 'admin_office.seating_generation' },
-        { name: 'Seating Plans', path: '/seating/plans', permission: 'admin_office.seating_plans' },
-        { name: 'Staff Assignment', path: '/invigilators', permission: 'admin_office.invigilators' },
+        { name: 'Add Student', path: '/students#add', permission: 'admin_office.students' },
+        { name: 'Student Directory', path: '/students/directory', permission: 'admin_office.students' },
+        { name: 'Bulk Upload', path: '/students#bulk-upload', permission: 'admin_office.students' },
+        { name: 'Batch Management', path: '/batches', permission: 'admin_office.batches' },
       ],
     },
     {
       key: 'attendance',
       name: 'Attendance',
       icon: ClipboardCheck,
-      iconBackground: 'linear-gradient(180deg, #a5f3fc 0%, #06b6d4 100%)',
       permission: 'attendance',
       children: [
         { name: 'Overview', path: '/attendance-management#overview', permission: 'attendance.overview' },
@@ -213,55 +254,16 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      key: 'staff',
-      name: 'Staff Management',
-      icon: Users,
-      iconBackground: 'linear-gradient(180deg, #c4b5fd 0%, #6366f1 100%)',
-      permission: 'admin_office',
-      children: [
-        { name: 'Add Staff', path: '/staff/add', permission: 'admin_office' },
-        { name: 'Staff Directory', path: '/staff/directory', permission: 'admin_office' },
-        { name: 'Bulk Upload', path: '/staff/bulk-upload', permission: 'admin_office' },
-      ],
-    },
-    {
-      key: 'academic',
-      name: 'Student Management',
-      icon: BookOpen,
-      iconBackground: 'linear-gradient(180deg, #7dd3fc 0%, #0ea5e9 100%)',
-      permission: 'admin_office.students',
-      children: [
-        { name: 'Add Student', path: '/students#add', permission: 'admin_office.students' },
-        { name: 'Student Directory', path: '/students/directory', permission: 'admin_office.students' },
-        { name: 'Bulk Upload', path: '/students#bulk-upload', permission: 'admin_office.students' },
-        { name: 'Batch Management', path: '/batches', permission: 'admin_office.batches' },
-      ],
-    },
-    {
-      key: 'hostels',
-      name: 'Hostel Management',
-      icon: Home,
-      iconBackground: 'linear-gradient(180deg, #fde68a 0%, #f59e0b 100%)',
-      permission: 'admin_office.hostels',
-      children: [
-        { name: 'Hostel Dashboard', path: '/hostels', permission: 'admin_office.hostels' },
-      ],
-    },
-    {
       key: 'timetable',
       name: 'Time Table',
       icon: CalendarDays,
-      iconBackground: 'linear-gradient(180deg, #93c5fd 0%, #2563eb 100%)',
       permission: 'timetable',
-      children: [
-        { name: 'Timetable Management', path: '/timetable', permission: 'timetable' },
-      ],
+      children: [{ name: 'Timetable Management', path: '/timetable', permission: 'timetable' }],
     },
     {
       key: 'lms',
       name: 'Learning Hub',
-      icon: GraduationCap,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #0f172a 100%)',
+      icon: BookOpen,
       roles: ['admin', 'teacher', 'student', 'viewer'],
       children: [
         { name: 'Courses', path: '/courses', permission: 'lms.view' },
@@ -272,8 +274,7 @@ export default function Layout({ children }: LayoutProps) {
     {
       key: 'online-tests',
       name: 'Online Tests',
-      icon: ClipboardCheck,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #1d4ed8 100%)',
+      icon: FileQuestion,
       roles: ['admin', 'teacher', 'student'],
       children: [
         { name: 'Overview', path: '/online-tests', roles: ['admin', 'teacher', 'student'] },
@@ -281,36 +282,43 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      key: 'ai-assistants',
-      name: 'AI Assistants',
-      icon: Sparkles,
-      iconBackground: 'linear-gradient(180deg, #e0f2fe 0%, #0284c7 100%)',
-      children: [
-        ...(isStudentAiUser
-          ? [{ name: 'AI Study Assistant', path: '/ai-study-assistant', permission: 'study_planner.view' }]
-          : []),
-        ...(isTeacherAiUser
-          ? [{ name: 'Teacher AI Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate' }]
-          : []),
-        ...(isSchoolAiUser
-          ? [{ name: 'School AI Assistant', path: '/school-ai-assistant', permission: 'ai_agents.view' }]
-          : []),
-      ],
-    },
-    {
       key: 'live-classes',
       name: 'Live Classes',
       icon: Video,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #2563eb 100%)',
+      children: [{ name: 'Session Hub', path: '/live-classes', permission: 'live_classes.view' }],
+    },
+    {
+      key: 'exam-planner',
+      name: 'Exam Planner',
+      icon: CalendarClock,
+      permission: 'admin_office',
       children: [
-        { name: 'Session Hub', path: '/live-classes', permission: 'live_classes.view' },
+        { name: 'Seating Generation', path: '/seating/generate', permission: 'admin_office.seating_generation' },
+        { name: 'Seating Plans', path: '/seating/plans', permission: 'admin_office.seating_plans' },
       ],
+    },
+    {
+      key: 'staff',
+      name: 'Staff Management',
+      icon: UserCog,
+      permission: 'admin_office',
+      children: [
+        { name: 'Add Staff', path: '/staff/add', permission: 'admin_office' },
+        { name: 'Staff Directory', path: '/staff/directory', permission: 'admin_office' },
+        { name: 'Bulk Upload', path: '/staff/bulk-upload', permission: 'admin_office' },
+      ],
+    },
+    {
+      key: 'hostels',
+      name: 'Hostel Management',
+      icon: Home,
+      permission: 'admin_office.hostels',
+      children: [{ name: 'Hostel Dashboard', path: '/hostels', permission: 'admin_office.hostels' }],
     },
     {
       key: 'inventory',
       name: 'Inventory Control',
       icon: Package,
-      iconBackground: 'linear-gradient(180deg, #67e8f9 0%, #0284c7 100%)',
       permission: 'inventory',
       children: [
         { name: 'Inventory Dashboard', path: '/inventory#dashboard', permission: 'inventory' },
@@ -322,45 +330,40 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
+      key: 'admin-office',
+      name: 'Admin Office',
+      icon: Building,
+      permission: 'admin_office',
+      children: [{ name: 'Admin Office Dashboard', path: '/admin-office', permission: 'admin_office' }],
+    },
+    {
+      key: 'rooms',
+      name: 'Room Management',
+      icon: DoorOpen,
+      permission: 'admin_office.rooms',
+      children: [{ name: 'Room Configuration', path: '/rooms', permission: 'admin_office.rooms' }],
+    },
+    {
+      key: 'invigilators',
+      name: 'Invigilator Management',
+      icon: UserCheck,
+      permission: 'admin_office.invigilators',
+      children: [{ name: 'Staff Assignment', path: '/invigilators', permission: 'admin_office.invigilators' }],
+    },
+    {
       key: 'fees',
       name: 'Fee Management',
       icon: Landmark,
-      iconBackground: 'linear-gradient(180deg, #818cf8 0%, #4f46e5 100%)',
       permission: 'edupay',
       children: [
-        { name: 'BRAIN OF HIMACHAL Dashboard', path: '/edupay', permission: 'edupay' },
-        { name: 'Revenue & Commerce', path: '/commerce', permission: 'edupay.revenue' },
+        { name: 'Fee Management', path: '/edupay', permission: 'edupay' },
+        { name: 'EduPay', path: '/commerce', permission: 'edupay.revenue' },
       ],
-    },
-    {
-      key: 'reports',
-      name: 'Download Statistics',
-      icon: FileBarChart2,
-      iconBackground: 'linear-gradient(180deg, #dbeafe 0%, #38bdf8 100%)',
-      permission: 'admin_office.reports',
-      children: [
-        { name: 'Reports & Export', path: '/reports', permission: 'admin_office.reports' },
-      ],
-    },
-    {
-      key: 'transport',
-      name: 'Transport Management',
-      icon: Bus,
-      iconBackground: 'linear-gradient(180deg, #bae6fd 0%, #0284c7 100%)',
-      children: [],
-    },
-    {
-      key: 'digital-diary',
-      name: 'Digital Diary',
-      icon: GraduationCap,
-      iconBackground: 'linear-gradient(180deg, #a5b4fc 0%, #3b82f6 100%)',
-      children: [],
     },
     {
       key: 'school-self-service',
       name: 'School Self-Service',
-      icon: Settings,
-      iconBackground: 'linear-gradient(180deg, #86efac 0%, #0f766e 100%)',
+      icon: SlidersHorizontal,
       permission: 'settings',
       roles: ['admin', 'school_admin', 'platform_admin'],
       children: [
@@ -374,20 +377,74 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
+      key: 'parent-portal',
+      name: 'Parent Portal',
+      icon: Contact,
+      permission: 'edupay.parent_portal',
+      roles: ['parent', 'admin'],
+      children: [
+        { name: 'Dashboard', path: '/parent/dashboard', permission: 'parent_intelligence.view' },
+        { name: 'Attendance', path: '/parent/attendance', permission: 'parent_intelligence.view' },
+        { name: 'Progress', path: '/parent/progress', permission: 'parent_intelligence.view' },
+        { name: 'Assignments', path: '/parent/assignments', permission: 'parent_intelligence.view' },
+        { name: 'Tests', path: '/parent/tests', permission: 'parent_intelligence.view' },
+        { name: 'Fees', path: '/edupay', permission: 'edupay.parent_portal' },
+        { name: 'Parent AI Assistant', path: '/parent/ai', permission: 'parent_intelligence.view' },
+      ],
+    },
+    {
+      key: 'student-portal',
+      name: 'Student Portal',
+      icon: GraduationCap,
+      roles: ['student'],
+      children: [{ name: 'Dashboard', path: '/student/dashboard' }],
+    },
+    {
+      key: 'ai-assistants',
+      name: 'AI Assistants',
+      icon: Sparkles,
+      children: [
+        ...(isStudentAiUser
+          ? [{ name: 'AI Study Assistant', path: '/ai-study-assistant', permission: 'study_planner.view' }]
+          : []),
+        ...(isTeacherAiUser
+          ? [{ name: 'Teacher AI Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate' }]
+          : []),
+        ...(isSchoolAiUser
+          ? [{ name: 'School AI Assistant', path: '/school-ai-assistant', permission: 'ai_agents.view' }]
+          : []),
+      ],
+    },
+    {
+      key: 'predictions',
+      name: 'Predictions',
+      icon: TrendingUp,
+      children: [{ name: 'Predictions', path: '/predictions', permission: 'ai_agents.view' }],
+    },
+    {
+      key: 'enterprise-bi',
+      name: 'Enterprise BI',
+      icon: BarChart3,
+      children: [{ name: 'BI Dashboard', path: '/bi', permission: 'bi.academic' }],
+    },
+    {
+      key: 'reports',
+      name: 'Download Statistics',
+      icon: FileBarChart2,
+      permission: 'admin_office.reports',
+      children: [{ name: 'Reports', path: '/reports', permission: 'admin_office.reports' }],
+    },
+    {
       key: 'settings',
       name: 'Settings',
       icon: Settings,
-      iconBackground: 'linear-gradient(180deg, #e0f2fe 0%, #0ea5e9 100%)',
       permission: 'settings',
-      children: [
-        { name: 'System Settings', path: '/settings', permission: 'settings' },
-      ],
+      children: [{ name: 'System Settings', path: '/settings', permission: 'settings' }],
     },
     {
       key: 'security',
       name: 'Role & Security',
       icon: ShieldCheck,
-      iconBackground: 'linear-gradient(180deg, #bfdbfe 0%, #2563eb 100%)',
       permission: 'admin_office.access_control',
       children: [
         { name: 'Access Control', path: '/admin/access-control', permission: 'admin_office.access_control' },
@@ -398,39 +455,35 @@ export default function Layout({ children }: LayoutProps) {
   ];
 
   const sections = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
 
     return rawSections
       .map((section) => {
-        if (section.key === 'platform-admin' && !isPlatformAdmin) return null;
-        const filteredChildren = (section.children || []).filter((child) => canAccess(child.permission, child.roles));
-        const sectionVisible =
-          section.path
-            ? canAccess(section.permission, section.roles)
-            : canAccess(section.permission, section.roles) && filteredChildren.length > 0;
+        const isSecurityForPlatform = section.key === 'security' && isPlatformAdmin;
+        const children =
+          isSecurityForPlatform
+            ? section.children || []
+            : (section.children || []).filter((child) => canAccess(child.permission, child.roles));
+
+        const sectionVisible = section.path
+          ? canAccess(section.permission, section.roles)
+          : isSecurityForPlatform
+            ? children.length > 0
+            : canAccess(section.permission, section.roles) && children.length > 0;
 
         if (!sectionVisible) return null;
 
         const matchesQuery =
-          !normalizedQuery ||
-          section.name.toLowerCase().includes(normalizedQuery) ||
-          filteredChildren.some((child) => child.name.toLowerCase().includes(normalizedQuery));
+          !q ||
+          section.name.toLowerCase().includes(q) ||
+          children.some((child) => child.name.toLowerCase().includes(q));
 
         if (!matchesQuery) return null;
 
-        return {
-          ...section,
-          children: !normalizedQuery
-            ? filteredChildren
-            : filteredChildren.filter(
-                (child) =>
-                  child.name.toLowerCase().includes(normalizedQuery) ||
-                  section.name.toLowerCase().includes(normalizedQuery),
-              ),
-        };
+        return { ...section, children };
       })
       .filter(Boolean) as MenuSection[];
-  }, [searchQuery, user, location.pathname]);
+  }, [searchQuery, user, location.pathname, isPlatformAdmin]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -441,6 +494,11 @@ export default function Layout({ children }: LayoutProps) {
         (child) => child.path === currentRoute || child.path === location.pathname,
       );
     });
+
+    if (currentRoute.startsWith('/platform')) {
+      setOpenSections(['__platform']);
+      return;
+    }
 
     if (activeSection) {
       setOpenSections([activeSection.key]);
@@ -459,253 +517,515 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   const toggleSection = (key: string) => {
-    setOpenSections((current) => (current.includes(key) ? [] : [key]));
+    setOpenSections((current) =>
+      current.includes(key) ? current.filter((k) => k !== key) : [...current, key],
+    );
   };
+
+  const isChildActive = (path?: string) =>
+    !!path && (currentRoute === path || location.pathname === path);
 
   const isSectionActive = (section: MenuSection) => {
-    if (section.path) return currentRoute === section.path || location.pathname === section.path;
-    return (section.children || []).some((child) => child.path === currentRoute || child.path === location.pathname);
+    if (section.path && isChildActive(section.path)) return true;
+    return (section.children || []).some((child) => isChildActive(child.path));
   };
 
-  const renderSectionButton = (section: MenuSection, compact = false) => {
+  const searching = searchQuery.trim().length > 0;
+
+  const renderNavItem = (section: MenuSection, compact: boolean) => {
     const Icon = section.icon;
+    const color = SECTION_COLOR[section.key] || '#3b82f6';
+    const childList = section.children ?? [];
+    const isAccordion = childList.length > 1;
+    const directPath = isAccordion ? undefined : section.path ?? childList[0]?.path;
     const active = isSectionActive(section);
-    const isOpen = openSections.includes(section.key);
-    const hasChildren = !!section.children?.length;
+    const isOpen = searching || openSections.includes(section.key);
+    const q = searchQuery.trim().toLowerCase();
+    const shownChildren = searching
+      ? childList.filter((child) => child.name.toLowerCase().includes(q))
+      : childList;
+
+    if (compact) {
+      return (
+        <div
+          key={section.key}
+          className="relative"
+          onMouseEnter={() => setHoveredCollapsedKey(section.key)}
+          onMouseLeave={() => setHoveredCollapsedKey((c) => (c === section.key ? null : c))}
+        >
+          <button
+            onClick={() => {
+              if (directPath && !isAccordion) {
+                handleNavigate(directPath);
+                return;
+              }
+              toggleSection(section.key);
+            }}
+            className={`flex w-full items-center justify-center rounded-2xl p-2 transition-all duration-200 ${
+              active ? 'bg-white/15 ring-1 ring-white/30' : 'hover:bg-white/10 hover:-translate-y-px hover:shadow-lg'
+            }`}
+            aria-expanded={isAccordion ? isOpen : undefined}
+          >
+            <IconChip icon={Icon} color={color} />
+          </button>
+          {hoveredCollapsedKey === section.key && (
+            <div className="absolute left-[calc(100%+10px)] top-0 z-40 w-60 overflow-hidden rounded-2xl border border-white/15 bg-[#1e3a8a]/95 shadow-2xl backdrop-blur-xl">
+              <div className="border-b border-white/10 px-3 py-2.5 text-[13px] font-bold text-white">
+                {section.name}
+              </div>
+              <div className="max-h-80 overflow-y-auto py-1.5">
+                {shownChildren.length > 0 ? (
+                  shownChildren.map((child) => {
+                    const cActive = isChildActive(child.path);
+                    return (
+                      <button
+                        key={child.path}
+                        onClick={() => handleNavigate(child.path)}
+                        className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors ${
+                          cActive
+                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 font-semibold text-white'
+                            : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        {child.name}
+                      </button>
+                    );
+                  })
+                ) : (
+                  directPath && (
+                    <button
+                      onClick={() => handleNavigate(directPath)}
+                      className="flex w-full items-center px-3 py-2 text-left text-[13px] text-blue-100 hover:bg-white/10 hover:text-white"
+                    >
+                      {section.name}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isAccordion) {
+      return (
+        <div key={section.key}>
+          <button
+            onClick={() => toggleSection(section.key)}
+            className={itemBase(active)}
+            aria-expanded={isOpen}
+          >
+            {active && <LeftAccent />}
+            <IconChip icon={Icon} color={color} />
+            <span className={labelCls(active)}>{section.name}</span>
+            {isOpen ? (
+              <ChevronDown className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-blue-200'}`} />
+            ) : (
+              <ChevronRight className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-blue-200'}`} />
+            )}
+          </button>
+          {isOpen && (
+            <div
+              className="overflow-hidden"
+              style={{
+                display: 'grid',
+                gridTemplateRows: isOpen ? '1fr' : '0fr',
+                transition: 'grid-template-rows 220ms ease-out',
+              }}
+            >
+              <div className="min-h-0">
+                <div className="ml-5 mt-1 space-y-1 border-l border-white/15 py-1 pl-[18px]">
+                  {shownChildren.map((child) => {
+                    const cActive = isChildActive(child.path);
+                    return (
+                      <button
+                        key={child.path}
+                        onClick={() => handleNavigate(child.path)}
+                        className={childBase(cActive)}
+                      >
+                        {cActive && <LeftAccent />}
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ background: color, opacity: cActive ? 1 : 0.6 }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{child.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
 
     return (
-      <div
+      <button
         key={section.key}
+        onClick={() => directPath && handleNavigate(directPath)}
+        className={itemBase(active)}
+      >
+        {active && <LeftAccent />}
+        <IconChip icon={Icon} color={color} />
+        <span className={labelCls(active)}>{section.name}</span>
+      </button>
+    );
+  };
+
+  const renderCollapsedPlatform = () => {
+    if (!isPlatformAdmin) return null;
+    const q = searchQuery.trim().toLowerCase();
+    const items = Object.values(PLATFORM_ITEMS).filter((item) => !q || item.name.toLowerCase().includes(q));
+    if (items.length === 0) return null;
+    return (
+      <div
         className="relative"
-        onMouseEnter={() => {
-          if (!sidebarExpanded && hasChildren) setHoveredCollapsedKey(section.key);
-        }}
-        onMouseLeave={() => {
-          if (!sidebarExpanded) setHoveredCollapsedKey((current) => (current === section.key ? null : current));
-        }}
+        onMouseEnter={() => setHoveredCollapsedKey('__platform')}
+        onMouseLeave={() => setHoveredCollapsedKey((c) => (c === '__platform' ? null : c))}
       >
         <button
-          onClick={() => {
-            if (section.path && !hasChildren) {
-              handleNavigate(section.path);
-              return;
-            }
-            if (section.path && hasChildren && section.key === 'dashboard') {
-              handleNavigate(section.path);
-              return;
-            }
-            toggleSection(section.key);
-          }}
-          className={`group flex w-full items-center gap-3 rounded-[1rem] px-3 py-3 text-left transition-all ${
-            active
-              ? 'text-white shadow-[inset_3px_0_0_0_#dbeafe]'
-              : 'text-white'
-          } ${compact ? 'justify-center px-2' : ''}`}
-          style={{
-            background: active
-              ? 'linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(96,165,250,0.3) 45%, rgba(99,102,241,0.28) 100%)'
-              : 'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(147,197,253,0.13) 50%, rgba(56,189,248,0.14) 100%)',
-            color: '#ffffff',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: active ? '1px solid rgba(219,234,254,0.55)' : '1px solid rgba(191,219,254,0.28)',
-            boxShadow: active
-              ? 'inset 0 1px 0 rgba(255,255,255,0.22), 0 12px 24px rgba(15,23,42,0.18)'
-              : 'inset 0 1px 0 rgba(255,255,255,0.18), 0 10px 18px rgba(15,23,42,0.12)',
-          }}
-          aria-expanded={hasChildren ? isOpen : undefined}
+          className={`flex w-full items-center justify-center rounded-2xl p-2 transition-all duration-200 ${
+            searching ? 'bg-white/15 ring-1 ring-white/30' : 'hover:bg-white/10 hover:-translate-y-px hover:shadow-lg'
+          }`}
         >
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-md shadow-blue-950/20"
-            style={{
-              background: section.iconBackground,
-              border: '1px solid rgba(255,255,255,0.28)',
-            }}
-          >
-            <Icon className="h-5 w-5" />
-          </div>
-
-          {!compact ? (
-            <>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-bold tracking-[0.01em]">{section.name}</p>
-              </div>
-              {hasChildren ? (
-                isOpen ? <ChevronDown className="h-4 w-4 text-white/60" /> : <ChevronRight className="h-4 w-4 text-white/60" />
-              ) : null}
-            </>
-          ) : null}
+          <IconChip icon={ShieldCheck} color="#3b82f6" />
         </button>
-
-        {!compact && hasChildren && isOpen ? (
-          <div
-            className="mt-2 overflow-hidden rounded-[1rem] shadow-lg shadow-slate-950/20"
-            style={{
-              background: 'linear-gradient(180deg, rgba(30,58,138,0.58) 0%, rgba(59,130,246,0.3) 52%, rgba(34,211,238,0.22) 100%)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(219,234,254,0.2)',
-            }}
-          >
-            <div className="py-2">
-              {section.children?.map((child) => {
-                const childActive = currentRoute === child.path || location.pathname === child.path;
+        {hoveredCollapsedKey === '__platform' && (
+          <div className="absolute left-[calc(100%+10px)] top-0 z-40 w-64 overflow-hidden rounded-2xl border border-white/15 bg-[#1e3a8a]/95 shadow-2xl backdrop-blur-xl">
+            <div className="border-b border-white/10 px-3 py-2.5 text-[13px] font-bold uppercase tracking-wide text-white">
+              Platform Management
+            </div>
+            <div className="max-h-80 overflow-y-auto py-1.5">
+              {items.map((item) => {
+                const a = isChildActive(item.path);
                 return (
                   <button
-                    key={child.path}
-                    onClick={() => handleNavigate(child.path)}
-                    className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition ${
-                      childActive ? 'bg-white/10 text-white' : 'text-white/90 hover:bg-white/7'
+                    key={item.path}
+                    onClick={() => handleNavigate(item.path)}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors ${
+                      a ? 'bg-gradient-to-r from-blue-500 to-blue-600 font-semibold text-white' : 'text-blue-100 hover:bg-white/10 hover:text-white'
                     }`}
                   >
-                    <span>{child.name}</span>
-                    <ArrowHint />
+                    {item.name}
                   </button>
                 );
               })}
             </div>
           </div>
-        ) : null}
-
-        {compact && hasChildren && hoveredCollapsedKey === section.key ? (
-          <div
-            className="absolute left-[calc(100%+12px)] top-0 z-40 w-72 overflow-hidden rounded-[1rem] border shadow-2xl shadow-slate-950/30"
-            style={{
-              background: 'linear-gradient(180deg, rgba(30,58,138,0.72) 0%, rgba(59,130,246,0.34) 50%, rgba(99,102,241,0.28) 100%)',
-              borderColor: 'rgba(191,219,254,0.45)',
-              backdropFilter: 'blur(18px)',
-              WebkitBackdropFilter: 'blur(18px)',
-            }}
-          >
-            <div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-white">{section.name}</div>
-            <div className="py-2">
-              {section.children?.map((child) => (
-                <button
-                  key={child.path}
-                  onClick={() => handleNavigate(child.path)}
-                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition ${
-                    currentRoute === child.path || location.pathname === child.path ? 'bg-white/10 text-white' : 'text-white/90 hover:bg-white/7'
-                  }`}
-                >
-                  <span>{child.name}</span>
-                  <ArrowHint />
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        )}
       </div>
     );
   };
 
-  const sidebarContent = (mobile = false) => (
-    <div
-      className="flex h-full flex-col text-white"
-      style={{
-        background: sidebarGradient,
-        color: '#ffffff',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-      }}
-    >
-      <div
-        className="border-b border-white/10 px-3 py-3"
-        style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(191,219,254,0.06) 100%)',
-        }}
-      >
-        <div className={`flex items-center ${sidebarExpanded || mobile ? 'justify-between gap-3' : 'justify-center'}`}>
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white px-1">
-              <img src={schoolBranding?.logo_url || bhavyaAxisLogo} alt="School logo" className="h-8 w-auto object-contain" />
-            </div>
-            {sidebarExpanded || mobile ? (
-              <div className="min-w-0">
-                <p className="truncate text-lg font-semibold text-white">{schoolBranding?.portal_name || 'Dr. Girish App'}</p>
-                <p className="truncate text-[11px] uppercase tracking-[0.22em] text-white/70">{user?.school_id ? 'School Workspace' : 'Platform Workspace'}</p>
-              </div>
-            ) : null}
-          </div>
+  const renderSchoolCard = (compact: boolean) => {
+    // Only platform admins have a workspace-context switcher. School admins,
+    // teachers, parents and students always operate in their own school and do
+    // not see this control.
+    if (!isPlatformAdmin) return null;
 
-          {mobile ? (
+    // ── Platform Workspace (default): Managing All Schools ──────────────────
+    if (!activeSchoolId) {
+      const platformCard = (
+        <div className="overflow-hidden rounded-2xl border border-white/15 bg-white/10 shadow-xl ring-1 ring-white/10 backdrop-blur-md">
+          <div className="h-1 w-full bg-gradient-to-r from-blue-400 to-blue-600" />
+          <div className="p-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-md ring-1 ring-white/20">
+                <Building2 className="h-[18px] w-[18px]" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-bold text-white">Platform Workspace</p>
+                <p className="truncate text-[12px] font-medium text-blue-100">Managing All Schools</p>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <span className="text-[12px] font-medium text-blue-100">Total Schools</span>
+              <span className="text-[15px] font-bold text-white">{totalSchools ?? '—'}</span>
+            </div>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => handleNavigate('/platform/schools')}
+                className="w-full rounded-xl border border-white/20 bg-white/15 px-2 py-1.5 text-[12px] font-semibold text-white transition hover:bg-white/25"
+              >
+                Open Schools
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+
+      if (compact) {
+        return (
+          <div
+            className="relative"
+            onMouseEnter={() => setHoveredCollapsedKey('__school')}
+            onMouseLeave={() => setHoveredCollapsedKey((c) => (c === '__school' ? null : c))}
+          >
             <button
-              onClick={() => setMobileMenuOpen(false)}
-              className="rounded-lg p-2 text-white hover:bg-white/10"
-              aria-label="Close menu"
+              onClick={() => handleNavigate('/platform/schools')}
+              className="flex w-full items-center justify-center rounded-2xl p-2 text-blue-100 transition-all duration-200 hover:bg-white/10 hover:-translate-y-px"
             >
-              <X className="h-5 w-5" />
+              <IconChip icon={Building2} color="#3b82f6" />
             </button>
-          ) : sidebarExpanded ? (
-            <ChevronDown className="h-4 w-4 text-orange-300" />
-          ) : null}
+            {hoveredCollapsedKey === '__school' && (
+              <div className="absolute left-[calc(100%+10px)] top-0 z-40 w-60 rounded-2xl border border-white/15 bg-[#1e3a8a]/95 p-2 shadow-2xl backdrop-blur-xl">
+                {platformCard}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      return <div className="mx-3">{platformCard}</div>;
+    }
+
+    // ── School Workspace: an individual school has been explicitly entered ───
+    const card = (
+      <div className="overflow-hidden rounded-2xl border border-white/15 bg-white/10 shadow-xl ring-1 ring-white/10 backdrop-blur-md">
+        <div className="h-1 w-full bg-gradient-to-r from-blue-400 to-blue-600" />
+        <div className="p-3">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/80">School Workspace</p>
+          <div className="mt-2 flex items-center gap-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 text-[14px] font-bold text-white shadow-md ring-1 ring-white/20">
+              {(activeSchoolName || 'S').charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[14px] font-bold text-white">{activeSchoolName || activeSchoolId}</p>
+              <p className="truncate text-[12px] font-medium text-blue-100">School ERP Mode · Active</p>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <PlatformAdminSchoolSelector
+              trigger={
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-white/20 bg-white/15 px-2 py-1.5 text-[12px] font-semibold text-white transition hover:bg-white/25"
+                >
+                  Change School
+                </button>
+              }
+            />
+            <button
+              type="button"
+              onClick={() => clearActiveSchool()}
+              className="flex-1 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5 text-[12px] font-semibold text-blue-100 transition hover:bg-white/10 hover:text-white"
+            >
+              Exit Workspace
+            </button>
+          </div>
         </div>
       </div>
+    );
 
-      <div
-        className="border-b border-white/10 px-3 py-4"
-        style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(147,197,253,0.08) 55%, rgba(34,211,238,0.06) 100%)',
-        }}
-      >
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" />
-          {(sidebarExpanded || mobile) ? (
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search menu"
-              className="h-12 w-full rounded-[0.95rem] border border-orange-300 bg-transparent pl-11 pr-3 text-sm text-white outline-none placeholder:text-white/55 focus:border-orange-400"
-            />
-          ) : (
-            <button
-              onClick={() => setSidebarExpanded(true)}
-              className="flex h-12 w-full items-center justify-center rounded-[0.95rem] border border-orange-300 bg-transparent text-white transition hover:bg-white/5"
-              aria-label="Expand and search menu"
-            >
-              <Search className="h-5 w-5" />
-            </button>
+    if (compact) {
+      return (
+        <div
+          className="relative"
+          onMouseEnter={() => setHoveredCollapsedKey('__school')}
+          onMouseLeave={() => setHoveredCollapsedKey((c) => (c === '__school' ? null : c))}
+        >
+          <button className="flex w-full items-center justify-center rounded-2xl p-2 text-blue-100 transition-all duration-200 hover:bg-white/10 hover:-translate-y-px">
+            <IconChip icon={Building2} color="#3b82f6" />
+          </button>
+          {hoveredCollapsedKey === '__school' && (
+            <div className="absolute left-[calc(100%+10px)] top-0 z-40 w-60 rounded-2xl border border-white/15 bg-[#1e3a8a]/95 p-2 shadow-2xl backdrop-blur-xl">
+              {card}
+            </div>
           )}
         </div>
-      </div>
+      );
+    }
 
-      <nav className="flex-1 space-y-2 overflow-y-auto px-2 py-3" style={{ backgroundColor: 'transparent' }}>
-        {sections.map((section) => renderSectionButton(section, !sidebarExpanded && !mobile))}
-      </nav>
+    return <div className="mx-3">{card}</div>;
+  };
 
+  const sidebarContent = (mobile = false) => {
+    const expanded = sidebarExpanded || mobile;
+    const dashboardSection = sections.find((s) => s.key === 'dashboard');
+
+    return (
       <div
-        className="border-t border-white/10 px-2 py-3"
-        style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(191,219,254,0.04) 100%)',
-        }}
+        className="flex h-full flex-col text-white"
+        style={{ background: SIDEBAR_BG, fontFamily: SIDEBAR_FONT }}
       >
-        <button
-          onClick={handleLogout}
-          className={`flex w-full items-center gap-3 rounded-[1rem] px-3 py-3 text-left text-white transition hover:bg-white/10 ${
-            sidebarExpanded || mobile ? '' : 'justify-center px-2'
-          }`}
-          style={{
-            border: '1px solid rgba(191,219,254,0.28)',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.14), 0 10px 18px rgba(15,23,42,0.12)',
-          }}
-        >
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-md shadow-blue-950/20"
-            style={{
-              background: 'linear-gradient(180deg, #fca5a5 0%, #ef4444 100%)',
-              border: '1px solid rgba(255,255,255,0.28)',
-            }}
-          >
-            <LogOut className="h-5 w-5" />
-          </div>
-          {sidebarExpanded || mobile ? (
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-bold tracking-[0.01em]">Logout</p>
+        {/* ── Header ── */}
+        <div className="shrink-0 border-b border-white/10 px-4 py-4">
+          <div className={`flex items-center ${expanded ? 'justify-between gap-3' : 'justify-center'}`}>
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="flex h-11 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/95 px-1 shadow-lg ring-1 ring-white/30">
+                <img src={schoolBranding?.logo_url || bhavyaAxisLogo} alt="" className="h-8 w-auto object-contain" />
+              </div>
+              {expanded && (
+                <div className="min-w-0">
+                  <p className="truncate text-[22px] font-bold leading-tight text-white">{schoolBranding?.portal_name || 'Dr. Girish App'}</p>
+                  <p className="truncate text-[13px] font-medium uppercase tracking-[0.16em] text-blue-100/80">
+                    {isPlatformAdmin
+                      ? activeSchoolId
+                        ? 'School Workspace'
+                        : 'Platform Workspace'
+                      : 'School Workspace'}
+                  </p>
+                </div>
+              )}
             </div>
-          ) : null}
-        </button>
+            {expanded && mobile && (
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-xl p-2 text-white transition hover:bg-white/10"
+                aria-label="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Search ── */}
+        <div className="shrink-0 px-3 py-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" />
+            {expanded ? (
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search modules..."
+                className="h-12 w-full rounded-2xl border border-white/15 bg-white/10 pl-11 pr-3 text-[14px] text-white outline-none shadow-inner backdrop-blur placeholder:text-white/55 transition focus:border-white/35 focus:bg-white/15"
+              />
+            ) : (
+              <button
+                onClick={() => setSidebarExpanded(true)}
+                className="flex h-12 w-full items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white/70 shadow-inner backdrop-blur transition hover:bg-white/15"
+                aria-label="Search"
+              >
+                <Search className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Navigation ── */}
+        <nav className="flex-1 space-y-1.5 overflow-y-auto px-3 py-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/25 [&::-webkit-scrollbar-track]:bg-transparent">
+          {!expanded ? (
+            <div className="space-y-1.5">
+              {dashboardSection && renderNavItem(dashboardSection, true)}
+              {renderCollapsedPlatform()}
+              {renderSchoolCard(true)}
+              {sections
+                .filter((s) => s.key !== 'dashboard')
+                .map((s) => renderNavItem(s, true))}
+            </div>
+          ) : (
+            <>
+              {dashboardSection && renderNavItem(dashboardSection, false)}
+
+              {/* ── Platform Management (collapsible, platform admins only) ── */}
+              {isPlatformAdmin &&
+                (() => {
+                  const q = searchQuery.trim().toLowerCase();
+                  const items = Object.values(PLATFORM_ITEMS).filter(
+                    (item) => !q || item.name.toLowerCase().includes(q),
+                  );
+                  if (items.length === 0) return null;
+                  const open = searching || openSections.includes('__platform');
+                  const platformActive = currentRoute.startsWith('/platform');
+                  return (
+                    <div className="mt-2 rounded-2xl border border-white/15 bg-white/10 p-1.5 shadow-lg backdrop-blur-md">
+                      <button
+                        onClick={() => toggleSection('__platform')}
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 ${
+                          platformActive
+                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30'
+                            : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        <IconChip icon={ShieldCheck} color="#3b82f6" />
+                        <span className="flex-1 text-[13px] font-bold uppercase tracking-[0.1em] text-white/90">
+                          Platform Management
+                        </span>
+                        <ChevronRight
+                          className={`h-4 w-4 text-blue-200 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+                        />
+                      </button>
+                      {open && (
+                        <div className="mt-1 space-y-1 border-l border-white/15 py-1 pl-[14px] ml-3">
+                          {items.map((item, idx) => {
+                            const a = isChildActive(item.path);
+                            return (
+                              <button
+                                key={item.path}
+                                onClick={() => handleNavigate(item.path)}
+                                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] transition-all duration-200 ${
+                                  a
+                                    ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30 font-semibold'
+                                    : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                                }`}
+                              >
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/40" />
+                                <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              {/* ── Current School (compact premium glass card) ── */}
+              {renderSchoolCard(false)}
+
+              {/* ── School ERP divider (platform admins only) ── */}
+              {isPlatformAdmin && (
+                <div className="mx-1 mt-4 flex items-center gap-2 border-t border-white/10 pt-3">
+                  <span className="h-1.5 w-1.5 rounded-full bg-white/50" />
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">
+                    School ERP
+                  </span>
+                </div>
+              )}
+
+              {/* ── All sections (flat, no categories) ── */}
+              {sections
+                .filter((s) => s.key !== 'dashboard')
+                .map((s) => (
+                  <div key={s.key} className="mt-0.5">
+                    {renderNavItem(s, false)}
+                  </div>
+                ))}
+            </>
+          )}
+        </nav>
+
+        {/* ── Logout ── */}
+        <div className="shrink-0 border-t border-white/10 px-3 py-3">
+          <button
+            onClick={handleLogout}
+            className={`flex w-full items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-3 py-3 text-left text-white shadow-lg transition-all duration-200 hover:bg-white/10 hover:-translate-y-px hover:shadow-xl ${
+              expanded ? '' : 'justify-center px-2'
+            }`}
+          >
+            <div
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-md"
+              style={{
+                background: 'linear-gradient(180deg, #fca5a5 0%, #ef4444 100%)',
+                border: '1px solid rgba(255,255,255,0.28)',
+              }}
+            >
+              <LogOut className="h-5 w-5" />
+            </div>
+            {expanded && (
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] font-bold">Logout</p>
+              </div>
+            )}
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-[#eef3fa]">
@@ -715,10 +1035,8 @@ export default function Layout({ children }: LayoutProps) {
       />
       <div className="relative hidden h-[100dvh] shrink-0 lg:block">
         <div
-          className={`h-full transition-all duration-300 ${sidebarExpanded ? 'w-[320px]' : 'w-[94px]'}`}
-          style={{
-            background: sidebarGradient,
-          }}
+          className={`h-full transition-all duration-300 ${sidebarExpanded ? 'w-[280px]' : 'w-[76px]'}`}
+          style={{ background: SIDEBAR_BG }}
         >
           {sidebarContent(false)}
         </div>
@@ -727,11 +1045,7 @@ export default function Layout({ children }: LayoutProps) {
             setSidebarExpanded((current) => !current);
             setHoveredCollapsedKey(null);
           }}
-          className="absolute -right-6 top-3 z-30 flex h-[108px] w-8 items-center justify-center rounded-r-xl text-[11px] font-bold uppercase tracking-[0.16em] text-[#153e75] shadow-lg [writing-mode:vertical-rl]"
-          style={{
-            background: 'linear-gradient(180deg, rgba(255,255,255,0.86) 0%, rgba(147,197,253,0.9) 60%, rgba(125,211,252,0.88) 100%)',
-            border: '1px solid rgba(255,255,255,0.5)',
-          }}
+          className="absolute -right-3 top-4 z-30 flex h-24 w-6 items-center justify-center rounded-r-xl border border-white/20 bg-white/10 text-[10px] font-bold uppercase tracking-[0.16em] text-white/80 shadow-lg backdrop-blur transition hover:bg-white/20 [writing-mode:vertical-rl]"
         >
           {sidebarExpanded ? 'Collapse' : 'Expand'}
         </button>
@@ -740,15 +1054,13 @@ export default function Layout({ children }: LayoutProps) {
       {mobileMenuOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button
-            className="absolute inset-0 bg-slate-950/45"
+            className="absolute inset-0 bg-slate-950/55"
             onClick={() => setMobileMenuOpen(false)}
             aria-label="Close menu overlay"
           />
           <div
-            className="relative h-full w-[88vw] max-w-[340px] shadow-2xl"
-            style={{
-              background: sidebarGradient,
-            }}
+            className="relative h-full w-[88vw] max-w-[320px] shadow-2xl"
+            style={{ background: SIDEBAR_BG }}
           >
             {sidebarContent(true)}
           </div>
@@ -777,14 +1089,6 @@ export default function Layout({ children }: LayoutProps) {
         <PlatformAdminSchoolScopeBanner />
         <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">{children}</div>
       </div>
-    </div>
-  );
-}
-
-function ArrowHint() {
-  return (
-    <div className="flex h-5 min-w-5 items-center justify-center rounded-full bg-orange-300 px-1.5 text-[10px] font-bold leading-none text-slate-900">
-      Go
     </div>
   );
 }

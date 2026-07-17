@@ -2178,6 +2178,65 @@ def get_portal_access_overview(
                 "returned_record_count": len(records),
             },
         )
+    elif normalized_entity == "school":
+        # Schools are institutions, not user entities with profiles/sessions.
+        # Scoped by school_id for authorization consistency with student/parent/staff.
+        school_row = _public_table("schools", supabase=supabase).select(
+            "id,school_code,slug,name,is_active,created_at"
+        ).eq("id", school_id).limit(1).execute()
+        school_data = list(school_row.data or [])
+        admin_count = 0
+        try:
+            memberships = list(
+                _public_table("school_memberships", supabase=supabase)
+                .select("id")
+                .eq("school_id", school_id)
+                .eq("is_active", True)
+                .execute()
+                .data
+                or []
+            )
+            admin_count = len(memberships)
+        except Exception:
+            logger.exception("portal_access_manager.school_membership_count_failed")
+        t2 = time.time()
+        if school_data:
+            sr = school_data[0]
+            is_active = bool(sr.get("is_active", True))
+            records.append({
+                "entity_type": "school",
+                "entity_id": _normalize(sr.get("id")),
+                "portal_status": "active" if is_active else "disabled",
+                "username": _normalize(sr.get("school_code")),
+                "login_email": _normalize(sr.get("slug")),
+                "last_login": None,
+                "last_activity": None,
+                "profile_linked": False,
+                "profile_id": None,
+                "account_created_date": sr.get("created_at"),
+                "must_change_password": False,
+                "first_login_completed": False,
+                "force_password_change": False,
+                "last_password_reset_at": None,
+                "active_sessions": 0,
+                "role_key": "school",
+                "permission_count": 0,
+                "entity_label": _normalize(sr.get("name")),
+                "is_enabled": is_active,
+                "entity_name": _normalize(sr.get("name")),
+                "school_code": _normalize(sr.get("school_code")),
+                "slug": _normalize(sr.get("slug")),
+                "admin_count": admin_count,
+            })
+        logger.info(
+            "portal_access_manager.school_overview",
+            extra={
+                "school_id": school_id,
+                "returned_record_count": len(records),
+                "admin_count": admin_count,
+                "load_ms": int((t2 - t0) * 1000),
+            },
+        )
     else:
         raise HTTPException(status_code=400, detail="Unsupported entity_type")
 
