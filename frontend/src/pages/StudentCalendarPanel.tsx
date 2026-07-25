@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
-import { useAuthStore } from '@store/auth';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import {
   inputClass,
   studentCalendarShadeClass,
@@ -37,10 +37,9 @@ export default function StudentCalendarPanel({
   selection,
   onAlert,
 }: StudentCalendarPanelProps) {
-  const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [calendarDate, setCalendarDate] = useState(new Date().toISOString().slice(0, 10));
   const [calendarPayload, setCalendarPayload] = useState<any | null>(null);
   const [, setUsingMonthFallback] = useState(false);
@@ -98,7 +97,7 @@ export default function StudentCalendarPanel({
       try {
         const monthParam = (calendarDate || '').slice(0, 7);
         const response = await apiService.getStudentAttendanceCalendar({
-          school_id: currentSchoolId,
+          school_id: effectiveSchoolId,
           month: monthParam,
           class_name: requestedClassName,
           batch_name: selection.scope === 'batch' ? selectedDashboardBatchName || undefined : undefined,

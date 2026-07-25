@@ -3,8 +3,8 @@ import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Upload, Camera, Plus, FileText, Trash2, ExternalLink, X } from 'lucide-react';
 import { apiService } from '@services/api';
-import { useAuthStore } from '@store/auth';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import {
   findStaffDirectoryNameMatches,
   type StaffDirectoryRecord,
@@ -207,7 +207,7 @@ const toFormState = (record: StaffDirectoryRecord): StaffFormState => ({
 export default function AddStaff() {
   const navigate = useNavigate();
   const location = useLocation();
-  const currentSchoolId = useAuthStore((state) => state.user?.school_id || 1);
+  const effectiveSchoolId = useEffectiveSchoolId();
   const navigationState = location.state as { editingRecord?: StaffDirectoryRecord; staffType?: StaffType; returnStaffType?: StaffType } | null;
   const [formData, setFormData] = useState<StaffFormState>(initialForm);
   const [editingRecord, setEditingRecord] = useState<StaffDirectoryRecord | null>(null);
@@ -235,8 +235,8 @@ export default function AddStaff() {
   const loadLiveDirectoryRecords = async (): Promise<StaffDirectoryRecord[]> => {
     const { getTeachers, getInvigilators } = useRefDataStore.getState();
     const [teachersData, invigilatorsData] = await Promise.all([
-      getTeachers(currentSchoolId),
-      getInvigilators(currentSchoolId),
+      getTeachers(effectiveSchoolId),
+      getInvigilators(effectiveSchoolId),
     ]);
 
     const teacherRecords = (teachersData || []).map((teacher: any) => ({
@@ -556,7 +556,7 @@ export default function AddStaff() {
                 notes: formData.notes.trim() || undefined,
               },
             },
-          }, currentSchoolId);
+          }, effectiveSchoolId);
         }
       } else {
         if (editingRecord?.backendId && editingRecord.backendType === 'non_teaching') {
@@ -654,7 +654,7 @@ export default function AddStaff() {
                 notes: formData.notes.trim() || undefined,
               },
             },
-          }, currentSchoolId);
+          }, effectiveSchoolId);
         }
       }
 

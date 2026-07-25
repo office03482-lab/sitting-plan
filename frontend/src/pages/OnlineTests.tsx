@@ -6,6 +6,7 @@ import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { BatchAnalytics, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestResult, SchoolAnalytics, StudentAnalytics, TestAnalyticsDetail } from '@types';
 import { onlineTestCardClass } from '@pages/onlineTestsShared';
 
@@ -25,6 +26,7 @@ export default function OnlineTests() {
   const canViewStudentDashboard = isStudent;
   const canViewTeacherDashboard = isTeacher;
   const canViewSchoolDashboard = isAdmin && !isPlatformAdmin;
+  const effectiveSchoolId = useEffectiveSchoolId();
 
   const [tests, setTests] = useState<OnlineTest[]>([]);
   const [attempts, setAttempts] = useState<OnlineTestAttempt[]>([]);
@@ -139,8 +141,8 @@ export default function OnlineTests() {
       if (canViewStudentDashboard) {
         requests.push(apiService.getStudentAnalytics('me'));
       }
-      if (canViewSchoolDashboard && user?.school_id) {
-        requests.push(apiService.getSchoolAnalytics(user.school_id));
+      if (canViewSchoolDashboard && effectiveSchoolId) {
+        requests.push(apiService.getSchoolAnalytics(effectiveSchoolId));
       }
 
       const responses = await Promise.all(requests);
@@ -167,7 +169,7 @@ export default function OnlineTests() {
         setStudentAnalytics(null);
       }
 
-      if (canViewSchoolDashboard && user?.school_id) {
+      if (canViewSchoolDashboard && effectiveSchoolId) {
         setSchoolAnalytics((responses[cursor++] as Awaited<ReturnType<typeof apiService.getSchoolAnalytics>>).data || null);
       } else {
         setSchoolAnalytics(null);

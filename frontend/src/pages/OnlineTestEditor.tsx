@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { Alert } from '@components/Alert';
@@ -7,19 +7,14 @@ import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { useRefDataStore } from '@store/referenceData';
-import type { Batch, OnlineTest, OnlineTestQuestion } from '@types';
+import type { Batch, OnlineTest } from '@types';
 import {
   createDefaultTestForm,
-  createEmptyQuestionDraft,
   describeBatchName,
-  mapQuestionToDraft,
   mapTestToForm,
-  onlineTestCardClass,
   onlineTestInputClass,
   onlineTestLabelClass,
-  questionDraftToPayload,
   testFormToPayload,
-  type QuestionDraft,
   type TestFormState,
 } from '@pages/onlineTestsShared';
 
@@ -28,36 +23,18 @@ type OnlineTestEditorProps = {
   testId?: string;
 };
 
-const aiInitialState = {
-  subject: '',
-  chapter: '',
-  topic: '',
-  difficulty: 'medium',
-  question_count: '10',
-  duration_minutes: '60',
-};
-
 export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps) {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
 
   const [form, setForm] = useState<TestFormState>(createDefaultTestForm());
-  const [questionDrafts, setQuestionDrafts] = useState<QuestionDraft[]>([createEmptyQuestionDraft(1)]);
-  const [removedQuestionIds, setRemovedQuestionIds] = useState<string[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [test, setTest] = useState<OnlineTest | null>(null);
-  const [existingQuestions, setExistingQuestions] = useState<OnlineTestQuestion[]>([]);
   const [loading, setLoading] = useState(mode === 'edit');
   const [saving, setSaving] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [uploadingAssetKey, setUploadingAssetKey] = useState('');
-  const [assetUploadProgress, setAssetUploadProgress] = useState<Record<string, number>>({});
   const [pageError, setPageError] = useState('');
   const [banner, setBanner] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string } | null>(null);
-  const [questionBankCount, setQuestionBankCount] = useState(0);
-  const [aiForm, setAiForm] = useState(aiInitialState);
 
   useEffect(() => {
     if (!canRunRequests) return;
@@ -67,23 +44,12 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
     }
   }, [canRunRequests, mode, testId]);
 
-  const questionMarksTotal = useMemo(
-    () => questionDrafts.reduce((sum, draft) => sum + Number(draft.marks || 0), 0),
-    [questionDrafts],
-  );
-
   const loadBatches = async () => {
     try {
-      const [batchData, questionBankResponse] = await Promise.all([
-        useRefDataStore.getState().getBatches(1, 'batch'),
-        apiService.listOnlineTestQuestionBank({ limit: 200 }),
-      ]);
+      const batchData = await useRefDataStore.getState().getBatches(1, 'batch');
       setBatches(batchData || []);
-      const count = Number((questionBankResponse.data || []).length || 0);
-      setQuestionBankCount(count);
     } catch {
       setBatches([]);
-      setQuestionBankCount(0);
     }
   };
 
@@ -91,18 +57,9 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
     try {
       setLoading(true);
       setPageError('');
-      const [testResponse, questionResponse] = await Promise.all([
-        apiService.getOnlineTest(id),
-        apiService.listOnlineTestQuestions({ test_id: id }),
-      ]);
+      const testResponse = await apiService.getOnlineTest(id);
       setTest(testResponse.data);
-      setExistingQuestions(questionResponse.data || []);
       setForm(mapTestToForm(testResponse.data));
-      setQuestionDrafts(
-        (questionResponse.data || []).length
-          ? (questionResponse.data || []).map((question) => mapQuestionToDraft(question))
-          : [createEmptyQuestionDraft(1)],
-      );
     } catch (error) {
       setPageError(getRequestErrorMessage(error, 'Online test editor load nahi ho paya.'));
     } finally {
@@ -114,39 +71,8 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const updateQuestion = (index: number, field: keyof QuestionDraft, value: string) => {
-    setQuestionDrafts((current) =>
-      current.map((draft, draftIndex) => (draftIndex === index ? { ...draft, [field]: value } : draft)),
-    );
-  };
-
-  const addQuestion = () => {
-    setQuestionDrafts((current) => [...current, createEmptyQuestionDraft(current.length + 1)]);
-  };
-
-  const removeQuestion = (index: number) => {
-    setQuestionDrafts((current) => {
-      const target = current[index];
-      if (target?.id) {
-        setRemovedQuestionIds((existing) => [...existing, target.id as string]);
-      }
-      const next = current.filter((_, itemIndex) => itemIndex !== index);
-      return next.length ? next : [createEmptyQuestionDraft(1)];
-    });
-  };
-
   const validateForm = () => {
     if (!form.title.trim()) return 'Test title is required.';
-    const validQuestions = questionDrafts.filter((question) => question.prompt_text.trim());
-    if (!validQuestions.length) return 'At least one question is required.';
-    for (const question of validQuestions) {
-      if (['single_choice', 'multiple_choice'].includes(question.question_type) && !question.option_lines.trim()) {
-        return 'Choice questions need option lines.';
-      }
-      if (!question.answer_lines.trim()) {
-        return 'Each question needs an answer key or accepted answer.';
-      }
-    }
     return '';
   };
 
@@ -160,8 +86,7 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
     try {
       setSaving(true);
       setBanner(null);
-      const validQuestions = questionDrafts.filter((question) => question.prompt_text.trim());
-      const testPayload = testFormToPayload(form, validQuestions);
+      const testPayload = testFormToPayload(form, []);
 
       let activeTestId = testId || '';
       if (mode === 'create') {
@@ -171,27 +96,14 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
         await apiService.updateOnlineTest(activeTestId, testPayload);
       }
 
-      for (const questionId of removedQuestionIds) {
-        await apiService.deleteOnlineTestQuestion(questionId);
-      }
-
-      for (const question of validQuestions) {
-        const questionPayload = questionDraftToPayload(question, activeTestId);
-        if (question.id) {
-          await apiService.updateOnlineTestQuestion(question.id, questionPayload);
-        } else {
-          await apiService.createOnlineTestQuestion(questionPayload);
-        }
-      }
-
-      navigate(mode === 'create' ? `/online-tests/edit/${activeTestId}` : '/online-tests', {
+      navigate(`/online-tests/${activeTestId}/build`, {
         state: {
           banner: {
             type: 'success',
             message:
               mode === 'create'
-                ? 'Online test created successfully. You can continue editing it here.'
-                : 'Online test updated successfully.',
+                ? 'Test created successfully. Now add your questions below.'
+                : 'Test details updated successfully.',
           },
         },
       });
@@ -199,102 +111,6 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
       setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Online test save nahi ho paya.') });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleImportWorkbook = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      setImporting(true);
-      const response = await apiService.importOnlineTestQuestionBank(file);
-      setQuestionBankCount((current) => current + Number(response.data.created_count || 0));
-      setBanner({ type: 'success', message: `${response.data.created_count || 0} questions imported into question bank.` });
-    } catch (error) {
-      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Question bank import nahi ho paya.') });
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleGenerateAiTest = async () => {
-    if (!aiForm.subject.trim() || !aiForm.chapter.trim() || !aiForm.topic.trim()) {
-      setBanner({ type: 'error', message: 'Subject, chapter aur topic required hain for AI generator.' });
-      return;
-    }
-    try {
-      setGenerating(true);
-      const response = await apiService.generateOnlineAiTest({
-        ...aiForm,
-        question_count: Number(aiForm.question_count || 10),
-        duration_minutes: Number(aiForm.duration_minutes || 60),
-        title: form.title || `${aiForm.subject} - ${aiForm.topic}`,
-        batch_id: form.batch_id || undefined,
-      });
-      if (!response.data.success || !response.data.test) {
-        setBanner({ type: 'warning', message: response.data.message || 'AI service temporarily unavailable' });
-        return;
-      }
-      navigate(`/online-tests/edit/${response.data.test.id}`, {
-        state: {
-          banner: {
-            type: 'success',
-            message: 'AI generated draft test created successfully. Review questions and publish when ready.',
-          },
-        },
-      });
-    } catch (error) {
-      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'AI test generate nahi ho paya.') });
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const trackAssetProgress = (key: string) => (progressEvent: { loaded?: number; total?: number }) => {
-    const total = Number(progressEvent.total || 0);
-    const loaded = Number(progressEvent.loaded || 0);
-    if (!total) return;
-    setAssetUploadProgress((current) => ({ ...current, [key]: Math.round((loaded / total) * 100) }));
-  };
-
-  const handleQuestionImageUpload = async (index: number, file: File) => {
-    const key = `question-image-${index}`;
-    try {
-      setUploadingAssetKey(key);
-      const response = await apiService.uploadImage(file, {
-        purpose: 'online_test_question',
-        onUploadProgress: trackAssetProgress(key),
-      });
-      updateQuestion(index, 'question_image_url', response.data.url);
-      setBanner({ type: 'success', message: 'Question image uploaded successfully.' });
-    } catch (error) {
-      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Question image upload nahi hua.') });
-    } finally {
-      setUploadingAssetKey('');
-    }
-  };
-
-  const handleOptionImageUpload = async (questionIndex: number, optionIndex: number, file: File) => {
-    const key = `option-image-${questionIndex}-${optionIndex}`;
-    try {
-      setUploadingAssetKey(key);
-      const response = await apiService.uploadImage(file, {
-        purpose: 'online_test_option',
-        onUploadProgress: trackAssetProgress(key),
-      });
-      const lines = questionDrafts[questionIndex]?.option_lines.split('\n') || [];
-      while (lines.length <= optionIndex) {
-        lines.push('');
-      }
-      const currentLine = lines[optionIndex]?.split('|')[0]?.trim() || `Option ${String.fromCharCode(65 + optionIndex)}`;
-      lines[optionIndex] = `${currentLine} | ${response.data.url}`;
-      updateQuestion(questionIndex, 'option_lines', lines.join('\n'));
-      setBanner({ type: 'success', message: `Option ${String.fromCharCode(65 + optionIndex)} image uploaded successfully.` });
-    } catch (error) {
-      setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Option image upload nahi hua.') });
-    } finally {
-      setUploadingAssetKey('');
     }
   };
 
@@ -312,463 +128,194 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
 
   return (
     <div className="p-4 md:p-6">
-      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <button
-            type="button"
-            onClick={() => navigate('/online-tests')}
-            className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Online Tests
-          </button>
-          <h1 className="text-2xl font-bold text-slate-900">
-            {mode === 'create' ? 'Create Online Test' : `Edit ${test?.title || 'Online Test'}`}
-          </h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Existing UI pattern ke andar hi test setup, schedule aur questions manage karo.
-          </p>
-        </div>
-
-        <div className={`${onlineTestCardClass} px-4 py-3`}>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Question Bank</p>
-          <p className="mt-1 text-lg font-bold text-slate-900">{questionDrafts.filter((item) => item.prompt_text.trim()).length}</p>
-          <p className="text-xs text-slate-500">Total marks {questionMarksTotal}</p>
-        </div>
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={() => navigate('/online-tests')}
+          className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Online Tests
+        </button>
+        <h1 className="text-2xl font-bold text-slate-900">
+          {mode === 'create' ? 'Create Online Test' : `Edit ${test?.title || 'Online Test'}`}
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          {mode === 'create'
+            ? 'Set up test details first, then add questions in the next step.'
+            : 'Update test details below.'}
+        </p>
       </div>
 
       {banner ? <Alert type={banner.type} message={banner.message} onClose={() => setBanner(null)} /> : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-6">
-          <section className={`${onlineTestCardClass} p-5`}>
-            <h2 className="mb-4 text-lg font-semibold text-slate-900">Test Details</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className={onlineTestLabelClass}>Title</label>
-                <input
-                  value={form.title}
-                  onChange={(event) => updateForm('title', event.target.value)}
-                  className={onlineTestInputClass}
-                  placeholder="Unit Test - Physics"
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Test Code</label>
-                <input
-                  value={form.test_code}
-                  onChange={(event) => updateForm('test_code', event.target.value)}
-                  className={onlineTestInputClass}
-                  placeholder="PHY-UT-01"
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Batch</label>
-                <select
-                  value={form.batch_id}
-                  onChange={(event) => updateForm('batch_id', event.target.value)}
-                  className={onlineTestInputClass}
-                >
-                  <option value="">All batches</option>
-                  {batches.map((batch) => (
-                    <option key={String(batch.id)} value={String(batch.id)}>
-                      {batch.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Status</label>
-                <select
-                  value={form.status}
-                  onChange={(event) => updateForm('status', event.target.value)}
-                  className={onlineTestInputClass}
-                >
-                  <option value="draft">Draft</option>
-                  <option value="published">Published</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                </select>
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Duration (minutes)</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={form.duration_minutes}
-                  onChange={(event) => updateForm('duration_minutes', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Maximum Attempts</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={form.max_attempts}
-                  onChange={(event) => updateForm('max_attempts', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Total Marks</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.total_marks}
-                  onChange={(event) => updateForm('total_marks', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Pass Marks</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.pass_marks}
-                  onChange={(event) => updateForm('pass_marks', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Starts At</label>
-                <input
-                  type="datetime-local"
-                  value={form.starts_at}
-                  onChange={(event) => updateForm('starts_at', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div>
-                <label className={onlineTestLabelClass}>Ends At</label>
-                <input
-                  type="datetime-local"
-                  value={form.ends_at}
-                  onChange={(event) => updateForm('ends_at', event.target.value)}
-                  className={onlineTestInputClass}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className={onlineTestLabelClass}>Description</label>
-                <textarea
-                  value={form.description}
-                  onChange={(event) => updateForm('description', event.target.value)}
-                  className={`${onlineTestInputClass} min-h-[84px]`}
-                  placeholder="Short overview for teachers or students."
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className={onlineTestLabelClass}>Instructions</label>
-                <textarea
-                  value={form.instructions}
-                  onChange={(event) => updateForm('instructions', event.target.value)}
-                  className={`${onlineTestInputClass} min-h-[120px]`}
-                  placeholder="Question navigation, calculator rules, submission guidance..."
-                />
-              </div>
+      <div className="mx-auto max-w-3xl space-y-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-5 text-lg font-semibold text-slate-900">Test Details</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className={onlineTestLabelClass}>Title *</label>
+              <input
+                value={form.title}
+                onChange={(event) => updateForm('title', event.target.value)}
+                className={onlineTestInputClass}
+                placeholder="Unit Test - Physics"
+              />
             </div>
-
-            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {[
-                ['shuffle_questions', 'Shuffle questions'],
-                ['shuffle_options', 'Shuffle options'],
-                ['show_result_immediately', 'Show result immediately'],
-                ['allow_review', 'Allow review'],
-              ].map(([field, label]) => (
-                <label
-                  key={field}
-                  className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700"
-                >
-                  <input
-                    type="checkbox"
-                    checked={Boolean(form[field as keyof TestFormState])}
-                    onChange={(event) =>
-                      updateForm(field as keyof TestFormState, event.target.checked as TestFormState[keyof TestFormState])
-                    }
-                  />
-                  {label}
-                </label>
-              ))}
+            <div>
+              <label className={onlineTestLabelClass}>Test Code</label>
+              <input
+                value={form.test_code}
+                onChange={(event) => updateForm('test_code', event.target.value)}
+                className={onlineTestInputClass}
+                placeholder="PHY-UT-01"
+              />
             </div>
-          </section>
-
-          <section className={`${onlineTestCardClass} p-5`}>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Questions</h2>
-                <p className="text-sm text-slate-600">Every question saves into the default section created for the test.</p>
-              </div>
-              <button
-                type="button"
-                onClick={addQuestion}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#c07a10] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a6650b]"
+            <div>
+              <label className={onlineTestLabelClass}>Batch</label>
+              <select
+                value={form.batch_id}
+                onChange={(event) => updateForm('batch_id', event.target.value)}
+                className={onlineTestInputClass}
               >
-                <Plus className="h-4 w-4" />
-                Add Question
-              </button>
+                <option value="">All batches</option>
+                {batches.map((batch) => (
+                  <option key={String(batch.id)} value={String(batch.id)}>
+                    {batch.name}
+                  </option>
+                ))}
+              </select>
             </div>
-
-            <div className="space-y-5">
-              {questionDrafts.map((question, index) => (
-                <div key={question.id || `draft-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="text-base font-semibold text-slate-900">Question {index + 1}</h3>
-                    <button
-                      type="button"
-                      onClick={() => removeQuestion(index)}
-                      className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Remove
-                    </button>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className={onlineTestLabelClass}>Prompt</label>
-                      <textarea
-                        value={question.prompt_text}
-                        onChange={(event) => updateQuestion(index, 'prompt_text', event.target.value)}
-                        className={`${onlineTestInputClass} min-h-[86px]`}
-                        placeholder="What is the acceleration due to gravity on Earth?"
-                      />
-                    </div>
-                    <div className="grid gap-4">
-                      <div className="grid gap-4 md:grid-cols-3">
-                        <div>
-                          <label className={onlineTestLabelClass}>Subject</label>
-                          <input value={question.subject} onChange={(event) => updateQuestion(index, 'subject', event.target.value)} className={onlineTestInputClass} placeholder="Physics" />
-                        </div>
-                        <div>
-                          <label className={onlineTestLabelClass}>Chapter</label>
-                          <input value={question.chapter} onChange={(event) => updateQuestion(index, 'chapter', event.target.value)} className={onlineTestInputClass} placeholder="Laws of Motion" />
-                        </div>
-                        <div>
-                          <label className={onlineTestLabelClass}>Topic</label>
-                          <input value={question.topic} onChange={(event) => updateQuestion(index, 'topic', event.target.value)} className={onlineTestInputClass} placeholder="Newton's Laws" />
-                        </div>
-                      </div>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div>
-                          <label className={onlineTestLabelClass}>Question Type</label>
-                          <select
-                            value={question.question_type}
-                            onChange={(event) => updateQuestion(index, 'question_type', event.target.value)}
-                            className={onlineTestInputClass}
-                          >
-                            <option value="single_choice">Single choice</option>
-                            <option value="multiple_choice">Multiple choice</option>
-                            <option value="short_answer">Short answer</option>
-                            <option value="long_answer">Long answer</option>
-                            <option value="numeric">Numerical</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className={onlineTestLabelClass}>Difficulty</label>
-                          <select
-                            value={question.difficulty_level}
-                            onChange={(event) => updateQuestion(index, 'difficulty_level', event.target.value)}
-                            className={onlineTestInputClass}
-                          >
-                            <option value="easy">Easy</option>
-                            <option value="medium">Medium</option>
-                            <option value="hard">Hard</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-3">
-                        <div>
-                          <label className={onlineTestLabelClass}>Marks</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.25"
-                            value={question.marks}
-                            onChange={(event) => updateQuestion(index, 'marks', event.target.value)}
-                            className={onlineTestInputClass}
-                          />
-                        </div>
-                        <div>
-                          <label className={onlineTestLabelClass}>Negative Marks</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.25"
-                            value={question.negative_marks}
-                            onChange={(event) => updateQuestion(index, 'negative_marks', event.target.value)}
-                            className={onlineTestInputClass}
-                          />
-                        </div>
-                        <div>
-                          <label className={onlineTestLabelClass}>Display Order</label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={question.display_order}
-                            onChange={(event) => updateQuestion(index, 'display_order', event.target.value)}
-                            className={onlineTestInputClass}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={onlineTestLabelClass}>Question Image URL</label>
-                        <div className="rounded-xl border border-slate-200 bg-white p-3">
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
-                            className="block w-full text-sm"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              event.target.value = '';
-                              if (file) void handleQuestionImageUpload(index, file);
-                            }}
-                          />
-                          {question.question_image_url ? <img src={question.question_image_url} alt="Question" className="mt-3 max-h-40 rounded-lg border border-slate-200 object-contain" /> : null}
-                          {uploadingAssetKey === `question-image-${index}` ? <p className="mt-2 text-xs text-slate-500">Uploading... {assetUploadProgress[`question-image-${index}`] || 0}%</p> : null}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className={onlineTestLabelClass}>Options</label>
-                      <textarea
-                        value={question.option_lines}
-                        onChange={(event) => updateQuestion(index, 'option_lines', event.target.value)}
-                        className={`${onlineTestInputClass} min-h-[120px]`}
-                        placeholder={'One option per line\nOption text | https://image-url\n9.8 m/s^2\n10.2 m/s^2'}
-                      />
-                      <div className="mt-3 grid gap-2 md:grid-cols-2">
-                        {[0, 1, 2, 3].map((optionIndex) => (
-                          <label key={`option-upload-${index}-${optionIndex}`} className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700">
-                            Upload image for Option {String.fromCharCode(65 + optionIndex)}
-                            <input
-                              type="file"
-                              accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
-                              className="mt-2 block w-full text-sm"
-                              onChange={(event) => {
-                                const file = event.target.files?.[0];
-                                event.target.value = '';
-                                if (file) void handleOptionImageUpload(index, optionIndex, file);
-                              }}
-                            />
-                            {uploadingAssetKey === `option-image-${index}-${optionIndex}` ? <span className="mt-2 block text-xs text-slate-500">Uploading... {assetUploadProgress[`option-image-${index}-${optionIndex}`] || 0}%</span> : null}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label className={onlineTestLabelClass}>Correct Answer / Accepted Values</label>
-                      <textarea
-                        value={question.answer_lines}
-                        onChange={(event) => updateQuestion(index, 'answer_lines', event.target.value)}
-                        className={`${onlineTestInputClass} min-h-[120px]`}
-                        placeholder={'For choice questions use option text or option id.\nFor multi-correct use one answer per line.'}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className={onlineTestLabelClass}>Explanation</label>
-                    <textarea
-                      value={question.explanation}
-                      onChange={(event) => updateQuestion(index, 'explanation', event.target.value)}
-                      className={`${onlineTestInputClass} min-h-[84px]`}
-                      placeholder="Optional explanation shown during review."
-                    />
-                  </div>
-                </div>
-              ))}
+            <div>
+              <label className={onlineTestLabelClass}>Status</label>
+              <select
+                value={form.status}
+                onChange={(event) => updateForm('status', event.target.value)}
+                className={onlineTestInputClass}
+              >
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+              </select>
             </div>
-          </section>
+            <div>
+              <label className={onlineTestLabelClass}>Duration (minutes)</label>
+              <input
+                type="number"
+                min="1"
+                value={form.duration_minutes}
+                onChange={(event) => updateForm('duration_minutes', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Maximum Attempts</label>
+              <input
+                type="number"
+                min="1"
+                value={form.max_attempts}
+                onChange={(event) => updateForm('max_attempts', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Total Marks</label>
+              <input
+                type="number"
+                min="0"
+                value={form.total_marks}
+                onChange={(event) => updateForm('total_marks', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Pass Marks</label>
+              <input
+                type="number"
+                min="0"
+                value={form.pass_marks}
+                onChange={(event) => updateForm('pass_marks', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Starts At</label>
+              <input
+                type="datetime-local"
+                value={form.starts_at}
+                onChange={(event) => updateForm('starts_at', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Ends At</label>
+              <input
+                type="datetime-local"
+                value={form.ends_at}
+                onChange={(event) => updateForm('ends_at', event.target.value)}
+                className={onlineTestInputClass}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className={onlineTestLabelClass}>Description</label>
+              <textarea
+                value={form.description}
+                onChange={(event) => updateForm('description', event.target.value)}
+                className={`${onlineTestInputClass} min-h-[84px]`}
+                placeholder="Short overview for teachers or students."
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className={onlineTestLabelClass}>Instructions</label>
+              <textarea
+                value={form.instructions}
+                onChange={(event) => updateForm('instructions', event.target.value)}
+                className={`${onlineTestInputClass} min-h-[120px]`}
+                placeholder="Question navigation, calculator rules, submission guidance..."
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              ['shuffle_questions', 'Shuffle questions'],
+              ['shuffle_options', 'Shuffle options'],
+              ['show_result_immediately', 'Show result immediately'],
+              ['allow_review', 'Allow review'],
+            ].map(([field, label]) => (
+              <label
+                key={field}
+                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(form[field as keyof TestFormState])}
+                  onChange={(event) =>
+                    updateForm(field as keyof TestFormState, event.target.checked as TestFormState[keyof TestFormState])
+                  }
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
+          <div className="text-sm text-slate-600">
+            <span className="font-semibold text-slate-900">{describeBatchName(form.batch_id, batches)}</span>
+            {form.duration_minutes ? <span className="ml-3">Duration: {form.duration_minutes} min</span> : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#1e3a8a] px-6 py-3 text-sm font-semibold text-white hover:bg-[#1b3277] disabled:opacity-70"
+          >
+            {saving ? 'Saving...' : 'Save & Add Questions'}
+            {!saving && <ChevronRight className="h-4 w-4" />}
+          </button>
         </div>
-
-        <aside className="space-y-6">
-          <section className={`${onlineTestCardClass} p-5`}>
-            <h2 className="text-lg font-semibold text-slate-900">Publishing Snapshot</h2>
-            <div className="mt-4 space-y-3 text-sm text-slate-600">
-              <div className="flex items-center justify-between gap-3">
-                <span>Assigned batch</span>
-                <span className="font-semibold text-slate-900">{describeBatchName(form.batch_id, batches)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Question count</span>
-                <span className="font-semibold text-slate-900">{questionDrafts.filter((item) => item.prompt_text.trim()).length}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Total marks</span>
-                <span className="font-semibold text-slate-900">{Number(form.total_marks || 0) || questionMarksTotal}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Status</span>
-                <span className="font-semibold capitalize text-slate-900">{form.status.replace('_', ' ')}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Existing questions</span>
-                <span className="font-semibold text-slate-900">{existingQuestions.length}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Question bank</span>
-                <span className="font-semibold text-slate-900">{questionBankCount}</span>
-              </div>
-            </div>
-          </section>
-
-          <section className={`${onlineTestCardClass} p-5`}>
-            <h2 className="text-lg font-semibold text-slate-900">Excel Bulk Import</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Upload `.xlsx` with columns: Question, Option A-D, Correct Answer, Difficulty, Topic, Chapter.
-            </p>
-            <label className="mt-4 inline-flex w-full cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <input type="file" accept=".xlsx" className="hidden" onChange={handleImportWorkbook} />
-              {importing ? 'Importing...' : 'Import Questions From Excel'}
-            </label>
-          </section>
-
-          <section className={`${onlineTestCardClass} p-5`}>
-            <h2 className="text-lg font-semibold text-slate-900">AI Test Generator</h2>
-            <div className="mt-4 space-y-3">
-              <input value={aiForm.subject} onChange={(event) => setAiForm((current) => ({ ...current, subject: event.target.value }))} className={onlineTestInputClass} placeholder="Subject" />
-              <input value={aiForm.chapter} onChange={(event) => setAiForm((current) => ({ ...current, chapter: event.target.value }))} className={onlineTestInputClass} placeholder="Chapter" />
-              <input value={aiForm.topic} onChange={(event) => setAiForm((current) => ({ ...current, topic: event.target.value }))} className={onlineTestInputClass} placeholder="Topic" />
-              <div className="grid gap-3 md:grid-cols-2">
-                <select value={aiForm.difficulty} onChange={(event) => setAiForm((current) => ({ ...current, difficulty: event.target.value }))} className={onlineTestInputClass}>
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                </select>
-                <input type="number" min="1" max="50" value={aiForm.question_count} onChange={(event) => setAiForm((current) => ({ ...current, question_count: event.target.value }))} className={onlineTestInputClass} placeholder="Question count" />
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleGenerateAiTest()}
-                disabled={generating}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-[#0f766e] px-4 py-3 text-sm font-semibold text-white hover:bg-[#0b5d57] disabled:opacity-70"
-              >
-                {generating ? 'Generating...' : 'Generate Complete Test'}
-              </button>
-            </div>
-          </section>
-
-          <section className={`${onlineTestCardClass} p-5`}>
-            <h2 className="text-lg font-semibold text-slate-900">Save Changes</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Test metadata aur question bank ek hi action me persist honge.
-            </p>
-            <button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={saving}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1e3a8a] px-4 py-3 text-sm font-semibold text-white hover:bg-[#1b3277] disabled:opacity-70"
-            >
-              <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : mode === 'create' ? 'Create Test' : 'Update Test'}
-            </button>
-          </section>
-        </aside>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiService } from '@services/api';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { Batch, Student } from '@types';
 import { Plus, Pencil, Trash2, AlertCircle, Search, Filter, X, ArrowUp, ArrowDown, ListOrdered } from 'lucide-react';
 
@@ -291,7 +292,7 @@ const BatchManagement: React.FC = () => {
   const formDataRef = useRef<BatchFormState>(toBatchFormState());
   const streamManuallyChangedRef = useRef(false);
 
-  const schoolId = 1; // TODO: Get from auth context
+  const effectiveSchoolId = useEffectiveSchoolId();
   const isClassView = selectedCategory === 'class';
   const primaryTotal = isClassView ? categoryTotals.class : categoryTotals.batch;
   const primaryStudentTotal = isClassView ? categoryTotals.classStudents : categoryTotals.batchStudents;
@@ -307,9 +308,9 @@ const BatchManagement: React.FC = () => {
       setLoading(true);
       const { getBatches, getStudents } = useRefDataStore.getState();
       const [selectedItems, otherItems, rawStudents] = await Promise.all([
-        getBatches(schoolId, selectedCategory),
-        getBatches(schoolId, selectedCategory === 'batch' ? 'class' : 'batch'),
-        getStudents(schoolId),
+        getBatches(effectiveSchoolId, selectedCategory),
+        getBatches(effectiveSchoolId, selectedCategory === 'batch' ? 'class' : 'batch'),
+        getStudents(effectiveSchoolId),
       ]);
       const students = Array.isArray(rawStudents)
         ? rawStudents
@@ -435,7 +436,7 @@ const BatchManagement: React.FC = () => {
         return;
       }
 
-      await apiService.createBatch(payload, schoolId);
+      await apiService.createBatch(payload, effectiveSchoolId);
       resetForm();
       setShowAddModal(false);
       loadBatches();
@@ -455,7 +456,7 @@ const BatchManagement: React.FC = () => {
         return;
       }
 
-      await apiService.updateBatch(selectedBatch.id, payload, schoolId);
+      await apiService.updateBatch(selectedBatch.id, payload, effectiveSchoolId);
       resetForm();
       setShowEditModal(false);
       setSelectedBatch(null);
@@ -469,7 +470,7 @@ const BatchManagement: React.FC = () => {
     if (!selectedBatch) return;
 
     try {
-      await apiService.deleteBatch(selectedBatch.id, schoolId);
+      await apiService.deleteBatch(selectedBatch.id, effectiveSchoolId);
       setShowDeleteModal(false);
       setDeleteError(null);
       setSelectedBatch(null);
@@ -509,8 +510,8 @@ const BatchManagement: React.FC = () => {
       setStudentsLoading(true);
       setStudentsError(null);
       const response = selectedCategory === 'class'
-        ? await apiService.listStudents(schoolId, 0, 10000)
-        : await apiService.listStudents(schoolId, 0, 10000, batch.name);
+        ? await apiService.listStudents(effectiveSchoolId, 0, 10000)
+        : await apiService.listStudents(effectiveSchoolId, 0, 10000, batch.name);
       const students = (Array.isArray(response.data)
         ? response.data
             .map(normalizeStudent)
@@ -551,7 +552,7 @@ const BatchManagement: React.FC = () => {
     if (!confirmed) return;
 
     try {
-      await apiService.deleteAllBatches(schoolId, selectedCategory);
+      await apiService.deleteAllBatches(effectiveSchoolId, selectedCategory);
       setDeleteError(null);
       setSelectedBatch(null);
       await loadBatches();
@@ -598,7 +599,7 @@ const BatchManagement: React.FC = () => {
         batch_id: batch.id,
         display_order: index + 1,
       }));
-      const response = await apiService.reorderBatches(payload, schoolId, selectedCategory);
+      const response = await apiService.reorderBatches(payload, effectiveSchoolId, selectedCategory);
       setBatches(Array.isArray(response.data) ? response.data : []);
       setError(null);
     } catch (err: any) {

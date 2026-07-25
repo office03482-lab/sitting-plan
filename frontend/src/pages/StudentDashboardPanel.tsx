@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
-import { useAuthStore } from '@store/auth';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { AttendanceStudent, StudentAttendanceDashboardBucket, StudentAttendanceDashboardSummary } from '@types';
 import {
   sectionClass,
@@ -38,10 +38,9 @@ export default function StudentDashboardPanel({
   managedClassOptions,
   onAlert,
 }: StudentDashboardPanelProps) {
-  const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [filters, setFilters] = useState({
     dashboard_scope: 'batch' as 'batch' | 'class',
     dashboard_class_name: '',
@@ -161,7 +160,7 @@ export default function StudentDashboardPanel({
     const loadPromise = (async () => {
       try {
         const response = await apiService.getStudentAttendanceDashboardSummary({
-          school_id: currentSchoolId,
+          school_id: effectiveSchoolId,
           date: targetDate,
           class_name: requestedClassName,
           batch_name: effectiveDashboardScope === 'batch' ? selectedDashboardBatchName || undefined : undefined,

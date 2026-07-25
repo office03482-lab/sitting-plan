@@ -24,34 +24,77 @@ function createFallbackStorage<T>(): PersistStorage<T> | null {
   }
 }
 
+function readPersistedSchoolSync(): { activeSchoolId: string | null; activeSchoolName: string | null } {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return { activeSchoolId: null, activeSchoolName: null };
+    }
+    const raw = window.localStorage.getItem('pa-active-school');
+    if (!raw) return { activeSchoolId: null, activeSchoolName: null };
+    const parsed = JSON.parse(raw);
+    const state = parsed?.state;
+    return {
+      activeSchoolId: (typeof state?.activeSchoolId === 'string' && state.activeSchoolId) || null,
+      activeSchoolName: (typeof state?.activeSchoolName === 'string' && state.activeSchoolName) || null,
+    };
+  } catch {
+    return { activeSchoolId: null, activeSchoolName: null };
+  }
+}
+
+type BrandingState = {
+  logo_url?: string | null;
+  favicon_url?: string | null;
+  portal_name?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
+} | null;
+
 type PlatformAdminSchoolState = {
   activeSchoolId: string | null;
   activeSchoolName: string | null;
+  schoolBranding: BrandingState;
   setActiveSchool: (schoolId: string, schoolName: string) => void;
   clearActiveSchool: () => void;
+  setSchoolBranding: (branding: BrandingState) => void;
 };
 
 const persistStorage = createFallbackStorage<PlatformAdminSchoolState>();
+const persisted = readPersistedSchoolSync();
 
 export const usePlatformAdminSchoolStore = create<PlatformAdminSchoolState>()(
   persistStorage
     ? persist(
         (set) => ({
-          activeSchoolId: null,
-          activeSchoolName: null,
+          activeSchoolId: persisted.activeSchoolId,
+          activeSchoolName: persisted.activeSchoolName,
+          schoolBranding: null,
           setActiveSchool: (schoolId, schoolName) =>
             set({ activeSchoolId: schoolId, activeSchoolName: schoolName }),
           clearActiveSchool: () =>
-            set({ activeSchoolId: null, activeSchoolName: null }),
+            set({ activeSchoolId: null, activeSchoolName: null, schoolBranding: null }),
+          setSchoolBranding: (branding) => set({ schoolBranding: branding }),
         }),
-        { name: 'pa-active-school', storage: persistStorage },
+        {
+          name: 'pa-active-school',
+          storage: persistStorage,
+          partialize: (state) => ({
+            activeSchoolId: state.activeSchoolId,
+            activeSchoolName: state.activeSchoolName,
+          }),
+        },
       )
     : (set) => ({
-        activeSchoolId: null as string | null,
-        activeSchoolName: null as string | null,
+        activeSchoolId: persisted.activeSchoolId,
+        activeSchoolName: persisted.activeSchoolName,
+        schoolBranding: null as BrandingState,
         setActiveSchool: (schoolId, schoolName) =>
           set({ activeSchoolId: schoolId, activeSchoolName: schoolName }),
         clearActiveSchool: () =>
-          set({ activeSchoolId: null, activeSchoolName: null }),
+          set({ activeSchoolId: null, activeSchoolName: null, schoolBranding: null }),
+        setSchoolBranding: (branding) => set({ schoolBranding: branding }),
       }),
 );
+
+export type { BrandingState };

@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock3, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { apiService, getRequestErrorMessage } from '@services/api';
-import { useAuthStore } from '@store/auth';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { Invigilator } from '@types';
 
 export default function NonTeachingManagement() {
   const navigate = useNavigate();
-  const currentSchoolId = useAuthStore((state) => state.user?.school_id || 1);
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [staff, setStaff] = useState<Invigilator[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,8 +34,8 @@ export default function NonTeachingManagement() {
     try {
       setLoading(true);
       const [staffData, settingsRes] = await Promise.all([
-        useRefDataStore.getState().getInvigilators(currentSchoolId),
-        apiService.getAttendanceSettings(currentSchoolId),
+        useRefDataStore.getState().getInvigilators(effectiveSchoolId),
+        apiService.getAttendanceSettings(effectiveSchoolId),
       ]);
       setStaff(staffData);
       setShiftForm({
@@ -53,7 +53,7 @@ export default function NonTeachingManagement() {
 
   useEffect(() => {
     loadData();
-  }, [currentSchoolId]);
+  }, [effectiveSchoolId]);
 
   const handleSaveShift = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -63,7 +63,7 @@ export default function NonTeachingManagement() {
         minimum_attendance_threshold: threshold,
         working_hours_start: shiftForm.working_hours_start,
         working_hours_end: shiftForm.working_hours_end,
-      }, currentSchoolId);
+      }, effectiveSchoolId);
       setMessage('Non-teaching shift timings saved.');
       setTimeout(() => setMessage(''), 2500);
     } finally {
@@ -89,7 +89,7 @@ export default function NonTeachingManagement() {
     event.preventDefault();
     try {
       setSaving(true);
-      await apiService.createInvigilator(formData, currentSchoolId);
+      await apiService.createInvigilator(formData, effectiveSchoolId);
       setMessage('Non-teaching staff added successfully.');
       clearForm();
       await loadData();

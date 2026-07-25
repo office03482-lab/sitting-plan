@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, GraduationCap, Lock, Mail, Monitor, School, Users } from 'lucide-react';
-import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
+import bhavyaAxisLogo from '@/assets/bhavya-axis-logo-removebg-preview.png';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { PortalIntent, SchoolPublicBranding } from '@types';

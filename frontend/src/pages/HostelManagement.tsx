@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Hostel, HostelRoom, StudentHostelRequest } from '@types';
 import { apiService } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200';
@@ -139,9 +140,9 @@ const getHistoryStatusLabel = (request: StudentHostelRequest) => {
 };
 
 export default function HostelManagement() {
-  const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
+  const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const schoolId = user?.school_id || 1;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [hostels, setHostels] = useState<Hostel[]>([]);
   const [requests, setRequests] = useState<StudentHostelRequest[]>([]);
   const [message, setMessage] = useState('');
@@ -176,7 +177,7 @@ export default function HostelManagement() {
 
   const loadRequests = async () => {
     try {
-      const response = await apiService.listStudentHostelRequests(schoolId);
+      const response = await apiService.listStudentHostelRequests(effectiveSchoolId);
       setRequests(toArray(response.data).map(normalizeRequest));
       return [] as string[];
     } catch (error: any) {
@@ -196,6 +197,7 @@ export default function HostelManagement() {
     const errors: string[] = [];
 
     if (hostelsRes.status === 'fulfilled') {
+      // Hostels loaded successfully
     } else {
       setHostels([]);
       errors.push(readApiError(hostelsRes.reason, 'Failed to load hostels'));
@@ -479,7 +481,7 @@ export default function HostelManagement() {
     setReportError('');
     setReportData(null);
     try {
-      const res = await apiService.getHostelReport({ report_type: reportType, school_id: schoolId });
+      const res = await apiService.getHostelReport({ report_type: reportType, school_id: effectiveSchoolId });
       setReportData(res.data.rows.map((r: { values: Record<string, unknown> }) => r.values));
     } catch (err: unknown) {
       setReportError(readApiError(err, 'Failed to load report'));
@@ -490,7 +492,7 @@ export default function HostelManagement() {
 
   const handleExportReport = async (format: 'pdf' | 'excel' | 'csv') => {
     try {
-      const res = await apiService.exportHostelReport({ report_type: reportType, export_format: format, school_id: schoolId });
+      const res = await apiService.exportHostelReport({ report_type: reportType, export_format: format, school_id: effectiveSchoolId });
       const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

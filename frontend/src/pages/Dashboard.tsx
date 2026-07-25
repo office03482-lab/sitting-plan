@@ -27,6 +27,7 @@ import {
 } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 
 type EduPaySummaryState = {
   totalCollected: number;
@@ -246,7 +247,7 @@ export default function Dashboard() {
   const authIdentityFingerprintRef = useRef('');
   const integratedPanelEnabled = false;
   const canRunDashboardRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const activeSchoolId = String(user?.school_id || user?.default_school_id || '').trim();
+  const effectiveSchoolId = useEffectiveSchoolId();
 
   const debugDashboardLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[dashboard-attendance-loader]', source, {
@@ -279,7 +280,7 @@ export default function Dashboard() {
     if (!canRunDashboardRequests) return;
     debugDashboardLoader('effect.loadStatistics');
     void loadStatistics();
-  }, [canViewEduPay, canViewInventory, showDetailedDashboard, canRunDashboardRequests]);
+  }, [canViewEduPay, canViewInventory, showDetailedDashboard, canRunDashboardRequests, effectiveSchoolId]);
 
   useEffect(() => {
     return () => {
@@ -335,7 +336,7 @@ export default function Dashboard() {
       return;
     }
 
-    const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}:${activeSchoolId}`;
+    const requestFingerprint = `${showDetailedDashboard}:${canViewInventory}:${canViewEduPay}:${Boolean(user?.id)}:${effectiveSchoolId}`;
     const now = Date.now();
     if (!force && dashboardLoadFingerprintRef.current === requestFingerprint && now - lastDashboardLoadAtRef.current < 60_000) {
       debugDashboardLoader('loadStatistics.skipped.cooldown', { requestFingerprint });
@@ -360,12 +361,12 @@ export default function Dashboard() {
           timetableCountRes,
           eduPayRes,
         ] = await Promise.allSettled([
-          apiService.getDashboardMetrics(activeSchoolId),
-          activeSchoolId
-            ? apiService.getStaffAttendanceDashboard({ school_id: activeSchoolId, date_from: today, date_to: today })
+          apiService.getDashboardMetrics(effectiveSchoolId),
+          effectiveSchoolId
+            ? apiService.getStaffAttendanceDashboard({ school_id: effectiveSchoolId, date_from: today, date_to: today })
             : apiService.getStaffAttendanceDashboard({ date_from: today, date_to: today }),
-          activeSchoolId
-            ? apiService.getTimetableEntriesCount(activeSchoolId)
+          effectiveSchoolId
+            ? apiService.getTimetableEntriesCount(effectiveSchoolId)
             : apiService.getTimetableEntriesCount(),
           canViewEduPay ? apiService.getEduPayDashboard() : Promise.resolve({ data: null }),
         ]);

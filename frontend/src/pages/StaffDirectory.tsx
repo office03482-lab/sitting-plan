@@ -10,6 +10,7 @@ import {
   logIfUnexpectedRequestError,
 } from '@services/api';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import {
   findStaffDirectoryNameMatches,
   getStaffDirectoryDuplicateGroups,
@@ -182,7 +183,7 @@ export default function StaffDirectory() {
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const user = useAuthStore((state) => state.user);
-  const currentSchoolId = user?.school_id || 1;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const [records, setRecords] = useState<StaffDirectoryRecord[]>([]);
   const [search, setSearch] = useState('');
@@ -201,8 +202,8 @@ export default function StaffDirectory() {
     try {
       const { getTeachers, getInvigilators } = useRefDataStore.getState();
       const [teachersRes, invigilatorsRes] = await Promise.allSettled([
-        getTeachers(currentSchoolId),
-        getInvigilators(currentSchoolId),
+        getTeachers(effectiveSchoolId),
+        getInvigilators(effectiveSchoolId),
       ]);
 
       const teacherRows =
@@ -255,7 +256,7 @@ export default function StaffDirectory() {
   useEffect(() => {
     if (!canLoadStaffDirectory) return;
     void loadRecords();
-  }, [canLoadStaffDirectory, currentSchoolId]);
+  }, [canLoadStaffDirectory, effectiveSchoolId]);
 
   useEffect(() => {
     const state = location.state as { staffType?: 'all' | 'teaching' | 'non_teaching' } | undefined;
@@ -433,7 +434,7 @@ export default function StaffDirectory() {
                 primaryMobile: editForm.phone.trim() || undefined,
               },
             },
-          }, currentSchoolId);
+          }, effectiveSchoolId);
           await apiService.deleteInvigilator(editingRecord.backendId);
         } else {
           await apiService.createInvigilator(
@@ -458,7 +459,7 @@ export default function StaffDirectory() {
                 },
               },
             },
-            currentSchoolId
+            effectiveSchoolId
           );
           await apiService.deleteTeacher(editingRecord.backendId);
         }
@@ -498,7 +499,7 @@ export default function StaffDirectory() {
     try {
       setSaving(true);
       const response = await apiService.deleteAllStaffDirectory({
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         staff_type: staffType === 'all' ? undefined : staffType,
         search: search || undefined,
         category: category === 'all' ? undefined : category,

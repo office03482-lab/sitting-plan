@@ -6,6 +6,7 @@ import { useAuthStore } from '@store/auth';
 import { apiService } from '@services/api';
 import { useRefDataStore } from '@store/referenceData';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   Student,
   StudentImportResponse,
@@ -432,7 +433,7 @@ export default function StudentManagement() {
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const user = useAuthStore((state) => state.user);
-  const currentSchoolId = user?.school_id || 1;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const isPlatformSuperAdmin = user?.role_key === 'platform_admin';
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, bumpStudentRefreshToken } = useAppStore();
@@ -527,7 +528,7 @@ export default function StudentManagement() {
     loadStudents();
     loadBatches();
     loadHostels();
-  }, [canRunRequests, currentSchoolId]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   useEffect(() => {
     const state = location.state as
@@ -606,7 +607,7 @@ export default function StudentManagement() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const rawStudents = await useRefDataStore.getState().getStudents(currentSchoolId);
+      const rawStudents = await useRefDataStore.getState().getStudents(effectiveSchoolId);
       const normalizedStudents = Array.isArray(rawStudents) ? rawStudents.map(normalizeStudent) : [];
       setStudents(normalizedStudents);
       const sessions = normalizedStudents
@@ -624,7 +625,7 @@ export default function StudentManagement() {
 
   const loadHostels = async () => {
     try {
-      const response = await apiService.listHostels(currentSchoolId);
+      const response = await apiService.listHostels(effectiveSchoolId);
       setHostels(response.data);
     } catch (error) {
       console.error('Failed to load hostels:', error);
@@ -634,7 +635,7 @@ export default function StudentManagement() {
 
   const loadBatches = async () => {
     try {
-      const batches = await useRefDataStore.getState().getBatches(currentSchoolId);
+      const batches = await useRefDataStore.getState().getBatches(effectiveSchoolId);
       setBatches(batches);
     } catch (error) {
       console.error('Failed to load batches:', error);
@@ -1824,7 +1825,7 @@ export default function StudentManagement() {
       }
 
       if (editStudent) {
-        const response = await apiService.updateStudent(editStudent.id, payload, currentSchoolId);
+        const response = await apiService.updateStudent(editStudent.id, payload, effectiveSchoolId);
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired
@@ -1834,7 +1835,7 @@ export default function StudentManagement() {
               : 'Student updated successfully'
         );
       } else {
-        const response = await apiService.createStudent(payload, currentSchoolId);
+        const response = await apiService.createStudent(payload, effectiveSchoolId);
         syncAdmissionSnapshot(response.data.id, payload.roll_number, sendToEduPayOnSubmit);
         setMessage(
           sendHostelRequestOnSubmit && studentForm.hostelRequired

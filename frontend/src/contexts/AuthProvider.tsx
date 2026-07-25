@@ -355,12 +355,7 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
         role_id,
         status,
         is_primary,
-        is_active,
-        roles (
-          role_key,
-          role_name,
-          is_system
-        )
+        is_active
       `)
       .eq('profile_id', userId)
       .eq('is_active', true)
@@ -377,10 +372,53 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
     throw membershipError;
   }
 
+  console.debug('[auth-memberships] raw query result', {
+    userId,
+    count: (memberships || []).length,
+    memberships,
+  });
+
+  const roleIds = [...new Set((memberships || []).map((m: any) => m.role_id).filter(Boolean))];
+  let rolesMap = new Map<string, { role_key: string; role_name: string; is_system?: boolean }>();
+
+  if (roleIds.length > 0) {
+    const { data: rolesData, error: rolesError } = await supabase
+      .from('roles')
+      .select('id, role_key, role_name, is_system')
+      .in('id', roleIds);
+
+    if (rolesError) {
+      console.warn('[auth-memberships] roles fetch failed (will proceed with null roles)', rolesError);
+    } else if (rolesData) {
+      for (const r of rolesData as any[]) {
+        rolesMap.set(r.id, r);
+      }
+    }
+
+    console.debug('[auth-memberships] roles fetch', {
+      roleIds,
+      rolesFound: rolesData?.length ?? 0,
+      rolesMap: Object.fromEntries(rolesMap),
+    });
+  }
+
   const membershipList = ((memberships || []) as unknown as MembershipRecord[]).map((item) => ({
     ...item,
-    roles: Array.isArray(item.roles) ? item.roles[0] || null : item.roles || null,
+    roles: rolesMap.get(item.role_id) || null,
   }));
+
+  console.debug('[auth-memberships] processed membershipList', {
+    count: membershipList.length,
+    items: membershipList.map((m) => ({
+      id: m.id,
+      school_id: m.school_id,
+      role_id: m.role_id,
+      role_key: m.roles?.role_key ?? null,
+      is_primary: m.is_primary,
+      is_active: m.is_active,
+      status: m.status,
+    })),
+  });
 
   if (portalIntent === 'student_portal') {
     const { data: studentData, error: studentError } = await supabase
@@ -469,14 +507,21 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
     };
   }
 
-  if (portalIntent === 'platform_admin') {
-    const paMembership = membershipList.find((m) => {
-      const role = Array.isArray(m.roles) ? m.roles[0] || null : m.roles;
-      return role?.role_key === 'platform_admin';
-    });
-    if (!paMembership) {
-      throw new Error('You are not authorized to access Platform Admin.');
-    }
+  // Platform Admin detection — role-based, not portal-intent-based.
+  // A user with a platform_admin membership is always resolved as a Platform
+  // Admin regardless of which portal intent was requested.  The downstream
+  // ProtectedRoute + PlatformAdminSchoolSelector handle school-context
+  // selection when the user navigates to school-scoped routes.
+  const paMembership = membershipList.find((m) => {
+    const role = Array.isArray(m.roles) ? m.roles[0] || null : m.roles;
+    return role?.role_key === 'platform_admin';
+  });
+
+  if (portalIntent === 'platform_admin' && !paMembership) {
+    throw new Error('You are not authorized to access Platform Admin.');
+  }
+
+  if (paMembership) {
     return {
       id: profile.id,
       email: profile.email || session.user.email || '',
@@ -506,12 +551,33 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
     return role?.role_key !== 'platform_admin';
   });
 
+  console.debug('[auth-memberships] filtering result', {
+    totalMemberships: membershipList.length,
+    nonPaCount: nonPaMemberships.length,
+    filteredOutAsPlatformAdmin: membershipList.length - nonPaMemberships.length,
+    nonPaItems: nonPaMemberships.map((m) => ({
+      id: m.id,
+      school_id: m.school_id,
+      role_key: m.roles?.role_key ?? null,
+      is_primary: m.is_primary,
+    })),
+    defaultSchoolId: profile.default_school_id,
+  });
+
   const activeMembership =
     nonPaMemberships.find((item) => item.is_primary) ||
     nonPaMemberships.find((item) => item.school_id === profile.default_school_id) ||
     nonPaMemberships[0];
 
   if (!activeMembership) {
+    console.warn('[auth-memberships] no active membership found, trying guardian fallback', {
+      userId,
+      membershipListCount: membershipList.length,
+      nonPaCount: nonPaMemberships.length,
+      defaultSchoolId: profile.default_school_id,
+      rawMemberships: memberships,
+    });
+
     const { data: guardianData } = await supabase
       .schema('academic')
       .from('guardians')
@@ -545,7 +611,36 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
       };
     }
 
-    throw new Error('No active school membership found for this user.');
+    const rejectionReasons: string[] = [];
+    if (membershipList.length === 0) {
+      rejectionReasons.push(
+        `school_memberships query returned 0 rows for profile_id=${userId} with is_active=true AND status=active. ` +
+        'This typically means RLS is blocking the rows. Check: (1) profiles.id matches auth.uid(), ' +
+        '(2) the membership row has is_active=true and status=active, ' +
+        '(3) no other RLS policy is interfering.'
+      );
+    } else {
+      rejectionReasons.push(
+        `Found ${membershipList.length} membership(s) but all were excluded. ` +
+        `Roles resolved: [${membershipList.map((m) => m.roles?.role_key ?? 'null').join(', ')}]. ` +
+        `default_school_id=${profile.default_school_id}. ` +
+        `Guardian fallback also returned null.`
+      );
+    }
+
+    console.error('[auth-memberships] REJECTION', {
+      userId,
+      portalIntent,
+      rawMemberships: memberships,
+      processedMemberships: membershipList,
+      nonPaMemberships,
+      defaultSchoolId: profile.default_school_id,
+      rejectionReasons,
+    });
+
+    throw new Error(
+      `No active school membership found for this user. ${rejectionReasons.join(' ')}`
+    );
   }
 
   const permissions = await fetchRolePermissions(activeMembership.role_id);
@@ -588,9 +683,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('IDLE');
   const [sessionRegistrationReady, setSessionRegistrationReady] = useState(false);
   const [sessionRegistrationError, setSessionRegistrationError] = useState<string | null>(null);
-  const [paActiveSchoolId, setPaActiveSchoolId] = useState<string | null>(
-    () => usePlatformAdminSchoolStore.getState().activeSchoolId,
-  );
+  const paActiveSchoolId = usePlatformAdminSchoolStore((s) => s.activeSchoolId);
 
   const storeUserRef = useRef(storeUser);
   const authErrorRef = useRef(authError);
@@ -612,13 +705,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     storeUserRef.current = storeUser;
   }, [storeUser]);
-
-  useEffect(() => {
-    const unsub = usePlatformAdminSchoolStore.subscribe((state) => {
-      setPaActiveSchoolId(state.activeSchoolId);
-    });
-    return unsub;
-  }, []);
 
   useEffect(() => {
     authErrorRef.current = authError;
@@ -978,7 +1064,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(bootstrapSession);
         setAuthError(null);
 
-        if (resolvedPortalIntent === 'platform_admin' || resolvedPortalIntent === 'student_portal' || resolvedPortalIntent === 'parent_portal') {
+        if (resolvedPortalIntent === 'platform_admin' || resolvedPortalIntent === 'student_portal' || resolvedPortalIntent === 'parent_portal' || appUser.role_key === 'platform_admin') {
           setSessionRegistrationReady(false);
         } else {
           registerPortalSession(bootstrapSession, {
@@ -1378,7 +1464,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal') {
+    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal' || storeUser?.role_key === 'platform_admin') {
       return;
     }
 
@@ -1427,7 +1513,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (authStatus !== 'AUTHENTICATED' || !storeUser?.id) {
       return;
     }
-    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal') {
+    if (portalIntentRef.current === 'platform_admin' || portalIntentRef.current === 'student_portal' || portalIntentRef.current === 'parent_portal' || storeUser?.role_key === 'platform_admin') {
       return;
     }
     const sessionKey = getStoredActiveSessionKey();

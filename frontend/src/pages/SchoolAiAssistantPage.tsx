@@ -3,8 +3,8 @@ import { AlertTriangle, BarChart3, BrainCircuit, Coins, RefreshCcw, Send, Shield
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   AiAgentDashboard,
   AiAgentRecommendation,
@@ -24,7 +24,6 @@ const severityTone: Record<string, string> = {
 };
 
 export default function SchoolAiAssistantPage() {
-  const { user } = useAuth();
   const [question, setQuestion] = useState('');
   const [dashboard, setDashboard] = useState<AiAgentDashboard | null>(null);
   const [recommendations, setRecommendations] = useState<AiAgentRecommendation[]>([]);
@@ -36,10 +35,10 @@ export default function SchoolAiAssistantPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const schoolId = String(user?.school_id || '').trim();
+  const effectiveSchoolId = useEffectiveSchoolId();
 
   const loadAssistant = async () => {
-    if (!schoolId) return;
+    if (!effectiveSchoolId) return;
     try {
       setLoading(true);
       setError('');
@@ -52,7 +51,7 @@ export default function SchoolAiAssistantPage() {
       ] = await Promise.all([
         apiService.getAiAgentsDashboard(),
         apiService.listAiAgentRecommendations(),
-        apiService.getSchoolAnalytics(schoolId),
+        apiService.getSchoolAnalytics(effectiveSchoolId),
         apiService.getCampusPredictions(),
         apiService.getFinancePredictions(),
       ]);
@@ -70,7 +69,7 @@ export default function SchoolAiAssistantPage() {
 
   useEffect(() => {
     void loadAssistant();
-  }, [schoolId]);
+  }, [effectiveSchoolId]);
 
   const summaryCards = useMemo(
     () => [

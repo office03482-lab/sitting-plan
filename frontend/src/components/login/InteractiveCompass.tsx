@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
+import bhavyaAxisLogo from '@/assets/bhavya-axis-logo-removebg-preview.png';
 import type { PortalIntent } from '@types';
 import {
   bearingFromPoint,

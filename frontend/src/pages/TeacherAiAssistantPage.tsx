@@ -3,8 +3,8 @@ import { BookOpen, ClipboardList, FileSpreadsheet, MessagesSquare, Sparkles, Use
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   BatchAnalytics,
   SchoolAnalytics,
@@ -19,7 +19,7 @@ const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
 type AssistantTab = 'paper' | 'assignment' | 'lesson' | 'report' | 'analysis';
 
 export default function TeacherAiAssistantPage() {
-  const { user } = useAuth();
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [tab, setTab] = useState<AssistantTab>('paper');
   const [topic, setTopic] = useState('');
   const [batchId, setBatchId] = useState('');
@@ -95,8 +95,8 @@ export default function TeacherAiAssistantPage() {
         if (batchId.trim()) {
           const response = await apiService.getBatchAnalytics(batchId.trim());
           setBatchAnalysis(response.data);
-        } else if (user?.school_id) {
-          const response = await apiService.getSchoolAnalytics(user.school_id);
+        } else if (effectiveSchoolId) {
+          const response = await apiService.getSchoolAnalytics(effectiveSchoolId);
           setSchoolAnalysis(response.data);
         } else {
           throw new Error('School context missing for weak student analysis.');

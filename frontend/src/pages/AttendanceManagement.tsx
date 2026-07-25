@@ -14,6 +14,7 @@ import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   AttendanceHoliday,
   AttendanceLeave,
@@ -194,7 +195,7 @@ function AttendanceManagementContent() {
   const isStudentTabVisible = activeTab === 'student' && loadedTabs.student;
   const isStaffTabVisible = activeTab === 'staff' && loadedTabs.staff;
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
 
   const debugAttendanceLoader = (source: string, details?: Record<string, unknown>) => {
     console.debug('[attendance-loader]', source, {
@@ -218,7 +219,7 @@ function AttendanceManagementContent() {
     refreshManagedBatches,
   } = useAttendanceStudentResources({
     canRunAttendanceRequests,
-    currentSchoolId,
+    currentSchoolId: effectiveSchoolId,
     overviewSubjectOptions: toArray(overview?.subject_options),
   });
 
@@ -345,8 +346,8 @@ function AttendanceManagementContent() {
         debugAttendanceLoader('loadStaffTab.start');
         setTabLoading(true);
         const [staffRes, approvedLeavesRes] = await Promise.all([
-          apiService.listAttendanceStaff({ school_id: currentSchoolId, limit: 200 }),
-          apiService.listAttendanceLeaves({ school_id: currentSchoolId, status: 'approved' }).catch(() => ({ data: [] })),
+          apiService.listAttendanceStaff({ school_id: effectiveSchoolId, limit: 200 }),
+          apiService.listAttendanceLeaves({ school_id: effectiveSchoolId, status: 'approved' }).catch(() => ({ data: [] })),
         ]);
         setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
         setStaffApprovedLeaves(toArray<AttendanceLeave>(approvedLeavesRes.data));
@@ -378,7 +379,7 @@ function AttendanceManagementContent() {
       return;
     }
     try {
-      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId, status: 'approved' });
+      const response = await apiService.listAttendanceLeaves({ school_id: effectiveSchoolId, status: 'approved' });
       setStaffApprovedLeaves(toArray<AttendanceLeave>(response.data));
     } catch {
       // Keep existing approved leave data if refresh fails.
@@ -405,8 +406,8 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadLeavesTab.start');
       setTabLoading(true);
       const [leavesRes, staffRes] = await Promise.all([
-        apiService.listAttendanceLeaves({ school_id: currentSchoolId }),
-        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: currentSchoolId, limit: 200 }),
+        apiService.listAttendanceLeaves({ school_id: effectiveSchoolId }),
+        staffMembers.length ? Promise.resolve({ data: staffMembers }) : apiService.listAttendanceStaff({ school_id: effectiveSchoolId, limit: 200 }),
       ]);
       setLeaves(toArray<AttendanceLeave>(leavesRes.data));
       setStaffMembers(toArray<AttendanceStaff>(staffRes.data));
@@ -869,7 +870,7 @@ function AttendanceManagementContent() {
         date: staffFilters.date,
         department: staffFilters.department,
         search: staffFilters.search || undefined,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
       });
       const payload = response.data;
       if (!payload || typeof payload !== 'object') {
@@ -902,7 +903,7 @@ function AttendanceManagementContent() {
         date_from: staffFilters.recordDate || undefined,
         date_to: staffFilters.recordDate || undefined,
         limit: 200,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
       });
       if (staffRecordsRequestKeyRef.current !== requestKey) return;
       const nextRecords = toArray<StaffAttendanceRecord>(recordsRes.data);
@@ -912,7 +913,7 @@ function AttendanceManagementContent() {
         return;
       }
       const dashboardRes = await apiService.getStaffAttendanceDashboard({
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         department: staffFilters.dashboardDepartment || undefined,
         date_from: staffFilters.dashboardDate || undefined,
         date_to: staffFilters.dashboardDate || undefined,
@@ -939,7 +940,7 @@ function AttendanceManagementContent() {
       debugAttendanceLoader('loadStaffCalendarRecords.start');
       const monthRange = getMonthRange(staffFilters.date);
       const response = await apiService.listStaffAttendanceRecords({
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         department: staffFilters.department || undefined,
         date_from: monthRange.from || undefined,
         date_to: monthRange.to || undefined,
@@ -1026,7 +1027,7 @@ function AttendanceManagementContent() {
       });
       setLeaveForm(initialLeaveForm);
       setAlert({ type: 'success', message: 'Leave application submit ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
+      const response = await apiService.listAttendanceLeaves({ school_id: effectiveSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1042,7 +1043,7 @@ function AttendanceManagementContent() {
         approved_by: 'HR Admin',
       });
       setAlert({ type: 'success', message: `Leave ${nextStatus} ho gayi.` });
-      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
+      const response = await apiService.listAttendanceLeaves({ school_id: effectiveSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1089,7 +1090,7 @@ function AttendanceManagementContent() {
     try {
       await apiService.deleteAttendanceLeave(leaveId);
       setAlert({ type: 'success', message: 'Leave request delete ho gayi.' });
-      const response = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
+      const response = await apiService.listAttendanceLeaves({ school_id: effectiveSchoolId });
       setLeaves(toArray<AttendanceLeave>(response.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1132,7 +1133,7 @@ function AttendanceManagementContent() {
     if (!window.confirm(`Current filters ke hisaab se saare staff attendance records ${isPlatformSuperAdmin ? 'delete' : 'delete request'} karne hain?`)) return;
     try {
       const response = await apiService.deleteAllStaffAttendanceRecords({
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         department: staffFilters.recordDepartment || undefined,
         staff_name: staffFilters.recordStaffName || undefined,
         date_from: staffFilters.recordDate || undefined,
@@ -1152,13 +1153,13 @@ function AttendanceManagementContent() {
   const handleDeleteAllLeaves = async () => {
     if (!window.confirm(`${isPlatformSuperAdmin ? 'Delete' : 'Request delete for'} all leave requests?`)) return;
     try {
-      const response = await apiService.deleteAllAttendanceLeaves({ school_id: currentSchoolId });
+      const response = await apiService.deleteAllAttendanceLeaves({ school_id: effectiveSchoolId });
       if (response.data?.mode === 'approval_required') {
         setAlert({ type: 'success', message: response.data?.message || 'Delete all leave requests request bhej di gayi hai.' });
         return;
       }
       setAlert({ type: 'success', message: 'All leave requests delete ho gayi.' });
-      const leavesResponse = await apiService.listAttendanceLeaves({ school_id: currentSchoolId });
+      const leavesResponse = await apiService.listAttendanceLeaves({ school_id: effectiveSchoolId });
       setLeaves(toArray<AttendanceLeave>(leavesResponse.data));
       await refreshStaffLeaveViews();
       await loadOverviewData({ force: true });
@@ -1171,7 +1172,7 @@ function AttendanceManagementContent() {
     try {
       const response = await apiService.getAttendanceReportData({
         report_type: reportFilters.report_type,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         batch_names: reportFilters.batch_names || undefined,
         department: reportFilters.department || undefined,
         date_from: reportFilters.date_from || undefined,
@@ -1205,7 +1206,7 @@ function AttendanceManagementContent() {
       const response = await apiService.exportAttendanceReport({
         report_type: reportFilters.report_type,
         export_format: format,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         batch_names: reportFilters.batch_names || undefined,
         department: reportFilters.department || undefined,
         date_from: reportFilters.date_from || undefined,

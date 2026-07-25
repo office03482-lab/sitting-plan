@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Eye, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
-import { useAuthStore } from '@store/auth';
 import { useRefDataStore } from '@store/referenceData';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { Batch, Student } from '@types';
 import {
   readEduPayAdmissionRequests,
@@ -80,8 +80,7 @@ function StudentAvatar({ student, className = 'h-14 w-14' }: { student: Student;
 export default function StudentDirectory() {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
-  const user = useAuthStore((state) => state.user);
-  const currentSchoolId = user?.school_id || 1;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { students, setStudents, removeStudent, studentRefreshToken } = useAppStore();
   const [classBatches, setClassBatches] = useState<Batch[]>([]);
@@ -116,7 +115,7 @@ export default function StudentDirectory() {
   const loadStudents = async () => {
     setStudentsLoading(true);
     try {
-      const rawStudents = await useRefDataStore.getState().getStudents(currentSchoolId);
+      const rawStudents = await useRefDataStore.getState().getStudents(effectiveSchoolId);
       const nextStudents = Array.isArray(rawStudents)
         ? rawStudents.map(normalizeStudent).filter((student) => String(student.id || '').trim() && (student.full_name || student.roll_number))
         : [];
@@ -132,7 +131,7 @@ export default function StudentDirectory() {
 
   const loadClassBatches = async () => {
     try {
-      const classBatchesData = await useRefDataStore.getState().getBatches(currentSchoolId, 'class');
+      const classBatchesData = await useRefDataStore.getState().getBatches(effectiveSchoolId, 'class');
       setClassBatches(Array.isArray(classBatchesData) ? classBatchesData : []);
     } catch {
       setClassBatches([]);
@@ -143,7 +142,7 @@ export default function StudentDirectory() {
     if (!canRunRequests) return;
     void loadStudents();
     void loadClassBatches();
-  }, [studentRefreshToken, canRunRequests, currentSchoolId]);
+  }, [studentRefreshToken, canRunRequests, effectiveSchoolId]);
 
   useEffect(() => {
     return () => {

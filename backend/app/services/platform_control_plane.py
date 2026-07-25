@@ -197,11 +197,20 @@ def _safe_count(table_name: str, *, school_id: str | None = None, schema: str | 
 
 def _safe_list(table_name: str, *, school_id: str | None = None, schema: str | None = None, select: str = "*") -> list[dict[str, Any]]:
     table = _schema_table(schema, table_name) if schema else _public_table(table_name)
-    query = table.select(select)
-    if school_id:
-        query = query.eq("school_id", school_id)
     try:
-        return [dict(row) for row in list(query.execute().data or [])]
+        PAGE_SIZE = 1000
+        all_rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            query = table.select(select)
+            if school_id:
+                query = query.eq("school_id", school_id)
+            page = query.range(offset, offset + PAGE_SIZE - 1).execute().data or []
+            all_rows.extend([dict(row) for row in page])
+            if len(page) < PAGE_SIZE:
+                break
+            offset += PAGE_SIZE
+        return all_rows
     except Exception:
         return []
 
@@ -452,39 +461,44 @@ def _load_school_row(school_id: str) -> dict[str, Any]:
     return dict(rows[0])
 
 
+def _fetch_all(table_name: str, *, select_cols: str = "*", filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Paginate through Supabase results using .range() to bypass the 1000-row default cap."""
+    PAGE_SIZE = 1000
+    all_rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        query = _public_table(table_name).select(select_cols)
+        if filters:
+            for col, val in (filters or {}).items():
+                if isinstance(val, list):
+                    query = query.in_(col, val)
+                else:
+                    query = query.eq(col, val)
+        page = query.range(offset, offset + PAGE_SIZE - 1).execute().data or []
+        all_rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+    return all_rows
+
+
 def _resolve_counts(school_ids: list[str]) -> dict[str, dict[str, int]]:
     counters: dict[str, dict[str, int]] = {school_id: {"students": 0, "teachers": 0, "staff": 0} for school_id in school_ids}
-    student_rows = (
-        _public_table("students")
-        .select("school_id")
-        .in_("school_id", school_ids)
-        .eq("is_active", True)
-        .execute()
-        .data
-        or []
-    )
+    student_rows = _fetch_all("students", select_cols="school_id", filters={"school_id": school_ids, "is_active": True})
     for row in student_rows:
         school_id = _normalize(row.get("school_id"))
         if school_id in counters:
             counters[school_id]["students"] += 1
 
-    staff_rows = (
-        _public_table("staff_members")
-        .select("school_id,staff_type")
-        .in_("school_id", school_ids)
-        .eq("is_active", True)
-        .execute()
-        .data
-        or []
-    )
+    staff_rows = _fetch_all("staff_members", select_cols="school_id,staff_type", filters={"school_id": school_ids, "is_active": True})
     for row in staff_rows:
         school_id = _normalize(row.get("school_id"))
         if school_id not in counters:
             continue
-        staff_type = _normalize(row.get("staff_type"))
+        staff_type = _normalize(row.get("staff_type")).lower()
         if staff_type == "teaching":
             counters[school_id]["teachers"] += 1
-        elif staff_type == "non_teaching":
+        else:
             counters[school_id]["staff"] += 1
     return counters
 
@@ -749,8 +763,8 @@ def _usage_item_for_school(school: dict[str, Any]) -> dict[str, Any]:
     school_name = str(school.get("name") or "")
     students = _safe_count("students", school_id=school_id, active_only=True)
     staff_rows = _safe_list("staff_members", school_id=school_id)
-    teachers = sum(1 for row in staff_rows if _normalize(row.get("staff_type")) == "teaching" and row.get("is_active", True))
-    staff = sum(1 for row in staff_rows if _normalize(row.get("staff_type")) == "non_teaching" and row.get("is_active", True))
+    teachers = sum(1 for row in staff_rows if _normalize(row.get("staff_type")).lower() == "teaching" and row.get("is_active", True))
+    staff = sum(1 for row in staff_rows if _normalize(row.get("staff_type")).lower() != "teaching" and row.get("is_active", True))
     parents = _execute_count(_public_table("school_memberships").select("id", count="exact", head=True).eq("school_id", school_id).eq("status", "active"))
     rooms = _safe_count("rooms", school_id=school_id, active_only=True)
     attendance_records = _safe_count("student_attendance", school_id=school_id, schema="attendance") + _safe_count("staff_attendance", school_id=school_id, schema="attendance")

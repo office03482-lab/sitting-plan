@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuthStore } from '@store/auth';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   Batch,
   AttendanceSubject,
@@ -61,7 +62,7 @@ export default function MarkStudentAttendance({
   const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
 
   const [filters, setFilters] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -251,7 +252,7 @@ export default function MarkStudentAttendance({
         section: selectedTimetableParts.section,
         subject_id: effectiveSubjectId || undefined,
         search: filters.search || undefined,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
       });
       const payload = response.data;
       if (!payload || typeof payload !== 'object') {
@@ -275,7 +276,7 @@ export default function MarkStudentAttendance({
       }
       setStudentMarking(null);
     }
-  }, [canRunAttendanceRequests, selectedTimetableParts, filters.date, filters.subject_id, filters.search, batchAttendanceContext?.subject_id, teacherAttendanceContext?.subject_id, onAlert]);
+  }, [canRunAttendanceRequests, selectedTimetableParts, filters.date, filters.subject_id, filters.search, batchAttendanceContext?.subject_id, teacherAttendanceContext?.subject_id, onAlert, effectiveSchoolId]);
 
   const loadTeacherAttendanceContext = useCallback(async () => {
     if (!canRunAttendanceRequests || user?.role !== 'teacher') {
@@ -286,7 +287,7 @@ export default function MarkStudentAttendance({
       const response = await apiService.getTeacherAttendanceContext({
         target_date: filters.date,
         current_time: getCurrentTimeHHMM(),
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
       });
       const context = response.data || null;
       setTeacherAttendanceContext(context);
@@ -296,7 +297,7 @@ export default function MarkStudentAttendance({
       }
       setTeacherAttendanceContext(null);
     }
-  }, [canRunAttendanceRequests, user?.role, filters.date]);
+  }, [canRunAttendanceRequests, user?.role, filters.date, effectiveSchoolId]);
 
   const loadBatchAttendanceContext = useCallback(async () => {
     if (!canRunAttendanceRequests || !selectedTimetableParts.className || !selectedTimetableParts.section) {
@@ -313,7 +314,7 @@ export default function MarkStudentAttendance({
         batch_name: filters.attendance_scope === 'batch' ? filters.batch_name : undefined,
         target_date: filters.date,
         current_time: getCurrentTimeHHMM(),
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
       });
       const contexts = toArray<TeacherAttendanceContext>(response.data);
       setBatchAttendanceOptions(contexts);
@@ -335,7 +336,7 @@ export default function MarkStudentAttendance({
     } finally {
       setBatchAttendanceOptionsLoading(false);
     }
-  }, [canRunAttendanceRequests, selectedTimetableParts, filters.attendance_scope, filters.batch_name, filters.date, getAttendanceContextOptionValue, selectedBatchAttendanceEntryId]);
+  }, [canRunAttendanceRequests, selectedTimetableParts, filters.attendance_scope, filters.batch_name, filters.date, getAttendanceContextOptionValue, selectedBatchAttendanceEntryId, effectiveSchoolId]);
 
   const handleSaveStudentAttendance = useCallback(async () => {
     const markingPayload = studentMarking;

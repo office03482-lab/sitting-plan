@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
@@ -15,33 +16,37 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
   const setActiveSchool = usePlatformAdminSchoolStore((s) => s.setActiveSchool);
   const [schools, setSchools] = useState<PlatformSchoolSummary[]>([]);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+  const fetchedRef = useRef(false);
+
+  const fetchSchools = useCallback(async () => {
+    if (fetchedRef.current && schools.length > 0) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiService.listPlatformSchools({ status: 'active' });
+      if (!cancelled) {
+        setSchools(res.data.items || []);
+        fetchedRef.current = true;
+      }
+    } catch (err: any) {
+      if (!cancelled) {
+        setError(getRequestErrorMessage(err, 'Schools load nahi ho paaye.'));
+      }
+    } finally {
+      if (!cancelled) setLoading(false);
+    }
+  }, [schools.length]);
 
   useEffect(() => {
-    if (trigger && !open) return;
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await apiService.listPlatformSchools({ status: 'active' });
-        if (!cancelled) {
-          setSchools(res.data.items || []);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(getRequestErrorMessage(err, 'Schools load nahi ho paaye.'));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void load();
-    return () => { cancelled = true; };
-  }, [open, trigger]);
+    if (!trigger || open) {
+      void fetchSchools();
+    }
+  }, [open, trigger, fetchSchools]);
 
   useEffect(() => {
     if (!open) return;
@@ -54,6 +59,15 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [open]);
+
   const filtered = schools.filter((s) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
@@ -64,34 +78,38 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
     );
   });
 
-  const handleSelect = (school: PlatformSchoolSummary) => {
+  const handleSelect = useCallback((school: PlatformSchoolSummary) => {
     setActiveSchool(school.id, school.name);
     setOpen(false);
     setSearch('');
     if (returnPath) {
       navigate(returnPath, { replace: true });
     }
-  };
+  }, [setActiveSchool, returnPath, navigate]);
+
+  const handleClose = useCallback(() => setOpen(false), []);
 
   if (trigger) {
     return (
       <>
         <div onClick={() => setOpen(true)}>{trigger}</div>
-        {open && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div ref={modalRef} className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-xl">
-              <SchoolSelectorContent
-                loading={loading}
-                error={error}
-                filtered={filtered}
-                search={search}
-                setSearch={setSearch}
-                handleSelect={handleSelect}
-                onClose={() => setOpen(false)}
-              />
-            </div>
-          </div>
-        )}
+        {open &&
+          createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30">
+              <div ref={modalRef} className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-xl">
+                <SchoolSelectorContent
+                  loading={loading}
+                  error={error}
+                  filtered={filtered}
+                  search={search}
+                  setSearch={setSearch}
+                  handleSelect={handleSelect}
+                  onClose={handleClose}
+                />
+              </div>
+            </div>,
+            document.body,
+          )}
       </>
     );
   }

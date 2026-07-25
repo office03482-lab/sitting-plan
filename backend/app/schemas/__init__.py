@@ -234,7 +234,12 @@ class StudentBase(BaseModel):
     @model_validator(mode="after")
     def validate_batch_reference(self):
         if not self.batch_id and not self.batch_name:
-            raise ValueError("Either batch_id or batch_name is required")
+            if self.class_name and self.section:
+                self.batch_name = f"{self.class_name} - {self.section}"
+            elif self.class_name:
+                self.batch_name = self.class_name
+            else:
+                self.batch_name = "Unassigned"
         return self
 
 

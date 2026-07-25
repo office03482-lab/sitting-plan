@@ -10,6 +10,7 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAuthStore } from '@store/auth';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type {
   Batch,
   DayOfWeek,
@@ -120,7 +121,7 @@ const TimetableManagement: React.FC = () => {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const user = useAuthStore((state) => state.user);
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const isTeacherSelfView = user?.role === 'teacher' && user?.user_type === 'teaching';
   const canManageTimetable = !isTeacherSelfView;
   const [entries, setEntries] = useState<TimetableView[]>([]);
@@ -201,7 +202,7 @@ const TimetableManagement: React.FC = () => {
           subject: String(entry.subject || 'Assigned Subject'),
           email: user?.email,
           phone: '',
-          school_id: currentSchoolId,
+          school_id: effectiveSchoolId,
           is_active: true,
         } as Teacher);
       });
@@ -209,7 +210,7 @@ const TimetableManagement: React.FC = () => {
     }
     const actorName = String(user?.full_name || '').trim().toLowerCase();
     return teacherList.filter((teacher) => String(teacher.name || '').trim().toLowerCase() === actorName);
-  }, [entries, isTeacherSelfView, teachers, user?.email, user?.full_name]);
+  }, [entries, isTeacherSelfView, teachers, user?.email, user?.full_name, effectiveSchoolId]);
 
   useEffect(() => {
     if (!canRunRequests) return;
@@ -235,7 +236,7 @@ const TimetableManagement: React.FC = () => {
       return [];
     }
     const response = await apiService.listTimetableEntries({
-      school_id: currentSchoolId,
+      school_id: effectiveSchoolId,
       reference_date: skipReferenceDate ? undefined : (referenceDate || undefined),
     });
     const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
@@ -247,7 +248,7 @@ const TimetableManagement: React.FC = () => {
     if (!canRunRequests) {
       return [];
     }
-    const response = await apiService.listTimetableEntries({ school_id: currentSchoolId });
+    const response = await apiService.listTimetableEntries({ school_id: effectiveSchoolId });
     const nextEntries = sortTimetableEntries(ensureArray<TimetableView>(response.data));
     setEntries(nextEntries);
     return nextEntries;
@@ -269,7 +270,7 @@ const TimetableManagement: React.FC = () => {
     const { getTeachers, getRooms, getBatches } = useRefDataStore.getState();
     if (isTeacherSelfView) {
       try {
-        const teachers = await getTeachers(currentSchoolId);
+        const teachers = await getTeachers(effectiveSchoolId);
         setTeachers(teachers);
         setReferenceUnavailable({ teachers: false, rooms: false, batches: false, students: false });
       } catch (error) {
@@ -283,10 +284,10 @@ const TimetableManagement: React.FC = () => {
     }
 
     const [teachersResult, roomsResult, batchResult, classResult] = await Promise.allSettled([
-      getTeachers(currentSchoolId),
-      getRooms(currentSchoolId),
-      getBatches(currentSchoolId, 'batch'),
-      getBatches(currentSchoolId, 'class'),
+      getTeachers(effectiveSchoolId),
+      getRooms(effectiveSchoolId),
+      getBatches(effectiveSchoolId, 'batch'),
+      getBatches(effectiveSchoolId, 'class'),
     ]);
 
     setTeachers(teachersResult.status === 'fulfilled' ? teachersResult.value : []);
@@ -308,7 +309,7 @@ const TimetableManagement: React.FC = () => {
       .filter(Boolean);
     setManagedBatchOptions(Array.from(new Set(managedOptions)).sort((a, b) => a.localeCompare(b)));
     setReferenceUnavailable(nextUnavailable);
-    useRefDataStore.getState().getStudents(currentSchoolId)
+    useRefDataStore.getState().getStudents(effectiveSchoolId)
       .then((students) => {
         setStudents(students);
         setReferenceUnavailable((current) => ({ ...current, students: false }));
@@ -449,7 +450,7 @@ const TimetableManagement: React.FC = () => {
       const selectedRoomData = normalizedRooms.find((room) => sameId(room.id, submitData.room_id));
 
       if (editingEntry) {
-        const response = await apiService.updateTimetableEntry(editingEntry.id, submitData, currentSchoolId);
+        const response = await apiService.updateTimetableEntry(editingEntry.id, submitData, effectiveSchoolId);
         upsertEntry(response.data);
         setAlert({ type: 'success', message: 'Timetable entry updated successfully' });
       } else {
@@ -476,7 +477,7 @@ const TimetableManagement: React.FC = () => {
         };
         upsertEntry(optimisticEntry);
         resetForm();
-        const response = await apiService.createTimetableEntry(submitData, currentSchoolId);
+        const response = await apiService.createTimetableEntry(submitData, effectiveSchoolId);
         setEntries((current) => current.filter((entry) => !sameId(entry.id, tempId)));
         upsertEntry(response.data);
         setAlert({ type: 'success', message: 'Timetable entry created successfully' });
@@ -505,7 +506,7 @@ const TimetableManagement: React.FC = () => {
     }
 
     try {
-      await apiService.deleteAllTimetableEntries(currentSchoolId, true);
+      await apiService.deleteAllTimetableEntries(effectiveSchoolId, true);
       setEntries([]);
       setAlert({ type: 'success', message: 'All timetable entries deleted successfully' });
     } catch (error) {
@@ -528,7 +529,7 @@ const TimetableManagement: React.FC = () => {
     if (!confirm('Are you sure you want to delete this timetable entry?')) return;
 
     try {
-      await apiService.deleteTimetableEntry(entryId, currentSchoolId);
+      await apiService.deleteTimetableEntry(entryId, effectiveSchoolId);
       setEntries((current) => current.filter((entry) => !sameId(entry.id, entryId)));
       setAlert({ type: 'success', message: 'Timetable entry deleted successfully' });
     } catch (error) {
@@ -576,7 +577,7 @@ const TimetableManagement: React.FC = () => {
 
       if (replace_target && targetEntries.length > 0) {
         for (const targetEntry of targetEntries) {
-          await apiService.deleteTimetableEntry(targetEntry.id, currentSchoolId);
+          await apiService.deleteTimetableEntry(targetEntry.id, effectiveSchoolId);
         }
       }
 
@@ -597,7 +598,7 @@ const TimetableManagement: React.FC = () => {
           subject: sourceEntry.subject,
           start_date: sourceEntry.start_date || undefined,
           end_date: sourceEntry.end_date || undefined,
-        }, currentSchoolId);
+        }, effectiveSchoolId);
       }
 
       setAlert({
@@ -719,7 +720,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
             ? viewMode
             : 'day',
         session_mode_filter: selectedSessionModeFilter,
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         day_of_week: selectedDay === 'all' ? undefined : selectedDay,
         teacher_id: selectedTeacher === 'all' ? undefined : selectedTeacher,
         room_id: selectedRoom === 'all' ? undefined : selectedRoom,
@@ -1324,7 +1325,7 @@ const getRoomModeSummary = (entry: TimetableView | TimetableEntry) => {
           teachers={visibleTeachers}
           rooms={normalizedRooms}
           batchOptions={batchOptions}
-          currentSchoolId={currentSchoolId}
+          effectiveSchoolId={effectiveSchoolId}
           apiService={apiService}
         />
       )}
@@ -1822,11 +1823,11 @@ interface BulkEntryModalProps {
   teachers: Teacher[];
   rooms: Room[];
   batchOptions: string[];
-  currentSchoolId: string | number | undefined;
+  effectiveSchoolId: string | number | undefined;
   apiService: typeof apiService;
 }
 
-function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, currentSchoolId, apiService }: BulkEntryModalProps) {
+function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, effectiveSchoolId, apiService }: BulkEntryModalProps) {
   const [pickedDate, setPickedDate] = useState('');
   const [teacherId, setTeacherId] = useState('');
   const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
@@ -1863,7 +1864,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, cur
     setUploading(true);
     setAlert(null);
     try {
-      const response = await apiService.uploadTimetableExcel(excelFile, currentSchoolId);
+      const response = await apiService.uploadTimetableExcel(excelFile, effectiveSchoolId);
       const data = response.data;
       const createdCount = data.created || 0;
       const errorList: string[] = data.errors || [];
@@ -1921,7 +1922,7 @@ function BulkEntryModal({ onClose, onCreated, teachers, rooms, batchOptions, cur
           class_name: batch,
           subject: subject || undefined,
           start_date: pickedDate || undefined,
-        }, currentSchoolId);
+        }, effectiveSchoolId);
         results.push({ status: 'fulfilled', value: res });
       } catch (err: any) {
         const msg = `Batch "${batch}": ${err?.response?.data?.detail || err?.message || 'Failed'}`;

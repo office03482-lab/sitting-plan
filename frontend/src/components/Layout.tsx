@@ -34,7 +34,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@store/auth';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 import PlatformAdminSchoolSelector from '@components/PlatformAdminSchoolSelector';
@@ -42,7 +42,7 @@ import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScope
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { UserRole } from '@types';
-import bhavyaAxisLogo from '@/assets/bhavya-axis-logo.png';
+import bhavyaAxisLogo from '@/assets/bhavya-axis-logo-removebg-preview.png';
 
 interface LayoutProps {
   children: ReactNode;
@@ -140,18 +140,11 @@ export default function Layout({ children }: LayoutProps) {
   const [openSections, setOpenSections] = useState<string[]>([]);
   const [hoveredCollapsedKey, setHoveredCollapsedKey] = useState<string | null>(null);
   const [totalSchools, setTotalSchools] = useState<number | null>(null);
-  const [schoolBranding, setSchoolBranding] = useState<{
-    logo_url?: string | null;
-    favicon_url?: string | null;
-    portal_name?: string;
-    primary_color?: string;
-    secondary_color?: string;
-    accent_color?: string;
-  } | null>(null);
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const { signOut } = useAuth();
-  const { activeSchoolId, activeSchoolName, clearActiveSchool } = usePlatformAdminSchoolStore();
+  const { activeSchoolId, activeSchoolName, schoolBranding, setSchoolBranding, clearActiveSchool } = usePlatformAdminSchoolStore();
+  const brandingFetchKeyRef = useRef<string | null>(null);
   const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = user?.role_key === 'platform_admin';
   const roleKey = String(user?.role_key || '').toLowerCase();
@@ -214,6 +207,35 @@ export default function Layout({ children }: LayoutProps) {
       active = false;
     };
   }, [isPlatformAdmin]);
+
+  // Fetch branding whenever the active school changes.
+  const fetchBranding = useCallback(async (schoolId: string) => {
+    const fetchKey = schoolId || '__platform__';
+    if (brandingFetchKeyRef.current === fetchKey) return;
+    brandingFetchKeyRef.current = fetchKey;
+    try {
+      const res = await apiService.getPublicSchoolBranding({ school: schoolId });
+      setSchoolBranding({
+        logo_url: res.data.logo_url,
+        favicon_url: res.data.favicon_url,
+        portal_name: res.data.portal_name,
+        primary_color: res.data.primary_color,
+        secondary_color: res.data.secondary_color,
+        accent_color: res.data.accent_color,
+      });
+    } catch {
+      setSchoolBranding(null);
+    }
+  }, [setSchoolBranding]);
+
+  useEffect(() => {
+    if (activeSchoolId) {
+      void fetchBranding(activeSchoolId);
+    } else {
+      brandingFetchKeyRef.current = null;
+      setSchoolBranding(null);
+    }
+  }, [activeSchoolId, fetchBranding, setSchoolBranding]);
 
   const canAccess = (permission?: string, roles?: UserRole[]) => {
     const roleAllowed = !roles?.length || Boolean(user?.role && roles.includes(user.role));
@@ -951,7 +973,7 @@ export default function Layout({ children }: LayoutProps) {
                       </button>
                       {open && (
                         <div className="mt-1 space-y-1 border-l border-white/15 py-1 pl-[14px] ml-3">
-                          {items.map((item, idx) => {
+                          {items.map((item) => {
                             const a = isChildActive(item.path);
                             return (
                               <button

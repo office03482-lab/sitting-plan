@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Zap, PlusCircle, Pencil, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useAppStore } from '@store/app';
-import { useAuthStore } from '@store/auth';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import {
   apiService,
   getRequestErrorMessage,
@@ -65,7 +65,7 @@ export default function SeatingGeneration() {
   const navigate = useNavigate();
   const defaultExamDate = new Date().toISOString().slice(0, 10);
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
-  const currentSchoolId = useAuthStore((state) => state.user?.school_id);
+  const effectiveSchoolId = useEffectiveSchoolId();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const { rooms, setRooms, setSeatingPlans } = useAppStore();
   const [loading, setLoading] = useState(false);
@@ -142,9 +142,9 @@ export default function SeatingGeneration() {
   );
 
   useEffect(() => {
-    if (!canRunRequests || !currentSchoolId) return;
+    if (!canRunRequests || !effectiveSchoolId) return;
     void loadInitialData();
-  }, [canRunRequests, currentSchoolId]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   const reloadExamsFromBackend = async (invalidExamId?: string | number | null) => {
     const examsResponse = await apiService.listExams();
@@ -169,16 +169,16 @@ export default function SeatingGeneration() {
   };
 
   const loadInitialData = async () => {
-    if (!currentSchoolId) return;
+    if (!effectiveSchoolId) return;
 
     setLoading(true);
     try {
       const { getRooms, getBatches, getStudents } = useRefDataStore.getState();
       const dataSources = [
-        { key: 'rooms', required: true, request: getRooms(currentSchoolId) },
+        { key: 'rooms', required: true, request: getRooms(effectiveSchoolId) },
         { key: 'exams', required: true, request: apiService.listExams() },
-        { key: 'batches', required: true, request: getBatches(currentSchoolId) },
-        { key: 'students', required: true, request: getStudents(currentSchoolId) },
+        { key: 'batches', required: true, request: getBatches(effectiveSchoolId) },
+        { key: 'students', required: true, request: getStudents(effectiveSchoolId) },
       ] as const;
 
       const results = await Promise.allSettled(dataSources.map((item) => item.request));
@@ -198,7 +198,7 @@ export default function SeatingGeneration() {
           batchByName.set(student.batch, {
             id: -batchByName.size - 1,
             name: student.batch,
-            school_id: currentSchoolId,
+            school_id: effectiveSchoolId,
             is_active: true,
             created_at: '',
             updated_at: '',

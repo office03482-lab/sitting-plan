@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiService, isRequestCanceled } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
-import { useAuthStore } from '@store/auth';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { Batch, AttendanceStudent, StudentAttendanceRecord } from '@types';
 import {
   sectionClass,
@@ -52,10 +52,9 @@ export default function StudentRecordsPanel({
   onAlert,
   onRefresh,
 }: StudentRecordsPanelProps) {
-  const user = useAuthStore((state) => state.user);
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunAttendanceRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const currentSchoolId = user?.school_id;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [records, setRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<StudentAttendanceRecord[]>([]);
   const [filters, setFilters] = useState({
@@ -147,7 +146,7 @@ export default function StudentRecordsPanel({
     const loadPromise = (async () => {
       try {
         const response = await apiService.listStudentAttendanceRecords({
-          school_id: currentSchoolId,
+          school_id: effectiveSchoolId,
           class_name: resolvedRecordClassName || undefined,
           section: undefined,
           batch_name: recordBatchName || undefined,
@@ -193,7 +192,7 @@ export default function StudentRecordsPanel({
     try {
       const selectedRecordBatchName = String(filters.record_batch_name || '').trim();
       await apiService.deleteAllStudentAttendanceRecords({
-        school_id: currentSchoolId,
+        school_id: effectiveSchoolId,
         class_name: recordBatchParts.className || undefined,
         section: selectedRecordBatchName ? recordBatchParts.section || undefined : undefined,
         student_name: filters.recordStudentName || undefined,

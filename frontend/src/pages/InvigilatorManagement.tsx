@@ -3,6 +3,7 @@ import { Trash, MapPin, Users, CheckCircle, AlertCircle, Download, FileText } fr
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import type { Teacher, Invigilator, RoomInvigilator, Room } from '@types';
 
 type StaffType = 'teaching' | 'non_teaching';
@@ -60,7 +61,7 @@ const formatApiError = (error: any, fallback: string) => {
 export default function InvigilatorManagement() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
-  const schoolId = 1;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [invigilators, setInvigilators] = useState<Invigilator[]>([]);
   const [teachingStaff, setTeachingStaff] = useState<Teacher[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -100,10 +101,10 @@ export default function InvigilatorManagement() {
       setLoading(true);
       const { getInvigilators, getRooms, getTeachers } = useRefDataStore.getState();
       const [invRes, roomRes, assignRes, teachingRes] = await Promise.allSettled([
-        getInvigilators(schoolId),
-        getRooms(schoolId),
-        apiService.listRoomAssignments(schoolId),
-        getTeachers(schoolId),
+        getInvigilators(effectiveSchoolId),
+        getRooms(effectiveSchoolId),
+        apiService.listRoomAssignments(effectiveSchoolId),
+        getTeachers(effectiveSchoolId),
       ]);
 
       const invigilatorsData = invRes.status === 'fulfilled' ? toArray<Invigilator>(invRes.value) : [];
@@ -131,7 +132,7 @@ export default function InvigilatorManagement() {
             id: `temp-assignment-${index + 1}-${String(invigilator.id)}`,
             room_id: room.id,
             invigilator_id: invigilator.id,
-            school_id: schoolId,
+            school_id: effectiveSchoolId,
             exam_id: undefined,
             notes: '',
             is_active: true,
@@ -345,7 +346,7 @@ export default function InvigilatorManagement() {
         designation: 'Teacher',
         is_active: teacher.is_active ?? true,
       },
-      schoolId
+      effectiveSchoolId
     );
     const createdInvigilator = created.data;
     setInvigilators((prev) => [createdInvigilator, ...prev]);
@@ -394,7 +395,7 @@ export default function InvigilatorManagement() {
             invigilator_id: invigilatorId,
             notes: assignmentData.notes,
           },
-          schoolId
+          effectiveSchoolId
         );
       }
       setAssignmentData({ room_id: '', staff_type: '', assignee_key: '', notes: '' });
