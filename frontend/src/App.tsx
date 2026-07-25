@@ -33,7 +33,7 @@ import OnlineTestEdit from '@pages/OnlineTestEdit';
 import OnlineTestResults from '@pages/OnlineTestResults';
 import OnlineTestTake from '@pages/OnlineTestTake';
 import OnlineTests from '@pages/OnlineTests';
-import QuestionBankEditor from '@pages/QuestionBankEditor';
+import QuestionBankList from '@pages/QuestionBankList';
 import QuestionBuilder from '@pages/QuestionBuilder';
 import AiStudyAssistantPage from '@pages/AiStudyAssistantPage';
 import SchoolAiAssistantPage from '@pages/SchoolAiAssistantPage';
@@ -373,10 +373,26 @@ function AppShell() {
           }
         />
         <Route
+          path="/question-bank"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <QuestionBankList />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/question-bank/add"
           element={
             <ProtectedRoute allowedRoles={['admin', 'teacher']}>
-              <QuestionBankEditor />
+              <QuestionBuilder />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/question-bank/edit/:questionId"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <QuestionBuilder />
             </ProtectedRoute>
           }
         />

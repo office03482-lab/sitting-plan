@@ -59,7 +59,7 @@ const sl = 'mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text
 const sselect = `${sf} cursor-pointer appearance-none`;
 
 export default function QuestionBuilder() {
-  const { id: testId } = useParams<{ id: string }>();
+  const { id: testId, questionId: bankQuestionId } = useParams<{ id: string; questionId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady } = useAuth();
@@ -110,9 +110,15 @@ export default function QuestionBuilder() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!canRunRequests || !testId) return;
-    void loadTestData(testId);
-  }, [canRunRequests, testId]);
+    if (!canRunRequests) return;
+    if (testId) {
+      void loadTestData(testId);
+    } else if (bankQuestionId) {
+      void loadBankQuestion(bankQuestionId);
+    } else {
+      setLoading(false);
+    }
+  }, [canRunRequests, testId, bankQuestionId]);
 
   const loadTestData = async (id: string) => {
     try {
@@ -127,6 +133,58 @@ export default function QuestionBuilder() {
       setQuestionDrafts(questions.length ? questions.map((q) => mapQuestionToDraft(q)) : [createEmptyQuestionDraft(1)]);
     } catch (error) {
       setPageError(getRequestErrorMessage(error, 'Question builder load nahi ho paya.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadBankQuestion = async (id: string) => {
+    try {
+      setLoading(true);
+      setPageError('');
+      const response = await apiService.getQBQuestion(id);
+      const q = response.data as Record<string, unknown>;
+      const options = (q.option_items as Array<{ label?: string; value?: string }> || []);
+      const meta = (q.metadata || {}) as Record<string, unknown>;
+      const draft: QuestionDraft = {
+        id: id as string,
+        display_order: 1,
+        question_type: (q.question_type as string) || 'single_choice',
+        prompt_text: (q.prompt_text as string) || '',
+        prompt_image_url: '',
+        prompt_video_url: '',
+        option_lines: options.map((o) => o.label || o.value || '').join('\n'),
+        option_image_urls: '',
+        answer_lines: (() => {
+          const ak = q.answer_key as Record<string, unknown> | undefined;
+          if (ak?.correct_option_id) return ak.correct_option_id as string;
+          if (ak?.correct_option_ids) return (ak.correct_option_ids as string[]).join(',');
+          return '';
+        })(),
+        explanation: (q.explanation as string) || '',
+        explanation_image_url: '',
+        marks: String(q.marks || 1),
+        negative_marks: String(q.negative_marks || 0),
+        difficulty_level: (q.difficulty_level as string) || 'medium',
+        subject: (q.subject as string) || '',
+        chapter: (q.chapter as string) || '',
+        topic: (q.topic as string) || '',
+        sub_topic: '',
+        question_code: (meta.question_code as string) || '',
+        source: '',
+        reference_url: '',
+        estimated_time_seconds: String(meta.estimated_time_seconds || 60),
+        video_url: '',
+      };
+      setQuestionDrafts([draft]);
+      setCurrentIndex(0);
+      if (q.exam_type_slug) setExamType(q.exam_type_slug as string);
+      if (q.language) setLanguage(q.language as string);
+      if (meta.source_name) setSourceName(meta.source_name as string);
+      if (Array.isArray(meta.tags)) setSelectedTags(meta.tags as string[]);
+      if (q.status) setQuestionStatus(q.status as string);
+    } catch (error) {
+      setPageError(getRequestErrorMessage(error, 'Bank question load nahi ho paya.'));
     } finally {
       setLoading(false);
     }
@@ -207,22 +265,67 @@ export default function QuestionBuilder() {
   }, [questionDrafts, updateQuestion, trackAssetProgress]);
 
   const saveQuestions = async (showBanner = true) => {
-    if (!testId) return false;
     try {
       setSaving(true);
       setBanner(null);
-      for (const qid of removedQuestionIds) await apiService.deleteOnlineTestQuestion(qid);
-      setRemovedQuestionIds([]);
       const validQuestions = questionDrafts.filter((d) => d.prompt_text.trim());
-      for (const question of validQuestions) {
-        const payload = questionDraftToPayload(question, testId);
-        if (question.id) {
-          await apiService.updateOnlineTestQuestion(question.id, payload);
-        } else {
-          const created = await apiService.createOnlineTestQuestion(payload);
-          setQuestionDrafts((prev) => prev.map((d) => (d === question ? { ...d, id: created.data.id } : d)));
+      if (!validQuestions.length) {
+        if (showBanner) setBanner({ type: 'warning', message: 'No questions to save.' });
+        return false;
+      }
+
+      if (testId) {
+        // TEST CONTEXT: save via online test question APIs
+        for (const qid of removedQuestionIds) await apiService.deleteOnlineTestQuestion(qid);
+        setRemovedQuestionIds([]);
+        for (const question of validQuestions) {
+          const payload = questionDraftToPayload(question, testId);
+          if (question.id) {
+            await apiService.updateOnlineTestQuestion(question.id, payload);
+          } else {
+            const created = await apiService.createOnlineTestQuestion(payload);
+            setQuestionDrafts((prev) => prev.map((d) => (d === question ? { ...d, id: created.data.id } : d)));
+          }
+        }
+      } else {
+        // STANDALONE CONTEXT: save via shared question bank APIs
+        for (const question of validQuestions) {
+          const bankPayload = {
+            question_type: question.question_type,
+            difficulty_level: question.difficulty_level,
+            prompt_text: question.prompt_text,
+            option_items: question.option_lines.split('\n').filter(Boolean).map((line, i) => {
+              const [label, imageUrl] = line.split('|').map((s) => s.trim());
+              return { id: `option_${i + 1}`, label, value: label, ...(imageUrl ? { image_url: imageUrl } : {}) };
+            }),
+            answer_key: { correct_option_id: question.answer_lines.trim() },
+            explanation: question.explanation || undefined,
+            marks: Number(question.marks || 1),
+            negative_marks: Number(question.negative_marks || 0),
+            subject: question.subject || undefined,
+            chapter: question.chapter || undefined,
+            topic: question.topic || undefined,
+            exam_type_slug: examType,
+            status: questionStatus,
+            display_order: Number(question.display_order || 1),
+            language,
+            metadata: {
+              estimated_time_seconds: Number(estimatedTime),
+              source_name: sourceName || undefined,
+              tags: selectedTags,
+              visibility,
+              question_code: question.question_code || questionCode || undefined,
+            },
+          };
+          if (question.id) {
+            await apiService.updateQBQuestion(question.id, bankPayload);
+          } else {
+            const created = await apiService.createQBQuestion(bankPayload);
+            setQuestionDrafts((prev) => prev.map((d) => (d === question ? { ...d, id: created.data.id as string } : d)));
+          }
         }
       }
+
       if (showBanner) setBanner({ type: 'success', message: 'Questions saved successfully.' });
       return true;
     } catch (error) {
@@ -245,14 +348,15 @@ export default function QuestionBuilder() {
   };
 
   const handlePublish = async () => {
-    if (!testId) return;
     try {
       setPublishing(true);
       setBanner(null);
       const ok = await saveQuestions(false);
       if (!ok) return;
-      await apiService.publishOnlineTest(testId);
-      setBanner({ type: 'success', message: 'Test published!' });
+      if (testId) {
+        await apiService.publishOnlineTest(testId);
+      }
+      setBanner({ type: 'success', message: testId ? 'Test published!' : 'Questions published to bank!' });
     } catch (error) {
       setBanner({ type: 'error', message: getRequestErrorMessage(error, 'Publish failed.') });
     } finally { setPublishing(false); }
@@ -315,13 +419,13 @@ export default function QuestionBuilder() {
       {/* ════════════ TOP BAR ════════════ */}
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => navigate(`/online-tests/edit/${testId}`)} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-slate-800">
+          <button type="button" onClick={() => navigate(testId ? `/online-tests/edit/${testId}` : '/question-bank')} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-slate-800">
             <ArrowLeft className="h-3.5 w-3.5" /> Back
           </button>
           <div className="h-4 w-px bg-slate-200" />
           <div>
-            <h1 className="text-[13px] font-bold text-slate-900 leading-tight">{test?.title || 'Question Builder'}</h1>
-            <p className="text-[10px] text-slate-400">{questionCount} questions · {totalMarks} marks · v1.0</p>
+            <h1 className="text-[13px] font-bold text-slate-900 leading-tight">{testId ? (test?.title || 'Test Questions') : bankQuestionId ? 'Question Bank — Edit' : 'Question Bank — New Question'}</h1>
+            <p className="text-[10px] text-slate-400">{questionCount} questions · {totalMarks} marks{testId ? '' : ' · Shared Bank'}</p>
           </div>
         </div>
 
@@ -834,7 +938,7 @@ export default function QuestionBuilder() {
       {/* ════════════ BOTTOM ACTION BAR ════════════ */}
       <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-5 py-2.5">
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => navigate(`/online-tests/edit/${testId}`)}
+          <button type="button" onClick={() => navigate(testId ? `/online-tests/edit/${testId}` : '/question-bank')}
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
           <button type="button" onClick={() => void saveQuestions()} disabled={saving}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">

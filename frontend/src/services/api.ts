@@ -882,6 +882,76 @@ class ApiService {
     return this.api.post<OnlineTest>(`/online-tests/tests/${testId}/duplicate`);
   }
 
+  // ==================== Question Bank (Shared Module) ====================
+
+  async listQBExamTypes() {
+    return this.api.get<Array<{ id: string; name: string; slug: string }>>('/question-bank/exam-types');
+  }
+
+  async createQBExamType(data: { name: string; slug: string; display_order?: number }) {
+    return this.api.post<{ id: string }>('/question-bank/exam-types', data);
+  }
+
+  async listQBTaxonomy(params: { exam_type_slug?: string; node_type?: string; parent_id?: string } = {}) {
+    return this.api.get<Array<{ id: string; name: string; node_type: string; parent_id?: string }>>('/question-bank/taxonomy', { params });
+  }
+
+  async createQBTaxonomyNode(data: { name: string; node_type: string; exam_type_slug?: string; parent_id?: string }) {
+    return this.api.post<{ id: string }>('/question-bank/taxonomy', data);
+  }
+
+  async deleteQBTaxonomyNode(nodeId: string) {
+    return this.api.delete(`/question-bank/taxonomy/${nodeId}`);
+  }
+
+  async listQBTags() {
+    return this.api.get<Array<{ id: string; name: string; slug: string; color: string }>>('/question-bank/tags');
+  }
+
+  async createQBTag(data: { name: string; slug: string; color?: string }) {
+    return this.api.post<{ id: string }>('/question-bank/tags', data);
+  }
+
+  async listQBSources() {
+    return this.api.get<Array<{ id: string; name: string; source_type: string }>>('/question-bank/sources');
+  }
+
+  async createQBSource(data: { name: string; source_type?: string }) {
+    return this.api.post<{ id: string }>('/question-bank/sources', data);
+  }
+
+  async listQBQuestions(params: Record<string, unknown> = {}) {
+    return this.api.get<Array<Record<string, unknown>>>('/question-bank/questions', { params });
+  }
+
+  async getQBQuestion(questionId: string) {
+    return this.api.get<Record<string, unknown>>(`/question-bank/questions/${questionId}`);
+  }
+
+  async createQBQuestion(data: Record<string, unknown>) {
+    return this.api.post<Record<string, unknown>>('/question-bank/questions', data);
+  }
+
+  async updateQBQuestion(questionId: string, data: Record<string, unknown>) {
+    return this.api.put<Record<string, unknown>>(`/question-bank/questions/${questionId}`, data);
+  }
+
+  async deleteQBQuestion(questionId: string) {
+    return this.api.delete(`/question-bank/questions/${questionId}`);
+  }
+
+  async listQBQuestionVersions(questionId: string) {
+    return this.api.get<Array<{ id: string; version: number; created_at: string; change_summary?: string }>>(`/question-bank/questions/${questionId}/versions`);
+  }
+
+  async restoreQBQuestionVersion(questionId: string, versionId: string) {
+    return this.api.post<Record<string, unknown>>(`/question-bank/questions/${questionId}/versions/${versionId}/restore`);
+  }
+
+  async listQBQuestionHistory(questionId: string) {
+    return this.api.get<Array<{ id: string; action: string; created_at: string }>>(`/question-bank/questions/${questionId}/history`);
+  }
+
   async getStudentAnalytics(studentId: string | number) {
     return this.api.get<StudentAnalytics>(`/analytics/student/${studentId}`);
   }
