@@ -3128,6 +3128,172 @@ export interface ParentPortalRecommendation {
   recommendations: string[];
 }
 
+// ==================== Offline Exams ====================
+export interface OfflineExam {
+  id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  instructions?: string | null;
+  exam_code?: string | null;
+  subject_id?: string | null;
+  batch_id?: string | null;
+  exam_type: string;
+  paper_format: string;
+  status: string;
+  duration_minutes: number;
+  total_marks: number;
+  pass_marks?: number | null;
+  total_sets: number;
+  shuffle_questions: boolean;
+  allow_negative_marking: boolean;
+  exam_date?: string | null;
+  exam_start_time?: string | null;
+  exam_end_time?: string | null;
+  question_source: string;
+  seating_required: boolean;
+  invigilators_required: boolean;
+  hall_tickets_required: boolean;
+  published_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  sections: OfflineExamSection[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamSection {
+  id: string;
+  exam_id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  display_order: number;
+  question_type: string;
+  marks_per_question: number;
+  negative_marks: number;
+  question_count: number;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamQuestion {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  section_id: string;
+  question_code?: string | null;
+  display_order: number;
+  question_type: string;
+  difficulty_level: string;
+  prompt_text: string;
+  option_items: Array<Record<string, unknown>>;
+  answer_key: Record<string, unknown>;
+  explanation?: string | null;
+  marks: number;
+  negative_marks: number;
+  set_labels: string[];
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamHallTicket {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  student_id: string;
+  roll_number: string;
+  room_id?: string | null;
+  seat_number?: string | null;
+  set_label?: string | null;
+  status: string;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  student?: Record<string, unknown>;
+  room?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamAttendance {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  student_id: string;
+  hall_ticket_id?: string | null;
+  status: string;
+  entry_time?: string | null;
+  exit_time?: string | null;
+  remarks?: string | null;
+  marked_by?: string | null;
+  is_active: boolean;
+  student?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamEvaluation {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  student_id: string;
+  question_id: string;
+  set_label: string;
+  marks_awarded: number;
+  max_marks: number;
+  evaluator_id?: string | null;
+  evaluation_method: string;
+  remarks?: string | null;
+  evaluated_at?: string | null;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamResult {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  student_id: string;
+  total_questions: number;
+  attempted_questions: number;
+  correct_answers: number;
+  incorrect_answers: number;
+  unanswered_questions: number;
+  score_obtained: number;
+  max_score: number;
+  percentage?: number | null;
+  rank_in_batch?: number | null;
+  rank_in_school?: number | null;
+  passed?: boolean | null;
+  pass_marks?: number | null;
+  published_at?: string | null;
+  metadata?: Record<string, unknown>;
+  is_active: boolean;
+  student?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OfflineExamSeatingPlan {
+  id: string;
+  school_id: string;
+  exam_id: string;
+  room_id: string;
+  student_id: string;
+  seat_number: number;
+  row_number?: number | null;
+  column_number?: number | null;
+  set_label?: string | null;
+  invigilator_id?: string | null;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 // ==================== UI State ====================
 export interface Toast {
   id: string;

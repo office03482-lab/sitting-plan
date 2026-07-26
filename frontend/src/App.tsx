@@ -33,6 +33,11 @@ import OnlineTestEdit from '@pages/OnlineTestEdit';
 import OnlineTestResults from '@pages/OnlineTestResults';
 import OnlineTestTake from '@pages/OnlineTestTake';
 import OnlineTests from '@pages/OnlineTests';
+import OfflineExams from '@pages/OfflineExams';
+import OfflineExamCreate from '@pages/OfflineExamCreate';
+import OfflineExamDetails from '@pages/OfflineExamDetails';
+import OfflineExamEvaluate from '@pages/OfflineExamEvaluate';
+import OfflineExamQuestionBuilder from '@pages/OfflineExamQuestionBuilder';
 import QuestionBankList from '@pages/QuestionBankList';
 import QuestionBuilder from '@pages/QuestionBuilder';
 import AiStudyAssistantPage from '@pages/AiStudyAssistantPage';
@@ -369,6 +374,46 @@ function AppShell() {
           element={
             <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
               <OnlineTestResults />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+              <OfflineExams />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams/create"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OfflineExamCreate />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams/details/:examId"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+              <OfflineExamDetails />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams/evaluate/:examId"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OfflineExamEvaluate />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams/build/:examId"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OfflineExamQuestionBuilder />
             </ProtectedRoute>
           }
         />

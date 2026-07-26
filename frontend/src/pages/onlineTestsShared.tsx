@@ -43,6 +43,8 @@ export type TestFormState = {
   allow_review: boolean;
   starts_at: string;
   ends_at: string;
+  exam_type: string;
+  subjects: string[];
 };
 
 export const createEmptyQuestionDraft = (displayOrder = 1): QuestionDraft => ({
@@ -81,6 +83,8 @@ export const createDefaultTestForm = (): TestFormState => ({
   allow_review: true,
   starts_at: '',
   ends_at: '',
+  exam_type: 'custom',
+  subjects: [],
 });
 
 const normalizeLine = (value: unknown) => String(value || '').trim();
@@ -161,6 +165,8 @@ export const mapTestToForm = (test: OnlineTest): TestFormState => ({
   allow_review: Boolean(test.allow_review),
   starts_at: toLocalDatetimeInput(test.starts_at),
   ends_at: toLocalDatetimeInput(test.ends_at),
+  exam_type: String((test as any).metadata?.exam_type || 'custom'),
+  subjects: Array.isArray((test as any).metadata?.subjects) ? (test as any).metadata.subjects : [],
 });
 
 const linesToOptions = (lines: string) =>
@@ -255,6 +261,10 @@ export const testFormToPayload = (form: TestFormState, questionDrafts: QuestionD
     allow_review: form.allow_review,
     starts_at: fromLocalDatetimeInput(form.starts_at),
     ends_at: fromLocalDatetimeInput(form.ends_at),
+    metadata: {
+      exam_type: form.exam_type || undefined,
+      subjects: form.subjects.length > 0 ? form.subjects : undefined,
+    },
   };
 };
 

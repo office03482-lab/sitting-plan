@@ -1234,7 +1234,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // over from a previous session (persisted in localStorage) is cleared so
       // no individual school appears immediately after login. This only affects
       // the workspace-context UI, not auth/permissions/routes/APIs.
-      if (event === 'SIGNED_IN') {
+      //
+      // IMPORTANT: Supabase fires SIGNED_IN on both fresh login AND page
+      // refresh (session restore from storage). We only want to clear the
+      // school context on a genuine fresh login, not on session restore.
+      // If initializedRef is already true, this is a session restore — skip clearing.
+      if (event === 'SIGNED_IN' && !initializedRef.current) {
         usePlatformAdminSchoolStore.getState().clearActiveSchool();
       }
 

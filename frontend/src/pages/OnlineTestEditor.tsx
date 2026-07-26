@@ -17,6 +17,7 @@ import {
   testFormToPayload,
   type TestFormState,
 } from '@pages/onlineTestsShared';
+import { EXAM_TYPE_OPTIONS, getSubjectsForExamType } from '@pages/offlineExamsShared';
 
 type OnlineTestEditorProps = {
   mode: 'create' | 'edit';
@@ -185,6 +186,58 @@ export default function OnlineTestEditor({ mode, testId }: OnlineTestEditorProps
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className={onlineTestLabelClass}>Exam Type</label>
+              <select
+                value={form.exam_type}
+                onChange={(event) => {
+                  updateForm('exam_type', event.target.value);
+                  updateForm('subjects', []);
+                }}
+                className={onlineTestInputClass}
+              >
+                {EXAM_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className={onlineTestLabelClass}>
+                Subjects {form.exam_type !== 'custom' ? '(Select one or more)' : ''}
+              </label>
+              {form.exam_type !== 'custom' ? (
+                <div className="flex flex-wrap gap-3 rounded-lg border border-[#d8e2ec] bg-white p-3">
+                  {getSubjectsForExamType(form.exam_type).map((subject) => (
+                    <label key={subject} className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={form.subjects.includes(subject)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            updateForm('subjects', [...form.subjects, subject]);
+                          } else {
+                            updateForm('subjects', form.subjects.filter((s) => s !== subject));
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-[#1e3a8a] focus:ring-[#1e3a8a]"
+                      />
+                      {subject}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <input
+                  value={form.subjects.join(', ')}
+                  onChange={(event) => {
+                    const raw = event.target.value;
+                    const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+                    updateForm('subjects', parts);
+                  }}
+                  className={onlineTestInputClass}
+                  placeholder="e.g. Physics, Chemistry, Mathematics"
+                />
+              )}
             </div>
             <div>
               <label className={onlineTestLabelClass}>Status</label>

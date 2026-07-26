@@ -3609,3 +3609,303 @@ class AiAgentApproveRequest(BaseModel):
     recommendation_id: str
     decision: str
     notes: Optional[str] = None
+
+
+# ==================== Offline Exams ====================
+
+class OfflineExamSectionCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    display_order: int = 1
+    question_type: str = "mcq"
+    marks_per_question: float = 1
+    negative_marks: float = 0
+    question_count: int = 0
+
+
+class OfflineExamSectionResponse(BaseModel):
+    id: str
+    exam_id: str
+    school_id: str
+    title: str
+    description: Optional[str] = None
+    display_order: int
+    question_type: str
+    marks_per_question: float
+    negative_marks: float
+    question_count: int
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    exam_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    exam_type: str = "custom"
+    paper_format: str = "mcq"
+    status: str = "draft"
+    duration_minutes: int = 120
+    total_marks: float = 0
+    pass_marks: Optional[float] = None
+    total_sets: int = 1
+    shuffle_questions: bool = False
+    allow_negative_marking: bool = False
+    exam_date: Optional[str] = None
+    exam_start_time: Optional[str] = None
+    exam_end_time: Optional[str] = None
+    question_source: str = "question_bank"
+    seating_required: bool = True
+    invigilators_required: bool = True
+    hall_tickets_required: bool = True
+    sections: List[OfflineExamSectionCreate] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OfflineExamUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    exam_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    exam_type: Optional[str] = None
+    paper_format: Optional[str] = None
+    status: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    total_marks: Optional[float] = None
+    pass_marks: Optional[float] = None
+    total_sets: Optional[int] = None
+    shuffle_questions: Optional[bool] = None
+    allow_negative_marking: Optional[bool] = None
+    exam_date: Optional[str] = None
+    exam_start_time: Optional[str] = None
+    exam_end_time: Optional[str] = None
+    question_source: Optional[str] = None
+    seating_required: Optional[bool] = None
+    invigilators_required: Optional[bool] = None
+    hall_tickets_required: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class OfflineExamResponse(BaseModel):
+    id: str
+    school_id: str
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    exam_code: Optional[str] = None
+    subject_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    exam_type: str
+    paper_format: str
+    status: str
+    duration_minutes: int
+    total_marks: float
+    pass_marks: Optional[float] = None
+    total_sets: int
+    shuffle_questions: bool
+    allow_negative_marking: bool
+    exam_date: Optional[str] = None
+    exam_start_time: Optional[str] = None
+    exam_end_time: Optional[str] = None
+    question_source: str
+    seating_required: bool
+    invigilators_required: bool
+    hall_tickets_required: bool
+    published_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    sections: List[OfflineExamSectionResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamQuestionCreate(BaseModel):
+    exam_id: str
+    section_id: Optional[str] = None
+    question_code: Optional[str] = None
+    display_order: int = 1
+    question_type: str = "mcq"
+    difficulty_level: str = "medium"
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float = 1
+    negative_marks: float = 0
+    set_labels: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OfflineExamQuestionUpdate(BaseModel):
+    section_id: Optional[str] = None
+    question_code: Optional[str] = None
+    display_order: Optional[int] = None
+    question_type: Optional[str] = None
+    difficulty_level: Optional[str] = None
+    prompt_text: Optional[str] = None
+    option_items: Optional[List[Dict[str, Any]]] = None
+    answer_key: Optional[Dict[str, Any]] = None
+    explanation: Optional[str] = None
+    marks: Optional[float] = None
+    negative_marks: Optional[float] = None
+    set_labels: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class OfflineExamQuestionResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    section_id: str
+    question_code: Optional[str] = None
+    display_order: int
+    question_type: str
+    difficulty_level: str
+    prompt_text: str
+    option_items: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_key: Dict[str, Any] = Field(default_factory=dict)
+    explanation: Optional[str] = None
+    marks: float
+    negative_marks: float
+    set_labels: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamHallTicketResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    student_id: str
+    roll_number: str
+    room_id: Optional[str] = None
+    seat_number: Optional[str] = None
+    set_label: Optional[str] = None
+    status: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    student: Optional[Dict[str, Any]] = None
+    room: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamAttendanceCreate(BaseModel):
+    student_id: str
+    hall_ticket_id: Optional[str] = None
+    status: str = "present"
+    entry_time: Optional[str] = None
+    exit_time: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class OfflineExamAttendanceResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    student_id: str
+    hall_ticket_id: Optional[str] = None
+    status: str
+    entry_time: Optional[str] = None
+    exit_time: Optional[str] = None
+    remarks: Optional[str] = None
+    marked_by: Optional[str] = None
+    is_active: bool
+    student: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamEvaluationCreate(BaseModel):
+    student_id: str
+    question_id: str
+    set_label: str = "A"
+    marks_awarded: float = 0
+    max_marks: float = 1
+    evaluation_method: str = "manual"
+    remarks: Optional[str] = None
+
+
+class OfflineExamEvaluationResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    student_id: str
+    question_id: str
+    set_label: str
+    marks_awarded: float
+    max_marks: float
+    evaluator_id: Optional[str] = None
+    evaluation_method: str
+    remarks: Optional[str] = None
+    evaluated_at: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamResultResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    student_id: str
+    total_questions: int
+    attempted_questions: int
+    correct_answers: int
+    incorrect_answers: int
+    unanswered_questions: int
+    score_obtained: float
+    max_score: float
+    percentage: Optional[float] = None
+    rank_in_batch: Optional[int] = None
+    rank_in_school: Optional[int] = None
+    passed: Optional[bool] = None
+    pass_marks: Optional[float] = None
+    published_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    student: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamSeatingPlanResponse(BaseModel):
+    id: str
+    school_id: str
+    exam_id: str
+    room_id: str
+    student_id: str
+    seat_number: int
+    row_number: Optional[int] = None
+    column_number: Optional[int] = None
+    set_label: Optional[str] = None
+    invigilator_id: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OfflineExamAnalyticsResponse(BaseModel):
+    scope: str
+    exam_id: Optional[str] = None
+    total_exams: int = 0
+    total_students: int = 0
+    average_score: float = 0
+    average_percentage: float = 0
+    highest_score: float = 0
+    lowest_score: float = 0
+    pass_rate: float = 0
+    attendance_rate: float = 0
+    subject_wise_analysis: List[Dict[str, Any]] = Field(default_factory=list)
+    question_wise_analysis: List[Dict[str, Any]] = Field(default_factory=list)
+    student_ranking: List[Dict[str, Any]] = Field(default_factory=list)

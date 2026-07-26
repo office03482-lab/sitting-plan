@@ -304,6 +304,16 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
+      key: 'offline-exams',
+      name: 'Offline Exams',
+      icon: ClipboardCheck,
+      roles: ['admin', 'teacher', 'student'],
+      children: [
+        { name: 'Overview', path: '/offline-exams', roles: ['admin', 'teacher', 'student'] },
+        { name: 'Create Exam', path: '/offline-exams/create', roles: ['admin', 'teacher'] },
+      ],
+    },
+    {
       key: 'live-classes',
       name: 'Live Classes',
       icon: Video,

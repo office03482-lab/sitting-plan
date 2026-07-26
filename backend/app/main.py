@@ -168,7 +168,7 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, entitlement, credits, online_tests, analytics, lms, live_classes, study_planner, parent_portal, parent_links, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_assistants, ai_provider, uploads, account_security, billing, school_self_service, question_bank
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, entitlement, credits, online_tests, analytics, offline_exams, lms, live_classes, study_planner, parent_portal, parent_links, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_assistants, ai_provider, uploads, account_security, billing, school_self_service, question_bank
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -303,6 +303,11 @@ app.include_router(
 app.include_router(
     analytics.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("online_tests"))],
+)
+
+app.include_router(
+    offline_exams.router,
+    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("offline_exams", "online_tests"))],
 )
 
 app.include_router(

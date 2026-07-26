@@ -9,6 +9,7 @@ import type {
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
   PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
+  OfflineExam, OfflineExamAttendance, OfflineExamEvaluation, OfflineExamHallTicket, OfflineExamQuestion, OfflineExamResult, OfflineExamSeatingPlan,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
   TeacherAiAssignmentResponse, TeacherAiLessonPlanResponse, TeacherAiQuestionPaperResponse, TeacherAiReportCommentsResponse,
@@ -26,6 +27,7 @@ type RetriableAxiosConfig = {
 const SAFE_RETRY_METHODS = new Set(['get']);
 const SAFE_RETRY_STATUS_CODES = new Set([502, 503, 504]);
 const MAX_SAFE_GET_RETRIES = 2;
+const MAX_SAFE_TIMEOUT_RETRIES = 1;
 
 export function isRequestCanceled(error: unknown): boolean {
   return axios.isCancel(error);
@@ -229,7 +231,11 @@ function waitForRetry(delayMs: number) {
   return new Promise((resolve) => window.setTimeout(resolve, delayMs));
 }
 
-function getSafeGetRetryDelayMs(attempt: number) {
+function getSafeGetRetryDelayMs(attempt: number, isTimeout: boolean) {
+  if (isTimeout) {
+    // Cold-start / server-wake: give the server more time to spin up
+    return attempt === 1 ? 12_000 : 18_000;
+  }
   const baseDelay = attempt === 1 ? 350 : 900;
   const jitter = Math.floor(Math.random() * 200);
   return baseDelay + jitter;
@@ -247,11 +253,13 @@ function isSafeRetryableRequest(error: any): boolean {
   }
 
   const retryCount = Number(config.__retryCount || 0);
-  if (retryCount >= MAX_SAFE_GET_RETRIES) {
-    return false;
+
+  // Timeout errors (cold-start / server wake): allow 1 retry with longer delay
+  if (isRequestTimeoutError(error)) {
+    return retryCount < MAX_SAFE_TIMEOUT_RETRIES;
   }
 
-  if (isRequestTimeoutError(error)) {
+  if (retryCount >= MAX_SAFE_GET_RETRIES) {
     return false;
   }
 
@@ -333,7 +341,7 @@ class ApiService {
         const nextAttempt = Number(config.__retryCount || 0) + 1;
         config.__retryCount = nextAttempt;
 
-        const delayMs = getSafeGetRetryDelayMs(nextAttempt);
+        const delayMs = getSafeGetRetryDelayMs(nextAttempt, isRequestTimeoutError(error));
         console.warn('[api-retry]', {
           url: `${config.baseURL || ''}${config.url || ''}`,
           method: String(config.method || 'get').toUpperCase(),
@@ -1389,6 +1397,111 @@ class ApiService {
     return this.api.delete(`/exams/${examId}`, {
       params: { school_id: schoolId },
     });
+  }
+
+  // ==================== Offline Exams ====================
+
+  async listOfflineExams() {
+    return this.api.get<OfflineExam[]>('/offline-exams');
+  }
+
+  async listOfflineExamSubjects() {
+    return this.api.get<Array<{ id: string; name: string; class_name?: string }>>('/offline-exams/subjects');
+  }
+
+  async getOfflineExam(examId: string) {
+    return this.api.get<OfflineExam>(`/offline-exams/${examId}`);
+  }
+
+  async createOfflineExam(data: Record<string, unknown>) {
+    return this.api.post<OfflineExam>('/offline-exams', data);
+  }
+
+  async updateOfflineExam(examId: string, data: Record<string, unknown>) {
+    return this.api.put<OfflineExam>(`/offline-exams/${examId}`, data);
+  }
+
+  async deleteOfflineExam(examId: string) {
+    return this.api.delete(`/offline-exams/${examId}`);
+  }
+
+  async publishOfflineExam(examId: string) {
+    return this.api.post<OfflineExam>(`/offline-exams/${examId}/publish`);
+  }
+
+  async unpublishOfflineExam(examId: string) {
+    return this.api.post<OfflineExam>(`/offline-exams/${examId}/unpublish`);
+  }
+
+  async duplicateOfflineExam(examId: string) {
+    return this.api.post<OfflineExam>(`/offline-exams/${examId}/duplicate`);
+  }
+
+  async listOfflineExamQuestions(examId: string) {
+    return this.api.get<OfflineExamQuestion[]>(`/offline-exams/${examId}/questions`);
+  }
+
+  async createOfflineExamQuestion(data: Record<string, unknown>) {
+    const examId = String(data.exam_id || '').trim();
+    return this.api.post<OfflineExamQuestion>(`/offline-exams/${examId}/questions`, data);
+  }
+
+  async updateOfflineExamQuestion(questionId: string, data: Record<string, unknown>) {
+    return this.api.put<OfflineExamQuestion>(`/offline-exams/questions/${questionId}`, data);
+  }
+
+  async deleteOfflineExamQuestion(questionId: string) {
+    return this.api.delete(`/offline-exams/questions/${questionId}`);
+  }
+
+  async listOfflineExamHallTickets(examId: string) {
+    return this.api.get<OfflineExamHallTicket[]>(`/offline-exams/${examId}/hall-tickets`);
+  }
+
+  async generateOfflineExamHallTickets(examId: string) {
+    return this.api.post<OfflineExamHallTicket[]>(`/offline-exams/${examId}/hall-tickets/generate`);
+  }
+
+  async listOfflineExamAttendance(examId: string) {
+    return this.api.get<OfflineExamAttendance[]>(`/offline-exams/${examId}/attendance`);
+  }
+
+  async markOfflineExamAttendance(examId: string, data: Record<string, unknown>) {
+    return this.api.post<OfflineExamAttendance>(`/offline-exams/${examId}/attendance`, data);
+  }
+
+  async listOfflineExamEvaluations(examId: string) {
+    return this.api.get<OfflineExamEvaluation[]>(`/offline-exams/${examId}/evaluations`);
+  }
+
+  async saveOfflineExamEvaluation(examId: string, data: Record<string, unknown>) {
+    return this.api.post<OfflineExamEvaluation>(`/offline-exams/${examId}/evaluations`, data);
+  }
+
+  async importOfflineExamScores(examId: string, file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.api.post<{ created_count: number }>(`/offline-exams/${examId}/evaluations/import`, formData, { timeout: 120000 });
+  }
+
+  async listOfflineExamResults(examId: string) {
+    return this.api.get<OfflineExamResult[]>(`/offline-exams/${examId}/results`);
+  }
+
+  async publishOfflineExamResults(examId: string) {
+    return this.api.post<{ published_count: number }>(`/offline-exams/${examId}/results/publish`);
+  }
+
+  async getOfflineExamAnalytics(examId: string) {
+    return this.api.get<Record<string, unknown>>(`/offline-exams/${examId}/analytics`);
+  }
+
+  async listOfflineExamSeating(examId: string) {
+    return this.api.get<OfflineExamSeatingPlan[]>(`/offline-exams/${examId}/seating`);
+  }
+
+  async generateOfflineExamSeating(examId: string, data?: Record<string, unknown>) {
+    return this.api.post<OfflineExamSeatingPlan[]>(`/offline-exams/${examId}/seating/generate`, data || {});
   }
 
   // ==================== Reports ====================
