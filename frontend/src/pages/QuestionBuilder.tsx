@@ -57,6 +57,12 @@ type RightPanelView = 'tools' | 'preview';
 const sf = 'w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-100';
 const sl = 'mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500';
 const sselect = `${sf} cursor-pointer appearance-none`;
+const EXAM_TYPE_IDS = new Set<ExamType>(EXAM_TYPES.map((item) => item.id));
+
+function parseExamType(value: unknown): ExamType | null {
+  const normalized = typeof value === 'string' ? value : '';
+  return EXAM_TYPE_IDS.has(normalized as ExamType) ? (normalized as ExamType) : null;
+}
 
 export default function QuestionBuilder() {
   const { id: testId, questionId: bankQuestionId } = useParams<{ id: string; questionId: string }>();
@@ -147,38 +153,33 @@ export default function QuestionBuilder() {
       const options = (q.option_items as Array<{ label?: string; value?: string }> || []);
       const meta = (q.metadata || {}) as Record<string, unknown>;
       const draft: QuestionDraft = {
-        id: id as string,
-        display_order: 1,
-        question_type: (q.question_type as string) || 'single_choice',
-        prompt_text: (q.prompt_text as string) || '',
-        prompt_image_url: '',
-        prompt_video_url: '',
+        ...createEmptyQuestionDraft(1),
+        id,
+        display_order: '1',
+        question_type: typeof q.question_type === 'string' ? q.question_type : 'single_choice',
+        prompt_text: typeof q.prompt_text === 'string' ? q.prompt_text : '',
         option_lines: options.map((o) => o.label || o.value || '').join('\n'),
-        option_image_urls: '',
         answer_lines: (() => {
           const ak = q.answer_key as Record<string, unknown> | undefined;
-          if (ak?.correct_option_id) return ak.correct_option_id as string;
-          if (ak?.correct_option_ids) return (ak.correct_option_ids as string[]).join(',');
+          if (typeof ak?.correct_option_id === 'string') return ak.correct_option_id;
+          if (Array.isArray(ak?.correct_option_ids)) {
+            return ak.correct_option_ids.filter((item): item is string => typeof item === 'string').join(',');
+          }
           return '';
         })(),
-        explanation: (q.explanation as string) || '',
-        explanation_image_url: '',
+        explanation: typeof q.explanation === 'string' ? q.explanation : '',
         marks: String(q.marks || 1),
         negative_marks: String(q.negative_marks || 0),
-        difficulty_level: (q.difficulty_level as string) || 'medium',
-        subject: (q.subject as string) || '',
-        chapter: (q.chapter as string) || '',
-        topic: (q.topic as string) || '',
-        sub_topic: '',
-        question_code: (meta.question_code as string) || '',
-        source: '',
-        reference_url: '',
-        estimated_time_seconds: String(meta.estimated_time_seconds || 60),
-        video_url: '',
+        difficulty_level: typeof q.difficulty_level === 'string' ? q.difficulty_level : 'medium',
+        subject: typeof q.subject === 'string' ? q.subject : '',
+        chapter: typeof q.chapter === 'string' ? q.chapter : '',
+        topic: typeof q.topic === 'string' ? q.topic : '',
+        question_code: typeof meta.question_code === 'string' ? meta.question_code : '',
       };
       setQuestionDrafts([draft]);
       setCurrentIndex(0);
-      if (q.exam_type_slug) setExamType(q.exam_type_slug as string);
+      const resolvedExamType = parseExamType(q.exam_type_slug);
+      if (resolvedExamType) setExamType(resolvedExamType);
       if (q.language) setLanguage(q.language as string);
       if (meta.source_name) setSourceName(meta.source_name as string);
       if (Array.isArray(meta.tags)) setSelectedTags(meta.tags as string[]);

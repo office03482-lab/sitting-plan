@@ -122,9 +122,16 @@ class UserRolePowerResponse(UserRolePowerBase):
     """Role user response schema"""
     id: str | int
     is_active: bool
-    created_at: datetime
+    is_primary: bool = False
+    created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdministratorOverviewResponse(BaseModel):
+    """Split administrator response for portal access manager."""
+    platform_administrators: List[UserRolePowerResponse] = Field(default_factory=list)
+    school_administrators: List[UserRolePowerResponse] = Field(default_factory=list)
 
 
 # ==================== Batch Schemas ====================

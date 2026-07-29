@@ -1,6 +1,7 @@
 """FastAPI main application setup."""
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
@@ -14,6 +15,7 @@ from app.database import SessionLocal, get_db
 from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
 from app.middleware.request_profiler import RequestProfilerMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 from app.services.timetable_schema_checks import verify_timetable_schema
 
@@ -58,6 +60,10 @@ app = FastAPI(
 
 app.add_middleware(SystemObservabilityEngine)
 app.add_middleware(RequestProfilerMiddleware, slow_threshold_ms=800)
+if settings.response_compression_enabled:
+    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size_bytes)
+if settings.security_headers_enabled:
+    app.add_middleware(SecurityHeadersMiddleware)
 
 # Add CORS middleware (strict configuration)
 app.add_middleware(

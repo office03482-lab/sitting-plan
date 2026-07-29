@@ -1,6 +1,6 @@
 # Dr. Girish Mobile Ecosystem
 
-Single Flutter application for student, parent, teacher, school admin, and platform admin journeys on top of the existing ERP APIs. This layer is role-aware and does not introduce backend changes.
+Single Flutter application on top of the existing ERP APIs. The currently implemented router covers student, parent, and teacher journeys. School admin and platform admin mobile journeys are planned but not yet wired in the active router. See [MOBILE_ADMIN_ROUTING_TODO.md](/abs/path/C:/Users/GIRISH/Desktop/SITTING%20PLAN/mobile/MOBILE_ADMIN_ROUTING_TODO.md) for the current gap report.
 
 ## Folder Structure
 
@@ -139,7 +139,7 @@ Expected commands:
 - `flutter test`
 - `flutter build apk --debug`
 
-Run these from the `mobile/` directory once Flutter and Firebase platform files are available on the machine.
+Run these from the `mobile/` directory once Flutter and Firebase platform files are available on the machine. On July 29, 2026, `flutter` was not installed in this workspace environment, so these commands could not be executed here.
 
 ## Deployment Plan
 

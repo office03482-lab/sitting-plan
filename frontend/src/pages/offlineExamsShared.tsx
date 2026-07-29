@@ -105,21 +105,6 @@ export const createDefaultOfflineExamForm = (): OfflineExamFormState => ({
 
 const normalizeLine = (value: unknown) => String(value || '').trim();
 
-const toLocalDatetimeInput = (value?: string | null) => {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const offset = date.getTimezoneOffset();
-  const local = new Date(date.getTime() - offset * 60_000);
-  return local.toISOString().slice(0, 16);
-};
-
-const fromLocalDatetimeInput = (value: string) => {
-  if (!value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
-
 const questionOptionLabel = (item: Record<string, unknown>) =>
   normalizeLine(item.label) || normalizeLine(item.text) || normalizeLine(item.value) || normalizeLine(item.id);
 

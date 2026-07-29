@@ -9,10 +9,36 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8000";
 
-  return {
-    plugins: [react()],
-    resolve: {
-      alias: {
+    return {
+      plugins: [react()],
+      build: {
+        sourcemap: false,
+        chunkSizeWarningLimit: 700,
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (!id.includes("node_modules")) {
+                return undefined;
+              }
+              if (id.includes("react-router-dom")) {
+                return "router";
+              }
+              if (id.includes("@supabase") || id.includes("axios")) {
+                return "data";
+              }
+              if (id.includes("react-dnd")) {
+                return "dnd";
+              }
+              if (id.includes("lucide-react")) {
+                return "icons";
+              }
+              return "vendor";
+            },
+          },
+        },
+      },
+      resolve: {
+        alias: {
         "@": path.resolve(__dirname, "./src"),
         "@lib": path.resolve(__dirname, "./src/lib"),
         "@pages": path.resolve(__dirname, "./src/pages"),

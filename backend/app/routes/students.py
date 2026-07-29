@@ -895,10 +895,10 @@ async def create_student(
     """
     Create a new student
     """
-    if not scope_context.is_school_wide and not _student_payload_matches_scope(student.dict(exclude_unset=True), scope_context):
+    if not scope_context.is_school_wide and not _student_payload_matches_scope(student.model_dump(exclude_unset=True), scope_context):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only create students within your assigned scope")
     if is_uuid_school_id(school_id):
-        payload = student.dict(exclude_unset=True)
+        payload = student.model_dump(exclude_unset=True)
         payload["preferred_hostel_id"] = str(payload["preferred_hostel_id"]).strip() if payload.get("preferred_hostel_id") is not None else None
         db_student = upsert_student_supabase(school_id, payload)
         if db_student.get("hostel_required") and db_student.get("preferred_hostel_id"):
@@ -1603,7 +1603,7 @@ async def update_student(
     if is_uuid_school_id(school_id):
         existing_student = get_student_supabase(school_id, student_id)
         _enforce_student_scope(scope_context, existing_student, "You can only update students in your scope")
-        payload = existing_student | update_data.dict(exclude_unset=True)
+        payload = existing_student | update_data.model_dump(exclude_unset=True)
         payload["preferred_hostel_id"] = str(payload["preferred_hostel_id"]).strip() if payload.get("preferred_hostel_id") is not None else None
         if not scope_context.is_school_wide and not _student_payload_matches_scope(payload, scope_context):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only move students within your assigned scope")
@@ -1631,7 +1631,7 @@ async def update_student(
     _enforce_student_scope(scope_context, serialize_student(student).model_dump(), "You can only update students in your scope")
     
     # Update fields
-    update_dict = update_data.dict(exclude_unset=True)
+    update_dict = update_data.model_dump(exclude_unset=True)
     if 'roll_number' in update_dict and update_dict['roll_number'] is not None:
         normalized_roll_number = update_dict['roll_number'].strip()
         if not normalized_roll_number:

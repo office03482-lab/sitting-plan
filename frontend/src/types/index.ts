@@ -81,8 +81,14 @@ export interface RolePowerUser {
   email?: string;
   password?: string;
   is_active: boolean;
+  is_primary?: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface AdministratorOverviewResponse {
+  platform_administrators: RolePowerUser[];
+  school_administrators: RolePowerUser[];
 }
 
 export interface ParentGuardianLink {
@@ -3162,6 +3168,38 @@ export interface OfflineExam {
   updated_at?: string | null;
 }
 
+export interface OfflineExamMetadata {
+  subjects?: string[];
+  [key: string]: unknown;
+}
+
+export interface OfflineExamStudentSummary {
+  id?: string;
+  full_name?: string | null;
+  roll_number?: string | null;
+  [key: string]: unknown;
+}
+
+export interface OfflineExamRoomSummary {
+  id?: string;
+  name?: string | null;
+  room_number?: string | null;
+  [key: string]: unknown;
+}
+
+export interface OfflineExamAnalytics {
+  scope: string;
+  exam_id?: string | null;
+  total_exams: number;
+  total_students: number;
+  average_score: number;
+  average_percentage: number;
+  highest_score: number;
+  lowest_score: number;
+  pass_rate: number;
+  attendance_rate: number;
+}
+
 export interface OfflineExamSection {
   id: string;
   exam_id: string;
@@ -3210,10 +3248,10 @@ export interface OfflineExamHallTicket {
   seat_number?: string | null;
   set_label?: string | null;
   status: string;
-  metadata?: Record<string, unknown>;
+  metadata?: OfflineExamMetadata;
   is_active: boolean;
-  student?: Record<string, unknown>;
-  room?: Record<string, unknown>;
+  student?: OfflineExamStudentSummary | null;
+  room?: OfflineExamRoomSummary | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -3230,7 +3268,7 @@ export interface OfflineExamAttendance {
   remarks?: string | null;
   marked_by?: string | null;
   is_active: boolean;
-  student?: Record<string, unknown>;
+  student?: OfflineExamStudentSummary | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -3271,9 +3309,9 @@ export interface OfflineExamResult {
   passed?: boolean | null;
   pass_marks?: number | null;
   published_at?: string | null;
-  metadata?: Record<string, unknown>;
+  metadata?: OfflineExamMetadata;
   is_active: boolean;
-  student?: Record<string, unknown>;
+  student?: OfflineExamStudentSummary | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

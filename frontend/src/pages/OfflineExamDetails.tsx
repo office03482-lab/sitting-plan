@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, BarChart3, ClipboardCheck, FileText, MapPin, PlayCircle, Plus, Printer, RefreshCw, Settings, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, ClipboardCheck, FileText, MapPin, PlayCircle, Plus, Printer, Settings, Trash2 } from 'lucide-react';
 import { Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 
 import { Alert } from '@components/Alert';
@@ -7,11 +7,11 @@ import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type {
-  OfflineExam, OfflineExamAttendance, OfflineExamEvaluation,
+  OfflineExam, OfflineExamAnalytics, OfflineExamAttendance, OfflineExamEvaluation,
   OfflineExamHallTicket, OfflineExamQuestion, OfflineExamResult, OfflineExamSeatingPlan,
 } from '@types';
 import {
-  offlineExamCardClass, offlineExamInputClass, offlineExamLabelClass,
+  offlineExamCardClass,
   EXAM_TYPE_OPTIONS, PAPER_FORMAT_OPTIONS,
 } from '@pages/offlineExamsShared';
 
@@ -36,7 +36,6 @@ export default function OfflineExamDetails() {
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session && !!examId;
   const isTeacher = user?.role === 'teacher';
-  const isStudent = user?.role === 'student';
   const isAdmin = user?.role === 'admin';
   const canManage = isTeacher || isAdmin;
 
@@ -48,7 +47,7 @@ export default function OfflineExamDetails() {
   const [attendance, setAttendance] = useState<OfflineExamAttendance[]>([]);
   const [evaluations, setEvaluations] = useState<OfflineExamEvaluation[]>([]);
   const [results, setResults] = useState<OfflineExamResult[]>([]);
-  const [analytics, setAnalytics] = useState<Record<string, unknown> | null>(null);
+  const [analytics, setAnalytics] = useState<OfflineExamAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -184,6 +183,12 @@ export default function OfflineExamDetails() {
     );
   }
 
+  const examSubjects = Array.isArray(exam.metadata?.subjects)
+    ? exam.metadata.subjects
+    : exam.subject_id
+      ? [exam.subject_id]
+      : [];
+
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6">
@@ -209,6 +214,16 @@ export default function OfflineExamDetails() {
             <p className="mt-1 text-sm text-slate-600">{exam.description || 'No description.'}</p>
           </div>
           <div className="flex flex-wrap gap-3">
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => navigate(`/offline-exams/edit/${examId}`)}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <FileText className="h-4 w-4" />
+                Edit
+              </button>
+            )}
             {canManage && exam.status !== 'published' && (
               <button
                 type="button"
@@ -273,20 +288,16 @@ export default function OfflineExamDetails() {
                 </div>
               ))}
             </div>
-            {(() => {
-              const metaSubjects = Array.isArray((exam as any).metadata?.subjects) ? (exam as any).metadata.subjects : [];
-              const allSubjects = metaSubjects.length > 0 ? metaSubjects : (exam.subject_id ? [exam.subject_id] : []);
-              return allSubjects.length > 0 ? (
-                <div className="mt-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 mb-2">Subjects</p>
-                  <div className="flex flex-wrap gap-2">
-                    {allSubjects.map((subject: string) => (
-                      <span key={subject} className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">{subject}</span>
-                    ))}
-                  </div>
+            {examSubjects.length > 0 ? (
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subjects</p>
+                <div className="flex flex-wrap gap-2">
+                  {examSubjects.map((subject) => (
+                    <span key={subject} className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">{subject}</span>
+                  ))}
                 </div>
-              ) : null;
-            })()}
+              </div>
+            ) : null}
             {exam.instructions && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Instructions</p>
@@ -367,7 +378,7 @@ export default function OfflineExamDetails() {
                   {hallTickets.map((ticket) => (
                     <tr key={ticket.id} className="border-b border-slate-100">
                       <td className="px-4 py-3 font-medium text-slate-900">{ticket.roll_number}</td>
-                      <td className="px-4 py-3 text-slate-700">{(ticket.student as Record<string, unknown>)?.full_name || ticket.student_id}</td>
+                      <td className="px-4 py-3 text-slate-700">{ticket.student?.full_name || ticket.student_id}</td>
                       <td className="px-4 py-3 text-slate-700">{ticket.set_label || 'A'}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{ticket.status}</span>
@@ -445,7 +456,7 @@ export default function OfflineExamDetails() {
                 <tbody>
                   {attendance.map((att) => (
                     <tr key={att.id} className="border-b border-slate-100">
-                      <td className="px-4 py-3 font-medium text-slate-900">{(att.student as Record<string, unknown>)?.full_name || att.student_id}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{att.student?.full_name || att.student_id}</td>
                       <td className="px-4 py-3">
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                           att.status === 'present' ? 'bg-emerald-100 text-emerald-700' :
@@ -541,7 +552,7 @@ export default function OfflineExamDetails() {
                   {results.map((result, idx) => (
                     <tr key={result.id} className="border-b border-slate-100">
                       <td className="px-4 py-3 font-medium text-slate-900">#{result.rank_in_school || idx + 1}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900">{(result.student as Record<string, unknown>)?.full_name || result.student_id}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{result.student?.full_name || result.student_id}</td>
                       <td className="px-4 py-3 text-slate-700">{result.score_obtained}/{result.max_score}</td>
                       <td className="px-4 py-3 text-slate-700">{result.percentage !== null ? `${result.percentage}%` : '-'}</td>
                       <td className="px-4 py-3">

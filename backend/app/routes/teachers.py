@@ -20,7 +20,7 @@ async def create_teacher(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
-    row = supabase_teachers.create_teacher(school_id, teacher.dict())
+    row = supabase_teachers.create_teacher(school_id, teacher.model_dump())
     logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: 1")
     return TeacherResponse(**row)
 
@@ -59,7 +59,7 @@ async def update_teacher(
     teacher_update: TeacherUpdate,
     school_id: str = Depends(resolve_school_id_from_actor),
 ):
-    row = supabase_teachers.update_teacher(school_id, teacher_id, teacher_update.dict(exclude_unset=True))
+    row = supabase_teachers.update_teacher(school_id, teacher_id, teacher_update.model_dump(exclude_unset=True))
     return TeacherResponse(**row)
 
 

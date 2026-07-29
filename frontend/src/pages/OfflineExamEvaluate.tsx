@@ -6,7 +6,7 @@ import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
-import type { OfflineExam, OfflineExamQuestion, OfflineExamEvaluation } from '@types';
+import type { OfflineExam, OfflineExamQuestion } from '@types';
 import { offlineExamCardClass, offlineExamInputClass, offlineExamLabelClass } from '@pages/offlineExamsShared';
 
 type BannerState = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;
@@ -19,7 +19,6 @@ export default function OfflineExamEvaluate() {
 
   const [exam, setExam] = useState<OfflineExam | null>(null);
   const [questions, setQuestions] = useState<OfflineExamQuestion[]>([]);
-  const [evaluations, setEvaluations] = useState<OfflineExamEvaluation[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -43,8 +42,6 @@ export default function OfflineExamEvaluate() {
       ]);
       setExam(examRes.data);
       setQuestions(questionsRes.data || []);
-      setEvaluations(evalsRes.data || []);
-
       const initialMarks: Record<string, Record<string, string>> = {};
       for (const ev of (evalsRes.data || [])) {
         if (!initialMarks[ev.student_id]) initialMarks[ev.student_id] = {};
@@ -56,16 +53,6 @@ export default function OfflineExamEvaluate() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const updateMark = (studentId: string, questionId: string, value: string) => {
-    setMarksMap((prev) => ({
-      ...prev,
-      [studentId]: {
-        ...prev[student_id],
-        [questionId]: value,
-      },
-    }));
   };
 
   const handleSaveAll = async () => {

@@ -1,10 +1,12 @@
 /**
  * Main React App Component
  */
+import { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 
 import { ErrorBoundary } from '@components/ErrorBoundary';
 import Layout from '@components/Layout';
+import { LoadingSpinner } from '@components/LoadingSpinner';
 import PlatformAdminRoute from '@components/PlatformAdminRoute';
 import { ParentRoute } from '@components/ParentRoute';
 import { ProtectedRoute } from '@components/ProtectedRoute';
@@ -12,82 +14,86 @@ import { StudentRoute } from '@components/StudentRoute';
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
 import RegistrationError from '@components/RegistrationError';
 
-import AccessControl from '@pages/AccessControl';
-import AddStaff from '@pages/AddStaff';
-import AdminOffice from '@pages/AdminOffice';
-import AttendanceManagement from '@pages/AttendanceManagement';
-import BatchManagement from '@pages/BatchManagement';
-import Dashboard from '@pages/Dashboard';
-import FeeManagement from '@pages/FeeManagement';
-import ForcePasswordChange from '@pages/ForcePasswordChange';
-import HostelManagement from '@pages/HostelManagement';
-import InventoryManagement from '@pages/InventoryManagement';
-import InvigilatorManagement from '@pages/InvigilatorManagement';
-import CommercePage from '@pages/CommercePage';
-import BusinessIntelligencePage from '@pages/BusinessIntelligencePage';
-import LmsAssignments from '@pages/LmsAssignments';
-import LiveClasses from '@pages/LiveClasses';
-import Login from '@pages/Login';
-import OnlineTestCreate from '@pages/OnlineTestCreate';
-import OnlineTestEdit from '@pages/OnlineTestEdit';
-import OnlineTestResults from '@pages/OnlineTestResults';
-import OnlineTestTake from '@pages/OnlineTestTake';
-import OnlineTests from '@pages/OnlineTests';
-import OfflineExams from '@pages/OfflineExams';
-import OfflineExamCreate from '@pages/OfflineExamCreate';
-import OfflineExamDetails from '@pages/OfflineExamDetails';
-import OfflineExamEvaluate from '@pages/OfflineExamEvaluate';
-import OfflineExamQuestionBuilder from '@pages/OfflineExamQuestionBuilder';
-import QuestionBankList from '@pages/QuestionBankList';
-import QuestionBuilder from '@pages/QuestionBuilder';
-import AiStudyAssistantPage from '@pages/AiStudyAssistantPage';
-import SchoolAiAssistantPage from '@pages/SchoolAiAssistantPage';
-import TeacherAiAssistantPage from '@pages/TeacherAiAssistantPage';
-import ParentIntelligencePortal from '@pages/ParentIntelligencePortal';
-import ParentDashboard from '@pages/ParentDashboard';
-import ParentAcademicProgress from '@pages/ParentAcademicProgress';
-import ParentAttendance from '@pages/ParentAttendance';
-import ParentTestResults from '@pages/ParentTestResults';
-import ParentAssignments from '@pages/ParentAssignments';
-import ParentAlerts from '@pages/ParentAlerts';
-import ParentAiAssistant from '@pages/ParentAiAssistant';
-import PortalAccessManager from '@pages/PortalAccessManager';
-import CourseDetail from '@pages/CourseDetail';
-import Courses from '@pages/Courses';
-import LessonPlayer from '@pages/LessonPlayer';
-import MyLearning from '@pages/MyLearning';
-import Reports from '@pages/Reports';
-import RoomConfiguration from '@pages/RoomConfiguration';
-import SeatingGeneration from '@pages/SeatingGeneration';
-import SeatingPlanManagement from '@pages/SeatingPlanManagement';
-import Settings from '@pages/Settings';
-import SecuritySessionsPage from '@pages/SecuritySessionsPage';
-import StaffBulkUpload from '@pages/StaffBulkUpload';
-import StaffDirectory from '@pages/StaffDirectory';
-import StudentDirectory from '@pages/StudentDirectory';
-import StudentManagement from '@pages/StudentManagement';
-import TeacherManagement from '@pages/TeacherManagement';
-import TimetableManagement from '@pages/TimetableManagement';
-import PlatformAnalyticsPage from '@pages/PlatformAnalyticsPage';
-import PlatformDashboard from '@pages/PlatformDashboard';
-import PlatformGlobalSearchPage from '@pages/PlatformGlobalSearchPage';
-import PlatformHealthDashboardPage from '@pages/PlatformHealthDashboardPage';
-import PlatformWorkflowQueue from '@pages/PlatformWorkflowQueue';
-import PlatformAuditLogs from '@pages/PlatformAuditLogs';
-import PlatformNotificationCenterPage from '@pages/PlatformNotificationCenterPage';
-import PlatformOnboardingWizardPage from '@pages/PlatformOnboardingWizardPage';
-import PlatformSchoolDetailsPage from '@pages/PlatformSchoolDetailsPage';
-import PlatformSchoolsPage from '@pages/PlatformSchoolsPage';
-import PlatformSubscriptionCenterPage from '@pages/PlatformSubscriptionCenterPage';
-import PlatformSupportCenterPage from '@pages/PlatformSupportCenterPage';
-import PlatformUsageDashboardPage from '@pages/PlatformUsageDashboardPage';
-import SchoolBackupCenterPage from '@pages/SchoolBackupCenterPage';
-import SchoolBrandingPage from '@pages/SchoolBrandingPage';
-import SchoolEmailTemplatesPage from '@pages/SchoolEmailTemplatesPage';
-import SchoolPortalSettingsPage from '@pages/SchoolPortalSettingsPage';
-import SchoolPreferencesPage from '@pages/SchoolPreferencesPage';
-import SchoolSmsTemplatesPage from '@pages/SchoolSmsTemplatesPage';
-import SchoolStorageCenterPage from '@pages/SchoolStorageCenterPage';
+const AccessControl = lazy(() => import('@pages/AccessControl'));
+const AddStaff = lazy(() => import('@pages/AddStaff'));
+const AdminOffice = lazy(() => import('@pages/AdminOffice'));
+const AttendanceManagement = lazy(() => import('@pages/AttendanceManagement'));
+const BatchManagement = lazy(() => import('@pages/BatchManagement'));
+const Dashboard = lazy(() => import('@pages/Dashboard'));
+const FeeManagement = lazy(() => import('@pages/FeeManagement'));
+const ForcePasswordChange = lazy(() => import('@pages/ForcePasswordChange'));
+const HostelManagement = lazy(() => import('@pages/HostelManagement'));
+const InventoryManagement = lazy(() => import('@pages/InventoryManagement'));
+const InvigilatorManagement = lazy(() => import('@pages/InvigilatorManagement'));
+const CommercePage = lazy(() => import('@pages/CommercePage'));
+const BusinessIntelligencePage = lazy(() => import('@pages/BusinessIntelligencePage'));
+const LmsAssignments = lazy(() => import('@pages/LmsAssignments'));
+const LiveClasses = lazy(() => import('@pages/LiveClasses'));
+const Login = lazy(() => import('@pages/Login'));
+const OnlineTestCreate = lazy(() => import('@pages/OnlineTestCreate'));
+const OnlineTestEdit = lazy(() => import('@pages/OnlineTestEdit'));
+const OnlineTestResults = lazy(() => import('@pages/OnlineTestResults'));
+const OnlineTestTake = lazy(() => import('@pages/OnlineTestTake'));
+const OnlineTests = lazy(() => import('@pages/OnlineTests'));
+const OfflineExams = lazy(() => import('@pages/OfflineExams'));
+const OfflineExamCreate = lazy(() => import('@pages/OfflineExamCreate'));
+const OfflineExamDetails = lazy(() => import('@pages/OfflineExamDetails'));
+const OfflineExamEvaluate = lazy(() => import('@pages/OfflineExamEvaluate'));
+const OfflineExamQuestionBuilder = lazy(() => import('@pages/OfflineExamQuestionBuilder'));
+const QuestionBankList = lazy(() => import('@pages/QuestionBankList'));
+const QuestionBuilder = lazy(() => import('@pages/QuestionBuilder'));
+const AiStudyAssistantPage = lazy(() => import('@pages/AiStudyAssistantPage'));
+const SchoolAiAssistantPage = lazy(() => import('@pages/SchoolAiAssistantPage'));
+const TeacherAiAssistantPage = lazy(() => import('@pages/TeacherAiAssistantPage'));
+const ParentIntelligencePortal = lazy(() => import('@pages/ParentIntelligencePortal'));
+const ParentDashboard = lazy(() => import('@pages/ParentDashboard'));
+const ParentAcademicProgress = lazy(() => import('@pages/ParentAcademicProgress'));
+const ParentAttendance = lazy(() => import('@pages/ParentAttendance'));
+const ParentTestResults = lazy(() => import('@pages/ParentTestResults'));
+const ParentAssignments = lazy(() => import('@pages/ParentAssignments'));
+const ParentAlerts = lazy(() => import('@pages/ParentAlerts'));
+const ParentAiAssistant = lazy(() => import('@pages/ParentAiAssistant'));
+const PortalAccessManager = lazy(() => import('@pages/PortalAccessManager'));
+const CourseDetail = lazy(() => import('@pages/CourseDetail'));
+const Courses = lazy(() => import('@pages/Courses'));
+const LessonPlayer = lazy(() => import('@pages/LessonPlayer'));
+const MyLearning = lazy(() => import('@pages/MyLearning'));
+const Reports = lazy(() => import('@pages/Reports'));
+const RoomConfiguration = lazy(() => import('@pages/RoomConfiguration'));
+const SeatingGeneration = lazy(() => import('@pages/SeatingGeneration'));
+const SeatingPlanManagement = lazy(() => import('@pages/SeatingPlanManagement'));
+const Settings = lazy(() => import('@pages/Settings'));
+const SecuritySessionsPage = lazy(() => import('@pages/SecuritySessionsPage'));
+const StaffBulkUpload = lazy(() => import('@pages/StaffBulkUpload'));
+const StaffDirectory = lazy(() => import('@pages/StaffDirectory'));
+const StudentDirectory = lazy(() => import('@pages/StudentDirectory'));
+const StudentManagement = lazy(() => import('@pages/StudentManagement'));
+const TeacherManagement = lazy(() => import('@pages/TeacherManagement'));
+const TimetableManagement = lazy(() => import('@pages/TimetableManagement'));
+const PlatformAnalyticsPage = lazy(() => import('@pages/PlatformAnalyticsPage'));
+const PlatformDashboard = lazy(() => import('@pages/PlatformDashboard'));
+const PlatformGlobalSearchPage = lazy(() => import('@pages/PlatformGlobalSearchPage'));
+const PlatformHealthDashboardPage = lazy(() => import('@pages/PlatformHealthDashboardPage'));
+const PlatformWorkflowQueue = lazy(() => import('@pages/PlatformWorkflowQueue'));
+const PlatformAuditLogs = lazy(() => import('@pages/PlatformAuditLogs'));
+const PlatformNotificationCenterPage = lazy(() => import('@pages/PlatformNotificationCenterPage'));
+const PlatformOnboardingWizardPage = lazy(() => import('@pages/PlatformOnboardingWizardPage'));
+const PlatformSchoolDetailsPage = lazy(() => import('@pages/PlatformSchoolDetailsPage'));
+const PlatformSchoolsPage = lazy(() => import('@pages/PlatformSchoolsPage'));
+const PlatformSubscriptionCenterPage = lazy(() => import('@pages/PlatformSubscriptionCenterPage'));
+const PlatformSupportCenterPage = lazy(() => import('@pages/PlatformSupportCenterPage'));
+const PlatformUsageDashboardPage = lazy(() => import('@pages/PlatformUsageDashboardPage'));
+const SchoolBackupCenterPage = lazy(() => import('@pages/SchoolBackupCenterPage'));
+const SchoolBrandingPage = lazy(() => import('@pages/SchoolBrandingPage'));
+const SchoolEmailTemplatesPage = lazy(() => import('@pages/SchoolEmailTemplatesPage'));
+const SchoolPortalSettingsPage = lazy(() => import('@pages/SchoolPortalSettingsPage'));
+const SchoolPreferencesPage = lazy(() => import('@pages/SchoolPreferencesPage'));
+const SchoolSmsTemplatesPage = lazy(() => import('@pages/SchoolSmsTemplatesPage'));
+const SchoolStorageCenterPage = lazy(() => import('@pages/SchoolStorageCenterPage'));
+
+function RouteFallback() {
+  return <LoadingSpinner message="Page load ho rahi hai..." />;
+}
 
 function SchoolAdminRoute({ children }: { children: JSX.Element }) {
   const { user } = useAuth();
@@ -116,8 +122,9 @@ function AppShell() {
 
   return (
     <Layout>
-      <Routes>
-        <Route path="/" element={<Navigate to={getDefaultRoute(user)} replace />} />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<Navigate to={getDefaultRoute(user)} replace />} />
         <Route path={DEFAULT_HOME_ROUTE} element={<Dashboard />} />
         <Route
           path="/admin-office"
@@ -387,6 +394,14 @@ function AppShell() {
         />
         <Route
           path="/offline-exams/create"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+              <OfflineExamCreate />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/offline-exams/edit/:examId"
           element={
             <ProtectedRoute allowedRoles={['admin', 'teacher']}>
               <OfflineExamCreate />
@@ -742,8 +757,9 @@ function AppShell() {
             </ParentRoute>
           }
         />
-        <Route path="*" element={<Navigate to={getDefaultRoute(user)} replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to={getDefaultRoute(user)} replace />} />
+        </Routes>
+      </Suspense>
     </Layout>
   );
 }
@@ -808,30 +824,32 @@ export function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <Routes>
-          <Route
-            path="/login"
-            element={
-              initialized && !loading && user ? <Navigate to={user.must_change_password ? '/force-password-change' : getDefaultRoute(user)} replace /> : <Login />
-            }
-          />
-          <Route
-            path="/force-password-change"
-            element={
-              <ProtectedRoute>
-                <ForcePasswordChange />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/*"
-            element={
-              <ProtectedRoute>
-                <AppShell />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                initialized && !loading && user ? <Navigate to={user.must_change_password ? '/force-password-change' : getDefaultRoute(user)} replace /> : <Login />
+              }
+            />
+            <Route
+              path="/force-password-change"
+              element={
+                <ProtectedRoute>
+                  <ForcePasswordChange />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/*"
+              element={
+                <ProtectedRoute>
+                  <AppShell />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </Suspense>
       </Router>
     </ErrorBoundary>
   );

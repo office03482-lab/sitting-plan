@@ -8,6 +8,7 @@ import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 import type {
   AccountHistoryItem,
   ActiveSessionRecord,
+  AdministratorOverviewResponse,
   Batch,
   BulkPortalCredentialRow,
   GeneratedCredentialRecord,
@@ -661,7 +662,7 @@ export default function PortalAccessManager() {
   const [parentOverview, setParentOverview] = useState<PortalOverviewResponse | null>(null);
   const [teacherOverview, setTeacherOverview] = useState<PortalOverviewResponse | null>(null);
   const [staffOverview, setStaffOverview] = useState<PortalOverviewResponse | null>(null);
-  const [roleUsers, setRoleUsers] = useState<RolePowerUser[]>([]);
+  const [adminOverview, setAdminOverview] = useState<AdministratorOverviewResponse | null>(null);
   const [recentCredentials, setRecentCredentials] = useState<GeneratedCredentialRecord[]>([]);
   const [history, setHistory] = useState<AccountHistoryItem[]>([]);
   const [sessions, setSessions] = useState<ActiveSessionRecord[]>([]);
@@ -714,7 +715,6 @@ export default function PortalAccessManager() {
   const [adminUsername, setAdminUsername] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
-  const [adminRoleKey, setAdminRoleKey] = useState('school_admin');
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [historySearch, setHistorySearch] = useState('');
 
@@ -769,7 +769,7 @@ export default function PortalAccessManager() {
         parentsRes,
         teachersRes,
         staffRes,
-        usersRes,
+        adminUsersRes,
         credentialsRes,
         historyRes,
         sessionsRes,
@@ -781,7 +781,7 @@ export default function PortalAccessManager() {
         apiService.getPortalOverview({ entity_type: 'parent', limit: 25, offset: 0 }),
         apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('teacher'), limit: 25, offset: 0 }),
         apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('non_teaching'), limit: 25, offset: 0 }),
-        apiService.listRoleUsers(),
+        apiService.listAdministratorUsers(),
         apiService.listRecentGeneratedCredentials({ limit: 50 }),
         apiService.getAccountHistory({ limit: 50, offset: 0 }),
         apiService.listSecuritySessions(),
@@ -793,7 +793,7 @@ export default function PortalAccessManager() {
       setParentOverview(parentsRes.data);
       setTeacherOverview(teachersRes.data);
       setStaffOverview(staffRes.data);
-      setRoleUsers(Array.isArray(usersRes.data) ? usersRes.data : []);
+      setAdminOverview(adminUsersRes.data);
       setRecentCredentials(Array.isArray(credentialsRes.data) ? credentialsRes.data : []);
       setHistory(historyRes.data.items || []);
       setSessions(Array.isArray(sessionsRes.data) ? sessionsRes.data : []);
@@ -850,12 +850,9 @@ export default function PortalAccessManager() {
     });
   }, [staffOverview?.records, staffSearch]);
 
-  const adminUsers = useMemo(() => {
-    if (isPlatformWorkspace) {
-      return roleUsers.filter((user) => String(user.role || '').toLowerCase() === 'platform_admin');
-    }
-    return roleUsers.filter((user) => String(user.role || '').toLowerCase() === 'school_admin');
-  }, [roleUsers, isPlatformWorkspace]);
+  const platformAdminUsers = useMemo(() => adminOverview?.platform_administrators || [], [adminOverview?.platform_administrators]);
+
+  const schoolAdminUsers = useMemo(() => adminOverview?.school_administrators || [], [adminOverview?.school_administrators]);
 
   const summary = useMemo(() => {
     const studentTotal = studentOverview?.summary.total_records || 0;
@@ -864,9 +861,20 @@ export default function PortalAccessManager() {
     const parentActive = parentOverview?.summary.portal_active || 0;
     const teacherTotal = teacherOverview?.summary.total_records || 0;
     const staffTotal = staffOverview?.summary.total_records || 0;
-    const adminTotal = adminUsers.length;
-    return { studentTotal, studentPending, studentActive, parentActive, teacherTotal, staffTotal, adminTotal, totalStaff: teacherTotal + staffTotal };
-  }, [adminUsers.length, parentOverview?.summary.portal_active, staffOverview?.summary.total_records, studentOverview?.summary.accounts_pending, studentOverview?.summary.portal_active, studentOverview?.summary.total_records, teacherOverview?.summary.total_records]);
+    const platformAdminTotal = platformAdminUsers.filter((user) => user.is_active).length;
+    const schoolAdminTotal = schoolAdminUsers.filter((user) => user.is_active).length;
+    return {
+      studentTotal,
+      studentPending,
+      studentActive,
+      parentActive,
+      teacherTotal,
+      staffTotal,
+      platformAdminTotal,
+      schoolAdminTotal,
+      totalStaff: teacherTotal + staffTotal,
+    };
+  }, [parentOverview?.summary.portal_active, platformAdminUsers, schoolAdminUsers, staffOverview?.summary.total_records, studentOverview?.summary.accounts_pending, studentOverview?.summary.portal_active, studentOverview?.summary.total_records, teacherOverview?.summary.total_records]);
 
   const toggleSelection = (value: string, selected: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
     setter(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
@@ -916,6 +924,24 @@ export default function PortalAccessManager() {
     setEditPermissions(summaryData.permissions || []);
     setEditScopeAssignments(normalizeScopeAssignments(summaryData.permissions || [], summaryData.selected_role || summaryData.role || 'viewer', summaryData.scope_assignments));
     setEditPowersOpen(true);
+  };
+
+  const loadAdminAccountPanel = async (user: RolePowerUser, mode: 'drawer' | 'view' | 'edit') => {
+    const record: PortalOverviewRecord = {
+      entity_type: 'administrator',
+      entity_id: String(user.id),
+      entity_name: user.full_name,
+      username: user.username,
+      email: user.email || null,
+      portal_status: user.is_active ? 'active' : 'disabled',
+      profile_linked: true,
+      profile_id: String(user.id),
+      active_sessions: 0,
+      role_key: user.role,
+      is_enabled: user.is_active,
+      account_created_date: user.created_at || null,
+    };
+    await loadAccountPanel(record, mode);
   };
 
   const withAction = async (key: string, action: () => Promise<void>) => {
@@ -1062,7 +1088,7 @@ export default function PortalAccessManager() {
         full_name: adminName,
         email: adminEmail || undefined,
         password: adminPassword,
-        role: adminRoleKey,
+        role: 'school_admin',
         user_type: 'non_teaching',
         permissions: adminPermissions,
       });
@@ -1106,14 +1132,66 @@ export default function PortalAccessManager() {
         await apiService.resetStudentPortalPassword(selectedAccount.entity_id);
       } else if (selectedAccount.entity_type === 'parent') {
         await apiService.resetParentPortalPassword(selectedAccount.entity_id);
+      } else if (selectedAccount.entity_type === 'administrator') {
+        const response = await apiService.resetRoleUserPassword(selectedAccount.entity_id);
+        setGeneratedRows([
+          {
+            name: selectedAccount.entity_name || accountSummary?.user_name || response.data.username,
+            role: adminRoleLabel(accountSummary?.selected_role || selectedAccount.role_key || 'school_admin'),
+            identifier: response.data.email || response.data.username,
+            student_name: selectedAccount.entity_name || accountSummary?.user_name || response.data.username,
+            roll_number: response.data.email || response.data.username,
+            username: response.data.username,
+            temporary_password: response.data.temporary_password,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+        setGeneratedModalOpen(true);
       } else {
         await apiService.resetStaffPortalPassword(selectedAccount.entity_id, accountSummary?.selected_role || selectedAccount.role_key || 'teacher');
       }
       await refreshAll();
-      if (selectedAccount.profile_id) {
+      if (selectedAccount.profile_id && selectedAccount.entity_type !== 'administrator') {
         await openCredentialDetails(selectedAccount.profile_id);
       }
       setMessage('Password reset complete.');
+    });
+  };
+
+  const handleAdminPasswordReset = async (user: RolePowerUser) => {
+    await withAction(`reset-admin-${user.id}`, async () => {
+      const response = await apiService.resetRoleUserPassword(user.id);
+      setGeneratedRows([
+        {
+          name: user.full_name,
+          role: adminRoleLabel(user.role),
+          identifier: response.data.email || response.data.username,
+          student_name: user.full_name,
+          roll_number: response.data.email || response.data.username,
+          username: response.data.username,
+          temporary_password: response.data.temporary_password,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setGeneratedModalOpen(true);
+      setMessage('Administrator password reset complete.');
+      await refreshAll();
+    });
+  };
+
+  const handleAdminActivationToggle = async (user: RolePowerUser) => {
+    await withAction(`toggle-admin-${user.id}`, async () => {
+      await apiService.updateRoleUser(user.id, { is_active: !user.is_active });
+      setMessage(user.is_active ? 'Administrator deactivated.' : 'Administrator reactivated.');
+      await refreshAll();
+    });
+  };
+
+  const handleTransferOwnership = async (user: RolePowerUser) => {
+    await withAction(`transfer-admin-${user.id}`, async () => {
+      await apiService.transferRoleUserOwnership(user.id);
+      setMessage('School ownership transferred.');
+      await refreshAll();
     });
   };
 
@@ -1293,7 +1371,8 @@ export default function PortalAccessManager() {
           <SummaryCard title="Parents" value={summary.parentActive} helper="Active" />
           <SummaryCard title="Teaching Staff" value={summary.teacherTotal} helper="Total" />
           <SummaryCard title="Non-Teaching Staff" value={summary.staffTotal} helper={`Combined staff ${summary.totalStaff}`} />
-          <SummaryCard title="Admins" value={summary.adminTotal} helper="Total" />
+          <SummaryCard title="Platform Administrators" value={summary.platformAdminTotal} helper="Global read-only" />
+          <SummaryCard title="School Administrators" value={summary.schoolAdminTotal} helper="Active for current school" />
         </section>
 
         <section className="mt-6 flex flex-wrap gap-3">
@@ -1488,57 +1567,131 @@ export default function PortalAccessManager() {
 
         {activeTab === 'administrator' ? (
           <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
-            <SectionCard title="Create Administrator" subtitle="Create a new administrator with the right access.">
+            <SectionCard title="Create School Administrator" subtitle="Create a school-scoped administrator for the current school.">
               <div className="grid gap-4 md:grid-cols-2">
                 <input value={adminName} onChange={(event) => setAdminName(event.target.value)} className={PANEL_INPUT} placeholder="Full name" />
                 <input value={adminUsername} onChange={(event) => setAdminUsername(event.target.value)} className={PANEL_INPUT} placeholder="Username" />
                 <input value={adminEmail} onChange={(event) => setAdminEmail(event.target.value)} className={PANEL_INPUT} placeholder="Email" />
                 <input value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} className={PANEL_INPUT} placeholder="Password" />
               </div>
-              <div className="mt-4">
-                <select value={adminRoleKey} onChange={(event) => setAdminRoleKey(event.target.value)} className={PANEL_INPUT}>
-                  <option value="school_admin">School Admin</option>
-                  <option value="platform_admin">Platform Admin</option>
-                  <option value="staff">Academic Coordinator</option>
-                  <option value="staff">Exam Cell</option>
-                  <option value="store_manager">Store Manager</option>
-                  <option value="viewer">Viewer</option>
-                  <option value="school_admin">Custom Admin</option>
-                </select>
+              <div className="mt-4 rounded-3xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                New administrator accounts created from this panel are always assigned the <span className="font-semibold">School Administrator</span> role for the current school.
               </div>
               <div className="mt-5">
                 <PermissionChecklist modules={permissionModules} selected={adminPermissions} onToggle={(permission) => togglePermission(permission, adminPermissions, setAdminPermissions)} />
               </div>
               <button type="button" onClick={() => void handleCreateAdministrator()} disabled={processingKey === 'create-admin'} className={`${BUTTON_PRIMARY} mt-5`}>
                 <Shield className="h-4 w-4" />
-                Create Administrator
+                Create School Administrator
               </button>
             </SectionCard>
-            <SectionCard
-              title={isPlatformWorkspace ? 'Platform Administrators' : 'School Administrators'}
-              subtitle={isPlatformWorkspace ? 'Current platform administrator accounts.' : `Current administrators for ${activeSchoolName || 'this school'}.`}
-            >
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Name</th>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Role</th>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-600">Username</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {adminUsers.map((user) => (
-                      <tr key={String(user.id)}>
-                        <td className="px-4 py-3 font-semibold text-slate-900">{user.full_name}</td>
-                        <td className="px-4 py-3 text-slate-700">{adminRoleLabel(user.role)}</td>
-                        <td className="px-4 py-3 text-slate-700">{user.username}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </SectionCard>
+            <div className="space-y-6">
+              <SectionCard
+                title="Platform Administrators"
+                subtitle={isPlatformWorkspace ? 'Global administrators are visible here in read-only mode.' : 'Platform administrators are global and never editable from a school workspace.'}
+              >
+                {platformAdminUsers.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Name</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Email</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Role</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {platformAdminUsers.map((user) => (
+                          <tr key={`platform-${String(user.id)}`}>
+                            <td className="px-4 py-3 font-semibold text-slate-900">{user.full_name}</td>
+                            <td className="px-4 py-3 text-slate-700">{user.email || 'Not available'}</td>
+                            <td className="px-4 py-3 text-slate-700">{adminRoleLabel(user.role)}</td>
+                            <td className="px-4 py-3 text-slate-700">{user.is_active ? 'Active' : 'Inactive'}</td>
+                            <td className="px-4 py-3 text-slate-700">Global platform administrator. Managed outside school workspace.</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-sm text-slate-500">
+                    No platform administrator is available in this workspace context. Global admin management remains read-only here.
+                  </div>
+                )}
+              </SectionCard>
+              <SectionCard
+                title="School Administrators"
+                subtitle={`Only administrators assigned to ${activeSchoolName || 'the current school'} are shown here.`}
+              >
+                {schoolAdminUsers.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Name</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Email</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Created Date</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {schoolAdminUsers.map((user) => (
+                          <tr key={`school-admin-${String(user.id)}`}>
+                            <td className="px-4 py-3 font-semibold text-slate-900">{user.full_name}</td>
+                            <td className="px-4 py-3 text-slate-700">{user.email || 'Not available'}</td>
+                            <td className="px-4 py-3 text-slate-700">{user.is_active ? 'Active' : 'Inactive'}</td>
+                            <td className="px-4 py-3 text-slate-700">{formatDateTime(user.created_at)}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                <button type="button" onClick={() => void loadAdminAccountPanel(user, 'edit')} className={BUTTON_SECONDARY}>
+                                  <Pencil className="h-4 w-4" />
+                                  Edit
+                                </button>
+                                <button type="button" onClick={() => void handleAdminActivationToggle(user)} className={BUTTON_SECONDARY}>
+                                  <Lock className="h-4 w-4" />
+                                  {user.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button type="button" onClick={() => void handleAdminPasswordReset(user)} className={BUTTON_SECONDARY}>
+                                  <KeyRound className="h-4 w-4" />
+                                  Reset Password
+                                </button>
+                                {user.is_primary ? (
+                                  <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-800">
+                                    <Check className="h-4 w-4" />
+                                    Current Owner
+                                  </span>
+                                ) : (
+                                  <button type="button" onClick={() => void handleTransferOwnership(user)} disabled={!user.is_active} className={BUTTON_SECONDARY}>
+                                    <RefreshCw className="h-4 w-4" />
+                                    Transfer Ownership
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-dashed border-amber-200 bg-amber-50 px-5 py-6">
+                    <p className="text-sm font-semibold text-amber-900">No School Administrator has been assigned to this school.</p>
+                    <p className="mt-2 text-sm text-amber-800">Create one below or assign an existing user.</p>
+                    <button
+                      type="button"
+                      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                      className={`${BUTTON_PRIMARY} mt-4`}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Create School Administrator
+                    </button>
+                  </div>
+                )}
+              </SectionCard>
+            </div>
           </div>
         ) : null}
 

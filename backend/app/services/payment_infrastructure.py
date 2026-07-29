@@ -24,7 +24,7 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 MODULE_KEY = "billing_payment_infrastructure"
 FINANCE_SCHEMA = "finance"
-SUPPORTED_PROVIDERS = {"razorpay", "stripe", "cashfree"}
+SUPPORTED_PROVIDERS = {"razorpay"}
 SUPPORTED_WEBHOOK_EVENTS = {
     "payment.success",
     "payment.failed",

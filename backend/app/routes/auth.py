@@ -11,7 +11,7 @@ from sqlalchemy import func
 
 from app.database import get_db
 from app.models import User, UserRole
-from app.middleware.auth import get_authenticated_user, user_has_permission
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, user_has_permission
 from app.services.supabase_admin import create_supabase_admin_client
 from app.services.auth_security import (
     assert_not_rate_limited,
@@ -25,7 +25,9 @@ from app.services.auth_security import (
     serialize_auth_detail,
     validate_refresh_token,
 )
+from app.services.supabase_account_security import generate_secure_password
 from app.schemas import (
+    AdministratorOverviewResponse,
     LoginResponse,
     LogoutRequest,
     ModulePermissionInfo,
@@ -312,9 +314,11 @@ def encode_permissions(values: List[str]) -> str:
     return ",".join(values)
 
 
-def decode_permissions(value: Optional[str]) -> List[str]:
+def decode_permissions(value: Optional[str | list[str]]) -> List[str]:
     if not value:
         return []
+    if isinstance(value, list):
+        return normalize_permissions(value)
     return normalize_permissions(value.split(","))
 
 
@@ -380,6 +384,14 @@ def _selected_role_from_supabase_role(role_row: dict[str, Any] | None) -> str:
     if role_key in ALLOWED_ROLE_VALUES:
         return role_key
     return "viewer"
+
+
+def _is_school_admin_role(role_row: dict[str, Any] | None) -> bool:
+    return _selected_role_from_supabase_role(role_row) == "school_admin"
+
+
+def _is_platform_admin_role(role_row: dict[str, Any] | None) -> bool:
+    return _selected_role_from_supabase_role(role_row) == "platform_admin"
 
 
 def _managed_role_key_for_profile(profile_id: str) -> str:
@@ -509,7 +521,8 @@ def _serialize_supabase_role_user(
         user_type=normalized_user_type,
         permissions=normalize_permissions(permissions_by_role.get(role_id, [])),
         is_active=bool(membership_row.get("is_active", True) and profile.get("is_active", True)),
-        created_at=membership_row.get("created_at"),
+        is_primary=bool(membership_row.get("is_primary", False)),
+        created_at=membership_row.get("created_at") or profile.get("created_at"),
     )
 
 
@@ -532,7 +545,7 @@ def _count_active_admins(rows: list[dict[str, Any]]) -> int:
             role = role[0] if role else {}
         if not isinstance(role, dict):
             role = {}
-        if _selected_role_from_supabase_role(role) in ADMIN_ROLE_VALUES and bool(row.get("is_active", True)):
+        if _is_school_admin_role(role) and bool(row.get("is_active", True)):
             count += 1
     return count
 
@@ -628,7 +641,8 @@ def serialize_role_user(user: User) -> UserRolePowerResponse:
         user_type=user.user_type or "non_teaching",
         permissions=decode_permissions(user.permissions),
         is_active=user.is_active,
-        created_at=user.created_at,
+        is_primary=False,
+        created_at=getattr(user, "created_at", None),
     )
 
 
@@ -933,6 +947,33 @@ async def list_role_users(
     ]
 
 
+@router.get("/users/administrators", response_model=AdministratorOverviewResponse)
+async def list_administrator_users(
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor_user: User = Depends(require_user_management_access),
+):
+    supabase = create_supabase_admin_client()
+    membership_rows = _load_school_role_user_rows(school_id, supabase)
+    role_ids = [_normalize_supabase_text(row.get("role_id")) for row in membership_rows]
+    permissions_by_role = _load_role_permissions_map(role_ids, supabase)
+
+    school_admins = [
+        _serialize_supabase_role_user(row, permissions_by_role)
+        for row in membership_rows
+        if _is_school_admin_role((row.get("roles")[0] if isinstance(row.get("roles"), list) and row.get("roles") else row.get("roles")))
+    ]
+
+    platform_admins: list[UserRolePowerResponse] = []
+    actor_role_key = str(getattr(actor_user, "role_key", "") or "").strip().lower()
+    if actor_role_key == "platform_admin":
+        platform_admins.append(serialize_role_user(actor_user))
+
+    return AdministratorOverviewResponse(
+        platform_administrators=platform_admins,
+        school_administrators=school_admins,
+    )
+
+
 @router.post("/users", response_model=UserRolePowerResponse)
 async def create_role_user(
     payload: UserRolePowerCreate,
@@ -951,6 +992,8 @@ async def create_role_user(
         raise HTTPException(status_code=400, detail="At least one permission is required")
 
     email = (payload.email or f"{username}@local.app").strip().lower()
+    profile_id = ""
+    existing_profile: dict[str, Any] | None = None
     try:
         user_response = supabase.auth.admin.create_user(
             {
@@ -964,16 +1007,45 @@ async def create_role_user(
                 },
             }
         )
+        created_user = getattr(user_response, "user", None)
+        profile_id = _normalize_supabase_text(getattr(created_user, "id", None))
     except Exception as exc:
         message = str(exc).strip() or "Failed to create user account"
         normalized_message = message.lower()
-        if "already" in normalized_message or "duplicate" in normalized_message:
+        if "already" not in normalized_message and "duplicate" not in normalized_message:
+            raise HTTPException(status_code=500, detail=message) from exc
+        profile_query = (
+            supabase.table("profiles")
+            .select("id,email,full_name,display_name,metadata,is_active")
+            .ilike("email", email)
+            .limit(1)
+            .execute()
+        )
+        existing_rows = list(profile_query.data or [])
+        if not existing_rows:
             raise HTTPException(status_code=400, detail="Username or email already exists") from exc
-        raise HTTPException(status_code=500, detail=message) from exc
-    created_user = getattr(user_response, "user", None)
-    profile_id = _normalize_supabase_text(getattr(created_user, "id", None))
+        existing_profile = dict(existing_rows[0])
+        profile_id = _normalize_supabase_text(existing_profile.get("id"))
     if not profile_id:
         raise HTTPException(status_code=500, detail="Failed to create user account")
+
+    existing_membership = next(
+        (
+            row for row in _load_school_role_user_rows(school_id, supabase)
+            if _normalize_supabase_text(row.get("profile_id")) == profile_id
+        ),
+        None,
+    )
+    if existing_membership:
+        raise HTTPException(status_code=400, detail="User is already assigned to this school")
+
+    existing_school_admin = any(
+        _is_school_admin_role((row.get("roles")[0] if isinstance(row.get("roles"), list) and row.get("roles") else row.get("roles")))
+        and bool(row.get("is_active", True))
+        and str(row.get("status") or "").strip().lower() == "active"
+        for row in _load_school_role_user_rows(school_id, supabase)
+    )
+    should_be_primary = role_value == "school_admin" and not existing_school_admin
 
     role_row = _ensure_managed_role(
         school_id,
@@ -1001,7 +1073,7 @@ async def create_role_user(
             "profile_id": profile_id,
             "role_id": role_row["id"],
             "status": "active",
-            "is_primary": False,
+            "is_primary": should_be_primary,
             "is_active": True,
             "metadata": {"source": "access_control"},
         }
@@ -1012,7 +1084,7 @@ async def create_role_user(
         "profile_id": profile_id,
         "role_id": role_row["id"],
         "status": "active",
-        "is_primary": False,
+        "is_primary": should_be_primary,
         "is_active": True,
     }
     membership_row["profiles"] = {
@@ -1020,7 +1092,11 @@ async def create_role_user(
         "email": email,
         "full_name": payload.full_name.strip(),
         "display_name": username,
-        "metadata": {"username": username, "user_type": user_type},
+        "metadata": {
+            **((existing_profile or {}).get("metadata") if isinstance((existing_profile or {}).get("metadata"), dict) else {}),
+            "username": username,
+            "user_type": user_type,
+        },
         "is_active": True,
     }
     membership_row["roles"] = role_row
@@ -1150,6 +1226,63 @@ async def delete_role_user(
 
     supabase.table("school_memberships").delete().eq("id", membership["id"]).execute()
     return {"message": "User deleted"}
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_role_user_password(
+    user_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    _: User = Depends(require_user_management_access),
+):
+    supabase = create_supabase_admin_client()
+    membership = _find_membership_or_404(school_id, user_id, supabase)
+    profile = membership.get("profiles")
+    if isinstance(profile, list):
+        profile = profile[0] if profile else {}
+    if not isinstance(profile, dict):
+        profile = {}
+
+    temporary_password = generate_secure_password(length=16)
+    supabase.auth.admin.update_user_by_id(user_id, {"password": temporary_password})
+    return {
+        "profile_id": user_id,
+        "username": _normalize_supabase_text(profile.get("display_name")) or _normalize_supabase_text(profile.get("email")).split("@")[0],
+        "email": _normalize_supabase_text(profile.get("email")) or None,
+        "temporary_password": temporary_password,
+    }
+
+
+@router.post("/users/{user_id}/transfer-ownership")
+async def transfer_school_admin_ownership(
+    user_id: str,
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    _: User = Depends(require_user_management_access),
+):
+    supabase = create_supabase_admin_client()
+    membership_rows = _load_school_role_user_rows(school_id, supabase)
+    membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)
+    if not membership:
+        raise HTTPException(status_code=404, detail="User not found")
+    role = membership.get("roles")
+    if isinstance(role, list):
+        role = role[0] if role else {}
+    if not _is_school_admin_role(role if isinstance(role, dict) else None):
+        raise HTTPException(status_code=400, detail="Ownership can be transferred only to a school administrator")
+
+    actor_profile_id = _normalize_supabase_text(actor.get("profile_id"))
+    if actor_profile_id:
+        current_primary = next((row for row in membership_rows if bool(row.get("is_primary"))), None)
+        if current_primary and _normalize_supabase_text(current_primary.get("profile_id")) == user_id:
+            return {"message": "Ownership already assigned"}
+        for row in membership_rows:
+            if not _is_school_admin_role((row.get("roles")[0] if isinstance(row.get("roles"), list) and row.get("roles") else row.get("roles"))):
+                continue
+            next_primary = _normalize_supabase_text(row.get("profile_id")) == user_id
+            supabase.table("school_memberships").update({"is_primary": next_primary}).eq("id", row["id"]).execute()
+        return {"message": "Ownership transferred"}
+
+    raise HTTPException(status_code=400, detail="Profile context missing")
 
 
 @router.get("/permissions", response_model=List[ModulePermissionInfo])

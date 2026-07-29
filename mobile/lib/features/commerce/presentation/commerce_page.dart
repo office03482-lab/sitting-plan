@@ -75,8 +75,6 @@ class _CommercePageState extends ConsumerState<CommercePage> {
                 value: _provider,
                 items: const <DropdownMenuItem<String>>[
                   DropdownMenuItem(value: 'razorpay', child: Text('Razorpay')),
-                  DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
-                  DropdownMenuItem(value: 'cashfree', child: Text('Cashfree')),
                 ],
                 onChanged: (String? value) => setState(() => _provider = value ?? 'razorpay'),
                 decoration: const InputDecoration(labelText: 'Provider', border: OutlineInputBorder()),

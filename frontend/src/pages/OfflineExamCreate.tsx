@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, FileText, MapPin, Printer, Settings, Users } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Check, FileText, MapPin, Settings, Users } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
@@ -9,6 +9,7 @@ import { apiService, getRequestErrorMessage } from '@services/api';
 import type { Batch } from '@types';
 import {
   createDefaultOfflineExamForm,
+  mapOfflineExamToForm,
   offlineExamFormToPayload,
   offlineExamInputClass,
   offlineExamLabelClass,
@@ -30,15 +31,16 @@ const STEPS = [
 ];
 
 export default function OfflineExamCreate() {
+  const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const isEditMode = Boolean(examId);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [form, setForm] = useState(createDefaultOfflineExamForm());
   const [batches, setBatches] = useState<Batch[]>([]);
   const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
-  const [allSubjects, setAllSubjects] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -52,10 +54,16 @@ export default function OfflineExamCreate() {
   const loadFormData = async () => {
     try {
       setLoading(true);
-      const [batchRes] = await Promise.all([
+      const [batchRes, subjectRes] = await Promise.all([
         apiService.listBatches(),
+        apiService.listOfflineExamSubjects(),
       ]);
       setBatches(batchRes.data || []);
+      setSubjects(subjectRes.data || []);
+      if (examId) {
+        const examRes = await apiService.getOfflineExam(examId);
+        setForm(mapOfflineExamToForm(examRes.data));
+      }
     } catch (requestError) {
       setError(getRequestErrorMessage(requestError, 'Form data load nahi ho paya.'));
     } finally {
@@ -75,14 +83,20 @@ export default function OfflineExamCreate() {
       if (publishNow) {
         payload.status = 'published';
       }
-      const response = await apiService.createOfflineExam(payload);
-      const newExamId = response.data.id;
-      setBanner({ type: 'success', message: 'Offline exam created successfully!' });
+      const response = examId
+        ? await apiService.updateOfflineExam(examId, payload)
+        : await apiService.createOfflineExam(payload);
+      const targetExamId = response.data.id;
+      const successBanner: NonNullable<BannerState> = {
+        type: 'success',
+        message: isEditMode ? 'Offline exam updated successfully!' : 'Offline exam created successfully!',
+      };
+      setBanner(successBanner);
       setTimeout(() => {
-        if (form.question_source === 'create_new') {
-          navigate(`/offline-exams/build/${newExamId}`, { state: { banner } });
+        if (!isEditMode && form.question_source === 'create_new') {
+          navigate(`/offline-exams/build/${targetExamId}`, { state: { banner: successBanner } });
         } else {
-          navigate(`/offline-exams/details/${newExamId}`, { state: { banner } });
+          navigate(`/offline-exams/details/${targetExamId}`, { state: { banner: successBanner } });
         }
       }, 800);
     } catch (requestError) {
@@ -112,8 +126,12 @@ export default function OfflineExamCreate() {
           <ArrowLeft className="h-4 w-4" />
           Back to Offline Exams
         </button>
-        <h1 className="text-2xl font-bold text-slate-900">Create Offline Exam</h1>
-        <p className="mt-1 text-sm text-slate-600">Exam details configure karo, question paper banao, seating plan set karo.</p>
+        <h1 className="text-2xl font-bold text-slate-900">{isEditMode ? 'Edit Offline Exam' : 'Create Offline Exam'}</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          {isEditMode
+            ? 'Existing exam details update karo without changing the offline exam workflow.'
+            : 'Exam details configure karo, question paper banao, seating plan set karo.'}
+        </p>
       </div>
 
       {banner ? <Alert type={banner.type} message={banner.message} onClose={() => setBanner(null)} /> : null}
@@ -563,7 +581,7 @@ export default function OfflineExamCreate() {
                 disabled={submitting}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#c07a10] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a6650b] disabled:opacity-50"
               >
-                {submitting ? 'Publishing...' : 'Publish & Create'}
+                {submitting ? (isEditMode ? 'Updating...' : 'Publishing...') : isEditMode ? 'Update Exam' : 'Publish & Create'}
               </button>
             </>
           )}

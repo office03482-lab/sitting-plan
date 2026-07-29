@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     otp_verify_max_attempts: int = 5
     auth_lockout_minutes: int = 15
     auth_rate_limit_window_minutes: int = 15
+    response_compression_enabled: bool = True
+    gzip_minimum_size_bytes: int = 1024
+    security_headers_enabled: bool = True
+    hsts_max_age_seconds: int = 31536000
 
     # Bootstrap
     initial_admin_enabled: bool = False
@@ -151,6 +155,8 @@ class Settings(BaseSettings):
         "enable_retrofit_lms",
         "enable_retrofit_storage",
         "enable_retrofit_analytics",
+        "response_compression_enabled",
+        "security_headers_enabled",
         mode="before",
     )
     @classmethod

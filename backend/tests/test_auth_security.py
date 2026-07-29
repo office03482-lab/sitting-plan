@@ -5,6 +5,7 @@ Tests mock the Supabase client to avoid a live dependency.
 """
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.main import app
+from app.routes import auth as auth_routes
 from app.utils.auth import create_access_token
 
 
@@ -341,3 +343,110 @@ def test_logout_invalidates_refresh_token(client):
         json={"refresh_token": refresh_token},
     )
     assert refresh_response.status_code == 401
+
+
+def test_administrator_overview_splits_platform_and_school_admins(client, monkeypatch):
+    school_rows = [
+        {
+            "id": "membership-school-admin-managed",
+            "profile_id": "profile-school-admin-managed",
+            "role_id": "role-managed-school-admin",
+            "is_active": True,
+            "status": "active",
+            "created_at": "2026-07-29T10:00:00Z",
+            "profiles": {
+                "id": "profile-school-admin-managed",
+                "email": "managed-admin@school.com",
+                "full_name": "Managed School Admin",
+                "display_name": "managedadmin",
+                "metadata": {"username": "managedadmin", "user_type": "non_teaching"},
+                "is_active": True,
+            },
+            "roles": {
+                "id": "role-managed-school-admin",
+                "role_key": "managed_profile_school_admin",
+                "role_name": "Managed School Admin",
+                "metadata": {"role_key": "school_admin", "legacy_role": "admin"},
+                "is_active": True,
+            },
+        },
+        {
+            "id": "membership-school-admin-system",
+            "profile_id": "profile-school-admin-system",
+            "role_id": "role-system-school-admin",
+            "is_active": True,
+            "status": "active",
+            "created_at": "2026-07-28T10:00:00Z",
+            "profiles": {
+                "id": "profile-school-admin-system",
+                "email": "system-admin@school.com",
+                "full_name": "System School Admin",
+                "display_name": "systemadmin",
+                "metadata": {"username": "systemadmin", "user_type": "non_teaching"},
+                "is_active": True,
+            },
+            "roles": {
+                "id": "role-system-school-admin",
+                "role_key": "school_admin",
+                "role_name": "School Admin",
+                "metadata": None,
+                "is_active": True,
+            },
+        },
+        {
+            "id": "membership-platform-admin",
+            "profile_id": "profile-platform-admin",
+            "role_id": "role-platform-admin",
+            "is_active": True,
+            "status": "active",
+            "created_at": "2026-07-27T10:00:00Z",
+            "profiles": {
+                "id": "profile-platform-admin",
+                "email": "platform-admin@global.com",
+                "full_name": "Platform Admin In Memberships",
+                "display_name": "platformadmin",
+                "metadata": {"username": "platformadmin", "user_type": "non_teaching"},
+                "is_active": True,
+            },
+            "roles": {
+                "id": "role-platform-admin",
+                "role_key": "platform_admin",
+                "role_name": "Platform Admin",
+                "metadata": None,
+                "is_active": True,
+            },
+        },
+    ]
+
+    monkeypatch.setattr(auth_routes, "create_supabase_admin_client", lambda: object())
+    monkeypatch.setattr(auth_routes, "_load_school_role_user_rows", lambda school_id, supabase=None: school_rows)
+    monkeypatch.setattr(auth_routes, "_load_role_permissions_map", lambda role_ids, supabase=None: {})
+
+    app.dependency_overrides[auth_routes.resolve_school_id_from_actor] = lambda: "school-a"
+    app.dependency_overrides[auth_routes.require_user_management_access] = lambda: SimpleNamespace(
+        id="platform-profile",
+        username="platformowner",
+        full_name="Platform Owner",
+        email="platform-owner@example.com",
+        role="admin",
+        role_key="platform_admin",
+        user_type="non_teaching",
+        permissions=["admin_office.access_control"],
+        is_active=True,
+        created_at="2026-07-29T09:00:00Z",
+    )
+
+    try:
+        response = client.get("/api/auth/users/administrators")
+    finally:
+        app.dependency_overrides.pop(auth_routes.resolve_school_id_from_actor, None)
+        app.dependency_overrides.pop(auth_routes.require_user_management_access, None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["platform_administrators"]) == 1
+    assert payload["platform_administrators"][0]["role"] == "admin"
+    assert [item["email"] for item in payload["school_administrators"]] == [
+        "managed-admin@school.com",
+        "system-admin@school.com",
+    ]

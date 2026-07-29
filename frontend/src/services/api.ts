@@ -6,10 +6,10 @@ import type {
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
   PlatformAnalyticsOverview, PlatformAuditCenterResponse, PlatformGlobalSearchResponse, PlatformHealthDashboardResponse, PlatformNotification, PlatformNotificationListResponse, PlatformOnboardingResponse, PlatformSchoolListResponse, PlatformSchoolSummary, PlatformSubscriptionSummary, PlatformSupportActionResponse, PlatformUsageDashboardResponse,
   SchoolBackupHistoryResponse, SchoolBrandAsset, SchoolPublicBranding, SchoolSelfServiceProfile, SchoolStorageOverview,
-  ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord,
+  ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord, AdministratorOverviewResponse,
   PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
-  OfflineExam, OfflineExamAttendance, OfflineExamEvaluation, OfflineExamHallTicket, OfflineExamQuestion, OfflineExamResult, OfflineExamSeatingPlan,
+  OfflineExam, OfflineExamAnalytics, OfflineExamAttendance, OfflineExamEvaluation, OfflineExamHallTicket, OfflineExamQuestion, OfflineExamResult, OfflineExamSeatingPlan,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
   TeacherAiAssignmentResponse, TeacherAiLessonPlanResponse, TeacherAiQuestionPaperResponse, TeacherAiReportCommentsResponse,
@@ -1493,7 +1493,7 @@ class ApiService {
   }
 
   async getOfflineExamAnalytics(examId: string) {
-    return this.api.get<Record<string, unknown>>(`/offline-exams/${examId}/analytics`);
+    return this.api.get<OfflineExamAnalytics>(`/offline-exams/${examId}/analytics`);
   }
 
   async listOfflineExamSeating(examId: string) {
@@ -2156,6 +2156,10 @@ class ApiService {
     return this.api.get('/auth/users', { params: { school_id: schoolId } });
   }
 
+  async listAdministratorUsers(schoolId: string | number = 1) {
+    return this.api.get<AdministratorOverviewResponse>('/auth/users/administrators', { params: { school_id: schoolId } });
+  }
+
   async listPermissions() {
     return this.api.get('/auth/permissions');
   }
@@ -2170,6 +2174,14 @@ class ApiService {
 
   async deleteRoleUser(userId: string | number) {
     return this.api.delete(`/auth/users/${userId}`);
+  }
+
+  async resetRoleUserPassword(userId: string | number) {
+    return this.api.post<{ profile_id: string; username: string; email?: string | null; temporary_password: string }>(`/auth/users/${userId}/reset-password`);
+  }
+
+  async transferRoleUserOwnership(userId: string | number) {
+    return this.api.post<{ message: string }>(`/auth/users/${userId}/transfer-ownership`);
   }
 
   async getPlatformDashboardSummary() {
