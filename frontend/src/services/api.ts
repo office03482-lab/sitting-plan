@@ -24,10 +24,27 @@ type RetriableAxiosConfig = {
   __retryableRequest?: boolean;
 } & Record<string, any>;
 
+type RequestOptions = {
+  signal?: AbortSignal;
+  forceFresh?: boolean;
+};
+
 const SAFE_RETRY_METHODS = new Set(['get']);
 const SAFE_RETRY_STATUS_CODES = new Set([502, 503, 504]);
 const MAX_SAFE_GET_RETRIES = 2;
 const MAX_SAFE_TIMEOUT_RETRIES = 1;
+const CACHE_TTL_PLATFORM_SCHOOLS_MS = 5 * 60_000;
+const CACHE_TTL_BRANDING_MS = 10 * 60_000;
+
+const platformSchoolsCache = new Map<string, { expiresAt: number; value: any }>();
+const platformSchoolsInFlight = new Map<string, Promise<any>>();
+const brandingCache = new Map<string, { expiresAt: number; value: any }>();
+const NO_SAFE_RETRY_PATHS = [
+  '/dashboard/metrics',
+  '/attendance/staff-dashboard',
+  '/edupay/dashboard',
+  '/timetable/count',
+] as const;
 
 export function isRequestCanceled(error: unknown): boolean {
   return axios.isCancel(error);
@@ -249,6 +266,11 @@ function isSafeRetryableRequest(error: any): boolean {
   const config = (error?.config || {}) as RetriableAxiosConfig;
   const method = String(config.method || 'get').toLowerCase();
   if (!SAFE_RETRY_METHODS.has(method)) {
+    return false;
+  }
+
+  const requestUrl = String(config.url || '');
+  if (NO_SAFE_RETRY_PATHS.some((path) => requestUrl.includes(path))) {
     return false;
   }
 
@@ -1703,9 +1725,10 @@ class ApiService {
     });
   }
 
-  async getTimetableEntriesCount(schoolId: string | number = 1) {
+  async getTimetableEntriesCount(schoolId: string | number = 1, options?: RequestOptions) {
     return this.api.get('/timetable/count', {
       params: { school_id: schoolId },
+      signal: options?.signal,
     });
   }
 
@@ -1815,8 +1838,25 @@ class ApiService {
     return this.api.post<SchoolBackupHistoryResponse>('/school-self-service/backups/restore-request', { notes });
   }
 
-  async getPublicSchoolBranding(params: { school?: string } = {}) {
-    return this.api.get<SchoolPublicBranding>('/school-self-service/public-branding', { params });
+  async getPublicSchoolBranding(
+    params: { school?: string } = {},
+    options?: { signal?: AbortSignal }
+  ) {
+    const cacheKey = String(params.school || '__default__');
+    const now = Date.now();
+    const cached = brandingCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value as Awaited<ReturnType<typeof this.api.get<SchoolPublicBranding>>>;
+    }
+    const response = await this.api.get<SchoolPublicBranding>('/school-self-service/public-branding', {
+      params,
+      signal: options?.signal,
+    });
+    brandingCache.set(cacheKey, {
+      expiresAt: now + CACHE_TTL_BRANDING_MS,
+      value: response,
+    });
+    return response;
   }
 
   // ==================== Batch Management ====================
@@ -2027,8 +2067,8 @@ class ApiService {
     target_date?: string;
     date_from?: string;
     date_to?: string;
-  } = {}) {
-    return this.api.get('/attendance/staff-dashboard', { params });
+  } = {}, options?: RequestOptions) {
+    return this.api.get('/attendance/staff-dashboard', { params, signal: options?.signal });
   }
 
   async createAttendanceHoliday(data: {
@@ -2202,8 +2242,43 @@ class ApiService {
     return this.api.get<PlatformAuditLogListResponse>('/platform/audit-logs', { params });
   }
 
-  async listPlatformSchools(params: { status?: string; q?: string } = {}) {
-    return this.api.get<PlatformSchoolListResponse>('/platform/schools', { params });
+  async listPlatformSchools(params: { status?: string; q?: string } = {}, options?: RequestOptions) {
+    const cacheKey = JSON.stringify(params || {});
+    const now = Date.now();
+    const canReuseSharedRequest = !options?.forceFresh && !options?.signal;
+    if (canReuseSharedRequest) {
+      const cached = platformSchoolsCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        return cached.value as Awaited<ReturnType<typeof this.api.get<PlatformSchoolListResponse>>>;
+      }
+      const inFlight = platformSchoolsInFlight.get(cacheKey);
+      if (inFlight) {
+        return inFlight as Promise<any>;
+      }
+    }
+
+    const request = this.api.get<PlatformSchoolListResponse>('/platform/schools', {
+      params,
+      signal: options?.signal,
+    });
+
+    if (!canReuseSharedRequest) {
+      return request;
+    }
+
+    platformSchoolsInFlight.set(cacheKey, request);
+    try {
+      const response = await request;
+      platformSchoolsCache.set(cacheKey, {
+        expiresAt: now + CACHE_TTL_PLATFORM_SCHOOLS_MS,
+        value: response,
+      });
+      return response;
+    } finally {
+      if (platformSchoolsInFlight.get(cacheKey) === request) {
+        platformSchoolsInFlight.delete(cacheKey);
+      }
+    }
   }
 
   async createPlatformSchool(data: Record<string, unknown>) {
@@ -2365,8 +2440,8 @@ class ApiService {
     return this.api.post('/students/transfer', data, { params: { school_id: schoolId } });
   }
 
-  async getDashboardMetrics(schoolId: string | number = 1) {
-    return this.api.get('/dashboard/metrics', { params: { school_id: schoolId } });
+  async getDashboardMetrics(schoolId: string | number = 1, options?: RequestOptions) {
+    return this.api.get('/dashboard/metrics', { params: { school_id: schoolId }, signal: options?.signal });
   }
 
   async getStudentsCount(schoolId: string | number = 1) {
@@ -2377,8 +2452,8 @@ class ApiService {
     return this.api.get('/inventory/dashboard');
   }
 
-  async getEduPayDashboard() {
-    return this.api.get('/edupay/dashboard');
+  async getEduPayDashboard(options?: RequestOptions) {
+    return this.api.get('/edupay/dashboard', { signal: options?.signal });
   }
 
   async getRoomsSummary(schoolId: string | number = 1) {

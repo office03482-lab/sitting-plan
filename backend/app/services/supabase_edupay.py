@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import logging
+import time
+from threading import Event, Lock
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_metrics import get_edupay_dashboard_summary_rpc
+
+logger = logging.getLogger(__name__)
+
+EDUPAY_DASHBOARD_CACHE_TTL_SECONDS = 60
+EDUPAY_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+EDUPAY_DASHBOARD_IN_FLIGHT: dict[str, dict[str, Any]] = {}
+EDUPAY_DASHBOARD_IN_FLIGHT_LOCK = Lock()
 
 
 def _iso(value: Any) -> Any:
@@ -60,6 +70,25 @@ def _parse_date(value: Any) -> date | None:
             except ValueError:
                 return None
     return None
+
+
+def _get_dashboard_cache(school_id: str) -> dict[str, Any] | None:
+    cached = EDUPAY_DASHBOARD_CACHE.get(school_id)
+    if not cached:
+        return None
+    expires_at, payload = cached
+    if expires_at <= time.monotonic():
+        EDUPAY_DASHBOARD_CACHE.pop(school_id, None)
+        return None
+    return payload
+
+
+def _set_dashboard_cache(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    EDUPAY_DASHBOARD_CACHE[school_id] = (
+        time.monotonic() + EDUPAY_DASHBOARD_CACHE_TTL_SECONDS,
+        payload,
+    )
+    return payload
 
 
 def _looks_like_uuid(value: Any) -> bool:
@@ -383,118 +412,158 @@ def list_payments(school_id: str) -> list[dict[str, Any]]:
     return [serialize_payment_row(item, student_names=student_names) for item in payments]
 
 
-def get_dashboard(school_id: str) -> dict[str, Any]:
+def get_dashboard(school_id: str, *, trace: dict[str, Any] | None = None) -> dict[str, Any]:
+    request_id = trace.get("request_id") if trace else None
+    cached_payload = _get_dashboard_cache(school_id)
+    if cached_payload:
+        logger.info("edupay.dashboard.cache_hit", extra={"school_id": school_id, "request_id": request_id})
+        return cached_payload
+
+    waiter: dict[str, Any] | None = None
+    is_leader = False
+    with EDUPAY_DASHBOARD_IN_FLIGHT_LOCK:
+        cached_payload = _get_dashboard_cache(school_id)
+        if cached_payload:
+            logger.info("edupay.dashboard.cache_hit_raced", extra={"school_id": school_id, "request_id": request_id})
+            return cached_payload
+        waiter = EDUPAY_DASHBOARD_IN_FLIGHT.get(school_id)
+        if waiter is None:
+            waiter = {"event": Event(), "payload": None, "error": None}
+            EDUPAY_DASHBOARD_IN_FLIGHT[school_id] = waiter
+            is_leader = True
+
+    if not is_leader:
+        waiter["event"].wait()
+        if waiter.get("error"):
+            raise waiter["error"]
+        logger.info("edupay.dashboard.inflight_reused", extra={"school_id": school_id, "request_id": request_id})
+        return waiter.get("payload") or _get_dashboard_cache(school_id) or {}
+
     try:
-        payload = get_edupay_dashboard_summary_rpc(school_id)
-        if payload:
-            return {
-                "total_collected": round(_to_float(payload.get("total_collected")), 2),
-                "pending_amount": round(_to_float(payload.get("pending_amount")), 2),
-                "overdue_amount": round(_to_float(payload.get("overdue_amount")), 2),
-                "upcoming_dues": int(payload.get("upcoming_dues") or 0),
-                "total_students": int(payload.get("total_students") or 0),
-                "active_fee_structures": int(payload.get("active_fee_structures") or 0),
-                "reminders_queued": int(payload.get("reminders_queued") or 0),
-                "collection_trend": list(payload.get("collection_trend") or []),
-                "payment_method_split": list(payload.get("payment_method_split") or []),
-                "reminders": list(payload.get("reminders") or []),
-                "recent_payments": list(payload.get("recent_payments") or []),
-            }
-    except Exception:
-        pass
+        try:
+            payload = get_edupay_dashboard_summary_rpc(school_id)
+            if payload:
+                normalized_payload = {
+                    "total_collected": round(_to_float(payload.get("total_collected")), 2),
+                    "pending_amount": round(_to_float(payload.get("pending_amount")), 2),
+                    "overdue_amount": round(_to_float(payload.get("overdue_amount")), 2),
+                    "upcoming_dues": int(payload.get("upcoming_dues") or 0),
+                    "total_students": int(payload.get("total_students") or 0),
+                    "active_fee_structures": int(payload.get("active_fee_structures") or 0),
+                    "reminders_queued": int(payload.get("reminders_queued") or 0),
+                    "collection_trend": list(payload.get("collection_trend") or []),
+                    "payment_method_split": list(payload.get("payment_method_split") or []),
+                    "reminders": list(payload.get("reminders") or []),
+                    "recent_payments": list(payload.get("recent_payments") or []),
+                }
+                logger.info("edupay.dashboard.rpc_complete", extra={"school_id": school_id, "request_id": request_id})
+                waiter["payload"] = _set_dashboard_cache(school_id, normalized_payload)
+                return waiter["payload"]
+        except Exception:
+            logger.exception("edupay.dashboard.rpc_failed_fallback", extra={"school_id": school_id, "request_id": request_id})
 
-    now = datetime.utcnow()
-    fee_structures = _fetch_fee_structures(school_id)
-    assignments = _fetch_assignments(school_id)
-    payments = _fetch_payments(school_id)
-    relevant_student_ids = _sanitize_lookup_ids(
-        [
-            *[item.get("student_id") for item in assignments[:100]],
-            *[item.get("student_id") for item in payments[:50]],
-        ]
-    )
-    student_names = _student_name_lookup(_fetch_student_lookup(school_id, relevant_student_ids))
-    total_students = _count_students(school_id)
-
-    pending_amount = 0.0
-    overdue_amount = 0.0
-    upcoming_dues = 0
-    reminders: list[dict[str, Any]] = []
-
-    for assignment in assignments:
-        status_value = _calculate_assignment_status(assignment, now=now)
-        outstanding = _to_float(_outstanding_amount(assignment))
-        if status_value == "overdue":
-            overdue_amount += outstanding
-        elif status_value in {"pending", "partial"}:
-            pending_amount += outstanding
-        due_date = _parse_date(assignment.get("due_date"))
-        if status_value != "paid" and due_date is not None:
-            days_until_due = (due_date - now.date()).days
-            if 0 <= days_until_due <= 15:
-                upcoming_dues += 1
-
-    upcoming = sorted(
-        [item for item in assignments if _calculate_assignment_status(item, now=now) != "paid"],
-        key=lambda item: (_parse_date(item.get("due_date")) or date.max),
-    )[:3]
-    for item in upcoming:
-        due_date = _parse_date(item.get("due_date"))
-        reminders.append(
-            {
-                "title": f"{item.get('installment_label') or 'Installment'} reminder",
-                "channel": "WhatsApp + Email",
-                "audience": student_names.get(str(item.get("student_id")), "Student"),
-                "scheduled_for": due_date.strftime("%d %b %Y") if due_date else "",
-            }
+        now = datetime.utcnow()
+        fee_structures = _fetch_fee_structures(school_id)
+        assignments = _fetch_assignments(school_id)
+        payments = _fetch_payments(school_id)
+        relevant_student_ids = _sanitize_lookup_ids(
+            [
+                *[item.get("student_id") for item in assignments[:100]],
+                *[item.get("student_id") for item in payments[:50]],
+            ]
         )
+        student_names = _student_name_lookup(_fetch_student_lookup(school_id, relevant_student_ids))
+        total_students = _count_students(school_id)
 
-    total_collected = round(sum(_to_float(payment.get("amount")) for payment in payments), 2)
-    trend_points: list[dict[str, Any]] = []
-    for month_offset in range(5, -1, -1):
-        anchor = _month_anchor(now, month_offset)
-        label = anchor.strftime("%b")
-        month_key = anchor.strftime("%Y-%m")
-        total = sum(
-            _to_float(payment.get("amount"))
-            for payment in payments
-            if str(_iso(payment.get("payment_date")) or "")[:7] == month_key
-        )
-        trend_points.append({"month": label, "amount": round(total, 2)})
+        pending_amount = 0.0
+        overdue_amount = 0.0
+        upcoming_dues = 0
+        reminders: list[dict[str, Any]] = []
 
-    total_payment_amount = sum(_to_float(payment.get("amount")) for payment in payments) or 1.0
-    method_split: list[dict[str, Any]] = []
-    for method in ("upi", "cash", "card", "bank_transfer", "wallet"):
-        amount = sum(
-            _to_float(payment.get("amount"))
-            for payment in payments
-            if str(payment.get("payment_method") or "").strip().lower() == method
-        )
-        if amount <= 0:
-            continue
-        method_split.append(
-            {
-                "method": _normalize_payment_method_for_client(method),
-                "amount": round(amount, 2),
-                "percentage": round((amount / total_payment_amount) * 100, 2),
-            }
-        )
+        for assignment in assignments:
+            status_value = _calculate_assignment_status(assignment, now=now)
+            outstanding = _to_float(_outstanding_amount(assignment))
+            if status_value == "overdue":
+                overdue_amount += outstanding
+            elif status_value in {"pending", "partial"}:
+                pending_amount += outstanding
+            due_date = _parse_date(assignment.get("due_date"))
+            if status_value != "paid" and due_date is not None:
+                days_until_due = (due_date - now.date()).days
+                if 0 <= days_until_due <= 15:
+                    upcoming_dues += 1
 
-    recent_payments = [serialize_payment_row(item, student_names=student_names) for item in payments[:5]]
-    active_fee_structures = len([item for item in fee_structures if item.get("is_active", True)])
-    return {
-        "total_collected": total_collected,
-        "pending_amount": round(pending_amount, 2),
-        "overdue_amount": round(overdue_amount, 2),
-        "upcoming_dues": upcoming_dues,
-        "total_students": total_students,
-        "active_fee_structures": active_fee_structures,
-        "reminders_queued": len(reminders),
-        "collection_trend": trend_points,
-        "payment_method_split": method_split,
-        "reminders": reminders,
-        "recent_payments": recent_payments,
-    }
+        upcoming = sorted(
+            [item for item in assignments if _calculate_assignment_status(item, now=now) != "paid"],
+            key=lambda item: (_parse_date(item.get("due_date")) or date.max),
+        )[:3]
+        for item in upcoming:
+            due_date = _parse_date(item.get("due_date"))
+            reminders.append(
+                {
+                    "title": f"{item.get('installment_label') or 'Installment'} reminder",
+                    "channel": "WhatsApp + Email",
+                    "audience": student_names.get(str(item.get("student_id")), "Student"),
+                    "scheduled_for": due_date.strftime("%d %b %Y") if due_date else "",
+                }
+            )
+
+        total_collected = round(sum(_to_float(payment.get("amount")) for payment in payments), 2)
+        trend_points: list[dict[str, Any]] = []
+        for month_offset in range(5, -1, -1):
+            anchor = _month_anchor(now, month_offset)
+            label = anchor.strftime("%b")
+            month_key = anchor.strftime("%Y-%m")
+            total = sum(
+                _to_float(payment.get("amount"))
+                for payment in payments
+                if str(_iso(payment.get("payment_date")) or "")[:7] == month_key
+            )
+            trend_points.append({"month": label, "amount": round(total, 2)})
+
+        total_payment_amount = sum(_to_float(payment.get("amount")) for payment in payments) or 1.0
+        method_split: list[dict[str, Any]] = []
+        for method in ("upi", "cash", "card", "bank_transfer", "wallet"):
+            amount = sum(
+                _to_float(payment.get("amount"))
+                for payment in payments
+                if str(payment.get("payment_method") or "").strip().lower() == method
+            )
+            if amount <= 0:
+                continue
+            method_split.append(
+                {
+                    "method": _normalize_payment_method_for_client(method),
+                    "amount": round(amount, 2),
+                    "percentage": round((amount / total_payment_amount) * 100, 2),
+                }
+            )
+
+        recent_payments = [serialize_payment_row(item, student_names=student_names) for item in payments[:5]]
+        active_fee_structures = len([item for item in fee_structures if item.get("is_active", True)])
+        payload = {
+            "total_collected": total_collected,
+            "pending_amount": round(pending_amount, 2),
+            "overdue_amount": round(overdue_amount, 2),
+            "upcoming_dues": upcoming_dues,
+            "total_students": total_students,
+            "active_fee_structures": active_fee_structures,
+            "reminders_queued": len(reminders),
+            "collection_trend": trend_points,
+            "payment_method_split": method_split,
+            "reminders": reminders,
+            "recent_payments": recent_payments,
+        }
+        logger.info("edupay.dashboard.fallback_complete", extra={"school_id": school_id, "request_id": request_id})
+        waiter["payload"] = _set_dashboard_cache(school_id, payload)
+        return waiter["payload"]
+    except Exception as exc:
+        waiter["error"] = exc
+        raise
+    finally:
+        waiter["event"].set()
+        with EDUPAY_DASHBOARD_IN_FLIGHT_LOCK:
+            EDUPAY_DASHBOARD_IN_FLIGHT.pop(school_id, None)
 
 
 def _next_receipt_number(school_id: str) -> str:

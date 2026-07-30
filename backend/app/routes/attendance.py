@@ -2,13 +2,14 @@
 Attendance management routes (Supabase-native)
 """
 
+import asyncio
 import csv
 from datetime import date, datetime, time as dt_time
 from io import BytesIO, StringIO
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib import colors
@@ -90,6 +91,7 @@ from app.services.supabase_attendance import (
 )
 from app.services.bulk_action_requests import create_bulk_action_request, is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
+from app.utils.dashboard_tracing import begin_dashboard_request, finish_dashboard_request
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1171,21 +1173,31 @@ def delete_all_staff_records_endpoint(
 
 
 @router.get("/staff-dashboard", response_model=StaffDashboardResponse)
-def get_staff_dashboard(
+async def get_staff_dashboard(
+    response: Response,
     school_id: str = Depends(resolve_school_id_from_actor),
     department: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
-    return StaffDashboardResponse(
-        **get_supabase_staff_dashboard(
+    del actor
+    trace = begin_dashboard_request("attendance_staff_dashboard", school_id)
+    response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
+    try:
+        payload = await asyncio.to_thread(
+            get_supabase_staff_dashboard,
             school_id,
             department=department,
             date_from=date_from.isoformat() if date_from else None,
             date_to=date_to.isoformat() if date_to else None,
+            trace=trace,
         )
-    )
+        finish_dashboard_request(trace, cache_status="service_logged", execution_path="rpc_or_fallback")
+        return StaffDashboardResponse(**payload)
+    except Exception as exc:
+        finish_dashboard_request(trace, cache_status="service_logged", execution_path="error", error=str(exc)[:200])
+        raise
 
 
 @router.get("/leaves", response_model=List[AttendanceLeaveResponse])

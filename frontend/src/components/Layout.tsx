@@ -37,7 +37,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@store/auth';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
-import { useRefDataStore } from '@store/referenceData';
 import { useAppStore } from '@store/app';
 import PlatformAdminSchoolSelector from '@components/PlatformAdminSchoolSelector';
 import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScopeBanner';
@@ -193,29 +192,30 @@ export default function Layout({ children }: LayoutProps) {
       setTotalSchools(null);
       return;
     }
-    let active = true;
+    const controller = new AbortController();
     (async () => {
       try {
-        const response = await apiService.listPlatformSchools();
-        if (active) {
-          setTotalSchools(response.data.total_count ?? response.data.items?.length ?? 0);
+        const response = await apiService.listPlatformSchools({}, { signal: controller.signal });
+        setTotalSchools(response.data.total_count ?? response.data.items?.length ?? 0);
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code === 'ERR_CANCELED') {
+          return;
         }
-      } catch {
-        if (active) setTotalSchools(null);
+        setTotalSchools(null);
       }
     })();
     return () => {
-      active = false;
+      controller.abort();
     };
   }, [isPlatformAdmin]);
 
   // Fetch branding whenever the active school changes.
-  const fetchBranding = useCallback(async (schoolId: string) => {
+  const fetchBranding = useCallback(async (schoolId: string, signal?: AbortSignal) => {
     const fetchKey = schoolId || '__platform__';
     if (brandingFetchKeyRef.current === fetchKey) return;
     brandingFetchKeyRef.current = fetchKey;
     try {
-      const res = await apiService.getPublicSchoolBranding({ school: schoolId });
+      const res = await apiService.getPublicSchoolBranding({ school: schoolId }, { signal });
       setSchoolBranding({
         logo_url: res.data.logo_url,
         favicon_url: res.data.favicon_url,
@@ -224,24 +224,30 @@ export default function Layout({ children }: LayoutProps) {
         secondary_color: res.data.secondary_color,
         accent_color: res.data.accent_color,
       });
-    } catch {
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code === 'ERR_CANCELED') {
+        return;
+      }
       setSchoolBranding(null);
     }
   }, [setSchoolBranding]);
 
   useEffect(() => {
+    const controller = new AbortController();
     if (activeSchoolId) {
-      void fetchBranding(activeSchoolId);
+      void fetchBranding(activeSchoolId, controller.signal);
     } else {
       brandingFetchKeyRef.current = null;
       setSchoolBranding(null);
     }
-    // Invalidate all cached reference data so pages re-fetch for the new school.
-    useRefDataStore.getState().invalidateAll();
-    // Clear stale app store arrays to prevent showing data from previous school.
+    // Clear stale app store arrays to prevent showing data from previous school
+    // while preserving school-scoped reference caches for quick switch-back.
     useAppStore.getState().setStudents([]);
     useAppStore.getState().setRooms([]);
     useAppStore.getState().setSeatingPlans([]);
+    return () => {
+      controller.abort();
+    };
   }, [activeSchoolId, fetchBranding, setSchoolBranding]);
 
   const canAccess = (permission?: string | string[], roles?: UserRole[]) =>

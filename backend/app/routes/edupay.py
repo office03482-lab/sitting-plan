@@ -1,10 +1,11 @@
 """
 EduPay fee management routes
 """
+import asyncio
 import logging
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.middleware.auth import get_authenticated_actor_context
 from app.schemas import (
@@ -34,6 +35,7 @@ from app.services.supabase_edupay import (
     list_payments as list_supabase_edupay_payments,
     list_students as list_supabase_edupay_students,
 )
+from app.utils.dashboard_tracing import begin_dashboard_request, finish_dashboard_request
 
 router = APIRouter(prefix="/api/edupay", tags=["EduPay"])
 logger = logging.getLogger(__name__)
@@ -51,18 +53,26 @@ def require_write_access(actor: Dict[str, str] = Depends(get_authenticated_actor
 
 
 @router.get("/dashboard", response_model=EduPayDashboardResponse)
-def get_dashboard(
+async def get_dashboard(
+    response: Response,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    trace = begin_dashboard_request("edupay_dashboard", school_id)
+    response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
     ensure_supabase_school_exists(school_id)
-    payload = get_supabase_edupay_dashboard(school_id)
-    logger.info(
-        "EduPay dashboard loaded - User ID: %s, School ID: %s, Execution mode: supabase_native",
-        actor.get("user_id") or actor.get("id"),
-        school_id,
-    )
-    return EduPayDashboardResponse(**payload)
+    try:
+        payload = await asyncio.to_thread(get_supabase_edupay_dashboard, school_id, trace=trace)
+        logger.info(
+            "EduPay dashboard loaded - User ID: %s, School ID: %s, Execution mode: supabase_native",
+            actor.get("user_id") or actor.get("id"),
+            school_id,
+        )
+        finish_dashboard_request(trace, cache_status="service_logged", execution_path="rpc_or_fallback")
+        return EduPayDashboardResponse(**payload)
+    except Exception as exc:
+        finish_dashboard_request(trace, cache_status="service_logged", execution_path="error", error=str(exc)[:200])
+        raise
 
 
 @router.get("/students", response_model=List[EduPayStudentResponse])

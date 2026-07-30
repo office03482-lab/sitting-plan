@@ -8,7 +8,7 @@ from datetime import date, datetime
 from io import BytesIO
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -45,6 +45,7 @@ from app.services.supabase_timetable import (
     list_timetable_entries as list_timetable_entries_supabase,
     update_timetable_entry as update_timetable_entry_supabase,
 )
+from app.utils.dashboard_tracing import begin_dashboard_request, finish_dashboard_request
 
 router = APIRouter()
 utility_router = APIRouter()
@@ -614,12 +615,20 @@ async def list_timetable_entries(
 
 @router.get("/count")
 async def get_timetable_entries_count(
+    response: Response,
     school_id: str = Depends(resolve_school_id_from_actor),
     scope_context: PermissionScopeContext = Depends(require_timetable_view_scope),
 ):
-    entries = list_timetable_entries_supabase(school_id)
-    entries = _filter_rows_for_scope(entries, scope_context)
-    return len(entries)
+    trace = begin_dashboard_request("timetable_count", school_id)
+    response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
+    try:
+        entries = await asyncio.to_thread(list_timetable_entries_supabase, school_id)
+        entries = _filter_rows_for_scope(entries, scope_context)
+        finish_dashboard_request(trace, cache_status="service_cache_possible", execution_path="list_and_filter")
+        return len(entries)
+    except Exception as exc:
+        finish_dashboard_request(trace, cache_status="service_cache_possible", execution_path="error", error=str(exc)[:200])
+        raise
 
 
 @router.get("/export")

@@ -22,30 +22,31 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
   const modalRef = useRef<HTMLDivElement>(null);
   const fetchedRef = useRef(false);
 
-  const fetchSchools = useCallback(async () => {
+  const fetchSchools = useCallback(async (signal?: AbortSignal) => {
     if (fetchedRef.current && schools.length > 0) return;
-    let cancelled = false;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiService.listPlatformSchools({ status: 'active' });
-      if (!cancelled) {
-        setSchools(res.data.items || []);
-        fetchedRef.current = true;
-      }
+      const res = await apiService.listPlatformSchools({ status: 'active' }, { signal });
+      setSchools(res.data.items || []);
+      fetchedRef.current = true;
     } catch (err: any) {
-      if (!cancelled) {
+      if (err?.code !== 'ERR_CANCELED') {
         setError(getRequestErrorMessage(err, 'Schools load nahi ho paaye.'));
       }
     } finally {
-      if (!cancelled) setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [schools.length]);
 
   useEffect(() => {
+    const controller = new AbortController();
     if (!trigger || open) {
-      void fetchSchools();
+      void fetchSchools(controller.signal);
     }
+    return () => {
+      controller.abort();
+    };
   }, [open, trigger, fetchSchools]);
 
   useEffect(() => {

@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from threading import Event, Lock
 from typing import Any
 from uuid import UUID
 
@@ -43,6 +44,8 @@ ATTENDANCE_STUDENT_DASHBOARD_CACHE_TTL_SECONDS = 45
 ATTENDANCE_STUDENT_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS = 45
 ATTENDANCE_STAFF_DASHBOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT: dict[str, dict[str, Any]] = {}
+ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT_LOCK = Lock()
 
 
 def _iso(value: Any) -> Any:
@@ -3609,7 +3612,9 @@ def get_staff_dashboard(
     department: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    request_id = trace.get("request_id") if trace else None
     cache_key = _staff_dashboard_cache_key(
         school_id,
         department=department,
@@ -3618,87 +3623,136 @@ def get_staff_dashboard(
     )
     cached_payload = _get_ttl_cache_entry(ATTENDANCE_STAFF_DASHBOARD_CACHE, cache_key)
     if cached_payload:
-        logger.info("attendance.staff_dashboard.cache_hit", extra={"school_id": school_id, "cache_key": cache_key})
+        logger.info(
+            "attendance.staff_dashboard.cache_hit",
+            extra={"school_id": school_id, "cache_key": cache_key, "request_id": request_id},
+        )
         return cached_payload
+
+    waiter: dict[str, Any] | None = None
+    is_leader = False
+    with ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT_LOCK:
+        cached_payload = _get_ttl_cache_entry(ATTENDANCE_STAFF_DASHBOARD_CACHE, cache_key)
+        if cached_payload:
+            logger.info(
+                "attendance.staff_dashboard.cache_hit_raced",
+                extra={"school_id": school_id, "cache_key": cache_key, "request_id": request_id},
+            )
+            return cached_payload
+        waiter = ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT.get(cache_key)
+        if waiter is None:
+            waiter = {"event": Event(), "payload": None, "error": None}
+            ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT[cache_key] = waiter
+            is_leader = True
+
+    if not is_leader:
+        waiter["event"].wait()
+        if waiter.get("error"):
+            raise waiter["error"]
+        resolved_payload = waiter.get("payload") or _get_ttl_cache_entry(ATTENDANCE_STAFF_DASHBOARD_CACHE, cache_key)
+        if not isinstance(resolved_payload, dict):
+            raise RuntimeError(
+                f"attendance staff dashboard in-flight request completed without a payload for cache_key={cache_key}"
+            )
+        logger.info(
+            "attendance.staff_dashboard.inflight_reused",
+            extra={"school_id": school_id, "cache_key": cache_key, "request_id": request_id},
+        )
+        return resolved_payload
 
     started_at = time.monotonic()
     try:
-        payload = _rpc_staff_dashboard(
-            school_id,
-            department=department,
-            date_from=date_from,
-            date_to=date_to,
+        try:
+            payload = _rpc_staff_dashboard(
+                school_id,
+                department=department,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except Exception:
+            logger.exception(
+                "attendance.staff_dashboard.rpc_failed_fallback",
+                extra={
+                    "school_id": school_id,
+                    "department": _normalize(department) or None,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                },
+            )
+            if settings.is_production:
+                raise
+            records = list_staff_records(
+                school_id,
+                department=department,
+                date_from=date_from,
+                date_to=date_to,
+                skip=0,
+                limit=MAX_STAFF_LOOKUP,
+            )
+            present_count = sum(1 for row in records if row.get("status") == "present")
+            absent_count = sum(1 for row in records if row.get("status") == "absent")
+            late_count = sum(1 for row in records if row.get("status") == "late")
+            half_day_count = sum(1 for row in records if row.get("status") == "half_day")
+            total = len(records) or 1
+            department_summary_map: dict[str, dict[str, Any]] = {}
+            for row in records:
+                department_name = _normalize(row.get("department")) or "General"
+                bucket = department_summary_map.setdefault(
+                    department_name,
+                    {"department": department_name, "present": 0, "absent": 0, "late": 0, "half_day": 0},
+                )
+                status_value = row.get("status")
+                if status_value == "present":
+                    bucket["present"] += 1
+                elif status_value == "absent":
+                    bucket["absent"] += 1
+                elif status_value == "late":
+                    bucket["late"] += 1
+                elif status_value == "half_day":
+                    bucket["half_day"] += 1
+            payload = {
+                "present_count": present_count,
+                "absent_count": absent_count,
+                "late_count": late_count,
+                "half_day_count": half_day_count,
+                "monthly_attendance_percentage": round(
+                    (((present_count + late_count + half_day_count * 0.5) / total) * 100),
+                    2,
+                ),
+                "department_summary": list(department_summary_map.values()),
+            }
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"attendance staff dashboard produced a non-mapping payload for cache_key={cache_key}"
+            )
+
+        _set_ttl_cache_entry(
+            ATTENDANCE_STAFF_DASHBOARD_CACHE,
+            cache_key,
+            payload,
+            ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS,
         )
-    except Exception:
-        logger.exception(
-            "attendance.staff_dashboard.rpc_failed_fallback",
+        logger.info(
+            "attendance.staff_dashboard.complete",
             extra={
                 "school_id": school_id,
+                "duration_ms": round((time.monotonic() - started_at) * 1000),
                 "department": _normalize(department) or None,
                 "date_from": date_from,
                 "date_to": date_to,
+                "request_id": request_id,
             },
         )
-        if settings.is_production:
-            raise
-        records = list_staff_records(
-            school_id,
-            department=department,
-            date_from=date_from,
-            date_to=date_to,
-            skip=0,
-            limit=MAX_STAFF_LOOKUP,
-        )
-        present_count = sum(1 for row in records if row.get("status") == "present")
-        absent_count = sum(1 for row in records if row.get("status") == "absent")
-        late_count = sum(1 for row in records if row.get("status") == "late")
-        half_day_count = sum(1 for row in records if row.get("status") == "half_day")
-        total = len(records) or 1
-        department_summary_map: dict[str, dict[str, Any]] = {}
-        for row in records:
-            department_name = _normalize(row.get("department")) or "General"
-            bucket = department_summary_map.setdefault(
-                department_name,
-                {"department": department_name, "present": 0, "absent": 0, "late": 0, "half_day": 0},
-            )
-            status_value = row.get("status")
-            if status_value == "present":
-                bucket["present"] += 1
-            elif status_value == "absent":
-                bucket["absent"] += 1
-            elif status_value == "late":
-                bucket["late"] += 1
-            elif status_value == "half_day":
-                bucket["half_day"] += 1
-        payload = {
-            "present_count": present_count,
-            "absent_count": absent_count,
-            "late_count": late_count,
-            "half_day_count": half_day_count,
-            "monthly_attendance_percentage": round(
-                (((present_count + late_count + half_day_count * 0.5) / total) * 100),
-                2,
-            ),
-            "department_summary": list(department_summary_map.values()),
-        }
-
-    _set_ttl_cache_entry(
-        ATTENDANCE_STAFF_DASHBOARD_CACHE,
-        cache_key,
-        payload,
-        ATTENDANCE_STAFF_DASHBOARD_CACHE_TTL_SECONDS,
-    )
-    logger.info(
-        "attendance.staff_dashboard.complete",
-        extra={
-            "school_id": school_id,
-            "duration_ms": round((time.monotonic() - started_at) * 1000),
-            "department": _normalize(department) or None,
-            "date_from": date_from,
-            "date_to": date_to,
-        },
-    )
-    return payload
+        waiter["payload"] = payload
+        return payload
+    except Exception as exc:
+        waiter["error"] = exc
+        raise
+    finally:
+        waiter["event"].set()
+        with ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT_LOCK:
+            ATTENDANCE_STAFF_DASHBOARD_IN_FLIGHT.pop(cache_key, None)
 
 
 def list_notifications(

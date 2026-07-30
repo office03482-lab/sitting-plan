@@ -252,6 +252,13 @@ function mapRoleKeyToUserType(roleKey?: string | null): UserType {
   return 'non_teaching';
 }
 
+function permissionMatches(currentPermissions: string[], permission: string): boolean {
+  return (
+    currentPermissions.includes(permission) ||
+    currentPermissions.some((item) => item.startsWith(`${permission}.`) || permission.startsWith(`${item}.`))
+  );
+}
+
 export function getDefaultRouteForUser(user?: User | null, portalIntent?: PortalIntent): string {
   console.debug('[auth-debug] getDefaultRouteForUser', { userId: user?.id, role: user?.role, role_key: user?.role_key, portalIntent });
   if (!user) return '/login';
@@ -330,7 +337,47 @@ async function fetchRolePermissions(roleId: string) {
     .filter(Boolean) as string[];
 }
 
-async function buildAppUserFromSession(session: Session, portalIntent: PortalIntent = 'school_erp'): Promise<User> {
+const APP_USER_BOOTSTRAP_CACHE_LIMIT = 8;
+const appUserBootstrapCache = new Map<string, User>();
+const appUserBootstrapInFlight = new Map<string, Promise<User>>();
+
+function buildAppUserCacheKey(session: Session, portalIntent: PortalIntent): string {
+  return `${session.user.id}:${session.access_token.slice(0, 16)}:${portalIntent}`;
+}
+
+function setCachedAppUser(cacheKey: string, user: User) {
+  appUserBootstrapCache.set(cacheKey, user);
+  if (appUserBootstrapCache.size > APP_USER_BOOTSTRAP_CACHE_LIMIT) {
+    const firstKey = appUserBootstrapCache.keys().next().value;
+    if (firstKey) {
+      appUserBootstrapCache.delete(firstKey);
+    }
+  }
+}
+
+function clearAppUserBootstrapCache() {
+  appUserBootstrapCache.clear();
+  appUserBootstrapInFlight.clear();
+}
+
+async function buildAppUserFromSession(
+  session: Session,
+  portalIntent: PortalIntent = 'school_erp',
+  options?: { forceRefresh?: boolean }
+): Promise<User> {
+  const cacheKey = buildAppUserCacheKey(session, portalIntent);
+  if (!options?.forceRefresh) {
+    const cached = appUserBootstrapCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const inFlight = appUserBootstrapInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+  }
+
+  const promise = (async () => {
   const userId = session.user.id;
 
   const [profileResult, membershipsResult] = await Promise.all([
@@ -645,12 +692,21 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
 
   const permissions = await fetchRolePermissions(activeMembership.role_id);
   const roleKey = activeMembership.roles?.role_key || 'viewer';
+  const legacyRole = mapRoleKeyToLegacyRole(roleKey);
+
+  console.debug('[auth-debug] resolved school ERP permissions', {
+    userId: profile.id,
+    membershipId: activeMembership.id,
+    role_key: roleKey,
+    role: legacyRole,
+    permissions,
+  });
 
   return {
     id: profile.id,
     email: profile.email || session.user.email || '',
     full_name: profile.full_name || profile.display_name || session.user.email || 'User',
-    role: mapRoleKeyToLegacyRole(roleKey),
+    role: legacyRole,
     role_key: roleKey,
     user_type: mapRoleKeyToUserType(roleKey),
     permissions,
@@ -668,6 +724,26 @@ async function buildAppUserFromSession(session: Session, portalIntent: PortalInt
     must_change_password: Boolean(profile.metadata?.portal_access?.must_change_password),
     first_login_completed: Boolean(profile.metadata?.portal_access?.first_login_completed),
   };
+  })();
+
+  if (!options?.forceRefresh) {
+    appUserBootstrapInFlight.set(cacheKey, promise);
+  }
+
+  try {
+    const user = await promise;
+    if (!options?.forceRefresh) {
+      setCachedAppUser(cacheKey, user);
+    }
+    return user;
+  } finally {
+    if (!options?.forceRefresh) {
+      const activePromise = appUserBootstrapInFlight.get(cacheKey);
+      if (activePromise === promise) {
+        appUserBootstrapInFlight.delete(cacheKey);
+      }
+    }
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -838,7 +914,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const reloadUserProfile = async () => {
     if (!session) return;
-    const appUser = await buildAppUserFromSession(session, portalIntentRef.current);
+    const appUser = await buildAppUserFromSession(session, portalIntentRef.current, { forceRefresh: true });
     hydrate({
       token: session.access_token,
       refreshToken: session.refresh_token,
@@ -889,6 +965,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const clearAuthState = (options?: { redirectToLogin?: boolean; reason?: string | null }) => {
       if (!isMounted) return;
+      clearAppUserBootstrapCache();
       clearPersistedAuthArtifacts();
       usePlatformAdminSchoolStore.getState().clearActiveSchool();
       setSession(null);
@@ -1430,32 +1507,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       hasPermission(permissions) {
         if (!storeUser?.is_active) return false;
-        if (storeUser.role === 'admin' || storeUser.role_key === 'platform_admin' || storeUser.role_key === 'school_admin') {
+        if (storeUser.role_key === 'platform_admin') {
           return true;
         }
         const wantedPermissions = Array.isArray(permissions) ? permissions : [permissions];
         const currentPermissions = storeUser.permissions || [];
-        return wantedPermissions.some(
-          (permission) =>
-            currentPermissions.includes(permission) ||
-            currentPermissions.some((item) => item.startsWith(`${permission}.`) || permission.startsWith(`${item}.`)),
-        );
+        return wantedPermissions.some((permission) => permissionMatches(currentPermissions, permission));
       },
       canAccess(options) {
         if (!storeUser?.is_active) return false;
-        const roleOk = !options?.roles?.length || options.roles.includes(storeUser.role) || storeUser.role_key === 'platform_admin';
+        const roleOk =
+          !options?.roles?.length ||
+          options.roles.includes(storeUser.role) ||
+          (storeUser.role_key ? options.roles.includes(storeUser.role_key as UserRole) : false) ||
+          storeUser.role_key === 'platform_admin';
         const permissionOk =
           !options?.permissions?.length ||
-          options.permissions.some(
-            (permission) =>
-              storeUser.role === 'admin' ||
-              storeUser.role_key === 'platform_admin' ||
-              storeUser.role_key === 'school_admin' ||
-              (storeUser.permissions || []).includes(permission) ||
-              (storeUser.permissions || []).some(
-                (item) => item.startsWith(`${permission}.`) || permission.startsWith(`${item}.`),
-              ),
-          );
+          storeUser.role_key === 'platform_admin' ||
+          options.permissions.some((permission) => permissionMatches(storeUser.permissions || [], permission));
         return roleOk && permissionOk;
       },
     });
