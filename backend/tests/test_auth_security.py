@@ -516,5 +516,8 @@ def test_permission_catalog_static_fallback_includes_offline_exams(monkeypatch):
     assert catalog["module_children"]["offline_exams"] == [
         "offline_exams.view",
         "offline_exams.manage",
+        "offline_exams.create",
+        "offline_exams.edit",
+        "offline_exams.delete",
         "offline_exams.reports",
     ]

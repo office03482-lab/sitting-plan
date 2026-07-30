@@ -90,21 +90,24 @@ const buildPermissionGroups = (
   const template = new Set(templatePermissions);
   return modules
     .map((module) => {
-      const keys = [module.key, ...module.sections.map((section) => section.key)];
-      const permissions = keys
-        .filter((key) => granted.has(key) || template.has(key))
-        .map((key) => {
-          const section = module.sections.find((item) => item.key === key);
-          return {
-            key,
-            label: section?.label || module.label,
-            granted: granted.has(key),
-            from_template: template.has(key),
-            manually_added: granted.has(key) && !template.has(key),
-            manually_removed: !granted.has(key) && template.has(key),
-          };
-        });
-      if (!permissions.length) return null;
+      const permissions = [
+        {
+          key: module.key,
+          label: module.label,
+          granted: granted.has(module.key),
+          from_template: template.has(module.key),
+          manually_added: granted.has(module.key) && !template.has(module.key),
+          manually_removed: !granted.has(module.key) && template.has(module.key),
+        },
+        ...module.sections.map((section) => ({
+          key: section.key,
+          label: section.label,
+          granted: granted.has(section.key),
+          from_template: template.has(section.key),
+          manually_added: granted.has(section.key) && !template.has(section.key),
+          manually_removed: !granted.has(section.key) && template.has(section.key),
+        })),
+      ];
       return {
         key: module.key,
         label: module.label,

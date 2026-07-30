@@ -293,9 +293,19 @@ def _load_shared_tests(school_id: str) -> list[dict[str, Any]]:
 # ─── Dashboard (Phase 1) ───────────────────────────────────────────────
 
 def get_dashboard(school_id: str, *, profile_id: str | None, user_email: str | None) -> dict[str, Any]:
-    linked = _resolve_parent_students(school_id, profile_id, user_email)
-    if not linked:
-        return {"children": [], "children_count": 0}
+    try:
+        linked = _resolve_parent_students(school_id, profile_id, user_email)
+    except HTTPException as exc:
+        if exc.status_code == 404 and str(exc.detail or "").strip().lower() == "no linked students found for this parent":
+            return {
+                "role": "parent",
+                "children_count": 0,
+                "academic_health_score": 0,
+                "risk_level": "low",
+                "children": [],
+                "generated_at": _now().isoformat(),
+            }
+        raise
 
     student_ids = [_normalize(s.get("id")) for s in linked if _normalize(s.get("id"))]
 
@@ -320,8 +330,12 @@ def get_dashboard(school_id: str, *, profile_id: str | None, user_email: str | N
         ))
 
     return {
+        "role": "parent",
+        "academic_health_score": 0,
+        "risk_level": "low",
         "children": children,
         "children_count": len(children),
+        "generated_at": _now().isoformat(),
     }
 
 

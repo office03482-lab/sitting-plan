@@ -161,6 +161,7 @@ def _role_aware_resolve_school_id(
     explicit_school_id: Any,
     logger_key: str = "school_context_denied",
 ) -> str:
+    started_at = time.monotonic()
     role_key = _get_actor_role_key(actor)
     is_platform_admin = role_key == "platform_admin"
 
@@ -186,16 +187,31 @@ def _role_aware_resolve_school_id(
                     status_code=500,
                     detail=f"School validation failed due to a server error ({type(exc).__name__}). Please check server logs.",
                 )
+            duration_ms = round((time.monotonic() - started_at) * 1000, 1)
+            logger.info(
+                "perf.school_context.resolve",
+                extra={"source": "platform_explicit", "role_key": role_key, "school_id": candidate, "duration_ms": duration_ms},
+            )
             return candidate
         raise HTTPException(status_code=403, detail="Platform Admin requires an explicit school_id")
 
     actor_school_id = _resolve_school_id_from_actor_claims(actor)
     if actor_school_id:
+        duration_ms = round((time.monotonic() - started_at) * 1000, 1)
+        logger.info(
+            "perf.school_context.resolve",
+            extra={"source": "actor_claims", "role_key": role_key, "school_id": actor_school_id, "duration_ms": duration_ms},
+        )
         return actor_school_id
 
     candidate = _normalize_school_id_candidate(explicit_school_id)
     if candidate and not _is_placeholder_school_id(candidate):
         if _validate_school_membership(actor, candidate):
+            duration_ms = round((time.monotonic() - started_at) * 1000, 1)
+            logger.info(
+                "perf.school_context.resolve",
+                extra={"source": "membership_validation", "role_key": role_key, "school_id": candidate, "duration_ms": duration_ms},
+            )
             return candidate
 
     logger.warning(

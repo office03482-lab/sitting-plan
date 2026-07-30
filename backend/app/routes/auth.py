@@ -120,6 +120,9 @@ ALLOWED_PERMISSIONS = {
     "offline_exams",
     "offline_exams.view",
     "offline_exams.manage",
+    "offline_exams.create",
+    "offline_exams.edit",
+    "offline_exams.delete",
     "offline_exams.reports",
     "live_classes",
     "live_classes.view",
@@ -223,6 +226,9 @@ PERMISSION_CHILDREN = {
     "offline_exams": [
         "offline_exams.view",
         "offline_exams.manage",
+        "offline_exams.create",
+        "offline_exams.edit",
+        "offline_exams.delete",
         "offline_exams.reports",
     ],
     "live_classes": [

@@ -732,6 +732,7 @@ def get_authenticated_actor_context(
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> Dict[str, str]:
+    started_at = time.monotonic()
     if request.method == "OPTIONS":
         return {
             "role": UserRole.ADMIN.value,
@@ -744,11 +745,16 @@ def get_authenticated_actor_context(
             "auth_source": "preflight",
         }
 
+    header_started_at = time.monotonic()
     resolved_auth = _resolve_authorization_header(request, authorization)
+    header_ms = round((time.monotonic() - header_started_at) * 1000, 1)
     logger.info("auth.actor_context_resolved", extra={"present": bool(resolved_auth)})
 
+    payload_started_at = time.monotonic()
     payload = _get_request_token_payload(request, resolved_auth)
+    payload_ms = round((time.monotonic() - payload_started_at) * 1000, 1)
     actor = build_actor_context(resolved_auth, payload)
+    principal_ms = 0.0
     if not actor.get("auth_source"):
         logger.warning(
             "auth.actor_context_missing",
@@ -760,7 +766,9 @@ def get_authenticated_actor_context(
         )
     if payload:
         try:
+            principal_started_at = time.monotonic()
             principal = _resolve_request_principal(request, payload, db)
+            principal_ms = round((time.monotonic() - principal_started_at) * 1000, 1)
             resolved_actor = principal.get("actor") or {}
             for key in ("role", "name", "email", "username", "user_id", "profile_id", "school_id", "membership_id", "auth_source"):
                 if resolved_actor.get(key):
@@ -769,12 +777,17 @@ def get_authenticated_actor_context(
             # Keep JWT-derived actor context available for routes that only need claims.
             pass
 
+    total_ms = round((time.monotonic() - started_at) * 1000, 1)
     logger.info(
         "auth.actor_context_built",
         extra={
             "user_id": actor.get("user_id", ""),
             "role": actor.get("role", ""),
             "school_id": actor.get("school_id", ""),
+            "header_ms": header_ms,
+            "payload_ms": payload_ms,
+            "principal_ms": principal_ms,
+            "duration_ms": total_ms,
         },
     )
     return actor

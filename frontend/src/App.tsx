@@ -339,7 +339,7 @@ function AppShell() {
         <Route
           path="/online-tests"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.view', 'online_tests.manage', 'online_tests.attempt', 'online_tests.grade', 'online_tests.reports']}>
               <OnlineTests />
             </ProtectedRoute>
           }
@@ -347,7 +347,7 @@ function AppShell() {
         <Route
           path="/online-tests/create"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.manage']}>
               <OnlineTestCreate />
             </ProtectedRoute>
           }
@@ -355,7 +355,7 @@ function AppShell() {
         <Route
           path="/online-tests/edit/:id"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.manage']}>
               <OnlineTestEdit />
             </ProtectedRoute>
           }
@@ -363,7 +363,7 @@ function AppShell() {
         <Route
           path="/online-tests/:id/build"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.manage']}>
               <QuestionBuilder />
             </ProtectedRoute>
           }
@@ -371,7 +371,7 @@ function AppShell() {
         <Route
           path="/online-tests/take/:id"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'student']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.attempt', 'online_tests.manage']}>
               <OnlineTestTake />
             </ProtectedRoute>
           }
@@ -379,7 +379,7 @@ function AppShell() {
         <Route
           path="/online-tests/results/:id"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.view', 'online_tests.manage', 'online_tests.attempt', 'online_tests.grade', 'online_tests.reports']}>
               <OnlineTestResults />
             </ProtectedRoute>
           }
@@ -387,7 +387,7 @@ function AppShell() {
         <Route
           path="/offline-exams"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.view', 'offline_exams.manage', 'offline_exams.reports']}>
               <OfflineExams />
             </ProtectedRoute>
           }
@@ -395,7 +395,7 @@ function AppShell() {
         <Route
           path="/offline-exams/create"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.manage']}>
               <OfflineExamCreate />
             </ProtectedRoute>
           }
@@ -403,7 +403,7 @@ function AppShell() {
         <Route
           path="/offline-exams/edit/:examId"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.manage']}>
               <OfflineExamCreate />
             </ProtectedRoute>
           }
@@ -411,7 +411,7 @@ function AppShell() {
         <Route
           path="/offline-exams/details/:examId"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.view', 'offline_exams.manage', 'offline_exams.reports']}>
               <OfflineExamDetails />
             </ProtectedRoute>
           }
@@ -419,7 +419,7 @@ function AppShell() {
         <Route
           path="/offline-exams/evaluate/:examId"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.manage', 'offline_exams.reports']}>
               <OfflineExamEvaluate />
             </ProtectedRoute>
           }
@@ -427,7 +427,7 @@ function AppShell() {
         <Route
           path="/offline-exams/build/:examId"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['offline_exams', 'offline_exams.manage']}>
               <OfflineExamQuestionBuilder />
             </ProtectedRoute>
           }
@@ -435,7 +435,7 @@ function AppShell() {
         <Route
           path="/question-bank"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+            <ProtectedRoute requiredPermissions={['online_tests', 'online_tests.manage']}>
               <QuestionBankList />
             </ProtectedRoute>
           }

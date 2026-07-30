@@ -10,7 +10,7 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 _MISSING_RPC_TTL_SECONDS = 300
 _missing_rpc_until: dict[str, float] = {}
-_CORE_COUNTS_CACHE_TTL_SECONDS = 30
+_CORE_COUNTS_CACHE_TTL_SECONDS = 120
 _core_counts_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _CORE_COUNTS_IN_FLIGHT: dict[str, dict[str, Any]] = {}
 _CORE_COUNTS_IN_FLIGHT_LOCK = Lock()

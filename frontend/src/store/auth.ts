@@ -13,6 +13,10 @@ interface AuthStore extends AuthState {
   hasPermission: (permission: string) => boolean;
 }
 
+const permissionMatches = (permissions: string[], permission: string) =>
+  permissions.includes(permission) ||
+  permissions.some((item) => item.startsWith(`${permission}.`) || permission.startsWith(`${item}.`));
+
 const decodeJwtExp = (token: string): number | null => {
   try {
     const parts = token.split('.');
@@ -239,11 +243,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   hasPermission: (permission) => {
     const user = get().user;
     if (!user || !user.is_active) return false;
-    if (user.role === 'admin' || user.role_key === 'platform_admin' || user.role_key === 'school_admin') return true;
+    if (user.role_key === 'platform_admin') return true;
     const permissions = user.permissions || [];
-    return (
-      permissions.includes(permission) ||
-      permissions.some((item) => item.startsWith(`${permission}.`))
-    );
+    return permissionMatches(permissions, permission);
   },
 }));
