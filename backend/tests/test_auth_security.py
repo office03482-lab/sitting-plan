@@ -450,3 +450,71 @@ def test_administrator_overview_splits_platform_and_school_admins(client, monkey
         "managed-admin@school.com",
         "system-admin@school.com",
     ]
+
+
+def test_permission_catalog_includes_dynamic_modules(client, monkeypatch):
+    monkeypatch.setattr(
+        auth_routes,
+        "_load_permission_catalog",
+        lambda supabase=None, force_refresh=False: {
+            "allowed_permissions": {
+                "settings",
+                "new_module",
+                "new_module.view",
+                "new_module.manage",
+            },
+            "module_children": {
+                "new_module": ["new_module.view", "new_module.manage"],
+            },
+            "module_labels": {
+                "new_module": "New Module",
+                "settings": "Settings",
+            },
+            "permission_labels": {
+                "new_module.view": "View",
+                "new_module.manage": "Manage",
+                "settings": "Settings",
+            },
+        },
+    )
+    app.dependency_overrides[auth_routes.require_user_management_access] = lambda: SimpleNamespace(
+        id="admin-1",
+        username="admin",
+        full_name="Admin",
+        email="admin@example.com",
+        role="admin",
+        role_key="school_admin",
+        user_type="non_teaching",
+        permissions=["admin_office.access_control"],
+        is_active=True,
+        created_at="2026-07-29T09:00:00Z",
+    )
+
+    try:
+        response = client.get("/api/auth/permissions")
+    finally:
+        app.dependency_overrides.pop(auth_routes.require_user_management_access, None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    new_module = next(item for item in payload if item["key"] == "new_module")
+    assert [section["key"] for section in new_module["sections"]] == [
+        "new_module.view",
+        "new_module.manage",
+    ]
+
+
+def test_permission_catalog_static_fallback_includes_offline_exams(monkeypatch):
+    mock_client = _mock_supabase_admin_client()
+    auth_routes._PERMISSION_CATALOG_CACHE.clear()
+    monkeypatch.setattr(auth_routes, "create_supabase_admin_client", lambda: mock_client)
+
+    catalog = auth_routes._load_permission_catalog(force_refresh=True)
+
+    assert "offline_exams" in catalog["allowed_permissions"]
+    assert "offline_exams.view" in catalog["allowed_permissions"]
+    assert catalog["module_children"]["offline_exams"] == [
+        "offline_exams.view",
+        "offline_exams.manage",
+        "offline_exams.reports",
+    ]

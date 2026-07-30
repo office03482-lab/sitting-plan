@@ -297,20 +297,40 @@ export default function Layout({ children }: LayoutProps) {
       key: 'online-tests',
       name: 'Online Tests',
       icon: FileQuestion,
-      roles: ['admin', 'teacher', 'student'],
+      roles: ['admin', 'school_admin', 'teacher', 'student'],
       children: [
-        { name: 'Overview', path: '/online-tests', roles: ['admin', 'teacher', 'student'] },
-        { name: 'Create Test', path: '/online-tests/create', roles: ['admin', 'teacher'] },
+        {
+          name: 'Overview',
+          path: '/online-tests',
+          permission: 'online_tests.view',
+          roles: ['admin', 'school_admin', 'teacher', 'student'],
+        },
+        {
+          name: 'Create Test',
+          path: '/online-tests/create',
+          permission: 'online_tests.manage',
+          roles: ['admin', 'school_admin', 'teacher'],
+        },
       ],
     },
     {
       key: 'offline-exams',
       name: 'Offline Exams',
       icon: ClipboardCheck,
-      roles: ['admin', 'teacher', 'student'],
+      roles: ['admin', 'school_admin', 'teacher', 'student'],
       children: [
-        { name: 'Overview', path: '/offline-exams', roles: ['admin', 'teacher', 'student'] },
-        { name: 'Create Exam', path: '/offline-exams/create', roles: ['admin', 'teacher'] },
+        {
+          name: 'Overview',
+          path: '/offline-exams',
+          permission: 'offline_exams.view',
+          roles: ['admin', 'school_admin', 'teacher', 'student'],
+        },
+        {
+          name: 'Create Exam',
+          path: '/offline-exams/create',
+          permission: 'offline_exams.manage',
+          roles: ['admin', 'school_admin', 'teacher'],
+        },
       ],
     },
     {

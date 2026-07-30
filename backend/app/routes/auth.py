@@ -2,6 +2,7 @@
 import logging
 from email.message import EmailMessage
 import smtplib
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -116,6 +117,10 @@ ALLOWED_PERMISSIONS = {
     "online_tests.attempt",
     "online_tests.grade",
     "online_tests.reports",
+    "offline_exams",
+    "offline_exams.view",
+    "offline_exams.manage",
+    "offline_exams.reports",
     "live_classes",
     "live_classes.view",
     "live_classes.manage",
@@ -215,6 +220,11 @@ PERMISSION_CHILDREN = {
         "online_tests.grade",
         "online_tests.reports",
     ],
+    "offline_exams": [
+        "offline_exams.view",
+        "offline_exams.manage",
+        "offline_exams.reports",
+    ],
     "live_classes": [
         "live_classes.view",
         "live_classes.manage",
@@ -286,21 +296,98 @@ PERMISSION_CHILDREN = {
     ],
 }
 
+_PERMISSION_CATALOG_CACHE_TTL_SECONDS = 60
+_PERMISSION_CATALOG_CACHE: dict[str, Any] = {
+    "expires_at": 0.0,
+    "catalog": None,
+}
+
+
+def _permission_catalog_from_static_config() -> dict[str, Any]:
+    return {
+        "allowed_permissions": set(ALLOWED_PERMISSIONS),
+        "module_children": {key: list(value) for key, value in PERMISSION_CHILDREN.items()},
+        "module_labels": {key: _make_permission_label(key) for key in PERMISSION_CHILDREN},
+        "permission_labels": {key: _make_permission_label(key.split(".", 1)[1] if "." in key else key) for key in ALLOWED_PERMISSIONS},
+    }
+
+
+def _load_permission_catalog(supabase=None, *, force_refresh: bool = False) -> dict[str, Any]:
+    now = time.monotonic()
+    cached_catalog = _PERMISSION_CATALOG_CACHE.get("catalog")
+    if not force_refresh and cached_catalog and now < float(_PERMISSION_CATALOG_CACHE.get("expires_at") or 0):
+        return cached_catalog
+
+    fallback = _permission_catalog_from_static_config()
+    try:
+        supabase = supabase or create_supabase_admin_client()
+        response = (
+            supabase.table("permissions")
+            .select("permission_key,module_key,action_key,description,is_active")
+            .eq("is_active", True)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if not rows:
+            raise ValueError("permission catalog is empty")
+
+        allowed_permissions: set[str] = set()
+        module_children: dict[str, list[str]] = {}
+        module_labels: dict[str, str] = {}
+        permission_labels: dict[str, str] = {}
+
+        for row in rows:
+            permission_key = _normalize_supabase_text(row.get("permission_key")).lower()
+            module_key = _normalize_supabase_text(row.get("module_key")).lower() or permission_key.split(".", 1)[0]
+            action_key = _normalize_supabase_text(row.get("action_key")).lower()
+            description = _normalize_supabase_text(row.get("description"))
+            if not permission_key:
+                continue
+
+            allowed_permissions.add(permission_key)
+            module_children.setdefault(module_key, [])
+            module_labels.setdefault(module_key, _make_permission_label(module_key))
+
+            if "." in permission_key:
+                if permission_key not in module_children[module_key]:
+                    module_children[module_key].append(permission_key)
+                permission_labels[permission_key] = description or _make_permission_label(action_key or permission_key.split(".", 1)[1])
+            else:
+                permission_labels[permission_key] = description or _make_permission_label(permission_key)
+                module_labels[module_key] = description or module_labels.get(module_key) or _make_permission_label(module_key)
+
+        catalog = {
+            "allowed_permissions": allowed_permissions,
+            "module_children": {key: sorted(value) for key, value in module_children.items()},
+            "module_labels": module_labels,
+            "permission_labels": permission_labels,
+        }
+        _PERMISSION_CATALOG_CACHE["catalog"] = catalog
+        _PERMISSION_CATALOG_CACHE["expires_at"] = now + _PERMISSION_CATALOG_CACHE_TTL_SECONDS
+        return catalog
+    except Exception:
+        _PERMISSION_CATALOG_CACHE["catalog"] = fallback
+        _PERMISSION_CATALOG_CACHE["expires_at"] = now + _PERMISSION_CATALOG_CACHE_TTL_SECONDS
+        return fallback
+
 
 def normalize_permissions(values: Optional[List[str]]) -> List[str]:
     if not values:
         return []
+    catalog = _load_permission_catalog()
+    allowed_permissions = set(catalog.get("allowed_permissions") or set(ALLOWED_PERMISSIONS))
+    module_children = dict(catalog.get("module_children") or PERMISSION_CHILDREN)
     cleaned: List[str] = []
     seen = set()
     for item in values:
         value = (item or "").strip().lower()
-        if value not in ALLOWED_PERMISSIONS or value in seen:
+        if value not in allowed_permissions or value in seen:
             continue
         seen.add(value)
         cleaned.append(value)
 
     cleaned_set = set(cleaned)
-    for parent, children in PERMISSION_CHILDREN.items():
+    for parent, children in module_children.items():
         if parent not in cleaned_set:
             continue
         selected_children = [child for child in children if child in cleaned_set]
@@ -1289,25 +1376,27 @@ async def transfer_school_admin_ownership(
 async def list_permissions(
     _: User = Depends(require_user_management_access),
 ):
+    catalog = _load_permission_catalog()
+    module_children = dict(catalog.get("module_children") or PERMISSION_CHILDREN)
+    module_labels = dict(catalog.get("module_labels") or {})
+    permission_labels = dict(catalog.get("permission_labels") or {})
     modules = []
-    for parent_key, children_keys in PERMISSION_CHILDREN.items():
+    for parent_key in sorted(module_children):
+        children_keys = module_children.get(parent_key) or []
         sections = [
-            {"key": child_key, "label": _make_permission_label(child_key.split(".", 1)[1] if "." in child_key else child_key)}
+            {"key": child_key, "label": permission_labels.get(child_key) or _make_permission_label(child_key.split(".", 1)[1] if "." in child_key else child_key)}
             for child_key in children_keys
         ]
         modules.append(ModulePermissionInfo(
             key=parent_key,
-            label=_make_permission_label(parent_key),
+            label=module_labels.get(parent_key) or _make_permission_label(parent_key),
             sections=sections,
         ))
-    standalone = sorted(
-        key for key in ALLOWED_PERMISSIONS
-        if "." not in key and key not in PERMISSION_CHILDREN
-    )
+    standalone = sorted(key for key in catalog.get("allowed_permissions") or set(ALLOWED_PERMISSIONS) if "." not in key and key not in module_children)
     for key in standalone:
         modules.append(ModulePermissionInfo(
             key=key,
-            label=_make_permission_label(key),
+            label=permission_labels.get(key) or _make_permission_label(key),
             sections=[],
         ))
     return modules

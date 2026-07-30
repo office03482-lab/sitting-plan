@@ -53,6 +53,7 @@ DEFAULT_TEACHER_PERMISSIONS = [
     "online_tests.view",
     "online_tests.manage",
     "online_tests.grade",
+    "offline_exams.view",
     "teacher_ai.generate",
 ]
 PORTAL_PERMISSION_TEMPLATES = {
@@ -65,6 +66,7 @@ PORTAL_PERMISSION_TEMPLATES = {
             "timetable.view",
             "ai_tutor.chat",
             "live_classes.join",
+            "offline_exams.view",
         ],
     },
     "parent": {
@@ -75,6 +77,7 @@ PORTAL_PERMISSION_TEMPLATES = {
             "attendance.student",
             "lms.assignments",
             "online_tests.view",
+            "offline_exams.view",
             "edupay.parent_portal",
         ],
     },
@@ -98,6 +101,8 @@ PORTAL_PERMISSION_TEMPLATES = {
             "online_tests.view",
             "online_tests.manage",
             "online_tests.grade",
+            "offline_exams.view",
+            "offline_exams.manage",
             "study_planner.reports",
             "teacher_ai.generate",
             "teacher_ai.reports",
@@ -118,6 +123,9 @@ PORTAL_PERMISSION_TEMPLATES = {
             "online_tests.view",
             "online_tests.manage",
             "online_tests.reports",
+            "offline_exams.view",
+            "offline_exams.manage",
+            "offline_exams.reports",
             "teacher_ai.generate",
             "teacher_ai.reports",
             "study_planner.reports",
@@ -136,6 +144,9 @@ PORTAL_PERMISSION_TEMPLATES = {
             "online_tests.manage",
             "online_tests.grade",
             "online_tests.reports",
+            "offline_exams.view",
+            "offline_exams.manage",
+            "offline_exams.reports",
         ],
     },
     "store_manager": {
@@ -171,6 +182,7 @@ PORTAL_PERMISSION_TEMPLATES = {
             "timetable.view",
             "lms.view",
             "online_tests.view",
+            "offline_exams.view",
             "live_classes.view",
         ],
     },
@@ -656,16 +668,19 @@ def _group_permissions(
     granted_permissions: list[str],
     template_permissions: list[str],
 ) -> list[dict[str, Any]]:
-    from app.routes.auth import ALLOWED_PERMISSIONS, PERMISSION_CHILDREN, normalize_permissions
+    from app.routes.auth import _load_permission_catalog, normalize_permissions
 
     granted_set = set(normalize_permissions(granted_permissions))
     template_set = set(normalize_permissions(template_permissions))
     changed_keys = granted_set.symmetric_difference(template_set)
-    module_keys = list(PERMISSION_CHILDREN.keys())
+    catalog = _load_permission_catalog()
+    module_children = dict(catalog.get("module_children") or {})
+    allowed_permissions = set(catalog.get("allowed_permissions") or set())
+    module_keys = list(module_children.keys())
     grouped: list[dict[str, Any]] = []
 
     for module_key in module_keys:
-        child_keys = list(PERMISSION_CHILDREN.get(module_key) or [])
+        child_keys = list(module_children.get(module_key) or [])
         granted_count = sum(1 for key in child_keys if key in granted_set)
         entries: list[dict[str, Any]] = []
         for permission_key in child_keys:
@@ -693,8 +708,8 @@ def _group_permissions(
 
     standalone_keys = sorted(
         key
-        for key in ALLOWED_PERMISSIONS
-        if "." not in key and key not in PERMISSION_CHILDREN
+        for key in allowed_permissions
+        if "." not in key and key not in module_children
     )
     for permission_key in standalone_keys:
         if permission_key not in granted_set and permission_key not in template_set and permission_key not in changed_keys:
