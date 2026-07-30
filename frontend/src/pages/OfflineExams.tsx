@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type { OfflineExam } from '@types';
 import { offlineExamCardClass } from '@pages/offlineExamsShared';
@@ -15,6 +16,7 @@ export default function OfflineExams() {
   const navigate = useNavigate();
   const location = useLocation();
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
+  const effectiveSchoolId = useEffectiveSchoolId();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const isTeacher = user?.role === 'teacher';
   const isStudent = user?.role === 'student';
@@ -39,7 +41,7 @@ export default function OfflineExams() {
   useEffect(() => {
     if (!canRunRequests) return;
     void loadDashboard();
-  }, [canRunRequests]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   const loadDashboard = async (showRefresh = false) => {
     try {

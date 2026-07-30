@@ -37,6 +37,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '@store/auth';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
+import { useRefDataStore } from '@store/referenceData';
+import { useAppStore } from '@store/app';
 import PlatformAdminSchoolSelector from '@components/PlatformAdminSchoolSelector';
 import PlatformAdminSchoolScopeBanner from '@components/PlatformAdminSchoolScopeBanner';
 import { DEFAULT_HOME_ROUTE, useAuth } from '@/contexts/AuthProvider';
@@ -51,7 +53,7 @@ interface LayoutProps {
 type MenuChild = {
   name: string;
   path: string;
-  permission?: string;
+  permission?: string | string[];
   roles?: UserRole[];
 };
 
@@ -59,7 +61,7 @@ type MenuSection = {
   key: string;
   name: string;
   icon: LucideIcon;
-  permission?: string;
+  permission?: string | string[];
   roles?: UserRole[];
   path?: string;
   children?: MenuChild[];
@@ -141,8 +143,7 @@ export default function Layout({ children }: LayoutProps) {
   const [hoveredCollapsedKey, setHoveredCollapsedKey] = useState<string | null>(null);
   const [totalSchools, setTotalSchools] = useState<number | null>(null);
   const user = useAuthStore((state) => state.user);
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const { signOut } = useAuth();
+  const { signOut, canAccess: authCanAccess } = useAuth();
   const { activeSchoolId, activeSchoolName, schoolBranding, setSchoolBranding, clearActiveSchool } = usePlatformAdminSchoolStore();
   const brandingFetchKeyRef = useRef<string | null>(null);
   const isAdmin = user?.role === 'admin';
@@ -235,13 +236,19 @@ export default function Layout({ children }: LayoutProps) {
       brandingFetchKeyRef.current = null;
       setSchoolBranding(null);
     }
+    // Invalidate all cached reference data so pages re-fetch for the new school.
+    useRefDataStore.getState().invalidateAll();
+    // Clear stale app store arrays to prevent showing data from previous school.
+    useAppStore.getState().setStudents([]);
+    useAppStore.getState().setRooms([]);
+    useAppStore.getState().setSeatingPlans([]);
   }, [activeSchoolId, fetchBranding, setSchoolBranding]);
 
-  const canAccess = (permission?: string, roles?: UserRole[]) => {
-    const roleAllowed = !roles?.length || Boolean(user?.role && roles.includes(user.role));
-    const permissionAllowed = !permission || isAdmin || hasPermission(permission);
-    return roleAllowed && permissionAllowed;
-  };
+  const canAccess = (permission?: string | string[], roles?: UserRole[]) =>
+    authCanAccess({
+      roles,
+      permissions: Array.isArray(permission) ? permission : permission ? [permission] : undefined,
+    });
 
   const rawSections: MenuSection[] = [
     {
@@ -297,19 +304,16 @@ export default function Layout({ children }: LayoutProps) {
       key: 'online-tests',
       name: 'Online Tests',
       icon: FileQuestion,
-      roles: ['admin', 'school_admin', 'teacher', 'student'],
       children: [
         {
           name: 'Overview',
           path: '/online-tests',
-          permission: 'online_tests.view',
-          roles: ['admin', 'school_admin', 'teacher', 'student'],
+          permission: ['online_tests', 'online_tests.view', 'online_tests.manage', 'online_tests.attempt', 'online_tests.grade', 'online_tests.reports'],
         },
         {
           name: 'Create Test',
           path: '/online-tests/create',
-          permission: 'online_tests.manage',
-          roles: ['admin', 'school_admin', 'teacher'],
+          permission: ['online_tests', 'online_tests.manage'],
         },
       ],
     },
@@ -317,19 +321,16 @@ export default function Layout({ children }: LayoutProps) {
       key: 'offline-exams',
       name: 'Offline Exams',
       icon: ClipboardCheck,
-      roles: ['admin', 'school_admin', 'teacher', 'student'],
       children: [
         {
           name: 'Overview',
           path: '/offline-exams',
-          permission: 'offline_exams.view',
-          roles: ['admin', 'school_admin', 'teacher', 'student'],
+          permission: ['offline_exams', 'offline_exams.view', 'offline_exams.manage', 'offline_exams.reports'],
         },
         {
           name: 'Create Exam',
           path: '/offline-exams/create',
-          permission: 'offline_exams.manage',
-          roles: ['admin', 'school_admin', 'teacher'],
+          permission: ['offline_exams', 'offline_exams.manage'],
         },
       ],
     },
@@ -851,6 +852,7 @@ export default function Layout({ children }: LayoutProps) {
           </div>
           <div className="mt-3 flex gap-2">
             <PlatformAdminSchoolSelector
+              returnPath={location.pathname}
               trigger={
                 <button
                   type="button"

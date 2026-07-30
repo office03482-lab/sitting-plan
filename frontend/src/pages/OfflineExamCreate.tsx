@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type { Batch } from '@types';
 import {
@@ -34,6 +35,7 @@ export default function OfflineExamCreate() {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
+  const effectiveSchoolId = useEffectiveSchoolId();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
   const isEditMode = Boolean(examId);
 
@@ -49,7 +51,7 @@ export default function OfflineExamCreate() {
   useEffect(() => {
     if (!canRunRequests) return;
     void loadFormData();
-  }, [canRunRequests]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   const loadFormData = async () => {
     try {

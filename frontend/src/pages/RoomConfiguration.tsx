@@ -6,6 +6,7 @@ import {
   logIfUnexpectedRequestError,
 } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import { useRefDataStore } from '@store/referenceData';
 import type { Room } from '@types';
 
@@ -53,6 +54,7 @@ const normalizeDoorLocation = (value: string): FormData['door_location'] => {
 export default function RoomConfiguration() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const { rooms, setRooms } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | number | null>(null);
@@ -75,12 +77,12 @@ export default function RoomConfiguration() {
   useEffect(() => {
     if (!canRunRequests) return;
     loadRooms();
-  }, [canRunRequests]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   const loadRooms = async () => {
     setLoading(true);
     try {
-      const roomsData = await useRefDataStore.getState().getRooms(1);
+      const roomsData = await useRefDataStore.getState().getRooms(effectiveSchoolId || '');
       setRooms(roomsData);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);

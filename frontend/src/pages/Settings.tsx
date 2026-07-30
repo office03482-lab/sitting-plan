@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Settings, Save, RefreshCw, Building, Mail, Palette, FileText, Shield } from 'lucide-react';
 import { useSettingsStore } from '../store/settings';
 import { apiService } from '../services/api';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { getRuntimeDiagnostics } from '../lib/runtimeConfig';
 
 const SettingsPage: React.FC = () => {
+  const effectiveSchoolId = useEffectiveSchoolId();
   const {
     settings,
     isLoading,
@@ -37,7 +39,7 @@ const SettingsPage: React.FC = () => {
     };
 
     loadSettingsFromAPI();
-  }, []);
+  }, [effectiveSchoolId]);
 
   const handleSaveSettings = async () => {
     try {

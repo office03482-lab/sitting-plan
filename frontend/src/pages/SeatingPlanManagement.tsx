@@ -6,6 +6,7 @@ import {
   logIfUnexpectedRequestError,
 } from '@services/api';
 import { useRefDataStore } from '@store/referenceData';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import { UnavailableStatCard } from '@components/UnavailableStatCard';
 import type { Batch, Room, SeatingPlan } from '@types';
 
@@ -54,6 +55,7 @@ const extractBatchesFromPlanName = (planName: string) => {
 };
 
 export default function SeatingPlanManagement() {
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [activeTab, setActiveTab] = useState<TabId>('view');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -84,14 +86,14 @@ export default function SeatingPlanManagement() {
     loadSummary();
     loadPlans();
     loadRooms();
-  }, []);
+  }, [effectiveSchoolId]);
 
   const loadSummary = async () => {
     setUploading(true);
     try {
       const [studentsRes, batchesData] = await Promise.allSettled([
         apiService.getStudentsCount(),
-        useRefDataStore.getState().getBatches(1),
+        useRefDataStore.getState().getBatches(effectiveSchoolId || ''),
       ]);
 
       if (studentsRes.status === 'fulfilled') {
@@ -141,7 +143,7 @@ export default function SeatingPlanManagement() {
 
   const loadRooms = async () => {
     try {
-      const roomsData = await useRefDataStore.getState().getRooms(1);
+      const roomsData = await useRefDataStore.getState().getRooms(effectiveSchoolId || '');
       setRooms(Array.isArray(roomsData) ? roomsData : []);
     } catch (error) {
       logIfUnexpectedRequestError('Failed to load rooms:', error);

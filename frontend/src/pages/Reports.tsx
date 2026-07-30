@@ -6,6 +6,7 @@ import { Alert } from '../components/Alert';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { UnavailableStatCard } from '../components/UnavailableStatCard';
 import { useAuth } from '@/contexts/AuthProvider';
+import { useEffectiveSchoolId } from '@hooks/useEffectiveSchoolId';
 import {
   apiService,
   getRequestErrorMessage as getSharedRequestErrorMessage,
@@ -22,6 +23,7 @@ const Reports: React.FC = () => {
   const navigate = useNavigate();
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
+  const effectiveSchoolId = useEffectiveSchoolId();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [teacherCount, setTeacherCount] = useState(0);
@@ -37,7 +39,7 @@ const Reports: React.FC = () => {
   useEffect(() => {
     if (!canRunRequests) return;
     loadData();
-  }, [canRunRequests]);
+  }, [canRunRequests, effectiveSchoolId]);
 
   const loadData = async () => {
     try {
