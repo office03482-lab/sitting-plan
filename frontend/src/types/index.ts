@@ -648,6 +648,39 @@ export interface SchoolPublicBranding {
   custom_domain?: string | null;
 }
 
+export interface ManageableSchoolSummary {
+  id: string;
+  name: string;
+  short_name?: string | null;
+  slug: string;
+  school_code: string;
+  timezone: string;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  logo_url?: string | null;
+  status?: string | null;
+  is_active?: boolean;
+}
+
+export interface ManageableSchoolListResponse {
+  items: ManageableSchoolSummary[];
+  total_count: number;
+}
+
+export interface SchoolSummary {
+  id: string;
+  name: string;
+  short_name?: string | null;
+  slug: string;
+  school_code: string;
+  timezone: string;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  logo_url?: string | null;
+  status?: string | null;
+  is_active?: boolean;
+}
+
 export interface SchoolSelfServiceProfile {
   school_id: string;
   branding: Record<string, unknown>;
@@ -659,7 +692,7 @@ export interface SchoolSelfServiceProfile {
   assets: SchoolBrandAsset[];
   storage: SchoolStorageOverview;
   backups: SchoolBackupHistoryResponse;
-  school_summary: Record<string, unknown>;
+  school_summary: SchoolSummary;
 }
 
 export interface AuthState {

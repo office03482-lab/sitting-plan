@@ -445,9 +445,11 @@ export default function Dashboard() {
             const roomsSummary = metrics?.rooms_summary || { count: 0, totalCapacity: 0 };
             const studentCount = Number(metrics?.students_count ?? 0);
             const teacherCount = Number(metrics?.teachers_count ?? 0);
+            const timetableEntriesCount = Number(metrics?.timetable_entries_count ?? 0);
             const notifications = Array.isArray(attendanceOverview?.notifications) ? attendanceOverview.notifications : [];
             const holidays = Array.isArray(attendanceOverview?.holidays) ? attendanceOverview.holidays : [];
             const inventoryDashboard = metrics?.inventory_dashboard ?? null;
+            const eduPayDashboard = metrics?.edupay_dashboard ?? null;
             const roomUtilization =
               roomsSummary.count > 0
                 ? Math.round((Number(roomsSummary.totalCapacity || 0) / (roomsSummary.count * 50)) * 100)
@@ -465,6 +467,7 @@ export default function Dashboard() {
               totalStudents: studentCount,
               totalTeachers: teacherCount,
               totalRooms: Number(roomsSummary.count || 0),
+              totalTimetableEntries: timetableEntriesCount,
               roomUtilization,
               inventoryStock: inventoryDashboard?.current_stock_available || 0,
             }));
@@ -474,7 +477,21 @@ export default function Dashboard() {
               holidays,
             }));
             setInventorySnapshot(inventoryDashboard);
-            setWidgetLoading((current) => ({ ...current, metrics: false }));
+            if (canViewEduPay) {
+              setEduPaySummary({
+                totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
+                pendingAmount: Number(eduPayDashboard?.pending_amount ?? eduPayDashboard?.total_pending ?? 0),
+                todayCollection: Number(eduPayDashboard?.today_collection ?? 0),
+                overdueAmount: Number(eduPayDashboard?.overdue_amount ?? 0),
+              });
+              setEduPayDashboardData(eduPayDashboard);
+            }
+            setWidgetLoading((current) => ({
+              ...current,
+              metrics: false,
+              timetable: false,
+              edupay: canViewEduPay ? false : current.edupay,
+            }));
           })
           .catch((error) => {
             if ((error as { code?: string } | null)?.code === 'ERR_CANCELED' || controller.signal.aborted) {
@@ -486,9 +503,10 @@ export default function Dashboard() {
               students: isTemporarilyUnavailableDataError(error),
               teachers: isTemporarilyUnavailableDataError(error),
               rooms: isTemporarilyUnavailableDataError(error),
+              timetable: isTemporarilyUnavailableDataError(error),
               inventory: isTemporarilyUnavailableDataError(error),
             }));
-            setWidgetLoading((current) => ({ ...current, metrics: false }));
+            setWidgetLoading((current) => ({ ...current, metrics: false, timetable: false, edupay: false }));
           });
 
         const attendancePromise = apiService
@@ -518,53 +536,7 @@ export default function Dashboard() {
             setWidgetLoading((current) => ({ ...current, attendance: false }));
           });
 
-        const timetablePromise = apiService
-          .getTimetableEntriesCount(effectiveSchoolId || 1, { signal: controller.signal })
-          .then((response) => {
-            if (!isCurrentRequest()) return;
-            setStats((current) => ({
-              ...current,
-              totalTimetableEntries: Number(response.data || 0),
-            }));
-            setWidgetLoading((current) => ({ ...current, timetable: false }));
-          })
-          .catch((error) => {
-            if ((error as { code?: string } | null)?.code === 'ERR_CANCELED' || controller.signal.aborted) {
-              return;
-            }
-            if (!isCurrentRequest()) return;
-            setDashboardAvailability((current) => ({
-              ...current,
-              timetable: isTemporarilyUnavailableDataError(error),
-            }));
-            setWidgetLoading((current) => ({ ...current, timetable: false }));
-          });
-
-        const eduPayPromise = canViewEduPay
-          ? apiService
-              .getEduPayDashboard({ signal: controller.signal })
-              .then((response) => {
-                if (!isCurrentRequest()) return;
-                const eduPayDashboard = response.data;
-                setEduPaySummary({
-                  totalCollected: Number(eduPayDashboard?.total_collected ?? 0),
-                  pendingAmount: Number(eduPayDashboard?.pending_amount ?? eduPayDashboard?.total_pending ?? 0),
-                  todayCollection: Number(eduPayDashboard?.today_collection ?? 0),
-                  overdueAmount: Number(eduPayDashboard?.overdue_amount ?? 0),
-                });
-                setEduPayDashboardData(eduPayDashboard);
-                setWidgetLoading((current) => ({ ...current, edupay: false }));
-              })
-              .catch((error) => {
-                if ((error as { code?: string } | null)?.code === 'ERR_CANCELED' || controller.signal.aborted) {
-                  return;
-                }
-                if (!isCurrentRequest()) return;
-                setWidgetLoading((current) => ({ ...current, edupay: false }));
-              })
-          : Promise.resolve(setWidgetLoading((current) => ({ ...current, edupay: false })));
-
-        await Promise.allSettled([metricsPromise, attendancePromise, timetablePromise, eduPayPromise]);
+        await Promise.allSettled([metricsPromise, attendancePromise]);
         if (!isCurrentRequest()) return;
 
         lastDashboardLoadAtRef.current = Date.now();

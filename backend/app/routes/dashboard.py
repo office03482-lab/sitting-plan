@@ -14,7 +14,12 @@ from fastapi import APIRouter, Depends, Response
 from app.middleware.auth import get_authenticated_actor_context
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import resolve_school_id_from_actor
-from app.services.supabase_metrics import get_dashboard_metrics_rpc, get_school_core_counts_cached
+from app.services.supabase_metrics import (
+    get_dashboard_metrics_rpc,
+    get_edupay_dashboard_summary_rpc,
+    get_school_core_counts_cached,
+)
+from app.services.supabase_timetable import get_timetable_table_query
 from app.utils.dashboard_tracing import begin_dashboard_request, finish_dashboard_request
 
 logger = logging.getLogger(__name__)
@@ -72,6 +77,69 @@ def _cache_dashboard_payload(school_id: str, payload: dict[str, Any]) -> dict[st
         "expires_at": time.monotonic() + _DASHBOARD_CACHE_TTL,
     }
     return payload
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_timetable_entries_count(school_id: str) -> int:
+    response = (
+        get_timetable_table_query()
+        .select("id", count="exact")
+        .eq("school_id", school_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    return int(getattr(response, "count", 0) or 0)
+
+
+def _load_edupay_dashboard_summary(school_id: str) -> dict[str, Any]:
+    payload = get_edupay_dashboard_summary_rpc(school_id)
+    if not payload:
+        return {}
+    return {
+        "total_collected": round(_to_float(payload.get("total_collected")), 2),
+        "pending_amount": round(_to_float(payload.get("pending_amount")), 2),
+        "overdue_amount": round(_to_float(payload.get("overdue_amount")), 2),
+        "today_collection": round(_to_float(payload.get("today_collection")), 2),
+        "upcoming_dues": _to_int(payload.get("upcoming_dues")),
+        "total_students": _to_int(payload.get("total_students")),
+        "active_fee_structures": _to_int(payload.get("active_fee_structures")),
+        "reminders_queued": _to_int(payload.get("reminders_queued")),
+        "collection_trend": list(payload.get("collection_trend") or []),
+        "payment_method_split": list(payload.get("payment_method_split") or []),
+        "reminders": list(payload.get("reminders") or []),
+        "recent_payments": list(payload.get("recent_payments") or []),
+    }
+
+
+def _augment_dashboard_payload(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload or {})
+    if "timetable_entries_count" not in normalized:
+        try:
+            normalized["timetable_entries_count"] = _get_timetable_entries_count(school_id)
+        except Exception as exc:
+            _perf_log("augment.timetable_count_error", school_id, 0, error=str(exc)[:200])
+    if "edupay_dashboard" not in normalized:
+        try:
+            edupay_summary = _load_edupay_dashboard_summary(school_id)
+            if edupay_summary:
+                normalized["edupay_dashboard"] = edupay_summary
+        except Exception as exc:
+            _perf_log("augment.edupay_summary_error", school_id, 0, error=str(exc)[:200])
+    return normalized
 
 
 @router.get("/dashboard/metrics")
@@ -136,6 +204,7 @@ async def get_dashboard_metrics(
             rpc_started_at = time.monotonic()
             try:
                 payload = await asyncio.to_thread(get_dashboard_metrics_rpc, school_id)
+                payload = await asyncio.to_thread(_augment_dashboard_payload, school_id, payload)
                 rpc_duration = round((time.monotonic() - rpc_started_at) * 1000, 1)
                 execution_path = "rpc"
             except Exception as exc:
@@ -249,6 +318,8 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict[str, Any]:
         "student_issue": (fetch_all, ("student_issue_entries", "quantity_issued", "inventory"), {"school_id": school_id}),
         "subjects": (fetch_all, ("subjects", "id, school_id, name, class_name, is_active, created_at, updated_at", None), {"school_id": school_id, "is_active": True}),
         "staff_count": (count_active_rows, ("staff_members",), {}),
+        "timetable_count": (_get_timetable_entries_count, (school_id,), {}),
+        "edupay_dashboard": (_load_edupay_dashboard_summary, (school_id,), {}),
     }
     if not rooms_summary:
         jobs["rooms_fallback"] = (fetch_all, ("rooms", "id, capacity", None), {"school_id": school_id, "is_active": True})
@@ -300,6 +371,7 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict[str, Any]:
     payload = {
         "students_count": students_count,
         "teachers_count": teachers_count,
+        "timetable_entries_count": _to_int(results.get("timetable_count")),
         "rooms_summary": rooms_summary,
         "hostel_summary": {
             "total_hostels": len(hostel_raw),
@@ -323,6 +395,7 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict[str, Any]:
             "total_books_in_inventory": total_in,
             "total_books_distributed": total_out,
         },
+        "edupay_dashboard": results.get("edupay_dashboard") or {},
         "batch_options": [
             {"id": row["id"], "name": row["name"], "class_name": row.get("class_name"), "section": row.get("section")}
             for row in batches

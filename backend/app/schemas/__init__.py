@@ -1604,7 +1604,7 @@ class AttendanceStaffResponse(AttendanceStaffCreate):
 class AttendanceSubjectCreate(BaseModel):
     name: str
     class_name: str
-    section: str
+    section: Optional[str] = None
 
 
 class AttendanceSubjectResponse(AttendanceSubjectCreate):
@@ -1624,7 +1624,7 @@ class AttendanceSettingUpdate(BaseModel):
 
 
 class AttendanceSettingResponse(AttendanceSettingUpdate):
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 class AttendanceHolidayCreate(BaseModel):

@@ -169,7 +169,8 @@ if "%PORT_BUSY%"=="1" (
 )
 
 echo Starting backend server on port %BACKEND_PORT%...
-start "Backend Server" cmd /k "\"%VENV_PY%\" -m uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT% > ..\backend.log 2>&1"
+REM Avoid Uvicorn's Windows reload subprocess here; it can fail reopening stdin.
+start "Backend Server" cmd /k "\"%VENV_PY%\" -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% > ..\backend.log 2>&1"
 
 REM Wait for backend to become healthy
 echo Waiting for backend health check...

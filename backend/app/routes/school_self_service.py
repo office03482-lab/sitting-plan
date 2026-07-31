@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Requ
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
 from app.models import User, UserRole
 from app.schemas.school_self_service import (
+    ManageableSchoolListResponse,
     PublicSchoolBrandingResponse,
     SchoolBackupHistoryResponse,
     SchoolBackupRequestPayload,
@@ -22,6 +23,7 @@ from app.schemas.school_self_service import (
 from app.services.school_self_service import (
     get_public_school_branding,
     get_school_self_service_profile,
+    list_manageable_schools,
     get_storage_overview,
     list_backup_history,
     request_backup,
@@ -34,6 +36,7 @@ from app.services.school_self_service import (
     update_school_preferences,
     upload_school_brand_asset,
 )
+from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/school-self-service", tags=["School Self Service"])
@@ -61,6 +64,14 @@ def get_school_login_branding(
         school_hint=school,
         hostname=x_forwarded_host or request.headers.get("host"),
     )
+
+
+@router.get("/manageable-schools", response_model=ManageableSchoolListResponse)
+def get_manageable_schools(
+    actor: dict[str, Any] = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_school_admin_user),
+):
+    return list_manageable_schools(actor=actor, is_platform_admin=is_platform_admin_user(user))
 
 
 @router.get("/profile", response_model=SchoolSelfServiceProfileResponse)

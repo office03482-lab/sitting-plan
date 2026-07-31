@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Copy, Download, Eye, FileText, KeyRound, Lock, LogOut, Pencil, Plus, RefreshCw, Search, Shield, Users, X } from 'lucide-react';
 
 import { apiService, getRequestErrorMessage } from '@services/api';
@@ -720,6 +720,8 @@ export default function PortalAccessManager() {
   const [adminPassword, setAdminPassword] = useState('');
   const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
   const [historySearch, setHistorySearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const loadedTabsRef = useRef<Partial<Record<TabKey, boolean>>>({});
 
   const currentUser = useAuthStore((state) => state.user);
   const { activeSchoolId, activeSchoolName } = usePlatformAdminSchoolStore();
@@ -761,53 +763,131 @@ export default function PortalAccessManager() {
     setExpandedGroups(Object.fromEntries(permissionModules.map((module) => [module.key, false])));
   }, [editPowersOpen, permissionModules]);
 
-  const refreshAll = async () => {
+  const loadSharedData = useCallback(async () => {
+    const [batchesRes, templatesRes, permissionsRes] = await Promise.all([
+      apiService.listBatches(),
+      apiService.getPortalPermissionTemplates(),
+      apiService.listPermissions(),
+    ]);
+    setBatches(Array.isArray(batchesRes.data) ? batchesRes.data : []);
+    setPermissionTemplates(Array.isArray(templatesRes.data) ? templatesRes.data : []);
+    setPermissionModules(Array.isArray(permissionsRes.data) ? permissionsRes.data : []);
+  }, []);
+
+  const loadStudentOverview = useCallback(async () => {
+    const response = await apiService.getPortalOverview({ entity_type: 'student', limit: 25, offset: 0 });
+    setStudentOverview(response.data);
+    loadedTabsRef.current.student = true;
+  }, []);
+
+  const loadParentOverview = useCallback(async () => {
+    const response = await apiService.getPortalOverview({ entity_type: 'parent', limit: 25, offset: 0 });
+    setParentOverview(response.data);
+    loadedTabsRef.current.parent = true;
+  }, []);
+
+  const loadTeacherOverview = useCallback(async () => {
+    const response = await apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('teacher'), limit: 25, offset: 0 });
+    setTeacherOverview(response.data);
+    loadedTabsRef.current.teacher = true;
+  }, []);
+
+  const loadStaffOverview = useCallback(async () => {
+    const response = await apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('non_teaching'), limit: 25, offset: 0 });
+    setStaffOverview(response.data);
+    loadedTabsRef.current.staff = true;
+  }, []);
+
+  const loadAdminOverview = useCallback(async () => {
+    const response = await apiService.listAdministratorUsers();
+    setAdminOverview(response.data);
+    loadedTabsRef.current.administrator = true;
+  }, []);
+
+  const loadCredentials = useCallback(async () => {
+    const response = await apiService.listRecentGeneratedCredentials({ limit: 50 });
+    setRecentCredentials(Array.isArray(response.data) ? response.data : []);
+    loadedTabsRef.current.credentials = true;
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    const response = await apiService.getAccountHistory({ limit: 50, offset: 0 });
+    setHistory(response.data.items || []);
+    loadedTabsRef.current.history = true;
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    const response = await apiService.listSecuritySessions();
+    setSessions(Array.isArray(response.data) ? response.data : []);
+    loadedTabsRef.current.sessions = true;
+  }, []);
+
+  const loadTabData = useCallback(async (tab: TabKey, force = false) => {
+    if (!force && loadedTabsRef.current[tab]) return;
+    if (tab === 'student') return loadStudentOverview();
+    if (tab === 'parent') return loadParentOverview();
+    if (tab === 'teacher') return loadTeacherOverview();
+    if (tab === 'staff') return loadStaffOverview();
+    if (tab === 'administrator') return loadAdminOverview();
+    if (tab === 'credentials') return loadCredentials();
+    if (tab === 'sessions') return loadSessions();
+    if (tab === 'history') return loadHistory();
+  }, [loadAdminOverview, loadCredentials, loadHistory, loadParentOverview, loadSessions, loadStaffOverview, loadStudentOverview, loadTeacherOverview]);
+
+  const warmSummaryData = useCallback(() => {
+    void Promise.allSettled([
+      loadedTabsRef.current.parent ? Promise.resolve() : loadParentOverview(),
+      loadedTabsRef.current.teacher ? Promise.resolve() : loadTeacherOverview(),
+      loadedTabsRef.current.staff ? Promise.resolve() : loadStaffOverview(),
+      loadedTabsRef.current.administrator ? Promise.resolve() : loadAdminOverview(),
+    ]);
+  }, [loadAdminOverview, loadParentOverview, loadStaffOverview, loadTeacherOverview]);
+
+  const refreshAll = useCallback(async () => {
     try {
       setError(null);
-      const [
-        batchesRes,
-        templatesRes,
-        permissionsRes,
-        studentsRes,
-        parentsRes,
-        teachersRes,
-        staffRes,
-        adminUsersRes,
-        credentialsRes,
-        historyRes,
-        sessionsRes,
-      ] = await Promise.all([
-        apiService.listBatches(),
-        apiService.getPortalPermissionTemplates(),
-        apiService.listPermissions(),
-        apiService.getPortalOverview({ entity_type: 'student', limit: 25, offset: 0 }),
-        apiService.getPortalOverview({ entity_type: 'parent', limit: 25, offset: 0 }),
-        apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('teacher'), limit: 25, offset: 0 }),
-        apiService.getPortalOverview({ entity_type: 'staff', staff_type: normalizeStaffType('non_teaching'), limit: 25, offset: 0 }),
-        apiService.listAdministratorUsers(),
-        apiService.listRecentGeneratedCredentials({ limit: 50 }),
-        apiService.getAccountHistory({ limit: 50, offset: 0 }),
-        apiService.listSecuritySessions(),
-      ]);
-      setBatches(Array.isArray(batchesRes.data) ? batchesRes.data : []);
-      setPermissionTemplates(Array.isArray(templatesRes.data) ? templatesRes.data : []);
-      setPermissionModules(Array.isArray(permissionsRes.data) ? permissionsRes.data : []);
-      setStudentOverview(studentsRes.data);
-      setParentOverview(parentsRes.data);
-      setTeacherOverview(teachersRes.data);
-      setStaffOverview(staffRes.data);
-      setAdminOverview(adminUsersRes.data);
-      setRecentCredentials(Array.isArray(credentialsRes.data) ? credentialsRes.data : []);
-      setHistory(historyRes.data.items || []);
-      setSessions(Array.isArray(sessionsRes.data) ? sessionsRes.data : []);
+      setLoading(true);
+      await loadSharedData();
+      await loadTabData(activeTab, true);
+      if (activeTab !== 'student') {
+        await loadStudentOverview();
+      }
+      warmSummaryData();
     } catch (requestError: any) {
       setError(getRequestErrorMessage(requestError, 'Failed to load access center.'));
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [activeTab, loadSharedData, loadStudentOverview, loadTabData, warmSummaryData]);
 
   useEffect(() => {
-    void refreshAll();
-  }, []);
+    let active = true;
+    const bootstrap = async () => {
+      try {
+        setError(null);
+        setLoading(true);
+        await loadSharedData();
+        await loadStudentOverview();
+        loadedTabsRef.current.student = true;
+        if (!active) return;
+        warmSummaryData();
+      } catch (requestError: any) {
+        if (!active) return;
+        setError(getRequestErrorMessage(requestError, 'Failed to load access center.'));
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void bootstrap();
+    return () => {
+      active = false;
+    };
+  }, [loadSharedData, loadStudentOverview, warmSummaryData]);
+
+  useEffect(() => {
+    if (loading) return;
+    void loadTabData(activeTab);
+  }, [activeTab, loadTabData, loading]);
 
   const studentRecords = useMemo(() => {
     const rows = studentOverview?.records || [];

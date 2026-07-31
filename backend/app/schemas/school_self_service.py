@@ -7,11 +7,17 @@ from pydantic import BaseModel, Field
 
 class SchoolBrandingPayload(BaseModel):
     school_name: str | None = None
+    short_name: str | None = None
+    school_code: str | None = None
     tagline: str | None = None
     logo_url: str | None = None
     banner_url: str | None = None
     favicon_url: str | None = None
     background_image_url: str | None = None
+    principal_signature_url: str | None = None
+    official_seal_url: str | None = None
+    report_card_header_url: str | None = None
+    certificate_header_url: str | None = None
     website: str | None = None
     email: str | None = None
     phone: str | None = None
@@ -71,6 +77,25 @@ class SchoolBrandAssetResponse(BaseModel):
     storage_path: str
     created_at: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManageableSchoolSummaryResponse(BaseModel):
+    id: str
+    name: str
+    short_name: str | None = None
+    slug: str
+    school_code: str
+    timezone: str
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    logo_url: str | None = None
+    status: str | None = None
+    is_active: bool = True
+
+
+class ManageableSchoolListResponse(BaseModel):
+    items: list[ManageableSchoolSummaryResponse] = Field(default_factory=list)
+    total_count: int = 0
 
 
 class SchoolStorageOverviewResponse(BaseModel):

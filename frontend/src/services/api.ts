@@ -5,7 +5,7 @@ import type {
   Teacher, TimetableEntry, TimetableView, DayOfWeek, Invigilator, RoomInvigilator,
   BulkActionRequest, PlatformAuditLogListResponse, PlatformDashboardSummary, PlatformWorkflowRequestDetail,
   PlatformAnalyticsOverview, PlatformAuditCenterResponse, PlatformGlobalSearchResponse, PlatformHealthDashboardResponse, PlatformNotification, PlatformNotificationListResponse, PlatformOnboardingResponse, PlatformSchoolListResponse, PlatformSchoolSummary, PlatformSubscriptionSummary, PlatformSupportActionResponse, PlatformUsageDashboardResponse,
-  SchoolBackupHistoryResponse, SchoolBrandAsset, SchoolPublicBranding, SchoolSelfServiceProfile, SchoolStorageOverview,
+  ManageableSchoolListResponse, SchoolBackupHistoryResponse, SchoolBrandAsset, SchoolPublicBranding, SchoolSelfServiceProfile, SchoolStorageOverview,
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord, AdministratorOverviewResponse,
   PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
   BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
@@ -1792,8 +1792,20 @@ class ApiService {
     return this.api.get<SchoolSelfServiceProfile>('/school-self-service/profile');
   }
 
-  async updateSchoolBranding(data: Record<string, unknown>) {
-    return this.api.put<SchoolSelfServiceProfile>('/school-self-service/branding', data);
+  async listManageableSchoolSelfServiceSchools() {
+    return this.api.get<ManageableSchoolListResponse>('/school-self-service/manageable-schools');
+  }
+
+  async getSchoolSelfServiceProfileForSchool(schoolId: string) {
+    return this.api.get<SchoolSelfServiceProfile>('/school-self-service/profile', {
+      params: { school_id: schoolId },
+    });
+  }
+
+  async updateSchoolBranding(data: Record<string, unknown>, schoolId?: string) {
+    return this.api.put<SchoolSelfServiceProfile>('/school-self-service/branding', data, {
+      params: schoolId ? { school_id: schoolId } : undefined,
+    });
   }
 
   async updateSchoolPreferences(data: Record<string, unknown>) {
@@ -1816,10 +1828,12 @@ class ApiService {
     return this.api.put<SchoolSelfServiceProfile>('/school-self-service/messaging-templates', { templates });
   }
 
-  async uploadSchoolBrandAsset(assetType: string, file: File) {
+  async uploadSchoolBrandAsset(assetType: string, file: File, schoolId?: string) {
     const formData = new FormData();
     formData.append('file', file);
-    return this.api.post<SchoolBrandAsset>(`/school-self-service/assets/${assetType}`, formData);
+    return this.api.post<SchoolBrandAsset>(`/school-self-service/assets/${assetType}`, formData, {
+      params: schoolId ? { school_id: schoolId } : undefined,
+    });
   }
 
   async getSchoolStorageOverview() {
@@ -1857,6 +1871,10 @@ class ApiService {
       value: response,
     });
     return response;
+  }
+
+  clearSchoolBrandingCache() {
+    brandingCache.clear();
   }
 
   // ==================== Batch Management ====================

@@ -41,11 +41,17 @@ def invalidate_branding_cache() -> None:
 
 DEFAULT_BRANDING = {
     "school_name": "",
+    "short_name": "",
+    "school_code": "",
     "tagline": "",
     "logo_url": "",
     "banner_url": "",
     "favicon_url": "",
     "background_image_url": "",
+    "principal_signature_url": "",
+    "official_seal_url": "",
+    "report_card_header_url": "",
+    "certificate_header_url": "",
     "website": "",
     "email": "",
     "phone": "",
@@ -147,6 +153,17 @@ def _merge_dict(base: dict[str, Any], updates: dict[str, Any] | None = None) -> 
     return merged
 
 
+def _merge_dict_without_blank_strings(base: dict[str, Any], updates: dict[str, Any] | None = None) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in dict(updates or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
+    return merged
+
+
 def _load_school_row(school_id: str) -> dict[str, Any]:
     rows = list(
         _public_table("schools")
@@ -160,6 +177,60 @@ def _load_school_row(school_id: str) -> dict[str, Any]:
     if not rows:
         raise HTTPException(status_code=404, detail="School not found")
     return dict(rows[0])
+
+
+def list_manageable_schools(*, actor: dict[str, Any], is_platform_admin: bool) -> dict[str, Any]:
+    if is_platform_admin:
+        rows = list(
+            _public_table("schools")
+            .select("*")
+            .order("name")
+            .execute()
+            .data
+            or []
+        )
+        items = [_school_summary(dict(row)) for row in rows]
+        return {"items": items, "total_count": len(items)}
+
+    profile_id = _normalize(actor.get("profile_id"))
+    if not profile_id:
+        return {"items": [], "total_count": 0}
+
+    membership_rows = list(
+        _public_table("school_memberships")
+        .select("school_id,roles(role_key)")
+        .eq("profile_id", profile_id)
+        .eq("is_active", True)
+        .eq("status", "active")
+        .execute()
+        .data
+        or []
+    )
+    school_ids = sorted({
+        _normalize(row.get("school_id"))
+        for row in membership_rows
+        if _normalize(row.get("school_id"))
+        and _normalize(
+            (
+                (row.get("roles")[0] if isinstance(row.get("roles"), list) and row.get("roles") else row.get("roles"))
+                or {}
+            ).get("role_key")
+        ).lower() in {"school_admin", "platform_admin"}
+    })
+    if not school_ids:
+        return {"items": [], "total_count": 0}
+
+    rows = list(
+        _public_table("schools")
+        .select("*")
+        .in_("id", school_ids)
+        .order("name")
+        .execute()
+        .data
+        or []
+    )
+    items = [_school_summary(dict(row)) for row in rows]
+    return {"items": items, "total_count": len(items)}
 
 
 def _upsert_profile_row(school_id: str, *, actor_profile_id: str | None = None) -> dict[str, Any]:
@@ -218,13 +289,59 @@ def _school_summary(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": _normalize(row.get("id")),
         "name": _normalize(row.get("name")),
+        "short_name": _normalize(row.get("short_name")) or None,
         "slug": _normalize(row.get("slug")),
         "school_code": _normalize(row.get("school_code")),
         "timezone": _normalize(row.get("timezone")) or "Asia/Kolkata",
         "contact_email": _normalize(row.get("contact_email")) or None,
         "contact_phone": _normalize(row.get("contact_phone")) or None,
         "logo_url": _normalize(branding.get("logo_url")) or None,
+        "status": _normalize(row.get("status")) or ("active" if bool(row.get("is_active", True)) else "inactive"),
+        "is_active": bool(row.get("is_active", True)),
     }
+
+
+def _school_master_branding_seed(school: dict[str, Any]) -> dict[str, Any]:
+    metadata = _json_dict(school.get("metadata"))
+    app_settings = _json_dict(metadata.get("app_settings"))
+    metadata_branding = _json_dict(metadata.get("branding"))
+    return {
+        "school_name": _normalize(school.get("name")),
+        "short_name": _normalize(school.get("short_name")),
+        "school_code": _normalize(school.get("school_code")),
+        "portal_name": _normalize(school.get("name")) or DEFAULT_BRANDING["portal_name"],
+        "website": _normalize(app_settings.get("website")) or _normalize(school.get("website")),
+        "email": _normalize(school.get("contact_email")),
+        "phone": _normalize(school.get("contact_phone")),
+        "address": _normalize(app_settings.get("address")) or _normalize(school.get("address")),
+        "principal_name": _normalize(app_settings.get("principal_name")) or _normalize(metadata.get("principal_name")),
+        "logo_url": _normalize(metadata_branding.get("logo_url")),
+        "banner_url": _normalize(metadata_branding.get("banner_url")),
+        "favicon_url": _normalize(metadata_branding.get("favicon_url")),
+    }
+
+
+def _branding_asset_field(asset_type: str) -> str | None:
+    return {
+        "logo": "logo_url",
+        "banner": "banner_url",
+        "favicon": "favicon_url",
+        "background_image": "background_image_url",
+        "principal_signature": "principal_signature_url",
+        "official_seal": "official_seal_url",
+        "report_card_header": "report_card_header_url",
+        "certificate_header": "certificate_header_url",
+    }.get(_normalize(asset_type).lower())
+
+
+def _branding_from_assets(assets: list[dict[str, Any]]) -> dict[str, Any]:
+    derived: dict[str, Any] = {}
+    for asset in assets:
+        field = _branding_asset_field(str(asset.get("asset_type") or ""))
+        if not field or derived.get(field):
+            continue
+        derived[field] = _normalize(asset.get("public_url"))
+    return derived
 
 
 def _serialize_asset(row: dict[str, Any]) -> dict[str, Any]:
@@ -325,13 +442,19 @@ def _sync_school_row(school_id: str, *, branding: dict[str, Any], preferences: d
 def get_school_self_service_profile(school_id: str, *, actor_profile_id: str | None = None) -> dict[str, Any]:
     row = _upsert_profile_row(school_id, actor_profile_id=actor_profile_id)
     school = _load_school_row(school_id)
-    branding = _merge_dict(deepcopy(DEFAULT_BRANDING), _json_dict(row.get("branding")))
+    assets = _list_assets(school_id)
+    branding = _merge_dict(
+        _merge_dict_without_blank_strings(
+            _merge_dict(deepcopy(DEFAULT_BRANDING), _school_master_branding_seed(school)),
+            _json_dict(row.get("branding")),
+        ),
+        _branding_from_assets(assets),
+    )
     portal_settings = _merge_dict(deepcopy(DEFAULT_PORTAL_SETTINGS), _json_dict(row.get("portal_settings")))
     domain_settings = _merge_dict(deepcopy(DEFAULT_DOMAIN_SETTINGS), _json_dict(row.get("domain_settings")))
     preferences = _merge_dict(deepcopy(DEFAULT_PREFERENCES), _json_dict(row.get("preferences")))
     email_templates = _merge_dict(deepcopy(DEFAULT_EMAIL_TEMPLATES), _json_dict(row.get("email_templates")))
     messaging_templates = _merge_dict(deepcopy(DEFAULT_MESSAGING_TEMPLATES), _json_dict(row.get("messaging_templates")))
-    assets = _list_assets(school_id)
     storage = _storage_overview(school_id)
     backups = _backup_history(school_id)
     return {
@@ -477,6 +600,10 @@ async def upload_school_brand_asset(
         "banner": "banner_url",
         "favicon": "favicon_url",
         "background_image": "background_image_url",
+        "principal_signature": "principal_signature_url",
+        "official_seal": "official_seal_url",
+        "report_card_header": "report_card_header_url",
+        "certificate_header": "certificate_header_url",
     }
     branding_field = branding_field_map.get(normalized_type)
     if branding_field:

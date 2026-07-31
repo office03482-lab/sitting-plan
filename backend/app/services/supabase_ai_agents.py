@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,118 @@ from app.services.supabase_predictions import (
 
 MODULE_KEY = "ai_agents"
 AI_SCHEMA = "ai"
+logger = logging.getLogger(__name__)
+
+_AGENT_REGISTRY_SEED_ROWS: list[dict[str, Any]] = [
+    {
+        "agent_key": "ai_principal",
+        "agent_name": "AI Principal",
+        "domain_key": "leadership",
+        "description": "Monitors academics, attendance, discipline, revenue, and hostel signals for leadership summaries.",
+        "target_roles": ["school_admin", "platform_admin"],
+        "source_modules": ["analytics", "predictions", "bi", "hostels", "edupay"],
+        "approval_scope": "admin",
+        "orchestration_mode": "approval_required",
+        "metadata": {"summary_frequency": "daily"},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_academic_coordinator",
+        "agent_name": "AI Academic Coordinator",
+        "domain_key": "academics",
+        "description": "Tracks syllabus completion, LMS completion, and weak-topic clusters.",
+        "target_roles": ["teacher", "school_admin"],
+        "source_modules": ["lms", "analytics", "bi"],
+        "approval_scope": "teacher",
+        "orchestration_mode": "approval_required",
+        "metadata": {"summary_frequency": "weekly"},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_attendance_officer",
+        "agent_name": "AI Attendance Officer",
+        "domain_key": "attendance",
+        "description": "Detects attendance decline and absentee clusters for escalation recommendations.",
+        "target_roles": ["teacher", "school_admin"],
+        "source_modules": ["attendance", "predictions", "parent_intelligence"],
+        "approval_scope": "teacher",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_exam_coordinator",
+        "agent_name": "AI Exam Coordinator",
+        "domain_key": "exams",
+        "description": "Monitors exam readiness, test coverage, and question quality.",
+        "target_roles": ["teacher", "school_admin"],
+        "source_modules": ["online_tests", "analytics", "study_planner"],
+        "approval_scope": "teacher",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_faculty_advisor",
+        "agent_name": "AI Faculty Advisor",
+        "domain_key": "faculty",
+        "description": "Tracks workload, performance, and student outcomes to suggest interventions.",
+        "target_roles": ["teacher", "school_admin"],
+        "source_modules": ["predictions", "bi", "timetable"],
+        "approval_scope": "admin",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_student_success_advisor",
+        "agent_name": "AI Student Success Advisor",
+        "domain_key": "student_success",
+        "description": "Generates personalized goals, learning plans, and improvement strategies.",
+        "target_roles": ["teacher", "student", "school_admin"],
+        "source_modules": ["study_planner", "predictions", "analytics", "lms"],
+        "approval_scope": "teacher",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_parent_advisor",
+        "agent_name": "AI Parent Advisor",
+        "domain_key": "parent_engagement",
+        "description": "Builds engagement recommendations and communication summaries for parents.",
+        "target_roles": ["teacher", "school_admin", "parent"],
+        "source_modules": ["parent_intelligence", "attendance", "predictions"],
+        "approval_scope": "teacher",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_revenue_advisor",
+        "agent_name": "AI Revenue Advisor",
+        "domain_key": "revenue",
+        "description": "Forecasts revenue, subscriptions, and fee collection risk.",
+        "target_roles": ["school_admin", "platform_admin"],
+        "source_modules": ["edupay", "bi", "predictions"],
+        "approval_scope": "admin",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+    {
+        "agent_key": "ai_operations_advisor",
+        "agent_name": "AI Operations Advisor",
+        "domain_key": "operations",
+        "description": "Monitors hostel utilization, inventory usage, and resource allocation.",
+        "target_roles": ["school_admin", "platform_admin"],
+        "source_modules": ["hostels", "inventory", "bi", "predictions"],
+        "approval_scope": "admin",
+        "orchestration_mode": "approval_required",
+        "metadata": {},
+        "is_active": True,
+    },
+]
 
 
 def _client():
@@ -127,137 +240,42 @@ def _upsert(schema: str, table: str, rows: list[dict[str, Any]], *, on_conflict:
     _schema_table(schema, table).upsert(rows, on_conflict=on_conflict).execute()
 
 
+def _service_unavailable(detail: str = "AI command center temporarily unavailable") -> HTTPException:
+    return HTTPException(status_code=503, detail=detail)
+
+
+def _registry_fallback_rows(school_id: str) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["agent_key"]): {"school_id": school_id, "id": None, **row}
+        for row in _AGENT_REGISTRY_SEED_ROWS
+    }
+
+
+def _safe_data(default: Any, loader, *, context: str) -> Any:
+    try:
+        return loader()
+    except Exception:
+        logger.exception("AI command center dependency failed: %s", context)
+        return default
+
+
 def _seed_agent_registry(school_id: str) -> dict[str, dict[str, Any]]:
-    rows = [
-        {
-            "school_id": school_id,
-            "agent_key": "ai_principal",
-            "agent_name": "AI Principal",
-            "domain_key": "leadership",
-            "description": "Monitors academics, attendance, discipline, revenue, and hostel signals for leadership summaries.",
-            "target_roles": ["school_admin", "platform_admin"],
-            "source_modules": ["analytics", "predictions", "bi", "hostels", "edupay"],
-            "approval_scope": "admin",
-            "orchestration_mode": "approval_required",
-            "metadata": {"summary_frequency": "daily"},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_academic_coordinator",
-            "agent_name": "AI Academic Coordinator",
-            "domain_key": "academics",
-            "description": "Tracks syllabus completion, LMS completion, and weak-topic clusters.",
-            "target_roles": ["teacher", "school_admin"],
-            "source_modules": ["lms", "analytics", "bi"],
-            "approval_scope": "teacher",
-            "orchestration_mode": "approval_required",
-            "metadata": {"summary_frequency": "weekly"},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_attendance_officer",
-            "agent_name": "AI Attendance Officer",
-            "domain_key": "attendance",
-            "description": "Detects attendance decline and absentee clusters for escalation recommendations.",
-            "target_roles": ["teacher", "school_admin"],
-            "source_modules": ["attendance", "predictions", "parent_intelligence"],
-            "approval_scope": "teacher",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_exam_coordinator",
-            "agent_name": "AI Exam Coordinator",
-            "domain_key": "exams",
-            "description": "Monitors exam readiness, test coverage, and question quality.",
-            "target_roles": ["teacher", "school_admin"],
-            "source_modules": ["online_tests", "analytics", "study_planner"],
-            "approval_scope": "teacher",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_faculty_advisor",
-            "agent_name": "AI Faculty Advisor",
-            "domain_key": "faculty",
-            "description": "Tracks workload, performance, and student outcomes to suggest interventions.",
-            "target_roles": ["teacher", "school_admin"],
-            "source_modules": ["predictions", "bi", "timetable"],
-            "approval_scope": "admin",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_student_success_advisor",
-            "agent_name": "AI Student Success Advisor",
-            "domain_key": "student_success",
-            "description": "Generates personalized goals, learning plans, and improvement strategies.",
-            "target_roles": ["teacher", "student", "school_admin"],
-            "source_modules": ["study_planner", "predictions", "analytics", "lms"],
-            "approval_scope": "teacher",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_parent_advisor",
-            "agent_name": "AI Parent Advisor",
-            "domain_key": "parent_engagement",
-            "description": "Builds engagement recommendations and communication summaries for parents.",
-            "target_roles": ["teacher", "school_admin", "parent"],
-            "source_modules": ["parent_intelligence", "attendance", "predictions"],
-            "approval_scope": "teacher",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_revenue_advisor",
-            "agent_name": "AI Revenue Advisor",
-            "domain_key": "revenue",
-            "description": "Forecasts revenue, subscriptions, and fee collection risk.",
-            "target_roles": ["school_admin", "platform_admin"],
-            "source_modules": ["edupay", "bi", "predictions"],
-            "approval_scope": "admin",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-        {
-            "school_id": school_id,
-            "agent_key": "ai_operations_advisor",
-            "agent_name": "AI Operations Advisor",
-            "domain_key": "operations",
-            "description": "Monitors hostel utilization, inventory usage, and resource allocation.",
-            "target_roles": ["school_admin", "platform_admin"],
-            "source_modules": ["hostels", "inventory", "bi", "predictions"],
-            "approval_scope": "admin",
-            "orchestration_mode": "approval_required",
-            "metadata": {},
-            "is_active": True,
-        },
-    ]
-    _upsert(AI_SCHEMA, "agent_registry", rows, on_conflict="school_id,agent_key")
-    registry_rows = (
-        _ai_table("agent_registry")
-        .select("id,school_id,agent_key,agent_name,domain_key,description,target_roles,source_modules,approval_scope,orchestration_mode,metadata")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .execute()
-        .data
-        or []
-    )
-    return {str(row.get("agent_key")): dict(row) for row in registry_rows if row.get("agent_key")}
+    rows = [{"school_id": school_id, **row} for row in _AGENT_REGISTRY_SEED_ROWS]
+    try:
+        _upsert(AI_SCHEMA, "agent_registry", rows, on_conflict="school_id,agent_key")
+        registry_rows = (
+            _ai_table("agent_registry")
+            .select("id,school_id,agent_key,agent_name,domain_key,description,target_roles,source_modules,approval_scope,orchestration_mode,metadata")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .execute()
+            .data
+            or []
+        )
+        return {str(row.get("agent_key")): dict(row) for row in registry_rows if row.get("agent_key")}
+    except Exception:
+        logger.exception("AI agent registry unavailable for school_id=%s", school_id)
+        return _registry_fallback_rows(school_id)
 
 
 def _create_job(
@@ -398,20 +416,44 @@ def _agent_recommendation_blueprints(
     registry: dict[str, dict[str, Any]],
     actor_profile_id: str | None,
 ) -> dict[str, list[dict[str, Any]]]:
-    student_predictions = get_student_predictions_dashboard(
-        school_id,
-        role_key="school_admin",
-        profile_id=actor_profile_id,
-        user_email=None,
-        requested_student_id=None,
-        limit=10,
-        actor_profile_id=actor_profile_id,
+    student_predictions = _safe_data(
+        {},
+        lambda: get_student_predictions_dashboard(
+            school_id,
+            role_key="school_admin",
+            profile_id=actor_profile_id,
+            user_email=None,
+            requested_student_id=None,
+            limit=10,
+            actor_profile_id=actor_profile_id,
+        ),
+        context="student predictions",
     )
-    campus_predictions = get_campus_predictions_dashboard(school_id, actor_profile_id=actor_profile_id)
-    finance_predictions = get_finance_predictions_dashboard(school_id, actor_profile_id=actor_profile_id)
-    academic_bi = get_academic_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id)
-    finance_bi = get_finance_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id)
-    operations_bi = get_operations_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id)
+    campus_predictions = _safe_data(
+        {},
+        lambda: get_campus_predictions_dashboard(school_id, actor_profile_id=actor_profile_id),
+        context="campus predictions",
+    )
+    finance_predictions = _safe_data(
+        {},
+        lambda: get_finance_predictions_dashboard(school_id, actor_profile_id=actor_profile_id),
+        context="finance predictions",
+    )
+    academic_bi = _safe_data(
+        {},
+        lambda: get_academic_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id),
+        context="academic BI",
+    )
+    finance_bi = _safe_data(
+        {},
+        lambda: get_finance_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id),
+        context="finance BI",
+    )
+    operations_bi = _safe_data(
+        {},
+        lambda: get_operations_dashboard(school_id, period="monthly", actor_profile_id=actor_profile_id),
+        context="operations BI",
+    )
 
     weak_topics = [item.get("topic") for item in list(academic_bi.get("weak_topics") or []) if _normalize(item.get("topic"))][:3]
     at_risk_students = [item for item in list(student_predictions.get("students") or []) if _normalize(item.get("overall_risk_level")) in {"high", "critical"}][:3]
@@ -571,8 +613,14 @@ def run_ai_agent_jobs(
     actor_profile_id: str | None,
     requested_agent_key: str | None = None,
 ) -> dict[str, Any]:
-    registry = _seed_agent_registry(school_id)
-    blueprints = _agent_recommendation_blueprints(school_id, registry=registry, actor_profile_id=actor_profile_id)
+    try:
+        registry = _seed_agent_registry(school_id)
+        blueprints = _agent_recommendation_blueprints(school_id, registry=registry, actor_profile_id=actor_profile_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("AI agent orchestration setup failed for school_id=%s", school_id)
+        raise _service_unavailable() from exc
     agent_keys = [requested_agent_key] if _normalize(requested_agent_key) else list(registry.keys())
     created_recommendations = 0
     created_actions = 0
@@ -582,14 +630,20 @@ def run_ai_agent_jobs(
         registry_row = registry.get(_normalize(agent_key))
         if not registry_row:
             continue
-        _deactivate_agent_records(school_id, _normalize(agent_key))
-        job_id = _create_job(
-            school_id,
-            registry_row=registry_row,
-            actor_profile_id=actor_profile_id,
-            trigger_mode="manual",
-            summary={"recommendation_count": len(blueprints.get(_normalize(agent_key), []))},
-        )
+        try:
+            _deactivate_agent_records(school_id, _normalize(agent_key))
+            job_id = _create_job(
+                school_id,
+                registry_row=registry_row,
+                actor_profile_id=actor_profile_id,
+                trigger_mode="manual",
+                summary={"recommendation_count": len(blueprints.get(_normalize(agent_key), []))},
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("AI agent job creation failed for school_id=%s agent_key=%s", school_id, agent_key)
+            raise _service_unavailable() from exc
         created_jobs.append({"job_id": job_id, "agent_key": agent_key, "agent_name": registry_row.get("agent_name")})
         recommendation_rows = []
         for blueprint in blueprints.get(_normalize(agent_key), []):
@@ -611,13 +665,17 @@ def run_ai_agent_jobs(
             )
         if not recommendation_rows:
             continue
-        inserted_recommendations = (
-            _ai_table("agent_recommendations")
-            .insert(recommendation_rows)
-            .execute()
-            .data
-            or []
-        )
+        try:
+            inserted_recommendations = (
+                _ai_table("agent_recommendations")
+                .insert(recommendation_rows)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            logger.exception("AI recommendation insert failed for school_id=%s agent_key=%s", school_id, agent_key)
+            raise _service_unavailable() from exc
         created_recommendations += len(inserted_recommendations)
         action_rows = []
         for inserted in inserted_recommendations:
@@ -650,7 +708,11 @@ def run_ai_agent_jobs(
                     )
                 )
         if action_rows:
-            inserted_actions = _ai_table("agent_actions").insert(action_rows).execute().data or []
+            try:
+                inserted_actions = _ai_table("agent_actions").insert(action_rows).execute().data or []
+            except Exception as exc:
+                logger.exception("AI action insert failed for school_id=%s agent_key=%s", school_id, agent_key)
+                raise _service_unavailable() from exc
             created_actions += len(inserted_actions)
 
     _log_audit_entry(
@@ -674,29 +736,33 @@ def list_ai_agent_recommendations(
     status_filter: str | None = None,
     agent_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    query = (
-        _ai_table("agent_recommendations")
-        .select("*")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-    )
-    if _normalize(status_filter):
-        query = query.eq("approval_status", _normalize(status_filter))
-    if _normalize(agent_key):
-        query = query.eq("agent_key", _normalize(agent_key))
-    rows = [dict(row) for row in list(query.execute().data or [])]
-    action_rows = (
-        _ai_table("agent_actions")
-        .select("*")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
+    try:
+        query = (
+            _ai_table("agent_recommendations")
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
+        )
+        if _normalize(status_filter):
+            query = query.eq("approval_status", _normalize(status_filter))
+        if _normalize(agent_key):
+            query = query.eq("agent_key", _normalize(agent_key))
+        rows = [dict(row) for row in list(query.execute().data or [])]
+        action_rows = (
+            _ai_table("agent_actions")
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        logger.exception("AI recommendations unavailable for school_id=%s", school_id)
+        return []
     actions_by_recommendation: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in action_rows:
         actions_by_recommendation[_normalize(row.get("recommendation_id"))].append(dict(row))
@@ -724,17 +790,21 @@ def approve_ai_agent_recommendation(
     approver_role_key: str,
     notes: str | None = None,
 ) -> dict[str, Any]:
-    rows = (
-        _ai_table("agent_recommendations")
-        .select("*")
-        .eq("school_id", school_id)
-        .eq("id", recommendation_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
+    try:
+        rows = (
+            _ai_table("agent_recommendations")
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("id", recommendation_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        logger.exception("AI recommendation lookup failed for school_id=%s recommendation_id=%s", school_id, recommendation_id)
+        raise _service_unavailable() from exc
     if not rows:
         raise HTTPException(status_code=404, detail="AI recommendation not found")
     recommendation = dict(rows[0])
@@ -745,21 +815,25 @@ def approve_ai_agent_recommendation(
     if normalized_decision not in {"approved", "rejected"}:
         raise HTTPException(status_code=400, detail="Decision must be approved or rejected")
 
-    updated_recommendation = (
-        _ai_table("agent_recommendations")
-        .update(
-            {
-                "approval_status": normalized_decision,
-                "approval_notes": notes,
-                "approved_by_profile_id": _normalize_optional_uuid(approver_profile_id),
-                "approved_at": _utc_now_iso(),
-            }
+    try:
+        updated_recommendation = (
+            _ai_table("agent_recommendations")
+            .update(
+                {
+                    "approval_status": normalized_decision,
+                    "approval_notes": notes,
+                    "approved_by_profile_id": _normalize_optional_uuid(approver_profile_id),
+                    "approved_at": _utc_now_iso(),
+                }
+            )
+            .eq("id", recommendation_id)
+            .execute()
+            .data
+            or []
         )
-        .eq("id", recommendation_id)
-        .execute()
-        .data
-        or []
-    )
+    except Exception as exc:
+        logger.exception("AI recommendation update failed for school_id=%s recommendation_id=%s", school_id, recommendation_id)
+        raise _service_unavailable() from exc
     action_updates = {
         "approval_status": normalized_decision,
         "approved_by_profile_id": _normalize_optional_uuid(approver_profile_id),
@@ -767,7 +841,11 @@ def approve_ai_agent_recommendation(
         "notes": notes,
         "execution_status": "ready_for_manual_execution" if normalized_decision == "approved" else "cancelled",
     }
-    _ai_table("agent_actions").update(action_updates).eq("recommendation_id", recommendation_id).execute()
+    try:
+        _ai_table("agent_actions").update(action_updates).eq("recommendation_id", recommendation_id).execute()
+    except Exception as exc:
+        logger.exception("AI action update failed for school_id=%s recommendation_id=%s", school_id, recommendation_id)
+        raise _service_unavailable() from exc
     _log_audit_entry(
         school_id=school_id,
         profile_id=approver_profile_id,
@@ -775,14 +853,18 @@ def approve_ai_agent_recommendation(
         payload={"recommendation_id": recommendation_id, "notes": notes},
     )
     updated = dict(updated_recommendation[0]) if updated_recommendation else recommendation
-    updated["actions"] = (
-        _ai_table("agent_actions")
-        .select("*")
-        .eq("recommendation_id", recommendation_id)
-        .eq("is_active", True)
-        .execute()
-        .data
-        or []
+    updated["actions"] = _safe_data(
+        [],
+        lambda: (
+            _ai_table("agent_actions")
+            .select("*")
+            .eq("recommendation_id", recommendation_id)
+            .eq("is_active", True)
+            .execute()
+            .data
+            or []
+        ),
+        context="recommendation actions refresh",
     )
     return updated
 
@@ -795,8 +877,14 @@ def get_ai_agents_dashboard(
     registry = _seed_agent_registry(school_id)
     recommendations = list_ai_agent_recommendations(school_id)
     if not recommendations:
-        run_ai_agent_jobs(school_id, actor_profile_id=actor_profile_id)
-        recommendations = list_ai_agent_recommendations(school_id)
+        try:
+            run_ai_agent_jobs(school_id, actor_profile_id=actor_profile_id)
+            recommendations = list_ai_agent_recommendations(school_id)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                logger.warning("AI dashboard falling back to empty state for school_id=%s: %s", school_id, exc.detail)
+            else:
+                raise
 
     severity_counter = Counter(_normalize(item.get("severity")).lower() or "info" for item in recommendations)
     pending_approvals = [item for item in recommendations if _normalize(item.get("approval_status")) == "pending"]

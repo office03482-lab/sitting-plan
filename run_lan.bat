@@ -28,7 +28,8 @@ if "%PORT_BUSY%"=="1" (
 )
 
 echo Starting backend on 0.0.0.0:%BACKEND_PORT%...
-start "Backend LAN Server" cmd /k "cd /d ""%~dp0backend"" && venv\Scripts\uvicorn.exe app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT%"
+REM Avoid Uvicorn's Windows reload subprocess here; it can fail reopening stdin.
+start "Backend LAN Server" cmd /k "cd /d ""%~dp0backend"" && venv\Scripts\uvicorn.exe app.main:app --host 0.0.0.0 --port %BACKEND_PORT%"
 
 timeout /t 3 /nobreak > nul
 

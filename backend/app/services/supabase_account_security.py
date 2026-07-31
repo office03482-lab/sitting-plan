@@ -208,6 +208,19 @@ def _schema_table(schema: str, name: str, *, supabase: Any | None = None):
     return client.schema(schema).table(name)
 
 
+def _fetch_all_rows(query: Any, *, page_size: int = 1000) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    safe_page_size = max(1, page_size)
+    while True:
+        page = list(query.range(offset, offset + safe_page_size - 1).execute().data or [])
+        rows.extend(dict(row) for row in page)
+        if len(page) < safe_page_size:
+            break
+        offset += safe_page_size
+    return rows
+
+
 def _eq_boolean(query: Any, column: str, value: bool) -> Any:
     return query.filter(column, "eq", str(bool(value)).lower())
 
@@ -384,8 +397,7 @@ def _load_students_for_scope(
         query = query.eq("batch_id", batch_id)
     if class_name:
         query = query.eq("class_name", class_name)
-    rows = list(query.order("roll_number").execute().data or [])
-    records = [dict(row) for row in rows]
+    records = _fetch_all_rows(query.order("roll_number"))
     batch_names = _load_batch_names_for_students(school_id, records, supabase=supabase)
     for record in records:
         record["batch_name"] = batch_names.get(_normalize(record.get("batch_id"))) or "Unassigned"
@@ -472,7 +484,7 @@ def _load_staff_members_for_scope(
     staff_type: str | None = None,
     supabase: Any | None = None,
 ) -> list[dict[str, Any]]:
-    rows = list(
+    records = _fetch_all_rows(
         _eq_boolean(
             _public_table("staff_members", supabase=supabase)
             .select("id,school_id,profile_id,employee_code,full_name,email,phone,staff_type,department,designation,metadata,is_active,created_at")
@@ -481,11 +493,7 @@ def _load_staff_members_for_scope(
             True,
         )
         .order("full_name")
-        .execute()
-        .data
-        or []
     )
-    records = [dict(row) for row in rows]
     requested_staff_type = _normalize_optional(staff_type)
     normalized_type = normalize_staff_type(staff_type)
     if normalized_type in {"teaching", "invigilator"}:
@@ -573,8 +581,7 @@ def _load_guardians_for_scope(
     )
     if normalized_guardian_ids:
         query = query.in_("id", normalized_guardian_ids)
-    rows = list(query.order("full_name").execute().data or [])
-    return [dict(row) for row in rows]
+    return _fetch_all_rows(query.order("full_name"))
 
 
 def _role_user_type(selected_role: str) -> str:

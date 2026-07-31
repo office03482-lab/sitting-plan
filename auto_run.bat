@@ -174,7 +174,8 @@ if not "%BACKEND_PORT%"=="8000" (
 )
 
 echo [7/8] Starting backend server on port %BACKEND_PORT%...
-start "Backend Server" cmd /k "call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT%"
+REM Avoid Uvicorn's Windows reload subprocess here; it can fail reopening stdin.
+start "Backend Server" cmd /k "call venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT%"
 
 echo.
 echo [8/8] Setting up frontend...

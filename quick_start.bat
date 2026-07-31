@@ -62,7 +62,8 @@ if errorlevel 1 (
 REM Start backend
 echo.
 echo [2/4] Starting backend server...
-start "Backend" cmd /k "call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT% > ..\backend.log 2>&1"
+REM Avoid Uvicorn's Windows reload subprocess here; it can fail reopening stdin.
+start "Backend" cmd /k "call venv\Scripts\activate.bat && uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% > ..\backend.log 2>&1"
 
 echo Waiting for backend health check...
 set "BACKEND_READY=0"
