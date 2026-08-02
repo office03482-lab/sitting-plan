@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 type AuthStatus = 'IDLE' | 'INITIALIZING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'REGISTRATION_ERROR';
 
@@ -296,69 +296,70 @@ describe('Auth State Machine', () => {
 
   // ─── Phase 2.3 Fix: Heartbeat Serialization + No Timeout Retry ───────
 
-  it('26. heartbeat does not overlap — chained setTimeout waits for completion', () => {
-    let concurrentCount = 0;
-    let maxConcurrent = 0;
-    let completedCount = 0;
+  it('26. heartbeat does not overlap — chained setTimeout waits for completion', async () => {
+    vi.useFakeTimers();
+    try {
+      let concurrentCount = 0;
+      let maxConcurrent = 0;
+      let completedCount = 0;
 
-    function simulatedHeartbeat(): Promise<void> {
-      concurrentCount++;
-      maxConcurrent = Math.max(maxConcurrent, concurrentCount);
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          concurrentCount--;
-          completedCount++;
-          resolve();
-        }, 10);
-      });
+      function simulatedHeartbeat(): Promise<void> {
+        concurrentCount++;
+        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            concurrentCount--;
+            completedCount++;
+            resolve();
+          }, 10);
+        });
+      }
+
+      // Simulate chained setTimeout: next heartbeat starts only after previous completes
+      const scheduleNext = () => {
+        simulatedHeartbeat().finally(() => {
+          if (completedCount < 3) scheduleNext();
+        });
+      };
+      scheduleNext();
+
+      await vi.advanceTimersByTimeAsync(40);
+      expect(maxConcurrent).toBe(1); // never overlapped
+      expect(completedCount).toBe(3);
+    } finally {
+      vi.useRealTimers();
     }
-
-    // Simulate chained setTimeout: next heartbeat starts only after previous completes
-    const scheduleNext = () => {
-      simulatedHeartbeat().finally(() => {
-        if (completedCount < 3) scheduleNext();
-      });
-    };
-    scheduleNext();
-
-    // After all complete
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(maxConcurrent).toBe(1); // never overlapped
-        expect(completedCount).toBe(3);
-        resolve();
-      }, 100);
-    });
   });
 
-  it('27. setInterval heartbeat WOULD overlap (regression guard)', () => {
-    let concurrentCount = 0;
-    let maxConcurrent = 0;
+  it('27. setInterval heartbeat WOULD overlap (regression guard)', async () => {
+    vi.useFakeTimers();
+    try {
+      let concurrentCount = 0;
+      let maxConcurrent = 0;
 
-    function simulatedHeartbeat(): Promise<void> {
-      concurrentCount++;
-      maxConcurrent = Math.max(maxConcurrent, concurrentCount);
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          concurrentCount--;
-          resolve();
-        }, 30); // takes 30ms
-      });
+      function simulatedHeartbeat(): Promise<void> {
+        concurrentCount++;
+        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            concurrentCount--;
+            resolve();
+          }, 30); // takes 30ms
+        });
+      }
+
+      // setInterval fires every 10ms — WILL overlap with 30ms request
+      const intervalId = setInterval(() => {
+        simulatedHeartbeat();
+      }, 10);
+
+      await vi.advanceTimersByTimeAsync(50);
+      clearInterval(intervalId);
+      // setInterval creates overlapping requests by design
+      expect(maxConcurrent).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
     }
-
-    // setInterval fires every 10ms — WILL overlap with 30ms request
-    const intervalId = setInterval(() => {
-      simulatedHeartbeat();
-    }, 10);
-
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        clearInterval(intervalId);
-        // setInterval creates overlapping requests by design
-        expect(maxConcurrent).toBeGreaterThan(1);
-        resolve();
-      }, 50);
-    });
   });
 
   it('28. safe retry does NOT retry on timeout after fix', () => {

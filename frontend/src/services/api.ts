@@ -2694,8 +2694,8 @@ class ApiService {
 
   // ─── Parent Portal ─────────────────────────────────────────────────
 
-  async getParentPortalChildren() {
-    return this.api.get<import('@types').ParentPortalChild[]>('/parent/children');
+  async getParentPortalChildren(options?: { signal?: AbortSignal }) {
+    return this.api.get<import('@types').ParentPortalChild[]>('/parent/children', { signal: options?.signal });
   }
 
   async getParentPortalDashboard() {
@@ -2708,9 +2708,10 @@ class ApiService {
     });
   }
 
-  async getParentPortalAttendance(studentId?: string) {
+  async getParentPortalAttendance(studentId?: string, options?: { signal?: AbortSignal }) {
     return this.api.get<import('@types').ParentPortalAttendanceResponse>('/parent/attendance', {
       params: studentId ? { student_id: studentId } : {},
+      signal: options?.signal,
     });
   }
 
@@ -2732,13 +2733,20 @@ class ApiService {
     });
   }
 
-  async askParentPortalAi(data: { question: string; student_id?: string; history?: { role: string; content: string }[] }) {
-    return this.api.post<import('@types').ParentPortalAiResponse>('/parent/ai/ask', data);
+  async getParentPortalFees(studentId?: string) {
+    return this.api.get<import('@types').ParentPortalFeesResponse>('/parent/fees', {
+      params: studentId ? { student_id: studentId } : {},
+    });
   }
 
-  async getParentPortalRecommendations(studentId?: string) {
+  async askParentPortalAi(data: { question: string; student_id?: string; history?: { role: string; content: string }[] }, options?: { signal?: AbortSignal }) {
+    return this.api.post<import('@types').ParentPortalAiResponse>('/parent/ai/ask', data, { signal: options?.signal });
+  }
+
+  async getParentPortalRecommendations(studentId?: string, options?: { signal?: AbortSignal }) {
     return this.api.get<import('@types').ParentPortalRecommendation[]>('/parent/ai/recommendations', {
       params: studentId ? { student_id: studentId } : {},
+      signal: options?.signal,
     });
   }
 }

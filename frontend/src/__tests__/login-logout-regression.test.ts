@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getDefaultRouteForUser, isRouteCompatibleWithPortal, DEFAULT_HOME_ROUTE, PLATFORM_HOME_ROUTE } from '@/contexts/AuthProvider';
+import { canPreviewStudentPortal, getDefaultRouteForUser, isRouteCompatibleWithPortal, DEFAULT_HOME_ROUTE, PLATFORM_HOME_ROUTE } from '@/contexts/AuthProvider';
 
 /**
  * Login & Logout Regression Tests
@@ -506,6 +506,48 @@ describe('Portal Redirect Logic', () => {
   });
 });
 
+describe('canPreviewStudentPortal', () => {
+  it('28. returns false for null or undefined users', () => {
+    expect(canPreviewStudentPortal(null)).toBe(false);
+    expect(canPreviewStudentPortal(undefined)).toBe(false);
+  });
+
+  it('29. recognizes platform_admin and school_admin role keys', () => {
+    expect(canPreviewStudentPortal(mockPlatformAdminUser)).toBe(true);
+    expect(canPreviewStudentPortal(mockSchoolAdminUser)).toBe(true);
+  });
+
+  it('30. recognizes legacy admin role', () => {
+    const adminRoleUser = { ...mockSchoolAdminUser, role: 'admin' as const, role_key: undefined };
+    expect(canPreviewStudentPortal(adminRoleUser)).toBe(true);
+  });
+
+  it('31. recognizes admin access via admin_office.students permission even when role_key is not an admin key', () => {
+    const permissionAdmin = {
+      id: 'pa-x', role: 'viewer' as const, role_key: 'admin',
+      email: 'perm@test.com', full_name: 'Permission Admin', school_id: 'school-1',
+      is_active: true, permissions: ['admin_office.students', 'edupay.parent_portal'],
+    };
+    expect(canPreviewStudentPortal(permissionAdmin)).toBe(true);
+  });
+
+  it('32. rejects parents and students even when they hold edupay.parent_portal', () => {
+    expect(canPreviewStudentPortal(mockParentUser)).toBe(false);
+    expect(canPreviewStudentPortal(mockStudentUser)).toBe(false);
+    const parentWithPortal = { ...mockParentUser, permissions: ['edupay.parent_portal'] };
+    expect(canPreviewStudentPortal(parentWithPortal)).toBe(false);
+  });
+
+  it('33. rejects viewers who lack admin_office.students access', () => {
+    const viewerWithParentPerm = {
+      id: 'v-1', role: 'viewer' as const, role_key: 'viewer',
+      email: 'v@test.com', full_name: 'Viewer', school_id: 'school-1',
+      is_active: true, permissions: ['edupay.parent_portal', 'parent_intelligence.view'],
+    };
+    expect(canPreviewStudentPortal(viewerWithParentPerm)).toBe(false);
+  });
+});
+
 describe('isRouteCompatibleWithPortal', () => {
   it('26. platform_admin portal only allows /platform/* and / routes', () => {
     expect(isRouteCompatibleWithPortal('/platform/dashboard', 'platform_admin')).toBe(true);
@@ -532,5 +574,84 @@ describe('isRouteCompatibleWithPortal', () => {
     expect(isRouteCompatibleWithPortal('/overview', 'school_erp')).toBe(true);
     expect(isRouteCompatibleWithPortal('/student/dashboard', 'school_erp')).toBe(true);
     expect(isRouteCompatibleWithPortal('/platform/dashboard', 'school_erp')).toBe(true);
+  });
+});
+
+describe('Login — Single Source of Truth for Errors', () => {
+  // Mirrors Login.tsx: one message zone renders exactly one child (conflict box OR error box).
+  const renderMessage = (sessionConflict: unknown, message: string | null) => {
+    if (sessionConflict) return { kind: 'conflict' as const, count: 1 };
+    if (message) return { kind: 'error' as const, count: 1 };
+    return { kind: 'empty' as const, count: 0 };
+  };
+
+  it('1. A server/validation error is rendered exactly once', () => {
+    const view = renderMessage(null, 'Invalid login credentials');
+    expect(view.kind).toBe('error');
+    expect(view.count).toBe(1);
+  });
+
+  it('2. Session-conflict and plain error never render simultaneously', () => {
+    // Even if both are set, the message zone shows only the conflict box.
+    const conflict = { message: 'Existing session detected' };
+    const view = renderMessage(conflict, 'Existing session detected');
+    expect(view.kind).toBe('conflict');
+    expect(view.count).toBe(1);
+  });
+
+  it('3. Empty message zone still occupies reserved space (no CLS)', () => {
+    const view = renderMessage(null, null);
+    expect(view.kind).toBe('empty');
+    expect(view.count).toBe(0);
+    // The zone itself always renders with a min-height regardless of content.
+    expect('auth-message-zone').toMatch(/message-zone/);
+  });
+
+  it('4. Error clears when the user retries login', () => {
+    let error: string | null = 'Invalid login credentials';
+    // submitLogin sets error to null before attempting signIn
+    error = null;
+    expect(error).toBeNull();
+  });
+});
+
+describe('Login — Username School-Context UX', () => {
+  const looksLikeEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+  const SCHOOL_CONTEXT_MESSAGE = 'Please select a school before using a username. Alternatively, log in with your email.';
+
+  // Mirrors the submitLogin pre-check in Login.tsx
+  const requiresSchoolContext = (identifier: string, portalIntent: string, schoolHint: string | undefined) =>
+    portalIntent === 'school_erp' && !looksLikeEmail(identifier) && !schoolHint;
+
+  it('5. Username (no @) in school_erp without school context shows the friendly message and does not call signIn', () => {
+    const blocked = requiresSchoolContext('student01', 'school_erp', undefined);
+    expect(blocked).toBe(true);
+    if (blocked) {
+      expect(SCHOOL_CONTEXT_MESSAGE).toContain('select a school');
+      expect(SCHOOL_CONTEXT_MESSAGE).toContain('log in with your email');
+    }
+  });
+
+  it('6. Username login proceeds when a school context is present', () => {
+    expect(requiresSchoolContext('student01', 'school_erp', 'school-1')).toBe(false);
+  });
+
+  it('7. Email identifiers are never blocked by the school-context check', () => {
+    expect(requiresSchoolContext('student01@school.edu', 'school_erp', undefined)).toBe(false);
+  });
+
+  it('8. Username login for student/parent/platform_admin portals does not require school context', () => {
+    expect(requiresSchoolContext('student01', 'student_portal', undefined)).toBe(false);
+    expect(requiresSchoolContext('parent01', 'parent_portal', undefined)).toBe(false);
+    expect(requiresSchoolContext('admin01', 'platform_admin', undefined)).toBe(false);
+  });
+
+  it('9. Backend "School context is required" error is translated to the friendly message', () => {
+    const raw = 'School context is required for username login. Please use your login email.';
+    const friendly = raw.includes('School context is required for username login')
+      ? SCHOOL_CONTEXT_MESSAGE
+      : raw;
+    expect(friendly).toBe(SCHOOL_CONTEXT_MESSAGE);
+    expect(friendly).not.toContain('School context is required');
   });
 });

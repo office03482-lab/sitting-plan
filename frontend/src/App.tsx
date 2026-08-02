@@ -52,6 +52,7 @@ const ParentAttendance = lazy(() => import('@pages/ParentAttendance'));
 const ParentTestResults = lazy(() => import('@pages/ParentTestResults'));
 const ParentAssignments = lazy(() => import('@pages/ParentAssignments'));
 const ParentAlerts = lazy(() => import('@pages/ParentAlerts'));
+const ParentFees = lazy(() => import('@pages/ParentFees'));
 const ParentAiAssistant = lazy(() => import('@pages/ParentAiAssistant'));
 const PortalAccessManager = lazy(() => import('@pages/PortalAccessManager'));
 const CourseDetail = lazy(() => import('@pages/CourseDetail'));
@@ -746,6 +747,14 @@ function AppShell() {
           element={
             <ParentRoute>
               <ParentAlerts />
+            </ParentRoute>
+          }
+        />
+        <Route
+          path="/parent/fees"
+          element={
+            <ParentRoute>
+              <ParentFees />
             </ParentRoute>
           }
         />

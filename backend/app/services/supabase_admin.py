@@ -3,11 +3,97 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from functools import lru_cache
 from typing import Any, Dict, List
 
+import httpx
+from postgrest._sync.client import SyncPostgrestClient
 from supabase import Client, create_client
 from app.config import BASE_DIR, settings
+
+_SUPABASE_RETRYABLE_METHODS = {"GET", "HEAD", "OPTIONS", "DELETE", "PUT"}
+_SUPABASE_TRANSPORT_RETRIES = 3
+_SUPABASE_RETRY_BACKOFF_SECONDS = 0.35
+_SUPABASE_REQUEST_TIMEOUT = httpx.Timeout(
+    connect=10.0,
+    read=30.0,
+    write=30.0,
+    pool=10.0,
+)
+
+
+class _RetryableSupabaseClient(httpx.Client):
+    def __init__(self, retries: int = _SUPABASE_TRANSPORT_RETRIES, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._supabase_retries = retries
+
+    def send(self, request: httpx.Request, *args, **kwargs) -> httpx.Response:
+        idempotent = request.method.upper() in _SUPABASE_RETRYABLE_METHODS
+        last_exc = None
+        for attempt in range(self._supabase_retries + 1):
+            try:
+                return super().send(request, *args, **kwargs)
+            except httpx.TransportError as exc:
+                last_exc = exc
+                if not idempotent or attempt >= self._supabase_retries:
+                    raise
+                time.sleep(_SUPABASE_RETRY_BACKOFF_SECONDS * (attempt + 1))
+        raise last_exc
+
+
+def _inject_supabase_transport_retries() -> None:
+    original_init = SyncPostgrestClient.__init__
+
+    def _init_with_retries(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        session = getattr(self, "session", None)
+        if session is None or isinstance(session, _RetryableSupabaseClient):
+            return
+        self.session = _RetryableSupabaseClient(
+            base_url=session.base_url,
+            headers=session.headers,
+            timeout=_SUPABASE_REQUEST_TIMEOUT,
+            follow_redirects=True,
+            transport=getattr(session, "_transport", None),
+        )
+
+    SyncPostgrestClient.__init__ = _init_with_retries
+
+
+_inject_supabase_transport_retries()
+
+_SUPABASE_SCHEMA_CLIENT_CACHE: dict[tuple[str, str, tuple], SyncPostgrestClient] = {}
+_SUPABASE_SCHEMA_CLIENT_CACHE_LOCK = threading.Lock()
+
+
+def _inject_schema_client_reuse() -> None:
+    """Cache per-schema PostgREST clients.
+
+    ``SyncPostgrestClient.schema()`` builds a brand-new httpx session every
+    call, so each non-public-schema query pays a fresh TCP/TLS handshake
+    (~1-4s against Cloudflare-fronted Supabase). Reusing one client per
+    (base_url, schema, headers) lets connection pooling kick in and drops the
+    per-query cost to ~0.2s. This is the dominant latency source for the
+    parent portal (which hits academic/attendance/exam schemas heavily).
+    """
+    original_schema = SyncPostgrestClient.schema
+
+    def _schema_cached(self, schema: str) -> SyncPostgrestClient:
+        headers_tuple = tuple(sorted((str(k), str(v)) for k, v in dict(self.headers).items()))
+        key = (str(self.base_url), schema, headers_tuple)
+        with _SUPABASE_SCHEMA_CLIENT_CACHE_LOCK:
+            cached = _SUPABASE_SCHEMA_CLIENT_CACHE.get(key)
+            if cached is None:
+                cached = original_schema(self, schema)
+                _SUPABASE_SCHEMA_CLIENT_CACHE[key] = cached
+            return cached
+
+    SyncPostgrestClient.schema = _schema_cached
+
+
+_inject_schema_client_reuse()
 
 
 def _read_env_file_value(key: str) -> str:

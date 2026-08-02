@@ -62,6 +62,13 @@ def _is_missing_relation_error(exc: Exception) -> bool:
     )
 
 
+def _is_optional_lookup_error(exc: Exception) -> bool:
+    error_text = str(exc or "")
+    error_code = getattr(exc, "code", None)
+    lowered = error_text.lower()
+    return _is_missing_relation_error(exc) or error_code == "22P02" or "invalid input syntax for type uuid" in lowered
+
+
 def _get_cached_dashboard_payload(school_id: str) -> dict[str, Any] | None:
     cached = _dashboard_cache.get(school_id)
     if cached and cached["expires_at"] > time.monotonic():
@@ -94,19 +101,29 @@ def _to_int(value: Any) -> int:
 
 
 def _get_timetable_entries_count(school_id: str) -> int:
-    response = (
-        get_timetable_table_query()
-        .select("id", count="exact")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-    )
+    try:
+        response = (
+            get_timetable_table_query()
+            .select("id", count="exact")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        if _is_optional_lookup_error(exc):
+            return 0
+        raise
     return int(getattr(response, "count", 0) or 0)
 
 
 def _load_edupay_dashboard_summary(school_id: str) -> dict[str, Any]:
-    payload = get_edupay_dashboard_summary_rpc(school_id)
+    try:
+        payload = get_edupay_dashboard_summary_rpc(school_id)
+    except Exception as exc:
+        if _is_optional_lookup_error(exc):
+            return {}
+        raise
     if not payload:
         return {}
     return {
@@ -284,7 +301,7 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict[str, Any]:
             )
             return int(getattr(response, "count", 0) or 0)
         except Exception as exc:
-            if _is_missing_relation_error(exc):
+            if _is_optional_lookup_error(exc):
                 return 0
             raise
 
@@ -296,7 +313,7 @@ def _fallback_dashboard(school_id: str, started_at: float) -> dict[str, Any]:
                 query = query.eq(key, value)
             return list((query.execute()).data or [])
         except Exception as exc:
-            if _is_missing_relation_error(exc):
+            if _is_optional_lookup_error(exc):
                 return []
             raise
 

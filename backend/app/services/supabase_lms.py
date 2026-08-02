@@ -1722,6 +1722,7 @@ def get_student_success_dashboard(
     *,
     student: dict[str, Any] | None = None,
     parent_students: list[dict[str, Any]] | None = None,
+    viewer_mode_override: str | None = None,
 ) -> dict[str, Any]:
     target_students = [student] if student is not None else list(parent_students or [])
     if not target_students:
@@ -1750,7 +1751,7 @@ def get_student_success_dashboard(
         enrolled_courses = [get_course(school_id, item.get("id"), student=student) for item in list_courses(school_id, student=student)]
         ai_insights = _build_ai_insights(school_id, student, enrolled_courses, progress_items)
         student_dashboard = _build_student_success_dashboard(school_id, student, progress_items, enrolled_courses)
-        viewer_mode = "student"
+        viewer_mode = viewer_mode_override or "student"
         child_dashboards: list[dict[str, Any]] = []
     else:
         enrolled_courses = []
@@ -1772,7 +1773,7 @@ def get_student_success_dashboard(
             "recommended_tests": [],
             "revision_suggestions": ["Track your child's incomplete lessons and upcoming assignments from My Learning"],
         }
-        viewer_mode = "parent"
+        viewer_mode = viewer_mode_override or "parent"
     return {
         "viewer_mode": viewer_mode,
         "progress_items": progress_items,

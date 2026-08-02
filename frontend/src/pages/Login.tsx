@@ -23,6 +23,9 @@ const DEFAULT_BRANDING: SchoolPublicBranding = {
   theme: 'auto',
 };
 
+const SCHOOL_CONTEXT_REQUIRED_HINT = 'School context is required for username login';
+const SCHOOL_CONTEXT_MESSAGE = 'Please select a school before using a username. Alternatively, log in with your email.';
+
 const TABS: { key: PortalIntent; label: string; Icon: typeof School | typeof GraduationCap | typeof Users }[] = [
   { key: 'school_erp', label: 'School ERP', Icon: School },
   { key: 'student_portal', label: 'Student', Icon: GraduationCap },
@@ -61,6 +64,17 @@ const PORTAL_DETAILS: Record<PortalIntent, {
     welcomeMessage: 'Welcome back! Please enter your details.',
   },
 };
+
+function looksLikeEmail(value: string): boolean {
+  return /\S+@\S+\.\S+/.test(value.trim());
+}
+
+function toFriendlyLoginError(raw: string): string {
+  if (raw.includes(SCHOOL_CONTEXT_REQUIRED_HINT)) {
+    return SCHOOL_CONTEXT_MESSAGE;
+  }
+  return raw;
+}
 
 export default function Login() {
   const { signIn, user, authError, getDefaultRoute } = useAuth();
@@ -168,6 +182,10 @@ export default function Login() {
       setError('Please enter both email/username and password.');
       return;
     }
+    if (portalIntent === 'school_erp' && !looksLikeEmail(trimmedIdentifier) && !schoolHint) {
+      setError(SCHOOL_CONTEXT_MESSAGE);
+      return;
+    }
     setLoading(true);
     setError(null);
     setSessionConflict(null);
@@ -176,14 +194,17 @@ export default function Login() {
     } catch (requestError: any) {
       if (requestError?.code === 'session_limit_exceeded') {
         setSessionConflict(requestError?.conflict || null);
+        setError(null);
+        return;
       }
-      setError(
+      const rawMessage =
         requestError?.conflict?.message ||
-          requestError?.response?.data?.detail ||
-          requestError?.message ||
-          requestError?.error_description ||
-          'Login failed',
-      );
+        requestError?.response?.data?.detail ||
+        requestError?.message ||
+        requestError?.error_description ||
+        'Login failed';
+      setSessionConflict(null);
+      setError(toFriendlyLoginError(String(rawMessage)));
     } finally {
       setLoading(false);
     }
@@ -199,6 +220,8 @@ export default function Login() {
     setError(null);
     setSessionConflict(null);
   };
+
+  const message = error || authError || null;
 
   return (
     <div className="login-page">
@@ -296,46 +319,38 @@ export default function Login() {
                 </div>
               </div>
 
-              {error ? <p className="auth-error">{error}</p> : null}
-
-              {sessionConflict ? (
-                <div className="auth-session-conflict">
-                  <p className="font-semibold">Existing session detected.</p>
-                  <p className="mt-1 text-xs opacity-80">
-                    {sessionConflict?.current_session?.device_name || 'Another device'} | {sessionConflict?.current_session?.browser || 'Browser'}
-                  </p>
-                  <p className="mt-1 text-xs opacity-70">
-                    Last activity: {sessionConflict?.current_session?.last_activity || 'Recently active'}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => void submitLogin({ forceTakeover: true })}
-                    className="auth-conflict-btn"
-                  >
-                    Continue Here
-                  </button>
-                </div>
-              ) : null}
-
-              {!error && authError ? <p className="text-sm font-semibold text-amber-700">{authError}</p> : null}
-
-              {error && (
-                <div className="auth-error-detail">
-                  {error.includes('Session registration timeout') || error.includes('session registration') ? (
-                    <p>Login verified, but application session setup could not complete. Please try again.</p>
-                  ) : error.includes('Failed to fetch') || error.includes('NetworkError') || error.includes('network') ? (
-                    <>
-                      <p>Network error. Check browser console and Supabase health:</p>
-                      <div className="mt-1 break-all font-semibold">
-                        {`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}
-                      </div>
-                    </>
-                  ) : (
-                    <p>{error}</p>
-                  )}
-                </div>
-              )}
+              <div className="auth-message-zone" aria-live="polite">
+                {sessionConflict ? (
+                  <div className="auth-session-conflict">
+                    <div className="auth-conflict-info">
+                      <p className="auth-conflict-title">Existing session detected.</p>
+                      <p className="auth-conflict-detail">
+                        {sessionConflict?.current_session?.device_name || 'Another device'} | {sessionConflict?.current_session?.browser || 'Browser'}
+                        {sessionConflict?.current_session?.last_activity ? ` · Last activity: ${sessionConflict.current_session.last_activity}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void submitLogin({ forceTakeover: true })}
+                      className="auth-conflict-btn"
+                    >
+                      Continue Here
+                    </button>
+                  </div>
+                ) : message ? (
+                  <div className="auth-error-box" role="alert">
+                    <p className="auth-error-text">
+                      {message.includes('Session registration timeout') || message.includes('session registration')
+                        ? 'Login verified, but application session setup could not complete. Please try again.'
+                        : message}
+                    </p>
+                    {message.includes('Failed to fetch') || message.includes('NetworkError') || message.includes('network') ? (
+                      <code className="auth-error-url">{`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}</code>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
 
               <button
                 type="submit"
@@ -443,7 +458,7 @@ export default function Login() {
 
         .auth-panel-inner {
           border-radius: 20px;
-          padding: 32px 32px 28px;
+          padding: 28px 32px 24px;
           height: 100%;
           display: flex;
           flex-direction: column;
@@ -454,7 +469,7 @@ export default function Login() {
         .auth-logo-wrap {
           display: flex;
           justify-content: center;
-          margin-bottom: 20px;
+          margin-bottom: 16px;
         }
 
         .auth-logo {
@@ -470,7 +485,7 @@ export default function Login() {
           letter-spacing: 0.16em;
           text-transform: uppercase;
           color: #94a3b8;
-          margin-bottom: 14px;
+          margin-bottom: 12px;
         }
 
         .portal-selector {
@@ -481,7 +496,7 @@ export default function Login() {
           backdrop-filter: blur(8px);
           border-radius: 16px;
           padding: 6px;
-          margin-bottom: 20px;
+          margin-bottom: 16px;
           box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
         }
 
@@ -562,7 +577,7 @@ export default function Login() {
           font-size: 13px;
           font-weight: 500;
           color: #94a3b8;
-          margin-bottom: 20px;
+          margin-bottom: 16px;
         }
 
         .auth-form {
@@ -572,7 +587,7 @@ export default function Login() {
         }
 
         .auth-field {
-          margin-bottom: 14px;
+          margin-bottom: 12px;
         }
 
         .auth-field-label {
@@ -635,31 +650,78 @@ export default function Login() {
           color: #0ea5e9;
         }
 
-        .auth-error {
-          font-size: 13px;
-          font-weight: 600;
-          color: #f43f5e;
+        .auth-message-zone {
+          min-height: 52px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
           margin-bottom: 12px;
+          flex-shrink: 0;
+        }
+
+        .auth-error-box {
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          border-radius: 12px;
+          padding: 8px 12px;
+          font-size: 12px;
+          color: #b91c1c;
+        }
+
+        .auth-error-text {
+          font-weight: 600;
+          line-height: 1.45;
+        }
+
+        .auth-error-url {
+          display: block;
+          margin-top: 4px;
+          font-size: 11px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          word-break: break-all;
         }
 
         .auth-session-conflict {
+          display: flex;
+          align-items: center;
+          gap: 12px;
           background: #fff7ed;
           border: 1px solid #fed7aa;
-          border-radius: 14px;
-          padding: 14px 16px;
-          margin-bottom: 12px;
-          font-size: 13px;
+          border-radius: 12px;
+          padding: 8px 12px;
+          min-height: 52px;
+          font-size: 12px;
           color: #9a3412;
         }
 
+        .auth-conflict-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .auth-conflict-title {
+          font-weight: 700;
+          font-size: 12px;
+        }
+
+        .auth-conflict-detail {
+          margin-top: 2px;
+          font-size: 11px;
+          opacity: 0.85;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
         .auth-conflict-btn {
-          margin-top: 10px;
+          flex-shrink: 0;
+          margin-top: 0;
           border-radius: 999px;
           background: #ea580c;
           color: #fff;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
-          padding: 8px 20px;
+          padding: 7px 14px;
           border: none;
           cursor: pointer;
           transition: background 0.2s ease;
@@ -674,16 +736,6 @@ export default function Login() {
           cursor: not-allowed;
         }
 
-        .auth-error-detail {
-          background: #fffbeb;
-          border: 1px solid #fde68a;
-          border-radius: 14px;
-          padding: 14px 16px;
-          margin-bottom: 12px;
-          font-size: 12px;
-          color: #92400e;
-        }
-
         .auth-submit-btn {
           width: 100%;
           border: none;
@@ -696,7 +748,7 @@ export default function Login() {
           background-size: 200% 100%;
           transition: all 0.25s ease;
           cursor: pointer;
-          margin-bottom: 14px;
+          margin-bottom: 12px;
         }
 
         .auth-submit-btn:hover:not(:disabled) {
@@ -977,6 +1029,10 @@ export default function Login() {
           .auth-field {
             margin-bottom: 12px;
           }
+          .auth-message-zone {
+            min-height: 48px;
+            margin-bottom: 10px;
+          }
           .auth-submit-btn {
             padding: 12px 22px;
             margin-bottom: 12px;
@@ -1019,6 +1075,10 @@ export default function Login() {
           }
           .auth-field {
             margin-bottom: 10px;
+          }
+          .auth-message-zone {
+            min-height: 44px;
+            margin-bottom: 8px;
           }
           .auth-field-label {
             font-size: 11px;
@@ -1109,15 +1169,19 @@ export default function Login() {
           .auth-helper {
             font-size: 10px;
           }
-          .auth-error {
-            font-size: 11px;
+          .auth-message-zone {
+            min-height: 40px;
             margin-bottom: 6px;
           }
-          .auth-session-conflict,
-          .auth-error-detail {
-            padding: 8px 10px;
+          .auth-error-box,
+          .auth-session-conflict {
+            padding: 6px 10px;
             font-size: 11px;
-            margin-bottom: 8px;
+            border-radius: 10px;
+          }
+          .auth-conflict-btn {
+            padding: 5px 10px;
+            font-size: 10px;
           }
           .compass-experience {
             min-height: 260px;
@@ -1249,9 +1313,13 @@ export default function Login() {
             font-size: 14px;
           }
 
-          .auth-session-conflict,
-          .auth-error-detail {
-            padding: 10px 12px;
+          .auth-message-zone {
+            min-height: 48px;
+          }
+
+          .auth-error-box,
+          .auth-session-conflict {
+            padding: 8px 10px;
             font-size: 12px;
           }
 
@@ -1319,6 +1387,11 @@ export default function Login() {
           .auth-submit-btn {
             padding: 11px 16px;
             font-size: 13px;
+          }
+
+          .auth-message-zone {
+            min-height: 44px;
+            margin-bottom: 8px;
           }
 
           .compass-experience {

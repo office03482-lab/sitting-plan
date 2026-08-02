@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
-import { Upload, Download, RefreshCw, CheckCircle, XCircle, AlertTriangle, Edit2, Trash2, Plus, Camera, ExternalLink, FileText, X } from 'lucide-react';
+import { Upload, Download, RefreshCw, CheckCircle, XCircle, AlertTriangle, Edit2, Trash2, Plus, Camera, ExternalLink, FileText, X, Eye } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@store/app';
 import { useAuthStore } from '@store/auth';
@@ -2407,6 +2407,14 @@ export default function StudentManagement() {
                             title="Edit"
                           >
                             <Edit2 size={18} />
+                          </button>
+                          <button
+                            onClick={() => navigate(`/student/dashboard?preview=${encodeURIComponent(String(student.id))}`)}
+                            disabled={uploading || deletingAll}
+                            className="text-indigo-600 hover:text-indigo-900 mr-4"
+                            title="View Student Portal (preview)"
+                          >
+                            <Eye size={18} />
                           </button>
                           <button
                             onClick={() => handleDeleteStudent(student.id)}

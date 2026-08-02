@@ -12,6 +12,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+# Hard cap for a single provider call (including internal retries). The
+# google-generativeai SDK has no default request timeout, so a stalled or
+# slow provider response would otherwise hold the request (and the FastAPI
+# worker thread) open indefinitely.
+PROVIDER_CALL_TIMEOUT_SECONDS = 45.0
 _provider_lock = threading.Lock()
 _gemini_module: Any | None = None
 _gemini_model: Any | None = None
@@ -21,12 +26,59 @@ class AIProviderError(RuntimeError):
     """Raised when the configured AI provider is unavailable."""
 
 
+class AIQuotaError(AIProviderError):
+    """Raised when the AI provider rejects the request due to a rate/daily quota."""
+
+
 def get_provider_name() -> str:
     return str(settings.ai_provider or "gemini").strip().lower() or "gemini"
 
 
 def provider_is_configured() -> bool:
     return bool(settings.gemini_api_key) if get_provider_name() == "gemini" else False
+
+
+def _is_quota_exhaustion(exc: BaseException) -> bool:
+    """True when the provider rejected the call because of a quota/rate limit."""
+    try:
+        from google.api_core import exceptions as google_exceptions
+
+        if isinstance(exc, google_exceptions.ResourceExhausted):
+            return True
+        if isinstance(exc, google_exceptions.TooManyRequests):
+            return True
+        if isinstance(exc, google_exceptions.RetryError) and getattr(exc, "cause", None) is not None:
+            return _is_quota_exhaustion(exc.cause)
+    except Exception:  # pragma: no cover - detection is best-effort
+        pass
+    return False
+
+
+def _provider_request_options() -> dict[str, Any]:
+    """Request options that bound every Gemini call (timeout + capped retry).
+
+    `timeout` bounds each individual call. `retry` caps the SDK's internal
+    exponential backoff so a flaky provider cannot spin for minutes, and
+    never retries quota/rate-limit errors (RESOURCE_EXHAUSTED): those carry
+    a 30-60s server retry delay (or are daily quotas), so retrying them only
+    hangs the request for the full deadline before the graceful fallback can
+    respond.
+    """
+    options: dict[str, Any] = {"timeout": PROVIDER_CALL_TIMEOUT_SECONDS}
+    try:
+        from google.api_core import exceptions as google_exceptions
+        from google.api_core import retry as google_retry
+
+        options["retry"] = google_retry.Retry(
+            initial=0.5,
+            maximum=5.0,
+            multiplier=1.5,
+            deadline=PROVIDER_CALL_TIMEOUT_SECONDS,
+            predicate=lambda exc: not isinstance(exc, google_exceptions.ResourceExhausted),
+        )
+    except Exception:  # pragma: no cover - retry capping is best-effort
+        pass
+    return options
 
 
 def _load_gemini_module():
@@ -92,11 +144,14 @@ def _extract_text(response: Any) -> str:
 def generate_text(prompt: str) -> str:
     try:
         model = _build_gemini_model()
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options=_provider_request_options())
         return _extract_text(response)
     except AIProviderError:
         raise
     except Exception as exc:
+        if _is_quota_exhaustion(exc):
+            logger.warning("Gemini quota exhausted for text generation: %s", exc)
+            raise AIQuotaError("Gemini daily quota exceeded") from exc
         logger.exception("Gemini text generation failed")
         raise AIProviderError("AI service temporarily unavailable") from exc
 
@@ -110,6 +165,7 @@ def generate_json(prompt: str) -> dict[str, Any]:
                 "response_mime_type": "application/json",
                 "temperature": 0.3,
             },
+            request_options=_provider_request_options(),
         )
         text = _extract_text(response)
         payload = json.loads(text)
@@ -119,6 +175,9 @@ def generate_json(prompt: str) -> dict[str, Any]:
     except AIProviderError:
         raise
     except Exception as exc:
+        if _is_quota_exhaustion(exc):
+            logger.warning("Gemini quota exhausted for JSON generation: %s", exc)
+            raise AIQuotaError("Gemini daily quota exceeded") from exc
         logger.exception("Gemini JSON generation failed")
         raise AIProviderError("AI service temporarily unavailable") from exc
 
@@ -140,10 +199,16 @@ def chat(messages: list[dict[str, Any]]) -> str:
             )
 
         session = model.start_chat(history=history)
-        response = session.send_message(_stringify_content(messages[-1].get("content")))
+        response = session.send_message(
+            _stringify_content(messages[-1].get("content")),
+            request_options=_provider_request_options(),
+        )
         return _extract_text(response)
     except AIProviderError:
         raise
     except Exception as exc:
+        if _is_quota_exhaustion(exc):
+            logger.warning("Gemini quota exhausted for chat: %s", exc)
+            raise AIQuotaError("Gemini daily quota exceeded") from exc
         logger.exception("Gemini chat failed")
         raise AIProviderError("AI service temporarily unavailable") from exc

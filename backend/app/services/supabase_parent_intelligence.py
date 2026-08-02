@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -633,13 +634,23 @@ def _batch_student_parent_payloads(
     if not student_ids:
         return []
 
-    attendance_map = _load_student_attendance_rows_batch(school_id, student_ids, days=90)
-    live_map = _load_live_attendance_rows_batch(school_id, student_ids, days=90)
-    results_map = _load_results_batch(school_id, student_ids, limit=20)
-    study_plans_map = _load_study_plans_batch(school_id, student_ids, days=30)
-    discipline_map = _load_discipline_records_batch(school_id, student_ids)
+    attendance_map: dict[str, list[dict[str, Any]]] = {}
+    live_map: dict[str, list[dict[str, Any]]] = {}
+    results_map: dict[str, list[dict[str, Any]]] = {}
+    study_plans_map: dict[str, list[dict[str, Any]]] = {}
+    discipline_map: dict[str, list[dict[str, Any]]] = {}
+    all_hostel_requests: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [
+            pool.submit(_load_student_attendance_rows_batch, school_id, student_ids, days=90),
+            pool.submit(_load_live_attendance_rows_batch, school_id, student_ids, days=90),
+            pool.submit(_load_results_batch, school_id, student_ids, limit=20),
+            pool.submit(_load_study_plans_batch, school_id, student_ids, days=30),
+            pool.submit(_load_discipline_records_batch, school_id, student_ids),
+            pool.submit(list_hostel_requests, school_id),
+        ]
+        attendance_map, live_map, results_map, study_plans_map, discipline_map, all_hostel_requests = (f.result() for f in futures)
 
-    all_hostel_requests = list_hostel_requests(school_id)
     hostel_map: dict[str, dict[str, Any] | None] = {}
     for sid in student_ids:
         matching = [item for item in all_hostel_requests if _normalize(item.get("student_id")) == sid]
@@ -680,15 +691,25 @@ def _student_parent_payload(
     attendance_rows = _attendance_rows if _attendance_rows is not None else _load_student_attendance_rows(school_id, student_id, days=90)
     live_rows = _live_rows if _live_rows is not None else _load_live_attendance_rows(school_id, student_id, days=90)
     result_rows = _result_rows if _result_rows is not None else list_results(school_id, student_id=student_id, limit=20)
-    analytics = get_student_analytics(school_id, student_id)
-    progress_dashboard = get_progress_dashboard(school_id, student=student)
-    assignments = list_assignments(school_id, student=student)
-    study_plans = _study_plans if _study_plans is not None else _load_study_plans(school_id, student_id, days=30)
-    hostel_status = _hostel_status if _hostel_status is not None else _load_hostel_status(school_id, student_id)
-    discipline_rows = _discipline_rows if _discipline_rows is not None else _load_discipline_records(school_id, student_id)
-    timetable_rows = _load_recent_timetable_rows(school_id, student)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        analytics_fut = pool.submit(get_student_analytics, school_id, student_id)
+        progress_fut = pool.submit(get_progress_dashboard, school_id, student=student)
+        assignments_fut = pool.submit(list_assignments, school_id, student=student)
+        timetable_fut = pool.submit(_load_recent_timetable_rows, school_id, student)
+        tests_fut = pool.submit(list_tests, school_id, student_batch_id=_normalize(student.get("batch_id")) or None, limit=10)
+        study_plans_fut = pool.submit(_load_study_plans, school_id, student_id, days=30)
+        hostel_fut = pool.submit(_load_hostel_status, school_id, student_id)
+        discipline_fut = pool.submit(_load_discipline_records, school_id, student_id)
+        analytics = analytics_fut.result()
+        progress_dashboard = progress_fut.result()
+        assignments = assignments_fut.result()
+        timetable_rows = timetable_fut.result()
+        all_tests = tests_fut.result()
+    study_plans = _study_plans if _study_plans is not None else study_plans_fut.result()
+    hostel_status = _hostel_status if _hostel_status is not None else hostel_fut.result()
+    discipline_rows = _discipline_rows if _discipline_rows is not None else discipline_fut.result()
     upcoming_tests = [
-        item for item in list_tests(school_id, student_batch_id=_normalize(student.get("batch_id")) or None, limit=10)
+        item for item in all_tests
         if _parse_iso_datetime(item.get("starts_at")) and (_parse_iso_datetime(item.get("starts_at")) or _utc_now()).date() <= (_today_local() + timedelta(days=7))
     ]
 

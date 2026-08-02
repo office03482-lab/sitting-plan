@@ -79,7 +79,7 @@ function buildAssetPreviewMap(assets: SchoolBrandAsset[]) {
 }
 
 export default function SchoolBrandingPage() {
-  const { user } = useAuth();
+  const { user, authReady, sessionReady } = useAuth();
   const { activeSchoolId, setActiveSchool } = usePlatformAdminSchoolStore();
   const [manageableSchools, setManageableSchools] = useState<ManageableSchoolSummary[]>([]);
   const [schoolSearch, setSchoolSearch] = useState('');
@@ -132,6 +132,9 @@ export default function SchoolBrandingPage() {
   const isDirty = toSnapshot(form) !== loadedSnapshot;
 
   useEffect(() => {
+    if (!sessionReady || !authReady) {
+      return;
+    }
     const loadManageableSchools = async () => {
       try {
         setSchoolsLoading(true);
@@ -152,7 +155,7 @@ export default function SchoolBrandingPage() {
     };
 
     void loadManageableSchools();
-  }, [activeSchoolId]);
+  }, [activeSchoolId, authReady, sessionReady]);
 
   useEffect(() => {
     if (!selectorOpen) return;
@@ -173,6 +176,9 @@ export default function SchoolBrandingPage() {
   }, [selectorOpen]);
 
   useEffect(() => {
+    if (!sessionReady || !authReady) {
+      return;
+    }
     if (!selectedSchoolId) {
       setForm({});
       setProfile(null);
@@ -214,7 +220,7 @@ export default function SchoolBrandingPage() {
     };
 
     void loadProfile();
-  }, [selectedSchoolId]);
+  }, [selectedSchoolId, authReady, sessionReady]);
 
   const updateField = (key: string, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));

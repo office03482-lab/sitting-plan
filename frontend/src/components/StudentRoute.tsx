@@ -1,7 +1,7 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { useAuth } from '@/contexts/AuthProvider';
+import { canPreviewStudentPortal, useAuth } from '@/contexts/AuthProvider';
 
 type StudentRouteProps = {
   children: ReactNode;
@@ -9,6 +9,7 @@ type StudentRouteProps = {
 
 export function StudentRoute({ children }: StudentRouteProps) {
   const { user, authReady, loading } = useAuth();
+  const [searchParams] = useSearchParams();
 
   if (loading || !authReady) {
     return (
@@ -22,7 +23,9 @@ export function StudentRoute({ children }: StudentRouteProps) {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role !== 'student') {
+  const isAdminPreview = canPreviewStudentPortal(user) && searchParams.has('preview');
+
+  if (user.role !== 'student' && !isAdminPreview) {
     return <Navigate to="/login" replace />;
   }
 

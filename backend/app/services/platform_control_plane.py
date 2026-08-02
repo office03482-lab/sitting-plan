@@ -768,10 +768,16 @@ def _usage_item_for_school(school: dict[str, Any]) -> dict[str, Any]:
     parents = _execute_count(_public_table("school_memberships").select("id", count="exact", head=True).eq("school_id", school_id).eq("status", "active"))
     rooms = _safe_count("rooms", school_id=school_id, active_only=True)
     attendance_records = _safe_count("student_attendance", school_id=school_id, schema="attendance") + _safe_count("staff_attendance", school_id=school_id, schema="attendance")
-    latest_usage_rows = (
-        _public_table("usage_snapshots").select("*").eq("school_id", school_id).order("snapshot_date", desc=True).limit(1).execute().data or []
-    )
-    latest_usage = dict(latest_usage_rows[0]) if latest_usage_rows else {}
+    try:
+        latest_usage_rows = (
+            _public_table("usage_snapshots").select("*").eq("school_id", school_id).order("snapshot_date", desc=True).limit(1).execute().data or []
+        )
+        latest_usage = dict(latest_usage_rows[0]) if latest_usage_rows else {}
+    except Exception as exc:
+        if "PGRST205" in str(exc) or "schema cache" in str(exc) or "Could not find the table 'public.usage_snapshots'" in str(exc):
+            latest_usage = {}
+        else:
+            raise
     ai_requests = _execute_count(
         _public_table("audit_logs")
         .select("id", count="exact", head=True)
@@ -1110,26 +1116,31 @@ def run_onboarding(payload: dict[str, Any], *, actor_profile_id: str | None) -> 
     provisioning.update(_provision_school_defaults(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id))
     admin_account = _provision_school_admin(_load_school_row(school_id), payload, actor_profile_id=actor_profile_id)
     audit_events.append("platform.onboarding.credentials_generated")
-    school_plan_rows = _public_table("school_plans").upsert(
-        {
-            "school_id": school_id,
-            "plan_tier": payload.get("plan_tier") or "starter",
-            "subscription_status": "trial",
-            "effective_from": date.today().isoformat(),
-            "created_by": actor_profile_id,
-            "updated_by": actor_profile_id,
-            "student_limit": payload.get("max_students") if payload.get("max_students") is not None else 100,
-            "teacher_limit": payload.get("max_teachers") if payload.get("max_teachers") is not None else 10,
-            "parent_limit": payload.get("max_parents") if payload.get("max_parents") is not None else 50,
-            "storage_limit_gb": payload.get("max_storage_gb") if payload.get("max_storage_gb") is not None else 5,
-            "metadata": {
-                "billing_cycle": payload.get("billing_cycle") or "monthly",
-                "max_staff": payload.get("max_staff"),
+    try:
+        school_plan_rows = _public_table("school_plans").upsert(
+            {
+                "school_id": school_id,
+                "plan_tier": payload.get("plan_tier") or "starter",
+                "subscription_status": "trial",
+                "effective_from": date.today().isoformat(),
+                "created_by": actor_profile_id,
+                "updated_by": actor_profile_id,
+                "student_limit": payload.get("max_students") if payload.get("max_students") is not None else 100,
+                "teacher_limit": payload.get("max_teachers") if payload.get("max_teachers") is not None else 10,
+                "parent_limit": payload.get("max_parents") if payload.get("max_parents") is not None else 50,
+                "storage_limit_gb": payload.get("max_storage_gb") if payload.get("max_storage_gb") is not None else 5,
+                "metadata": {
+                    "billing_cycle": payload.get("billing_cycle") or "monthly",
+                    "max_staff": payload.get("max_staff"),
+                },
             },
-        },
-        on_conflict="school_id",
-    ).execute().data or []
-    subscription_initialized = bool(school_plan_rows or True)
+            on_conflict="school_id",
+        ).execute().data or []
+        subscription_initialized = bool(school_plan_rows or True)
+    except PostgrestAPIError as exc:
+        if "PGRST205" not in str(exc) and "school_plans" not in str(exc):
+            raise
+        subscription_initialized = False
     provisioning["subscription"] = subscription_initialized
     _public_table("usage_snapshots").upsert(
         {

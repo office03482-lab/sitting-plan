@@ -90,6 +90,18 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal("0")
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -389,7 +401,7 @@ def _serialize_subscription(row: dict[str, Any] | None) -> dict[str, Any] | None
         "renewal_count": _safe_int(row.get("renewal_count")),
         "amount": str(row.get("amount") or 0),
         "currency": row.get("currency"),
-        "metadata": dict(row.get("metadata") or {}),
+        "metadata": _json_safe(dict(row.get("metadata") or {})),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -435,15 +447,20 @@ class SchoolSubscriptionService:
         return created or self.repository.get_plan(school_id) or {}
 
     def _rule_limits(self, plan_tier: PlanTier) -> dict[str, Decimal]:
-        rows = (
-            _public_table("entitlement_rule")
-            .select("resource_key,max_count")
-            .eq("plan_tier", plan_tier.value)
-            .eq("is_active", True)
-            .execute()
-            .data
-            or []
-        )
+        try:
+            rows = (
+                _public_table("entitlement_rule")
+                .select("resource_key,max_count")
+                .eq("plan_tier", plan_tier.value)
+                .eq("is_active", True)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            if "PGRST205" in str(exc) or "schema cache" in str(exc):
+                return {}
+            raise
         return {str(row.get("resource_key")): _to_decimal(row.get("max_count")) for row in rows}
 
     def _base_limit_payload(self, plan_tier: PlanTier) -> dict[str, Any]:
@@ -459,16 +476,21 @@ class SchoolSubscriptionService:
         }
 
     def list_plan_catalog(self) -> list[dict[str, Any]]:
-        rows = (
-            _public_table("entitlement_rule")
-            .select("plan_tier,resource_key,max_count,is_active")
-            .eq("is_active", True)
-            .order("plan_tier")
-            .order("resource_key")
-            .execute()
-            .data
-            or []
-        )
+        try:
+            rows = (
+                _public_table("entitlement_rule")
+                .select("plan_tier,resource_key,max_count,is_active")
+                .eq("is_active", True)
+                .order("plan_tier")
+                .order("resource_key")
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            if "PGRST205" in str(exc) or "schema cache" in str(exc):
+                return []
+            raise
         grouped: dict[str, dict[str, Any]] = {}
         for row in rows:
             plan_tier = _normalize(row.get("plan_tier")).lower()
@@ -530,7 +552,7 @@ class SchoolSubscriptionService:
             "effective_from": plan.get("effective_from"),
             "effective_until": plan.get("effective_until"),
             "trial_ends_at": plan.get("trial_ends_at"),
-            "metadata": dict(plan.get("metadata") or {}),
+            "metadata": _json_safe(dict(plan.get("metadata") or {})),
             "limits": limits["limits"],
             "overrides": limits["overrides"],
             "subscription": _serialize_subscription(subscription),

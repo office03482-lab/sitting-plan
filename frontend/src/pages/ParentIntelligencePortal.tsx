@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bell, BookOpenCheck, CalendarClock, HeartPulse, MessageSquare, ShieldAlert, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Bell, BookOpenCheck, CalendarClock, HeartPulse, MessageSquare, RefreshCw, ShieldAlert, TrendingUp } from 'lucide-react';
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
-import type { ParentAlert, ParentChildDashboard, ParentDashboardResponse, ParentInsight, ParentRiskScoreResponse } from '@types';
+import type { ParentAlert, ParentChildDashboard, ParentInsight } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
 
@@ -13,9 +13,8 @@ export default function ParentIntelligencePortal() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
 
-  const [dashboard, setDashboard] = useState<ParentDashboardResponse | null>(null);
+  const [children, setChildren] = useState<ParentChildDashboard[]>([]);
   const [insights, setInsights] = useState<ParentInsight[]>([]);
-  const [riskScore, setRiskScore] = useState<ParentRiskScoreResponse | null>(null);
   const [alerts, setAlerts] = useState<ParentAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [workingKey, setWorkingKey] = useState('');
@@ -31,16 +30,11 @@ export default function ParentIntelligencePortal() {
     try {
       setLoading(true);
       setError('');
-      const [dashboardResponse, insightsResponse, riskResponse, alertsResponse] = await Promise.all([
-        apiService.getParentIntelligenceDashboard(),
-        apiService.getParentIntelligenceInsights(),
-        apiService.getParentIntelligenceRiskScore(),
-        apiService.getParentIntelligenceAlerts(),
-      ]);
-      setDashboard(dashboardResponse.data);
-      setInsights(insightsResponse.data?.insights || []);
-      setRiskScore(riskResponse.data);
-      setAlerts(alertsResponse.data?.alerts || []);
+      const riskRes = await apiService.getParentIntelligenceRiskScore();
+      const items = Array.isArray(riskRes.data?.children) ? (riskRes.data.children as ParentChildDashboard[]) : [];
+      setChildren(items);
+      setInsights(items.flatMap((child) => child.insights || []));
+      setAlerts(items.flatMap((child) => child.alerts || []));
     } catch (requestError) {
       setError(getRequestErrorMessage(requestError, 'Parent intelligence portal load nahi ho paya.'));
     } finally {
@@ -48,19 +42,27 @@ export default function ParentIntelligencePortal() {
     }
   };
 
-  const children = dashboard?.children || [];
   const summary = useMemo(() => {
     const totalChildren = children.length || 1;
-    const avgAttendance = children.reduce((sum, child) => sum + Number(child.attendance_score || 0), 0) / totalChildren;
-    const avgTests = children.reduce((sum, child) => sum + Number(child.test_performance_score || 0), 0) / totalChildren;
-    const avgConsistency = children.reduce((sum, child) => sum + Number(child.learning_consistency_score || 0), 0) / totalChildren;
-    const avgEngagement = children.reduce((sum, child) => sum + Number(child.engagement_score || 0), 0) / totalChildren;
+    const average = (key: 'attendance_score' | 'test_performance_score' | 'learning_consistency_score' | 'engagement_score') =>
+      children.reduce((sum, child) => sum + Number(child[key] || 0), 0) / totalChildren;
     return {
-      attendance: avgAttendance.toFixed(1),
-      tests: avgTests.toFixed(1),
-      consistency: avgConsistency.toFixed(1),
-      engagement: avgEngagement.toFixed(1),
+      attendance: average('attendance_score').toFixed(1),
+      tests: average('test_performance_score').toFixed(1),
+      consistency: average('learning_consistency_score').toFixed(1),
+      engagement: average('engagement_score').toFixed(1),
     };
+  }, [children]);
+
+  const overallHealth = useMemo(() => {
+    if (!children.length) return '0.0';
+    return (children.reduce((sum, child) => sum + Number(child.academic_health_score || 0), 0) / children.length).toFixed(1);
+  }, [children]);
+
+  const overallRisk = useMemo(() => {
+    if (children.some((child) => String(child.risk_level || '').toLowerCase() === 'high')) return 'HIGH';
+    if (children.some((child) => String(child.risk_level || '').toLowerCase() === 'medium')) return 'MEDIUM';
+    return 'LOW';
   }, [children]);
 
   const handleAcknowledgeAlert = async (alert: ParentAlert) => {
@@ -126,10 +128,21 @@ export default function ParentIntelligencePortal() {
       </div>
 
       {banner ? <Alert type="success" message={banner} onClose={() => setBanner('')} /> : null}
-      {error ? <Alert type="error" message={error} onClose={() => setError('')} /> : null}
+      {error ? (
+        <div className="flex flex-col gap-3">
+          <Alert type="error" message={error} onClose={() => setError('')} />
+          <button
+            type="button"
+            onClick={() => void loadPortal()}
+            className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="h-4 w-4" /> Retry
+          </button>
+        </div>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard icon={HeartPulse} label="Academic Health" value={`${Number(dashboard?.academic_health_score || 0).toFixed(1)}`} helper={String(dashboard?.risk_level || 'low').toUpperCase()} />
+        <MetricCard icon={HeartPulse} label="Academic Health" value={overallHealth} helper={overallRisk} />
         <MetricCard icon={BookOpenCheck} label="Attendance Score" value={summary.attendance} helper="Across linked children" color="emerald" />
         <MetricCard icon={TrendingUp} label="Test Score" value={summary.tests} helper="Recent performance" color="sky" />
         <MetricCard icon={CalendarClock} label="Consistency" value={summary.consistency} helper="Planner + assignments" color="amber" />
@@ -164,7 +177,7 @@ export default function ParentIntelligencePortal() {
             </div>
           </div>
           <div className="mt-4 space-y-3">
-            {(riskScore?.children || []).map((child) => (
+            {children.map((child) => (
               <div key={child.student_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div>
@@ -172,7 +185,7 @@ export default function ParentIntelligencePortal() {
                     <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">Risk {String(child.risk_level).toUpperCase()}</p>
                   </div>
                   <div className="text-sm text-slate-600">
-                    Factors: {child.risk_factors.length ? child.risk_factors.join(', ') : 'No major risk signals'}
+                    Factors: {(child.risk_factors || []).length ? child.risk_factors.join(', ') : 'No major risk signals'}
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -264,10 +277,10 @@ export default function ParentIntelligencePortal() {
               <div key={`recommendation-${child.student_id}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm font-semibold text-slate-900">{child.student_name}</p>
                 <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">Weak topics</p>
-                <p className="mt-2 text-sm text-slate-600">{child.weak_topics.length ? child.weak_topics.join(', ') : 'No weak topics flagged.'}</p>
+                <p className="mt-2 text-sm text-slate-600">{(child.weak_topics || []).length ? child.weak_topics.join(', ') : 'No weak topics flagged.'}</p>
                 <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">Suggestions</p>
                 <ul className="mt-2 space-y-2 text-sm text-slate-600">
-                  {child.suggestions.length ? child.suggestions.slice(0, 3).map((suggestion) => (
+                  {(child.suggestions || []).length ? (child.suggestions || []).slice(0, 3).map((suggestion) => (
                     <li key={suggestion}>{suggestion}</li>
                   )) : <li>No AI recommendation available.</li>}
                 </ul>
@@ -343,10 +356,10 @@ function ChildHealthCard({
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <InfoCell label="Academic Health" value={child.academic_health_score.toFixed(1)} />
-        <InfoCell label="Attendance" value={child.attendance_score.toFixed(1)} />
-        <InfoCell label="Tests" value={child.test_performance_score.toFixed(1)} />
-        <InfoCell label="Engagement" value={child.engagement_score.toFixed(1)} />
+        <InfoCell label="Academic Health" value={Number(child.academic_health_score || 0).toFixed(1)} />
+        <InfoCell label="Attendance" value={Number(child.attendance_score || 0).toFixed(1)} />
+        <InfoCell label="Tests" value={Number(child.test_performance_score || 0).toFixed(1)} />
+        <InfoCell label="Engagement" value={Number(child.engagement_score || 0).toFixed(1)} />
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -354,7 +367,7 @@ function ChildHealthCard({
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Risk Factors</p>
           <p className="mt-2 text-sm text-slate-600">
-            {child.risk_factors.length ? child.risk_factors.join(', ') : 'No active risk factors'}
+            {(child.risk_factors || []).length ? child.risk_factors.join(', ') : 'No active risk factors'}
           </p>
           <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Hostel Status</p>
           <p className="mt-2 text-sm text-slate-600">
@@ -397,9 +410,9 @@ function TrendCell({
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
       <div className="mt-3 grid gap-3 md:grid-cols-3">
-        <InfoCell label="Marks" value={Number(metrics.marks || 0).toFixed(1)} compact />
-        <InfoCell label="Attendance" value={Number(metrics.attendance || 0).toFixed(1)} compact />
-        <InfoCell label="Engagement" value={Number(metrics.engagement || 0).toFixed(1)} compact />
+        <InfoCell label="Marks" value={Number(metrics?.marks || 0).toFixed(1)} compact />
+        <InfoCell label="Attendance" value={Number(metrics?.attendance || 0).toFixed(1)} compact />
+        <InfoCell label="Engagement" value={Number(metrics?.engagement || 0).toFixed(1)} compact />
       </div>
     </div>
   );

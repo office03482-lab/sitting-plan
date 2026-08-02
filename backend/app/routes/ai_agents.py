@@ -67,7 +67,7 @@ def require_ai_agents_approve_user(
 
 @router.get("/dashboard", response_model=AiAgentDashboardResponse)
 @alias_router.get("/dashboard", response_model=AiAgentDashboardResponse, include_in_schema=False)
-async def api_get_ai_agents_dashboard(
+def api_get_ai_agents_dashboard(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_view_user),
@@ -80,7 +80,7 @@ async def api_get_ai_agents_dashboard(
 
 
 @router.post("/run", response_model=AiAgentRunResponse)
-async def api_run_ai_agents(
+def api_run_ai_agents(
     payload: AiAgentRunRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -96,7 +96,7 @@ async def api_run_ai_agents(
 
 @router.get("/recommendations", response_model=list[AiAgentRecommendationResponse])
 @alias_router.get("/recommendations", response_model=list[AiAgentRecommendationResponse], include_in_schema=False)
-async def api_list_ai_agent_recommendations(
+def api_list_ai_agent_recommendations(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_view_user),
@@ -106,7 +106,7 @@ async def api_list_ai_agent_recommendations(
 
 
 @router.post("/approve", response_model=AiAgentRecommendationResponse)
-async def api_approve_ai_agent_recommendation(
+def api_approve_ai_agent_recommendation(
     payload: AiAgentApproveRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),

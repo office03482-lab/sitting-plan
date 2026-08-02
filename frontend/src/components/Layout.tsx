@@ -447,7 +447,7 @@ export default function Layout({ children }: LayoutProps) {
         { name: 'Progress', path: '/parent/progress', permission: 'parent_intelligence.view' },
         { name: 'Assignments', path: '/parent/assignments', permission: 'parent_intelligence.view' },
         { name: 'Tests', path: '/parent/tests', permission: 'parent_intelligence.view' },
-        { name: 'Fees', path: '/edupay', permission: 'edupay.parent_portal' },
+                { name: 'Fees', path: '/parent/fees', permission: 'edupay.parent_portal' },
         { name: 'Parent AI Assistant', path: '/parent/ai', permission: 'parent_intelligence.view' },
       ],
     },
@@ -518,6 +518,7 @@ export default function Layout({ children }: LayoutProps) {
 
     return rawSections
       .map((section) => {
+        if (section.key === 'student-portal' && user?.role !== 'student') return null;
         const isSecurityForPlatform = section.key === 'security' && isPlatformAdmin;
         const children =
           isSecurityForPlatform

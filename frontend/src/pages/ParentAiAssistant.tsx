@@ -6,6 +6,7 @@ import { apiService } from '@services/api';
 import type { ParentPortalChild, ParentPortalRecommendation } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
+const LOADING_TIMEOUT_MS = 30_000;
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -34,6 +35,15 @@ export default function ParentAiAssistant() {
   const [recommendations, setRecommendations] = useState<ParentPortalRecommendation[]>([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const sendAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      sendAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (!canRun) return;
@@ -41,11 +51,16 @@ export default function ParentAiAssistant() {
   }, [canRun]);
 
   const loadData = async () => {
+    sendAbortRef.current?.abort();
+    const controller = new AbortController();
+    sendAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), LOADING_TIMEOUT_MS);
     try {
       const [childRes, recRes] = await Promise.all([
-        apiService.getParentPortalChildren(),
-        apiService.getParentPortalRecommendations(),
+        apiService.getParentPortalChildren({ signal: controller.signal }),
+        apiService.getParentPortalRecommendations(undefined, { signal: controller.signal }),
       ]);
+      if (!mountedRef.current || controller.signal.aborted) return;
       const data = childRes.data;
       setChildren(data);
       if (data.length > 0) {
@@ -55,7 +70,13 @@ export default function ParentAiAssistant() {
     } catch {
       // non-critical
     } finally {
-      setLoadingRecs(false);
+      window.clearTimeout(timeout);
+      if (sendAbortRef.current === controller) {
+        sendAbortRef.current = null;
+      }
+      if (mountedRef.current) {
+        setLoadingRecs(false);
+      }
     }
   };
 
@@ -69,18 +90,42 @@ export default function ParentAiAssistant() {
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', content: question }]);
     setSending(true);
+
+    sendAbortRef.current?.abort();
+    const controller = new AbortController();
+    sendAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), LOADING_TIMEOUT_MS);
+
     try {
       const history = messages.slice(1).map((m) => ({ role: m.role, content: m.content }));
       const res = await apiService.askParentPortalAi({
         question,
         student_id: selectedChildId || undefined,
         history,
-      });
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.data.answer }]);
+      }, { signal: controller.signal });
+      if (mountedRef.current && !controller.signal.aborted) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: res.data.answer }]);
+      }
     } catch (err) {
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Sorry, I had trouble answering that. Please try again.' }]);
+      if (!mountedRef.current) return;
+      const timedOut = controller.signal.aborted;
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: timedOut
+            ? 'This is taking too long. Please try again in a moment.'
+            : 'Sorry, I had trouble answering that. Please try again.',
+        },
+      ]);
     } finally {
-      setSending(false);
+      window.clearTimeout(timeout);
+      if (sendAbortRef.current === controller) {
+        sendAbortRef.current = null;
+      }
+      if (mountedRef.current) {
+        setSending(false);
+      }
     }
   }, [input, sending, messages, selectedChildId]);
 

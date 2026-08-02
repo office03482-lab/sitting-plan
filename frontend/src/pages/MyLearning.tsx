@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
-import { useAuth } from '@/contexts/AuthProvider';
+import { useAuth, canPreviewStudentPortal } from '@/contexts/AuthProvider';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import type { LmsDashboardCourseSummary, LmsProgressDashboard, LmsRevisionTrackerItem } from '@types';
 
@@ -61,9 +61,32 @@ function TopicBucket({ title, items, tone }: { title: string; items: string[]; t
   );
 }
 
+function PreviewBanner({ studentName, onExit }: { studentName: string; onExit: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+      <p className="text-sm font-semibold text-amber-900">
+        Previewing as student: <span className="font-bold">{studentName || 'Student'}</span>
+        <span className="ml-2 font-normal text-amber-700">(read-only admin view — changes are disabled)</span>
+      </p>
+      <button
+        type="button"
+        onClick={onExit}
+        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+      >
+        Exit Preview
+      </button>
+    </div>
+  );
+}
+
 export default function MyLearning() {
   const { authReady, sessionReady, schoolContextReady, session, user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
+
+  const previewStudentId = searchParams.get('preview')?.trim() || '';
+  const isAdminPreview = Boolean(previewStudentId) && canPreviewStudentPortal(user);
 
   const [dashboard, setDashboard] = useState<LmsProgressDashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +96,8 @@ export default function MyLearning() {
   useEffect(() => {
     if (!canRunRequests) return;
     void loadDashboard();
-  }, [canRunRequests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRunRequests, previewStudentId]);
 
   const isParentView = dashboard?.viewer_mode === 'parent' || user?.role_key === 'parent';
   const studentDashboard = dashboard?.student_dashboard || null;
@@ -89,7 +113,9 @@ export default function MyLearning() {
     try {
       setLoading(true);
       setError('');
-      const response = await apiService.getLmsProgress();
+      const response = await apiService.getLmsProgress(
+        previewStudentId ? { child_student_id: previewStudentId } : {},
+      );
       setDashboard(response.data);
     } catch (requestError) {
       setError(getRequestErrorMessage(requestError, 'My Learning dashboard load nahi hua.'));
@@ -214,6 +240,7 @@ export default function MyLearning() {
           <h1 className="text-2xl font-bold text-slate-900">My Learning</h1>
           <p className="mt-1 text-sm text-slate-600">Student success center will appear here once you start learning activity.</p>
         </div>
+        {isAdminPreview ? <PreviewBanner studentName="" onExit={() => navigate('/students')} /> : null}
         {error ? <Alert type="error" message={error} onClose={() => setError('')} /> : null}
         <section className={`${cardClass} text-center`}>
           <h2 className="text-lg font-semibold text-slate-900">No learning activity yet</h2>
@@ -228,6 +255,9 @@ export default function MyLearning() {
 
   return (
     <div className="space-y-6 p-4 md:p-6">
+      {isAdminPreview ? (
+        <PreviewBanner studentName={studentDashboard.student_name} onExit={() => navigate('/students')} />
+      ) : null}
       <div className="rounded-[2rem] border border-slate-200 bg-[linear-gradient(135deg,_#0f172a_0%,_#1e293b_55%,_#334155_100%)] p-6 text-white shadow-lg">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -346,30 +376,38 @@ export default function MyLearning() {
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={updatingTopicKey === item.topic_key}
-                          onClick={() => void handleRevisionUpdate(item, 'not_started')}
-                          className={statusButtonClass(item.status === 'not_started')}
-                        >
-                          Not Started
-                        </button>
-                        <button
-                          type="button"
-                          disabled={updatingTopicKey === item.topic_key}
-                          onClick={() => void handleRevisionUpdate(item, 'in_progress')}
-                          className={statusButtonClass(item.status === 'in_progress')}
-                        >
-                          In Progress
-                        </button>
-                        <button
-                          type="button"
-                          disabled={updatingTopicKey === item.topic_key}
-                          onClick={() => void handleRevisionUpdate(item, 'completed')}
-                          className={statusButtonClass(item.status === 'completed')}
-                        >
-                          Completed
-                        </button>
+                        {isAdminPreview ? (
+                          <span className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-500">
+                            Read-only preview
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={updatingTopicKey === item.topic_key}
+                              onClick={() => void handleRevisionUpdate(item, 'not_started')}
+                              className={statusButtonClass(item.status === 'not_started')}
+                            >
+                              Not Started
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingTopicKey === item.topic_key}
+                              onClick={() => void handleRevisionUpdate(item, 'in_progress')}
+                              className={statusButtonClass(item.status === 'in_progress')}
+                            >
+                              In Progress
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingTopicKey === item.topic_key}
+                              onClick={() => void handleRevisionUpdate(item, 'completed')}
+                              className={statusButtonClass(item.status === 'completed')}
+                            >
+                              Completed
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

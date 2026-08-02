@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { CalendarCheck, CalendarDays, TrendingDown, TrendingUp, Minus } from 'lucide-react';
+import { CalendarCheck, CalendarDays, TrendingDown, TrendingUp, Minus, RefreshCw } from 'lucide-react';
+import axios from 'axios';
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
@@ -19,6 +20,7 @@ export default function ParentAttendance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -37,15 +39,30 @@ export default function ParentAttendance() {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
       };
     }
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     void loadData();
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      requestRef.current?.abort();
+    };
   }, [canRun]);
 
   const loadData = async () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setLoading(true);
+    setError('');
+    timeoutRef.current = setTimeout(() => {
+      controller.abort();
+      if (mountedRef.current) {
+        setLoading(false);
+        setError('Attendance data is taking too long to load. Please try again.');
+      }
+    }, LOADING_TIMEOUT_MS);
     try {
-      setLoading(true);
-      setError('');
-      const res = await apiService.getParentPortalAttendance();
+      const res = await apiService.getParentPortalAttendance(undefined, { signal: controller.signal });
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       const data = res.data;
       if (!mountedRef.current) return;
       setChildren(Array.isArray(data.children) ? data.children : []);
@@ -54,7 +71,11 @@ export default function ParentAttendance() {
       }
       setLoading(false);
     } catch (err) {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (!mountedRef.current) return;
+      if (axios.isCancel(err)) {
+        return;
+      }
       setError(getRequestErrorMessage(err, 'Attendance data load failed.'));
       setLoading(false);
     }
@@ -81,7 +102,18 @@ export default function ParentAttendance() {
         )}
       </div>
 
-      {error ? <Alert type="error" message={error} onClose={() => setError('')} /> : null}
+      {error ? (
+        <div className="flex flex-col gap-3">
+          <Alert type="error" message={error} onClose={() => setError('')} />
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="h-4 w-4" /> Retry
+          </button>
+        </div>
+      ) : null}
 
       {child && (
         <>

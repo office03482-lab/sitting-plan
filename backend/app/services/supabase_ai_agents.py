@@ -326,6 +326,17 @@ def _severity_to_priority(value: str) -> int:
     return {"critical": 4, "warning": 3, "positive": 2, "info": 1}.get(normalized, 1)
 
 
+_ALLOWED_SEVERITIES = {"info", "warning", "critical", "positive"}
+_RISK_TO_SEVERITY = {"low": "info", "medium": "warning", "high": "warning", "critical": "critical"}
+
+
+def _normalize_severity(value: Any) -> str:
+    normalized = _normalize(value).lower()
+    if normalized in _ALLOWED_SEVERITIES:
+        return normalized
+    return _RISK_TO_SEVERITY.get(normalized, "warning")
+
+
 def _recommendation_row(
     school_id: str,
     *,
@@ -348,7 +359,7 @@ def _recommendation_row(
         "agent_key": registry_row.get("agent_key"),
         "title": title,
         "summary": summary,
-        "severity": severity,
+        "severity": _normalize_severity(severity),
         "recommendation_type": recommendation_type,
         "target_scope": target_scope,
         "target_entity_id": _normalize_optional_uuid(target_entity_id),

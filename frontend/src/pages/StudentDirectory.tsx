@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, Search, Trash2, X } from 'lucide-react';
+import { Eye, GraduationCap, Search, Trash2, X } from 'lucide-react';
 import { apiService } from '@services/api';
 import { useAppStore } from '@store/app';
 import { useRefDataStore } from '@store/referenceData';
@@ -538,6 +538,15 @@ export default function StudentDirectory() {
                   <div className="mt-5 flex gap-2">
                     <button
                       type="button"
+                      onClick={() => navigate(`/student/dashboard?preview=${encodeURIComponent(String(student.id))}`)}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                      title="View Student Portal (preview)"
+                    >
+                      <GraduationCap className="h-4 w-4" />
+                      Student Portal
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => openDetails(student)}
                       className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700 hover:bg-amber-100"
                     >
@@ -592,6 +601,9 @@ export default function StudentDirectory() {
                       <p className="mt-1 text-xs text-slate-500">{student.special_needs || '-'}</p>
                     </div>
                     <div className="flex gap-2">
+                      <button type="button" onClick={() => navigate(`/student/dashboard?preview=${encodeURIComponent(String(student.id))}`)} className="rounded-lg border border-indigo-200 bg-indigo-50 p-2 text-indigo-700 hover:bg-indigo-100" title="View Student Portal (preview)">
+                        <GraduationCap className="h-4 w-4" />
+                      </button>
                       <button type="button" onClick={() => openDetails(student)} className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-700 hover:bg-amber-100" title="Full details">
                         <Eye className="h-4 w-4" />
                       </button>

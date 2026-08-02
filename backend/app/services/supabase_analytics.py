@@ -615,6 +615,56 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
         _normalize(row.get("id")): row
         for row in _load_sections(school_id=school_id, section_ids=[_normalize(row.get("section_id")) for row in question_rows])
     }
+    ranking = _get_school_ranking(school_id)
+
+    payload = _build_student_analytics_payload(
+        school_id=school_id,
+        student=student,
+        result_rows=result_rows,
+        attempt_map=attempt_map,
+        test_map=test_map,
+        subject_map=subject_map,
+        response_rows=response_rows,
+        question_map=question_map,
+        section_map=section_map,
+        ranking=ranking,
+    )
+    return _cache_set(cache_key, payload)
+
+
+def _get_school_ranking(school_id: str) -> list[tuple[str, float]]:
+    school_ranking_key = f"ranking:{school_id}"
+    cached_ranking = _SCHOOL_RANKING_CACHE.get(school_ranking_key)
+    if cached_ranking and time.time() - cached_ranking[0] < _SCHOOL_RANKING_CACHE_TTL_SECONDS:
+        return cached_ranking[1]
+    school_result_rows = _load_results(school_id=school_id)
+    student_scoreboard: dict[str, dict[str, float]] = defaultdict(lambda: {"score": 0.0, "max_score": 0.0})
+    for row in school_result_rows:
+        student_key = _normalize(row.get("student_id"))
+        student_scoreboard[student_key]["score"] += float(row.get("score_obtained") or 0)
+        student_scoreboard[student_key]["max_score"] += float(row.get("max_score") or 0)
+    ranking = sorted(
+        [(student_key, _safe_percentage(item["score"], item["max_score"])) for student_key, item in student_scoreboard.items()],
+        key=lambda item: item[1], reverse=True,
+    )
+    _SCHOOL_RANKING_CACHE[school_ranking_key] = (time.time(), ranking)
+    return ranking
+
+
+def _build_student_analytics_payload(
+    *,
+    school_id: str,
+    student: dict[str, Any],
+    result_rows: list[dict[str, Any]],
+    attempt_map: dict[str, dict[str, Any]],
+    test_map: dict[str, dict[str, Any]],
+    subject_map: dict[str, dict[str, Any]],
+    response_rows: list[dict[str, Any]],
+    question_map: dict[str, dict[str, Any]],
+    section_map: dict[str, dict[str, Any]],
+    ranking: list[tuple[str, float]],
+) -> dict[str, Any]:
+    student_id = _normalize(student.get("id"))
 
     total_score = sum(float(row.get("score_obtained") or 0) for row in result_rows)
     total_max_score = sum(float(row.get("max_score") or 0) for row in result_rows)
@@ -668,22 +718,6 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
     ]
     chapter_percentages.sort(key=lambda item: item["chapter_name"])
 
-    school_ranking_key = f"ranking:{school_id}"
-    cached_ranking = _SCHOOL_RANKING_CACHE.get(school_ranking_key)
-    if cached_ranking and time.time() - cached_ranking[0] < _SCHOOL_RANKING_CACHE_TTL_SECONDS:
-        ranking = cached_ranking[1]
-    else:
-        school_result_rows = _load_results(school_id=school_id)
-        student_scoreboard: dict[str, dict[str, float]] = defaultdict(lambda: {"score": 0.0, "max_score": 0.0})
-        for row in school_result_rows:
-            student_key = _normalize(row.get("student_id"))
-            student_scoreboard[student_key]["score"] += float(row.get("score_obtained") or 0)
-            student_scoreboard[student_key]["max_score"] += float(row.get("max_score") or 0)
-        ranking = sorted(
-            [(student_key, _safe_percentage(item["score"], item["max_score"])) for student_key, item in student_scoreboard.items()],
-            key=lambda item: item[1], reverse=True,
-        )
-        _SCHOOL_RANKING_CACHE[school_ranking_key] = (time.time(), ranking)
     rank = next((index for index, item in enumerate(ranking, start=1) if item[0] == student_id), None)
     below_count = len([item for item in ranking if item[1] < overall_percentage])
     percentile = round((below_count / len(ranking)) * 100, 2) if ranking else 0.0
@@ -699,7 +733,7 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
         f"Reattempt {latest_test_title}" if latest_test_title else "Reattempt your latest scheduled test",
     ]
 
-    payload = {
+    return {
         "school_id": school_id,
         "student_id": student_id,
         "student_name": _normalize(student.get("full_name")) or "Student",
@@ -716,7 +750,60 @@ def get_student_analytics(school_id: str, student_id: str, *, actor_profile_id: 
         "latest_test_id": latest_test_id,
         "generated_at": _utc_now_iso(),
     }
-    return _cache_set(cache_key, payload)
+
+
+def get_student_analytics_batch(school_id: str, student_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Compute per-student analytics with a single round of shared dataset loads.
+
+    Shared Online Test metadata (tests, questions, sections) plus batch-loaded
+    attempts and responses are fetched exactly once, then each student's
+    analytics payload is composed in memory — no per-student aggregator calls.
+    """
+    ids = sorted({_normalize(s) for s in student_ids if _normalize(s)})
+    if not ids:
+        return {}
+
+    student_rows = _load_students(school_id=school_id, student_ids=ids)
+    student_map = {_normalize(row.get("id")): row for row in student_rows}
+
+    result_rows = _load_results(school_id=school_id, student_ids=ids)
+    result_by_student: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in result_rows:
+        result_by_student[_normalize(row.get("student_id"))].append(row)
+
+    attempt_ids = sorted({_normalize(row.get("attempt_id")) for row in result_rows if _normalize(row.get("attempt_id"))})
+    attempt_map = {_normalize(row.get("id")): row for row in _load_attempts(school_id=school_id, attempt_ids=attempt_ids)}
+
+    test_ids = sorted({_normalize(row.get("test_id")) for row in result_rows if _normalize(row.get("test_id"))})
+    test_rows = _load_tests(school_id=school_id, test_ids=test_ids)
+    test_map = {_normalize(row.get("id")): row for row in test_rows}
+    subject_map = _load_subjects([_normalize(row.get("subject_id")) for row in test_rows], school_id=school_id)
+
+    response_rows = _load_responses(school_id=school_id, attempt_ids=attempt_ids)
+    question_rows = _load_questions(school_id=school_id, test_ids=test_ids)
+    question_map = {_normalize(row.get("id")): row for row in question_rows}
+    section_map = {
+        _normalize(row.get("id")): row
+        for row in _load_sections(school_id=school_id, section_ids=[_normalize(row.get("section_id")) for row in question_rows])
+    }
+
+    ranking = _get_school_ranking(school_id)
+
+    payloads: dict[str, dict[str, Any]] = {}
+    for student_id in ids:
+        payloads[student_id] = _build_student_analytics_payload(
+            school_id=school_id,
+            student=student_map.get(student_id, {"id": student_id}),
+            result_rows=result_by_student.get(student_id, []),
+            attempt_map=attempt_map,
+            test_map=test_map,
+            subject_map=subject_map,
+            response_rows=[row for row in response_rows if _normalize(row.get("student_id")) == student_id],
+            question_map=question_map,
+            section_map=section_map,
+            ranking=ranking,
+        )
+    return payloads
 
 
 def persist_student_analytics(school_id: str, student_id: str, *, actor_profile_id: str | None = None) -> None:

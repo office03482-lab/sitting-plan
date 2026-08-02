@@ -92,6 +92,13 @@ def _is_parent_portal_user(user: User) -> bool:
     return _role_key(user) == "parent" or "edupay.parent_portal" in permissions
 
 
+def _is_admin_preview_user(user: User) -> bool:
+    if _is_school_admin_user(user) or is_platform_admin_user(user):
+        return True
+    permissions = [str(item or "").strip().lower() for item in (getattr(user, "permissions", None) or [])]
+    return "admin_office.students" in permissions
+
+
 def require_lms_manage_user(
     _: User = Depends(require_permissions("lms.manage")),
     user: User = Depends(get_authenticated_user),
@@ -509,18 +516,22 @@ async def api_get_progress(
         result = get_student_success_dashboard(school_id, student=student)
         commit_route_retrofit(reservation)
         return result
+    if _is_admin_preview_user(user):
+        if child_student_id:
+            student = _get_student(school_id, child_student_id)
+            if not _student_is_in_scope(student, scope_context):
+                raise HTTPException(status_code=403, detail="You can only view LMS progress for students in your assigned scope")
+            result = get_student_success_dashboard(school_id, student=student, viewer_mode_override="admin")
+            commit_route_retrofit(reservation)
+            return result
+        result = get_student_success_dashboard(school_id, parent_students=[])
+        commit_route_retrofit(reservation)
+        return result
     if _is_parent_portal_user(user):
         linked_students = _list_parent_linked_students(school_id, str(actor.get("profile_id") or "").strip(), getattr(user, "email", None))
         if child_student_id:
             linked_students = [item for item in linked_students if str(item.get("id") or "").strip() == child_student_id]
         result = get_student_success_dashboard(school_id, parent_students=linked_students)
-        commit_route_retrofit(reservation)
-        return result
-    if child_student_id:
-        student = _get_student(school_id, child_student_id)
-        if not _student_is_in_scope(student, scope_context):
-            raise HTTPException(status_code=403, detail="You can only view LMS progress for students in your assigned scope")
-        result = get_student_success_dashboard(school_id, student=student)
         commit_route_retrofit(reservation)
         return result
     result = get_student_success_dashboard(school_id, parent_students=[])
@@ -564,6 +575,13 @@ async def api_list_revision_tracker(
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return list_revision_tracker(school_id, str(student.get("id") or "").strip())
+    if _is_admin_preview_user(user):
+        if child_student_id:
+            student = _get_student(school_id, child_student_id)
+            if not _student_is_in_scope(student, scope_context):
+                raise HTTPException(status_code=403, detail="You can only view LMS revision data for students in your assigned scope")
+            return list_revision_tracker(school_id, str(student.get("id") or "").strip())
+        return []
     if _is_parent_portal_user(user):
         linked_students = _list_parent_linked_students(school_id, str(actor.get("profile_id") or "").strip(), getattr(user, "email", None))
         if child_student_id:
@@ -571,11 +589,6 @@ async def api_list_revision_tracker(
         if not linked_students:
             return []
         return list_revision_tracker(school_id, str(linked_students[0].get("id") or "").strip())
-    if child_student_id:
-        student = _get_student(school_id, child_student_id)
-        if not _student_is_in_scope(student, scope_context):
-            raise HTTPException(status_code=403, detail="You can only view LMS revision data for students in your assigned scope")
-        return list_revision_tracker(school_id, str(student.get("id") or "").strip())
     return []
 
 

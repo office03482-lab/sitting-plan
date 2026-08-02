@@ -3167,6 +3167,18 @@ export interface ParentPortalRecommendation {
   recommendations: string[];
 }
 
+export interface ParentPortalFeesChild {
+  student_id: string;
+  student_name: string;
+  class_name?: string;
+  section?: string;
+  fee_status: ParentPortalFeeStatus;
+}
+
+export interface ParentPortalFeesResponse {
+  children: ParentPortalFeesChild[];
+}
+
 // ==================== Offline Exams ====================
 export interface OfflineExam {
   id: string;

@@ -259,6 +259,12 @@ function permissionMatches(currentPermissions: string[], permission: string): bo
   );
 }
 
+export function canPreviewStudentPortal(user?: User | null): boolean {
+  if (!user) return false;
+  if (user.role_key === 'platform_admin' || user.role_key === 'school_admin' || user.role === 'admin') return true;
+  return (user.permissions || []).includes('admin_office.students');
+}
+
 export function getDefaultRouteForUser(user?: User | null, portalIntent?: PortalIntent): string {
   console.debug('[auth-debug] getDefaultRouteForUser', { userId: user?.id, role: user?.role, role_key: user?.role_key, portalIntent });
   if (!user) return '/login';

@@ -507,8 +507,16 @@ def get_academic_progress(school_id: str, *, profile_id: str | None, user_email:
     assignments = _batch_load_assignments(school_id)
     progress_by_student = _batch_load_progress(school_id, student_ids)
     test_results = _batch_load_test_results(school_id, student_ids, limit=50)
+    analytics_by_student = _get_students_analytics_data(school_id, student_ids)
 
-    children = [_build_academic_progress_from_batch(school_id, s, assignments, progress_by_student.get(_normalize(s.get("id")), []), test_results.get(_normalize(s.get("id")), [])) for s in linked]
+    children = [_build_academic_progress_from_batch(
+        school_id,
+        s,
+        assignments,
+        progress_by_student.get(_normalize(s.get("id")), []),
+        test_results.get(_normalize(s.get("id")), []),
+        analytics=analytics_by_student.get(_normalize(s.get("id"))),
+    ) for s in linked]
     return {"children": children}
 
 
@@ -518,6 +526,7 @@ def _build_academic_progress_from_batch(
     all_assignments: list[dict[str, Any]],
     progress_items: list[dict[str, Any]],
     test_results_list: list[dict[str, Any]],
+    analytics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sid = _normalize(student.get("id"))
     sname = _normalize(student.get("full_name")) or "Student"
@@ -544,7 +553,7 @@ def _build_academic_progress_from_batch(
         "completed_revisions": len([r for r in revision_items if r.get("is_completed") or _normalize(r.get("status")).lower() == "completed"]),
     }
 
-    analytics = _get_student_analytics_data(school_id, sid)
+    analytics = analytics or _get_student_analytics_data(school_id, sid)
     weak = list(analytics.get("weak_topics") or [])[:5]
     strong = list(analytics.get("strong_topics") or [])[:5]
 
@@ -574,6 +583,14 @@ def _get_student_analytics_data(school_id: str, student_id: str) -> dict[str, An
     try:
         from app.services.supabase_analytics import get_student_analytics
         return get_student_analytics(school_id, student_id)
+    except Exception:
+        return {}
+
+
+def _get_students_analytics_data(school_id: str, student_ids: list[str]) -> dict[str, dict[str, Any]]:
+    try:
+        from app.services.supabase_analytics import get_student_analytics_batch
+        return get_student_analytics_batch(school_id, student_ids)
     except Exception:
         return {}
 
@@ -842,6 +859,7 @@ def _build_alerts_from_batch(
     test_results_list: list[dict[str, Any]],
     assignments: list[dict[str, Any]],
     shared_tests: list[dict[str, Any]],
+    fee_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sid = _normalize(student.get("id"))
     sname = _normalize(student.get("full_name")) or "Student"
@@ -894,7 +912,10 @@ def _build_alerts_from_batch(
             "value": _normalize(next_test.get("starts_at")),
         })
 
-    fee_status = _get_fee_status(school_id, sid)
+    if fee_data is not None:
+        fee_status = fee_data
+    else:
+        fee_status = _get_fee_status(school_id, sid)
     if fee_status.get("due_amount", 0) > 0:
         alerts.append({
             "type": "fee_due",
@@ -1046,8 +1067,8 @@ def ai_ask(school_id: str, *, profile_id: str | None, user_email: str | None, st
             f"{attendance_overall.get('absent_days', dash.get('absent_days'))} absent)\n"
             f"Learning Score: {dash.get('learning_score')}%\n"
             f"Pending Assignments: {dash.get('pending_assignments')}\n"
-            f"Fee Status: {dash.get('fee_status', {}).get('status')} (Due: ₹{dash.get('fee_status', {}).get('due_amount', 0):.0f})\n"
-            f"Latest Test: {dash.get('latest_test_result', {}).get('title', 'N/A')} - {dash.get('latest_test_result', {}).get('percentage', 0)}%\n"
+            f"Fee Status: {(dash.get('fee_status') or {}).get('status')} (Due: ₹{(dash.get('fee_status') or {}).get('due_amount', 0):.0f})\n"
+            f"Latest Test: {(dash.get('latest_test_result') or {}).get('title', 'N/A')} - {(dash.get('latest_test_result') or {}).get('percentage', 0)}%\n"
             f"Upcoming Tests: {len(dash.get('upcoming_tests', []))}\n"
             f"Assignment Summary: pending={assignment_summary.get('pending', 0)}, submitted={assignment_summary.get('submitted', 0)}, graded={assignment_summary.get('graded', 0)}, late={assignment_summary.get('late', 0)}\n"
             f"Test Average: {test.get('average_percentage')}% over {test.get('total_tests')} tests\n"
@@ -1098,11 +1119,19 @@ def generate_recommendations(school_id: str, *, profile_id: str | None, user_ema
 def _build_recommendations(school_id: str, student: dict[str, Any]) -> dict[str, Any]:
     sid = _normalize(student.get("id"))
     sname = _normalize(student.get("full_name")) or "Student"
-    dash = _build_child_dashboard(school_id, student)
-    att = _build_attendance(school_id, student)
-    assign = _build_assignments(school_id, student)
-    test = _build_test_results(school_id, student)
-    academic = _build_academic_progress(school_id, student)
+
+    try:
+        dash = _build_child_dashboard(school_id, student)
+        att = _build_attendance(school_id, student)
+        assign = _build_assignments(school_id, student)
+        test = _build_test_results(school_id, student)
+        academic = _build_academic_progress(school_id, student)
+    except Exception:
+        return {
+            "student_id": sid,
+            "student_name": sname,
+            "recommendations": ["Recommendation data is unavailable right now. Please try again."],
+        }
 
     recs = []
 
@@ -1114,8 +1143,8 @@ def _build_recommendations(school_id: str, student: dict[str, Any]) -> dict[str,
         recs.append(f"Your child has {dash.get('pending_assignments')} pending assignments. A study schedule may help.")
     if test.get("average_percentage", 100) < 50:
         recs.append("Consider extra practice in weak subjects to improve test scores.")
-    if dash.get("fee_status", {}).get("due_amount", 0) > 0:
-        recs.append(f"Fee payment of ₹{_safe_float(dash.get('fee_status', {}).get('due_amount', 0)):.0f} is due.")
+    if (dash.get("fee_status") or {}).get("due_amount", 0) > 0:
+        recs.append(f"Fee payment of ₹{_safe_float((dash.get('fee_status') or {}).get('due_amount', 0)):.0f} is due.")
     if dash.get("absent_days", 0) > 10:
         recs.append("Frequent absences may impact learning. A consistent routine helps.")
     if not recs:

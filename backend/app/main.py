@@ -26,6 +26,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Transient upstream connection errors (e.g. Supabase/PostgREST keep-alive drops)
+# surface as raw 500s. Convert them into retryable 502s so clients can recover.
+
+
+async def _upstream_connection_error_handler(request, exc):
+    """Return a retryable 502 for transient upstream connection failures."""
+    logger.warning(
+        "Upstream connection error path=%s method=%s error=%r",
+        str(request.url.path),
+        request.method,
+        exc,
+    )
+    origins = settings.cors_origins
+    origin = request.headers.get("origin", "")
+    allowed = origin if origin in origins else (origins[0] if origins else "*")
+    return JSONResponse(
+        status_code=502,
+        content={
+            "detail": "Upstream service temporarily unavailable. Please retry.",
+            "error": "bad_gateway",
+            "status_code": 502,
+        },
+        headers={
+            "Access-Control-Allow-Origin": allowed,
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -64,6 +92,18 @@ if settings.response_compression_enabled:
     app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size_bytes)
 if settings.security_headers_enabled:
     app.add_middleware(SecurityHeadersMiddleware)
+
+app.add_exception_handler(ConnectionError, _upstream_connection_error_handler)
+try:
+    import httpx
+    app.add_exception_handler(httpx.HTTPError, _upstream_connection_error_handler)
+except ImportError:
+    pass
+try:
+    import requests
+    app.add_exception_handler(requests.RequestException, _upstream_connection_error_handler)
+except ImportError:
+    pass
 
 # Add CORS middleware (strict configuration)
 app.add_middleware(

@@ -13,6 +13,7 @@ from app.services.scope_engine import PermissionScopeContext, build_scope_contex
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_admin import get_supabase_admin_client
 import app.services.parent_portal_service as parent_portal_service
+import app.services.parent_portal_ai as parent_portal_ai
 import app.services.supabase_parent_intelligence as parent_intelligence_service
 from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_parent_intelligence import acknowledge_parent_alert, contact_teacher, request_parent_meeting
@@ -112,77 +113,26 @@ def _build_parent_ai_response(
     *,
     question: str,
     history: list[dict[str, str]] | None,
+    scope_context: PermissionScopeContext | None = None,
+    actor: dict[str, Any] | None = None,
+    user: User | None = None,
+    student_id: str | None = None,
 ) -> dict[str, Any]:
-    if not visible_students:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No linked students found for this request")
-
-    context_parts: list[str] = []
-    for student in visible_students:
-        sid = _normalize_scope_value(student.get("id"))
-        sname = _normalize_scope_value(student.get("full_name")) or "Student"
-        dash = parent_portal_service._build_child_dashboard(school_id, student)  # type: ignore[attr-defined]
-        attendance = parent_portal_service._build_attendance(school_id, student)  # type: ignore[attr-defined]
-        assignments = parent_portal_service._build_assignments(school_id, student)  # type: ignore[attr-defined]
-        tests = parent_portal_service._build_test_results(school_id, student)  # type: ignore[attr-defined]
-        academic = parent_portal_service._build_academic_progress(school_id, student)  # type: ignore[attr-defined]
-        attendance_overall = attendance.get("overall", {})
-        assignment_summary = assignments.get("summary", {})
-        weak_topics = list(academic.get("weak_topics") or [])[:3]
-        strong_topics = list(academic.get("strong_topics") or [])[:3]
-
-        context_parts.append(
-            f"--- {sname} (ID: {sid}) ---\n"
-            f"Class: {dash.get('class_name')} {dash.get('section')}\n"
-            f"Attendance: {attendance_overall.get('attendance_percentage', dash.get('attendance_percentage'))}% "
-            f"({attendance_overall.get('present_days', dash.get('present_days'))} present, "
-            f"{attendance_overall.get('absent_days', dash.get('absent_days'))} absent)\n"
-            f"Learning Score: {dash.get('learning_score')}%\n"
-            f"Pending Assignments: {dash.get('pending_assignments')}\n"
-            f"Fee Status: {dash.get('fee_status', {}).get('status')} (Due: Rs {dash.get('fee_status', {}).get('due_amount', 0):.0f})\n"
-            f"Latest Test: {dash.get('latest_test_result', {}).get('title', 'N/A')} - {dash.get('latest_test_result', {}).get('percentage', 0)}%\n"
-            f"Upcoming Tests: {len(dash.get('upcoming_tests', []))}\n"
-            f"Assignment Summary: pending={assignment_summary.get('pending', 0)}, submitted={assignment_summary.get('submitted', 0)}, graded={assignment_summary.get('graded', 0)}, late={assignment_summary.get('late', 0)}\n"
-            f"Test Average: {tests.get('average_percentage')}% over {tests.get('total_tests')} tests\n"
-            f"Weak Topics: {weak_topics}\n"
-            f"Strong Topics: {strong_topics}"
-        )
-
-    student_context = "\n\n".join(context_parts)
-    system_prompt = (
-        "You are the Aspire Academy Parent AI Assistant. "
-        "Answer only from the grounded student data provided below. "
-        "Use attendance, assignments, test scores, course progress, and topic analysis whenever relevant. "
-        "Do not invent facts or use any data outside this prompt. "
-        "If something is missing, say that clearly. "
-        "Use simple, supportive language and keep the answer concise in 3-6 sentences.\n\n"
-        f"STUDENT DATA:\n{student_context}"
+    return parent_portal_ai.run_ai_ask(
+        school_id,
+        question=question,
+        history=history,
+        scope_context=scope_context,
+        actor=actor,
+        user=user,
+        student_id=student_id,
     )
-    messages: list[dict[str, str]] = [{"role": "assistant", "content": system_prompt}]
-    if history:
-        messages.extend(history[-10:])
-    messages.append({"role": "user", "content": question})
-
-    try:
-        answer = parent_portal_service.chat(messages)  # type: ignore[attr-defined]
-    except parent_portal_service.AIProviderError:  # type: ignore[attr-defined]
-        answer = "I'm sorry, I'm having trouble connecting right now. Please try again in a moment."
-
-    return {
-        "answer": answer,
-        "context_students": [
-            {
-                "student_id": _normalize_scope_value(student.get("id")),
-                "student_name": _normalize_scope_value(student.get("full_name")) or "Student",
-            }
-            for student in visible_students
-        ],
-    }
 
 
 # ─── Multi-Child Support (Phase 7) ─────────────────────────────────────
 
 @router.get("/children")
-async def api_list_children(
+def api_list_children(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
@@ -204,7 +154,7 @@ async def api_list_children(
 # ─── Dashboard (Phase 1) ───────────────────────────────────────────────
 
 @router.get("/dashboard")
-async def api_get_dashboard(
+def api_get_dashboard(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
@@ -218,7 +168,7 @@ async def api_get_dashboard(
 # ─── Academic Progress (Phase 2) ───────────────────────────────────────
 
 @router.get("/academic-progress")
-async def api_get_academic_progress(
+def api_get_academic_progress(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -226,13 +176,36 @@ async def api_get_academic_progress(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return {"children": [parent_portal_service._build_academic_progress(school_id, student) for student in visible_students]}  # type: ignore[attr-defined]
+    student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
+    try:
+        assignments = parent_portal_service._batch_load_assignments(school_id)  # type: ignore[attr-defined]
+        progress_by_student = parent_portal_service._batch_load_progress(school_id, student_ids)  # type: ignore[attr-defined]
+        test_results = parent_portal_service._batch_load_test_results(school_id, student_ids, limit=50)  # type: ignore[attr-defined]
+        analytics_by_student = parent_portal_service._get_students_analytics_data(school_id, student_ids)  # type: ignore[attr-defined]
+    except Exception:
+        assignments = []
+        progress_by_student = {}
+        test_results = {}
+        analytics_by_student = {}
+    return {
+        "children": [
+            parent_portal_service._build_academic_progress_from_batch(  # type: ignore[attr-defined]
+                school_id,
+                student,
+                assignments,
+                progress_by_student.get(_normalize_scope_value(student.get("id")), []),
+                test_results.get(_normalize_scope_value(student.get("id")), []),
+                analytics=analytics_by_student.get(_normalize_scope_value(student.get("id"))),
+            )
+            for student in visible_students
+        ]
+    }
 
 
 # ─── Attendance Center (Phase 3) ───────────────────────────────────────
 
 @router.get("/attendance")
-async def api_get_attendance(
+def api_get_attendance(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -240,13 +213,26 @@ async def api_get_attendance(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return {"children": [parent_portal_service._build_attendance(school_id, student) for student in visible_students]}  # type: ignore[attr-defined]
+    student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
+    try:
+        rows_by_student = parent_portal_service._batch_load_attendance(school_id, student_ids, days=365)  # type: ignore[attr-defined]
+    except Exception:
+        rows_by_student = {}
+    return {
+        "children": [
+            parent_portal_service._build_attendance_from_batch(  # type: ignore[attr-defined]
+                student,
+                rows_by_student.get(_normalize_scope_value(student.get("id")), []),
+            )
+            for student in visible_students
+        ]
+    }
 
 
 # ─── Online Test Results (Phase 4) ─────────────────────────────────────
 
 @router.get("/test-results")
-async def api_get_test_results(
+def api_get_test_results(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -254,13 +240,26 @@ async def api_get_test_results(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return {"children": [parent_portal_service._build_test_results(school_id, student) for student in visible_students]}  # type: ignore[attr-defined]
+    student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
+    try:
+        test_results = parent_portal_service._batch_load_test_results(school_id, student_ids, limit=50)  # type: ignore[attr-defined]
+    except Exception:
+        test_results = {}
+    return {
+        "children": [
+            parent_portal_service._build_test_results_from_batch(  # type: ignore[attr-defined]
+                student,
+                test_results.get(_normalize_scope_value(student.get("id")), []),
+            )
+            for student in visible_students
+        ]
+    }
 
 
 # ─── Assignments (Phase 5) ─────────────────────────────────────────────
 
 @router.get("/assignments")
-async def api_get_assignments(
+def api_get_assignments(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -268,13 +267,55 @@ async def api_get_assignments(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return {"children": [parent_portal_service._build_assignments(school_id, student) for student in visible_students]}  # type: ignore[attr-defined]
+    try:
+        assignments = parent_portal_service._batch_load_assignments(school_id)  # type: ignore[attr-defined]
+    except Exception:
+        assignments = []
+    return {
+        "children": [
+            parent_portal_service._build_assignments_from_batch(  # type: ignore[attr-defined]
+                student,
+                assignments,
+            )
+            for student in visible_students
+        ]
+    }
+
+
+# ─── Fees (Parent view) ────────────────────────────────────────────────
+
+@router.get("/fees")
+def api_get_fees(
+    student_id: str | None = Query(default=None),
+    school_id: str = Depends(resolve_school_id_from_actor),
+    actor: dict = Depends(get_authenticated_actor_context),
+    user: User = Depends(require_parent_view_user),
+    scope_context: PermissionScopeContext = Depends(require_parent_scope),
+):
+    visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
+    student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
+    try:
+        fee_by_student = parent_portal_service._batch_load_fees(school_id, student_ids)  # type: ignore[attr-defined]
+    except Exception:
+        fee_by_student = {}
+    children = []
+    for student in visible_students:
+        sid = _normalize_scope_value(student.get("id"))
+        fee_status = fee_by_student.get(sid) or {"total_fee": 0, "paid_amount": 0, "due_amount": 0, "status": "unavailable", "due_date": None, "payment_percentage": 0}
+        children.append({
+            "student_id": sid,
+            "student_name": _normalize_scope_value(student.get("full_name")) or "Student",
+            "class_name": _normalize_scope_value(student.get("class_name")),
+            "section": _normalize_scope_value(student.get("section")),
+            "fee_status": fee_status,
+        })
+    return {"children": children}
 
 
 # ─── Alerts (Phase 6) ──────────────────────────────────────────────────
 
 @router.get("/alerts")
-async def api_get_alerts(
+def api_get_alerts(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -282,30 +323,59 @@ async def api_get_alerts(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return {"children": [parent_portal_service._build_alerts(school_id, student) for student in visible_students]}  # type: ignore[attr-defined]
+    student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
+    try:
+        attendance_by_student = parent_portal_service._batch_load_attendance(school_id, student_ids, days=90)  # type: ignore[attr-defined]
+        test_results = parent_portal_service._batch_load_test_results(school_id, student_ids, limit=10)  # type: ignore[attr-defined]
+        assignments = parent_portal_service._batch_load_assignments(school_id)  # type: ignore[attr-defined]
+        shared_tests = parent_portal_service._load_shared_tests(school_id)  # type: ignore[attr-defined]
+        fee_by_student = parent_portal_service._batch_load_fees(school_id, student_ids)  # type: ignore[attr-defined]
+    except Exception:
+        attendance_by_student = {}
+        test_results = {}
+        assignments = []
+        shared_tests = []
+        fee_by_student = {}
+    return {
+        "children": [
+            parent_portal_service._build_alerts_from_batch(  # type: ignore[attr-defined]
+                school_id,
+                student,
+                attendance_rows=attendance_by_student.get(_normalize_scope_value(student.get("id")), []),
+                test_results_list=test_results.get(_normalize_scope_value(student.get("id")), []),
+                assignments=assignments,
+                shared_tests=shared_tests,
+                fee_data=fee_by_student.get(_normalize_scope_value(student.get("id"))),
+            )
+            for student in visible_students
+        ]
+    }
 
 
 # ─── AI Assistant (Phase 8) ────────────────────────────────────────────
 
 @router.post("/ai/ask")
-async def api_ai_ask(
+def api_ai_ask(
     payload: AiAskRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
-    visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=payload.student_id)
     return _build_parent_ai_response(
         school_id,
-        visible_students,
+        [],
         question=payload.question,
         history=payload.history,
+        scope_context=scope_context,
+        actor=actor,
+        user=user,
+        student_id=payload.student_id,
     )
 
 
 @router.get("/ai/recommendations")
-async def api_get_recommendations(
+def api_get_recommendations(
     student_id: str | None = Query(default=None),
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -313,13 +383,13 @@ async def api_get_recommendations(
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
-    return [parent_portal_service._build_recommendations(school_id, student) for student in visible_students]  # type: ignore[attr-defined]
+    return parent_portal_ai.build_recommendations_batch(school_id, visible_students)
 
 
 # ─── Legacy Intelligence Endpoints (keep for backward compat) ──────────
 
 @router.get("/insights")
-async def api_get_parent_insights(
+def api_get_parent_insights(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
@@ -334,7 +404,7 @@ async def api_get_parent_insights(
 
 
 @router.get("/risk-score")
-async def api_get_parent_risk_scores(
+def api_get_parent_risk_scores(
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
@@ -349,7 +419,7 @@ async def api_get_parent_risk_scores(
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
-async def api_acknowledge_parent_alert(
+def api_acknowledge_parent_alert(
     alert_id: str,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -394,7 +464,7 @@ async def api_acknowledge_parent_alert(
 
 
 @router.post("/communication/contact-teacher")
-async def api_contact_teacher(
+def api_contact_teacher(
     payload: ParentCommunicationRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -411,7 +481,7 @@ async def api_contact_teacher(
 
 
 @router.post("/communication/request-meeting")
-async def api_request_parent_meeting(
+def api_request_parent_meeting(
     payload: ParentCommunicationRequest,
     school_id: str = Depends(resolve_school_id_from_actor),
     actor: dict = Depends(get_authenticated_actor_context),
