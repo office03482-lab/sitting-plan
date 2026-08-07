@@ -6,26 +6,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.middleware.auth import get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.services import supabase_question_bank as qb_service
-from app.services.scope_engine import PermissionScopeContext
 
 router = APIRouter(prefix="/api/question-bank", tags=["Question Bank"])
 
 
-def _school_id(request: Request) -> str:
-    ctx: PermissionScopeContext = request.state.permission_scope
-    return ctx.school_id
+def _school_id(tenant: TenantContext) -> str:
+    return tenant.school_id
 
 
 # ─── Exam Types ──────────────────────────────────────────────
 
 @router.get("/exam-types")
-def api_list_exam_types(request: Request):
-    return qb_service.list_exam_types(_school_id(request))
+def api_list_exam_types(tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.list_exam_types(_school_id(tenant))
 
 
 class ExamTypeCreate(BaseModel):
@@ -34,15 +32,15 @@ class ExamTypeCreate(BaseModel):
     display_order: int = 0
 
 @router.post("/exam-types")
-def api_create_exam_type(body: ExamTypeCreate, request: Request):
-    return qb_service.create_exam_type(_school_id(request), body.name, body.slug, body.display_order)
+def api_create_exam_type(body: ExamTypeCreate, tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.create_exam_type(_school_id(tenant), body.name, body.slug, body.display_order)
 
 
 # ─── Taxonomy Nodes ──────────────────────────────────────────
 
 @router.get("/taxonomy")
-def api_list_taxonomy(request: Request, exam_type_slug: str | None = None, node_type: str | None = None, parent_id: str | None = None):
-    return qb_service.list_taxonomy_nodes(_school_id(request), exam_type_slug, node_type, parent_id)
+def api_list_taxonomy(tenant: TenantContext = Depends(get_tenant_context), exam_type_slug: str | None = None, node_type: str | None = None, parent_id: str | None = None):
+    return qb_service.list_taxonomy_nodes(_school_id(tenant), exam_type_slug, node_type, parent_id)
 
 
 class TaxonomyNodeCreate(BaseModel):
@@ -53,15 +51,15 @@ class TaxonomyNodeCreate(BaseModel):
     display_order: int = 0
 
 @router.post("/taxonomy")
-def api_create_taxonomy_node(body: TaxonomyNodeCreate, request: Request):
+def api_create_taxonomy_node(body: TaxonomyNodeCreate, tenant: TenantContext = Depends(get_tenant_context)):
     return qb_service.create_taxonomy_node(
-        _school_id(request), body.name, body.node_type, body.exam_type_slug, body.parent_id, body.display_order,
+        _school_id(tenant), body.name, body.node_type, body.exam_type_slug, body.parent_id, body.display_order,
     )
 
 
 @router.delete("/taxonomy/{node_id}")
-def api_delete_taxonomy_node(node_id: str, request: Request):
-    ok = qb_service.delete_taxonomy_node(node_id, _school_id(request))
+def api_delete_taxonomy_node(node_id: str, tenant: TenantContext = Depends(get_tenant_context)):
+    ok = qb_service.delete_taxonomy_node(node_id, _school_id(tenant))
     if not ok:
         raise HTTPException(status_code=404, detail="Taxonomy node not found.")
     return {"status": "deleted"}
@@ -70,8 +68,8 @@ def api_delete_taxonomy_node(node_id: str, request: Request):
 # ─── Tags ────────────────────────────────────────────────────
 
 @router.get("/tags")
-def api_list_tags(request: Request):
-    return qb_service.list_tags(_school_id(request))
+def api_list_tags(tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.list_tags(_school_id(tenant))
 
 
 class TagCreate(BaseModel):
@@ -81,15 +79,15 @@ class TagCreate(BaseModel):
     icon: str | None = None
 
 @router.post("/tags")
-def api_create_tag(body: TagCreate, request: Request):
-    return qb_service.create_tag(_school_id(request), body.name, body.slug, body.color, body.icon)
+def api_create_tag(body: TagCreate, tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.create_tag(_school_id(tenant), body.name, body.slug, body.color, body.icon)
 
 
 # ─── Sources ─────────────────────────────────────────────────
 
 @router.get("/sources")
-def api_list_sources(request: Request):
-    return qb_service.list_sources(_school_id(request))
+def api_list_sources(tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.list_sources(_school_id(tenant))
 
 
 class SourceCreate(BaseModel):
@@ -97,15 +95,15 @@ class SourceCreate(BaseModel):
     source_type: str = "self"
 
 @router.post("/sources")
-def api_create_source(body: SourceCreate, request: Request):
-    return qb_service.create_source(_school_id(request), body.name, body.source_type)
+def api_create_source(body: SourceCreate, tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.create_source(_school_id(tenant), body.name, body.source_type)
 
 
 # ─── Questions ───────────────────────────────────────────────
 
 @router.get("/questions")
 def api_list_questions(
-    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
     exam_type_slug: str | None = None,
     subject: str | None = None,
     chapter: str | None = None,
@@ -122,12 +120,12 @@ def api_list_questions(
         "topic": topic, "difficulty_level": difficulty_level, "question_type": question_type,
         "status": status, "search": search,
     }.items() if v}
-    return qb_service.list_questions(_school_id(request), filters, skip, limit)
+    return qb_service.list_questions(_school_id(tenant), filters, skip, limit)
 
 
 @router.get("/questions/{question_id}")
-def api_get_question(question_id: str, request: Request):
-    q = qb_service.get_question(question_id, _school_id(request))
+def api_get_question(question_id: str, tenant: TenantContext = Depends(get_tenant_context)):
+    q = qb_service.get_question(question_id, _school_id(tenant))
     if not q:
         raise HTTPException(status_code=404, detail="Question not found.")
     return q
@@ -172,8 +170,8 @@ class QuestionCreate(BaseModel):
     metadata: dict[str, Any] = {}
 
 @router.post("/questions")
-def api_create_question(body: QuestionCreate, request: Request):
-    return qb_service.create_question(_school_id(request), body.model_dump(exclude_unset=True))
+def api_create_question(body: QuestionCreate, tenant: TenantContext = Depends(get_tenant_context)):
+    return qb_service.create_question(_school_id(tenant), body.model_dump(exclude_unset=True))
 
 
 class QuestionUpdate(BaseModel):
@@ -215,8 +213,8 @@ class QuestionUpdate(BaseModel):
     metadata: dict[str, Any] | None = None
 
 @router.put("/questions/{question_id}")
-def api_update_question(question_id: str, body: QuestionUpdate, request: Request):
-    sid = _school_id(request)
+def api_update_question(question_id: str, body: QuestionUpdate, tenant: TenantContext = Depends(get_tenant_context)):
+    sid = _school_id(tenant)
     existing = qb_service.get_question(question_id, sid)
     if not existing:
         raise HTTPException(status_code=404, detail="Question not found.")
@@ -235,8 +233,8 @@ def api_update_question(question_id: str, body: QuestionUpdate, request: Request
 
 
 @router.delete("/questions/{question_id}")
-def api_delete_question(question_id: str, request: Request):
-    sid = _school_id(request)
+def api_delete_question(question_id: str, tenant: TenantContext = Depends(get_tenant_context)):
+    sid = _school_id(tenant)
     existing = qb_service.get_question(question_id, sid)
     if not existing:
         raise HTTPException(status_code=404, detail="Question not found.")
@@ -248,13 +246,13 @@ def api_delete_question(question_id: str, request: Request):
 # ─── Version History ─────────────────────────────────────────
 
 @router.get("/questions/{question_id}/versions")
-def api_list_versions(question_id: str, request: Request, limit: int = 20):
-    return qb_service.list_versions(question_id, _school_id(request), limit)
+def api_list_versions(question_id: str, tenant: TenantContext = Depends(get_tenant_context), limit: int = 20):
+    return qb_service.list_versions(question_id, _school_id(tenant), limit)
 
 
 @router.post("/questions/{question_id}/versions/{version_id}/restore")
-def api_restore_version(question_id: str, version_id: str, request: Request):
-    sid = _school_id(request)
+def api_restore_version(question_id: str, version_id: str, tenant: TenantContext = Depends(get_tenant_context)):
+    sid = _school_id(tenant)
     version = qb_service.get_version(version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Version not found.")
@@ -272,5 +270,5 @@ def api_restore_version(question_id: str, version_id: str, request: Request):
 # ─── Edit History ────────────────────────────────────────────
 
 @router.get("/questions/{question_id}/history")
-def api_list_history(question_id: str, request: Request, limit: int = 50):
-    return qb_service.list_history(question_id, _school_id(request), limit)
+def api_list_history(question_id: str, tenant: TenantContext = Depends(get_tenant_context), limit: int = 50):
+    return qb_service.list_history(question_id, _school_id(tenant), limit)

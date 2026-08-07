@@ -18,6 +18,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.middleware.auth import get_authenticated_actor_context, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     ConflictCheckResponse,
@@ -28,7 +29,6 @@ from app.schemas import (
     TimetableView,
 )
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.scope_engine import (
     PermissionScopeContext,
     build_scope_context,
@@ -82,10 +82,11 @@ def require_timetable_manage_access(
 
 
 def require_timetable_view_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, str] = Depends(get_authenticated_actor_context),
     user: User = Depends(require_permissions("timetable.view", "timetable")),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -96,10 +97,11 @@ def require_timetable_view_scope(
 
 
 def require_timetable_manage_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, str] = Depends(get_authenticated_actor_context),
     user: User = Depends(require_permissions("timetable.manage", "timetable")),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -578,9 +580,10 @@ def create_timetable_pdf(entries: list[TimetableView], view_by: str, session_mod
 @router.post("", response_model=TimetableEntryResponse)
 async def create_timetable_entry(
     entry: TimetableEntryCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_scope_teacher_access(scope_context, str(entry.teacher_id) if entry.teacher_id else None, "You can only create timetable entries for your assigned timetable scope")
     result = create_timetable_entry_supabase(school_id, entry.model_dump())
     return build_timetable_response(result)
@@ -588,7 +591,7 @@ async def create_timetable_entry(
 
 @router.get("", response_model=list[TimetableView])
 async def list_timetable_entries(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     day_of_week: DayOfWeek | None = None,
     teacher_id: str | int | None = None,
     class_name: str | None = None,
@@ -596,6 +599,7 @@ async def list_timetable_entries(
     reference_date: date | None = Query(default=None),
     scope_context: PermissionScopeContext = Depends(require_timetable_view_scope),
 ):
+    school_id = tenant.school_id
     if teacher_id and not scope_context.is_school_wide:
         _enforce_scope_teacher_access(scope_context, str(teacher_id), "You can only view your assigned timetable")
     rows = await asyncio.get_event_loop().run_in_executor(
@@ -616,9 +620,10 @@ async def list_timetable_entries(
 @router.get("/count")
 async def get_timetable_entries_count(
     response: Response,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_view_scope),
 ):
+    school_id = tenant.school_id
     trace = begin_dashboard_request("timetable_count", school_id)
     response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
     try:
@@ -636,13 +641,14 @@ async def export_timetable(
     export_format: str = Query(..., pattern="^(excel|pdf)$"),
     view_by: str = Query(default="day", pattern="^(day|teacher|room|batch)$"),
     session_mode_filter: str = Query(default="all", pattern="^(all|offline|online|merged)$"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     day_of_week: DayOfWeek | None = Query(default=None),
     teacher_id: str | int | None = Query(default=None),
     room_id: str | int | None = Query(default=None),
     batch_name: str | None = Query(default=None),
     scope_context: PermissionScopeContext = Depends(require_timetable_view_scope),
 ):
+    school_id = tenant.school_id
     if teacher_id and not scope_context.is_school_wide:
         _enforce_scope_teacher_access(scope_context, str(teacher_id), "You can only export your assigned timetable")
     entries = coerce_timetable_views(_filter_rows_for_scope(list_timetable_entries_supabase(
@@ -674,9 +680,10 @@ async def export_timetable(
 @router.get("/{entry_id}", response_model=TimetableEntryResponse)
 async def get_timetable_entry(
     entry_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_view_scope),
 ):
+    school_id = tenant.school_id
     result = get_timetable_entry_supabase(school_id, entry_id)
     _enforce_scope_entry_access(scope_context, result, "You can only view timetable entries in your assigned scope")
     return build_timetable_response(result)
@@ -686,9 +693,10 @@ async def get_timetable_entry(
 async def update_timetable_entry(
     entry_id: str,
     entry_update: TimetableEntryUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     current = get_timetable_entry_supabase(school_id, entry_id)
     _enforce_scope_entry_access(scope_context, current, "You can only update timetable entries in your assigned scope")
     next_teacher_id = str(entry_update.teacher_id) if entry_update.teacher_id else str(current.get("teacher_id") or "")
@@ -700,9 +708,10 @@ async def update_timetable_entry(
 @router.delete("/{entry_id}")
 async def delete_timetable_entry(
     entry_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     current = get_timetable_entry_supabase(school_id, entry_id)
     _enforce_scope_entry_access(scope_context, current, "You can only delete timetable entries in your assigned scope")
     return delete_timetable_entry_supabase(school_id, entry_id)
@@ -710,10 +719,11 @@ async def delete_timetable_entry(
 
 @router.delete("")
 async def delete_all_timetable_entries(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     is_admin: bool = Query(default=False),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     ensure_school_wide_scope(scope_context, "Only school-wide timetable access can bulk delete timetable entries")
     if not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can delete all timetable entries")
@@ -729,9 +739,10 @@ async def check_conflict(
     room_id: str | int | None = Body(default=None),
     class_name: str | None = Body(default=None),
     exclude_entry_id: str | int = Body(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_scope_teacher_access(scope_context, str(teacher_id), "You can only validate conflicts for your assigned timetable")
     conflicts = check_teacher_conflicts_supabase(
         school_id,
@@ -823,9 +834,10 @@ async def download_timetable_template():
 @utility_router.post("/upload")
 async def upload_timetable_excel(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_timetable_manage_scope),
 ):
+    school_id = tenant.school_id
     ensure_school_wide_scope(scope_context, "Only school-wide timetable access can import timetable workbooks")
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")

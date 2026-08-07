@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pytest
 
+from app.middleware.tenant_context import TenantContext
 from app.routes import account_security, analytics, attendance, lms, reports, students
 from app.models import UserRole
 from app.services import supabase_account_security, supabase_analytics
@@ -137,7 +138,7 @@ def test_school_analytics_blocks_cross_tenant_access_for_school_admin():
     app = FastAPI()
     app.include_router(analytics.router)
     school_admin = SimpleNamespace(role=analytics.UserRole.ADMIN, role_key="school_admin", user_type="staff")
-    app.dependency_overrides[analytics.resolve_school_id_from_actor] = lambda: SCHOOL_A
+    app.dependency_overrides[analytics.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_A)
     app.dependency_overrides[analytics.get_authenticated_actor_context] = lambda: {"profile_id": "profile-admin"}
     app.dependency_overrides[analytics.require_school_analytics_user] = lambda: school_admin
 
@@ -150,7 +151,7 @@ def test_school_analytics_blocks_cross_tenant_access_for_school_admin():
 def test_students_list_uses_actor_school_context(monkeypatch):
     app = FastAPI()
     app.include_router(students.router, prefix="/api/students")
-    app.dependency_overrides[students.resolve_school_id_from_actor] = lambda: SCHOOL_A
+    app.dependency_overrides[students.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_A)
     app.dependency_overrides[students.get_authenticated_actor_context] = lambda: {"user_id": "user-1"}
     app.dependency_overrides[students.require_student_directory_scope] = lambda: _school_scope("admin_office.students")
     app.dependency_overrides[students.get_db] = _dummy_db
@@ -175,7 +176,7 @@ def test_lms_courses_use_actor_school_context(monkeypatch):
     app = FastAPI()
     app.include_router(lms.router)
     school_admin = SimpleNamespace(role=lms.UserRole.ADMIN, role_key="school_admin", user_type="staff")
-    app.dependency_overrides[lms.resolve_school_id_from_actor] = lambda: SCHOOL_A
+    app.dependency_overrides[lms.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_A)
     app.dependency_overrides[lms.get_authenticated_actor_context] = lambda: {"profile_id": "profile-admin"}
     app.dependency_overrides[lms.require_lms_view_user] = lambda: school_admin
     app.dependency_overrides[lms.require_lms_view_scope] = lambda: _school_scope("lms.view")
@@ -201,7 +202,7 @@ def test_lms_courses_use_actor_school_context(monkeypatch):
 def test_attendance_reports_use_actor_school_context(monkeypatch):
     app = FastAPI()
     app.include_router(attendance.router)
-    app.dependency_overrides[attendance.resolve_school_id_from_actor] = lambda: SCHOOL_A
+    app.dependency_overrides[attendance.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_A)
     captured: dict[str, object] = {}
 
     async def fake_collect_student_report_records(school_id, class_name, section, batch_names, date_from, date_to):

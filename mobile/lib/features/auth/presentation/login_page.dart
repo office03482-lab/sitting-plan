@@ -66,7 +66,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               ),
                               const SizedBox(height: 20),
                               Text(
-                                'School ERP, optimized for daily execution.',
+                                'Dr. Girish App, optimized for daily execution.',
                                 style: theme.textTheme.displaySmall?.copyWith(
                                   fontWeight: FontWeight.w700,
                                   color: const Color(0xFF0F172A),

@@ -8,8 +8,8 @@ import type { PortalIntent, SchoolPublicBranding } from '@types';
 import InteractiveCompass from '@components/login/InteractiveCompass';
 
 const DEFAULT_BRANDING: SchoolPublicBranding = {
-  school_name: 'School',
-  portal_name: 'School ERP',
+  school_name: 'Dr. Girish App',
+  portal_name: 'Dr. Girish App',
   tagline: '',
   logo_url: '',
   banner_url: '',
@@ -27,7 +27,7 @@ const SCHOOL_CONTEXT_REQUIRED_HINT = 'School context is required for username lo
 const SCHOOL_CONTEXT_MESSAGE = 'Please select a school before using a username. Alternatively, log in with your email.';
 
 const TABS: { key: PortalIntent; label: string; Icon: typeof School | typeof GraduationCap | typeof Users }[] = [
-  { key: 'school_erp', label: 'School ERP', Icon: School },
+  { key: 'school_erp', label: 'Dr. Girish App', Icon: School },
   { key: 'student_portal', label: 'Student', Icon: GraduationCap },
   { key: 'parent_portal', label: 'Parent', Icon: Users },
   { key: 'platform_admin', label: 'Admin', Icon: Monitor },
@@ -41,7 +41,7 @@ const PORTAL_DETAILS: Record<PortalIntent, {
 }> = {
   school_erp: {
     subtitle: 'Login to your school workspace',
-    buttonText: 'Login to School ERP',
+    buttonText: 'Login to Dr. Girish App',
     helperText: 'Use the account provided by your school.',
     welcomeMessage: 'Welcome back! Please enter your details.',
   },
@@ -161,7 +161,7 @@ export default function Login() {
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.title = branding?.portal_name || branding?.school_name || 'Sign In';
+      document.title = branding?.school_name || branding?.portal_name || 'Sign In';
     }
     const faviconUrl = branding?.favicon_url;
     if (!faviconUrl || typeof document === 'undefined') return;
@@ -275,7 +275,7 @@ export default function Login() {
             </div>
 
             <h1 className="auth-heading">
-              {portalIntent === 'school_erp' ? (branding?.portal_name || 'School ERP') :
+              {portalIntent === 'school_erp' ? (branding?.school_name || branding?.portal_name || 'Dr. Girish App') :
                portalIntent === 'student_portal' ? 'Student Portal' :
                portalIntent === 'parent_portal' ? 'Parent Portal' :
                'Platform Administration'}

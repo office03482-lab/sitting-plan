@@ -5,10 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit, storage_delta_gb
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_storage import upload_file_to_supabase_storage
 
 router = APIRouter(prefix="/api/uploads", tags=["Uploads"])
@@ -54,10 +54,11 @@ def _file_size_bytes(file: UploadFile) -> int:
 async def api_upload_video(
     file: UploadFile = File(...),
     purpose: str = Query(default="lms"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_upload_manager),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="storage",
         user=user,
@@ -83,10 +84,11 @@ async def api_upload_video(
 async def api_upload_document(
     file: UploadFile = File(...),
     purpose: str = Query(default="lms"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_upload_manager),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="storage",
         user=user,
@@ -112,10 +114,11 @@ async def api_upload_document(
 async def api_upload_image(
     file: UploadFile = File(...),
     purpose: str = Query(default="online_test"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_upload_manager),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="storage",
         user=user,
@@ -140,10 +143,11 @@ async def api_upload_image(
 async def api_upload_assignment(
     file: UploadFile = File(...),
     submission: bool = Query(default=False),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_assignment_upload_user),
 ):
+    school_id = tenant.school_id
     permission_key = "lms.assignments" if _is_student_user(user) else "lms.manage"
     reservation = prepare_route_retrofit(
         flag_name="storage",

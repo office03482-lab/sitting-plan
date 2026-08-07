@@ -7,10 +7,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import DoubtHistoryResponse, DoubtInputBase, DoubtSolverResponse
 from app.services.bulk_action_requests import is_platform_admin_user
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_doubt_solver import get_doubt_solver_overview, list_doubt_history, solve_image_doubt, solve_pdf_doubt, solve_text_doubt
 
 router = APIRouter(prefix="/api/doubts", tags=["AI Doubt Solver"])
@@ -45,10 +45,11 @@ def require_doubt_solver_user(
 @router.post("/text", response_model=DoubtSolverResponse)
 async def api_doubt_text(
     payload: DoubtInputBase,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_doubt_solver_user),
 ):
+    school_id = tenant.school_id
     return solve_text_doubt(
         school_id,
         role_key=_role_key(user),
@@ -61,10 +62,11 @@ async def api_doubt_text(
 @router.post("/image", response_model=DoubtSolverResponse)
 async def api_doubt_image(
     payload: DoubtInputBase,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_doubt_solver_user),
 ):
+    school_id = tenant.school_id
     return solve_image_doubt(
         school_id,
         role_key=_role_key(user),
@@ -77,10 +79,11 @@ async def api_doubt_image(
 @router.post("/pdf", response_model=DoubtSolverResponse)
 async def api_doubt_pdf(
     payload: DoubtInputBase,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_doubt_solver_user),
 ):
+    school_id = tenant.school_id
     return solve_pdf_doubt(
         school_id,
         role_key=_role_key(user),
@@ -92,12 +95,13 @@ async def api_doubt_pdf(
 
 @router.get("/history", response_model=list[DoubtHistoryResponse])
 async def api_doubt_history(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_doubt_solver_user),
     target_student_id: Optional[str] = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
 ):
+    school_id = tenant.school_id
     return list_doubt_history(
         school_id,
         role_key=_role_key(user),
@@ -110,12 +114,13 @@ async def api_doubt_history(
 
 @alias_router.get("/doubt-solver", include_in_schema=False)
 async def api_doubt_solver_overview(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_doubt_solver_user),
     target_student_id: Optional[str] = Query(default=None),
     limit: int = Query(default=10, ge=1, le=50),
 ):
+    school_id = tenant.school_id
     return get_doubt_solver_overview(
         school_id,
         role_key=_role_key(user),

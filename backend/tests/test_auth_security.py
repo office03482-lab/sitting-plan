@@ -16,6 +16,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.main import app
+from app.middleware.tenant_context import TenantContext
 from app.routes import auth as auth_routes
 from app.utils.auth import create_access_token
 
@@ -422,7 +423,7 @@ def test_administrator_overview_splits_platform_and_school_admins(client, monkey
     monkeypatch.setattr(auth_routes, "_load_school_role_user_rows", lambda school_id, supabase=None: school_rows)
     monkeypatch.setattr(auth_routes, "_load_role_permissions_map", lambda role_ids, supabase=None: {})
 
-    app.dependency_overrides[auth_routes.resolve_school_id_from_actor] = lambda: "school-a"
+    app.dependency_overrides[auth_routes.get_tenant_context] = lambda: TenantContext(school_id="school-a")
     app.dependency_overrides[auth_routes.require_user_management_access] = lambda: SimpleNamespace(
         id="platform-profile",
         username="platformowner",
@@ -439,7 +440,7 @@ def test_administrator_overview_splits_platform_and_school_admins(client, monkey
     try:
         response = client.get("/api/auth/users/administrators")
     finally:
-        app.dependency_overrides.pop(auth_routes.resolve_school_id_from_actor, None)
+        app.dependency_overrides.pop(auth_routes.get_tenant_context, None)
         app.dependency_overrides.pop(auth_routes.require_user_management_access, None)
 
     assert response.status_code == 200

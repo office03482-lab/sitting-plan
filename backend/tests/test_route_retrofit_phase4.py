@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.tenant_context import TenantContext
 from app.routes import ai_tutor, online_tests
 from app.services import route_retrofit
 
@@ -235,7 +236,7 @@ def test_ai_tutor_route_enforces_and_commits(monkeypatch):
     user = _user(role_key="student", user_type="student")
     app.dependency_overrides[ai_tutor.require_ai_tutor_chat_user] = lambda: user
     app.dependency_overrides[get_authenticated_actor_context] = lambda: {"profile_id": PROFILE_ID, "school_id": SCHOOL_ID}
-    app.dependency_overrides[ai_tutor.resolve_school_id_from_actor] = lambda: SCHOOL_ID
+    app.dependency_overrides[ai_tutor.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_ID)
 
     client = TestClient(app)
     response = client.post("/api/ai/chat", json={"topic": "Algebra", "question": "What is x?"})
@@ -264,7 +265,7 @@ def test_online_tests_ai_generate_route_returns_structured_limit_error(monkeypat
     )
     app.dependency_overrides[online_tests.require_online_tests_manage_scope] = lambda: scope_context
     app.dependency_overrides[get_authenticated_actor_context] = lambda: {"profile_id": PROFILE_ID, "school_id": SCHOOL_ID}
-    app.dependency_overrides[online_tests.resolve_school_id_from_actor] = lambda: SCHOOL_ID
+    app.dependency_overrides[online_tests.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_ID)
 
     client = TestClient(app)
     response = client.post(

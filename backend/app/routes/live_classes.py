@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
 from app.models import User, UserRole
 from app.schemas import (
@@ -16,7 +17,6 @@ from app.schemas import (
     LiveClassSessionResponse,
 )
 from app.services.bulk_action_requests import is_platform_admin_user
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_live_classes import (
     create_live_class,
     end_live_class,
@@ -112,10 +112,11 @@ async def api_list_live_classes(
     status_filter: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_live_class_view_user),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     rows = list_live_classes(
         school_id,
         role_key=_role_key(user),
@@ -131,10 +132,11 @@ async def api_list_live_classes(
 @router.post("", response_model=LiveClassSessionResponse)
 async def api_create_live_class(
     payload: LiveClassSessionCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_manage_user),
 ):
+    school_id = tenant.school_id
     del user
     return create_live_class(school_id, str(actor.get("profile_id") or "").strip() or None, payload.model_dump(exclude_none=True))
 
@@ -142,19 +144,21 @@ async def api_create_live_class(
 @router.get("/{session_id}", response_model=LiveClassSessionResponse)
 async def api_get_live_class(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_live_class_view_user),
 ):
+    school_id = tenant.school_id
     return _sanitize_session_for_user(get_live_class(school_id, session_id), user)
 
 
 @router.post("/{session_id}/start", response_model=LiveClassSessionActionResponse)
 async def api_start_live_class(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_manage_user),
 ):
+    school_id = tenant.school_id
     del user
     session = start_live_class(school_id, session_id, str(actor.get("profile_id") or "").strip() or None)
     return {"session": session, "message": "Live class started successfully"}
@@ -163,10 +167,11 @@ async def api_start_live_class(
 @router.post("/{session_id}/end", response_model=LiveClassSessionActionResponse)
 async def api_end_live_class(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_manage_user),
 ):
+    school_id = tenant.school_id
     del user
     session = end_live_class(school_id, session_id, str(actor.get("profile_id") or "").strip() or None)
     return {"session": session, "message": "Live class ended successfully"}
@@ -175,10 +180,11 @@ async def api_end_live_class(
 @router.post("/{session_id}/join", response_model=LiveClassJoinLeaveResponse)
 async def api_join_live_class(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_join_user),
 ):
+    school_id = tenant.school_id
     return join_live_class(
         school_id,
         session_id,
@@ -190,10 +196,11 @@ async def api_join_live_class(
 @router.post("/{session_id}/leave", response_model=LiveClassJoinLeaveResponse)
 async def api_leave_live_class(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_join_user),
 ):
+    school_id = tenant.school_id
     del user
     return leave_live_class(
         school_id,
@@ -205,10 +212,11 @@ async def api_leave_live_class(
 @router.get("/{session_id}/attendance", response_model=list[LiveClassAttendanceResponse])
 async def api_get_live_class_attendance(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_live_class_attendance_user),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     return get_live_class_attendance(
         school_id,
         session_id,
@@ -222,10 +230,11 @@ async def api_get_live_class_attendance(
 async def api_upload_live_class_recording(
     session_id: str,
     payload: LiveClassRecordingCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_live_class_manage_user),
 ):
+    school_id = tenant.school_id
     del user
     return upload_live_class_recording(
         school_id,

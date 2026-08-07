@@ -236,12 +236,12 @@ def test_unknown_domain_or_hint_never_leaks_another_school_branding(monkeypatch)
     unknown_host = school_self_service.get_public_school_branding(hostname="unknown.yourdomain.com")
     unknown_hint = school_self_service.get_public_school_branding(school_hint="missing-school")
 
-    assert unknown_host["school_name"] == "School ERP"
-    assert unknown_host["portal_name"] == "School ERP"
+    assert unknown_host["school_name"] == "Dr. Girish App"
+    assert unknown_host["portal_name"] == "Dr. Girish App"
     assert unknown_host.get("logo_url") is None
 
-    assert unknown_hint["school_name"] == "School ERP"
-    assert unknown_hint["portal_name"] == "School ERP"
+    assert unknown_hint["school_name"] == "Dr. Girish App"
+    assert unknown_hint["portal_name"] == "Dr. Girish App"
     assert unknown_hint.get("logo_url") is None
 
 

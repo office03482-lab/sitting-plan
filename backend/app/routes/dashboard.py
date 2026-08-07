@@ -12,8 +12,8 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, Response
 
 from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_metrics import (
     get_dashboard_metrics_rpc,
     get_edupay_dashboard_summary_rpc,
@@ -162,9 +162,10 @@ def _augment_dashboard_payload(school_id: str, payload: dict[str, Any]) -> dict[
 @router.get("/dashboard/metrics")
 async def get_dashboard_metrics(
     response: Response,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     del actor
     global _dashboard_rpc_missing_until
     trace = begin_dashboard_request("dashboard_metrics", school_id)

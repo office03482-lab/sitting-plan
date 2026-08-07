@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 
 logger = logging.getLogger(__name__)
 
@@ -180,9 +180,10 @@ def _build_school_update_payload(existing_row: dict, settings_data: dict) -> tup
 
 @router.get("")
 async def get_settings(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     row = _load_school_row(school_id)
     payload = _serialize_school_settings(row)
     logger.info(
@@ -195,9 +196,10 @@ async def get_settings(
 @router.put("")
 async def update_settings(
     settings_data: SchoolSettings,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     existing_row = _load_school_row(school_id)
     update_payload, _ = _build_school_update_payload(
         existing_row,
@@ -226,9 +228,10 @@ async def update_settings(
 
 @router.post("/reset")
 async def reset_settings(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     existing_row = _load_school_row(school_id)
     update_payload, _ = _build_school_update_payload(existing_row, deepcopy(_DEFAULT_SETTINGS))
     update_payload["name"] = _normalize_text(existing_row.get("name"))

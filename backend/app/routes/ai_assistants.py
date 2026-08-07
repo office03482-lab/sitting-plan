@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import SchoolAiAssistantQueryRequest, SchoolAiAssistantResponse
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.supabase_ai_assistants import answer_school_ai_question
-from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/ai-assistants", tags=["AI Assistants"])
 
@@ -34,10 +34,11 @@ def require_school_ai_user(
 @router.post("/school/query", response_model=SchoolAiAssistantResponse)
 async def api_school_ai_query(
     payload: SchoolAiAssistantQueryRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_school_ai_user),
 ):
+    school_id = tenant.school_id
     del user
     return answer_school_ai_question(
         school_id,

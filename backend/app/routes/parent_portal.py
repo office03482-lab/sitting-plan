@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.services.scope_engine import PermissionScopeContext, build_scope_context
 from app.services.bulk_action_requests import is_platform_admin_user
@@ -15,7 +16,6 @@ from app.services.supabase_admin import get_supabase_admin_client
 import app.services.parent_portal_service as parent_portal_service
 import app.services.parent_portal_ai as parent_portal_ai
 import app.services.supabase_parent_intelligence as parent_intelligence_service
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_parent_intelligence import acknowledge_parent_alert, contact_teacher, request_parent_meeting
 
 router = APIRouter(prefix="/api/parent", tags=["Parent Portal"])
@@ -61,14 +61,14 @@ def require_parent_view_user(
 
 
 def require_parent_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="edupay.parent_portal",
         include_students=True,
     )
@@ -133,11 +133,12 @@ def _build_parent_ai_response(
 
 @router.get("/children")
 def api_list_children(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user)
     return [
         {
@@ -155,11 +156,12 @@ def api_list_children(
 
 @router.get("/dashboard")
 def api_get_dashboard(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip() or None
     user_email = str(getattr(user, "email", "") or actor.get("email") or "").strip() or None
     return parent_portal_service.get_dashboard(school_id, profile_id=profile_id, user_email=user_email)
@@ -170,11 +172,12 @@ def api_get_dashboard(
 @router.get("/academic-progress")
 def api_get_academic_progress(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
     try:
@@ -207,11 +210,12 @@ def api_get_academic_progress(
 @router.get("/attendance")
 def api_get_attendance(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
     try:
@@ -234,11 +238,12 @@ def api_get_attendance(
 @router.get("/test-results")
 def api_get_test_results(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
     try:
@@ -261,11 +266,12 @@ def api_get_test_results(
 @router.get("/assignments")
 def api_get_assignments(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     try:
         assignments = parent_portal_service._batch_load_assignments(school_id)  # type: ignore[attr-defined]
@@ -287,11 +293,12 @@ def api_get_assignments(
 @router.get("/fees")
 def api_get_fees(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
     try:
@@ -317,11 +324,12 @@ def api_get_fees(
 @router.get("/alerts")
 def api_get_alerts(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     student_ids = [_normalize_scope_value(s.get("id")) for s in visible_students if _normalize_scope_value(s.get("id"))]
     try:
@@ -357,11 +365,12 @@ def api_get_alerts(
 @router.post("/ai/ask")
 def api_ai_ask(
     payload: AiAskRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     return _build_parent_ai_response(
         school_id,
         [],
@@ -377,11 +386,12 @@ def api_ai_ask(
 @router.get("/ai/recommendations")
 def api_get_recommendations(
     student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user, student_id=student_id)
     return parent_portal_ai.build_recommendations_batch(school_id, visible_students)
 
@@ -390,11 +400,12 @@ def api_get_recommendations(
 
 @router.get("/insights")
 def api_get_parent_insights(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user)
     profile_id = str(actor.get("profile_id") or "").strip() or None
     return {
@@ -405,11 +416,12 @@ def api_get_parent_insights(
 
 @router.get("/risk-score")
 def api_get_parent_risk_scores(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     visible_students = _load_visible_students(school_id, scope_context, actor, user)
     profile_id = str(actor.get("profile_id") or "").strip() or None
     return {
@@ -421,11 +433,12 @@ def api_get_parent_risk_scores(
 @router.post("/alerts/{alert_id}/acknowledge")
 def api_acknowledge_parent_alert(
     alert_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     rows = list(
         get_supabase_admin_client()
         .table("analytics_parent_alerts")
@@ -466,11 +479,12 @@ def api_acknowledge_parent_alert(
 @router.post("/communication/contact-teacher")
 def api_contact_teacher(
     payload: ParentCommunicationRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     _load_visible_students(school_id, scope_context, actor, user, student_id=payload.student_id)
     return contact_teacher(
         school_id,
@@ -483,11 +497,12 @@ def api_contact_teacher(
 @router.post("/communication/request-meeting")
 def api_request_parent_meeting(
     payload: ParentCommunicationRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_parent_view_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
+    school_id = tenant.school_id
     _load_visible_students(school_id, scope_context, actor, user, student_id=payload.student_id)
     return request_parent_meeting(
         school_id,

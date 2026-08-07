@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.schemas import (
     EduPayDashboardResponse,
     EduPayFeeAssignmentResponse,
@@ -22,7 +23,6 @@ from app.schemas import (
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_context import (
     ensure_supabase_school_exists,
-    resolve_school_id_from_actor,
 )
 from app.services.supabase_edupay import (
     create_fee_structure as create_supabase_edupay_fee_structure,
@@ -55,9 +55,10 @@ def require_write_access(actor: Dict[str, str] = Depends(get_authenticated_actor
 @router.get("/dashboard", response_model=EduPayDashboardResponse)
 async def get_dashboard(
     response: Response,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     trace = begin_dashboard_request("edupay_dashboard", school_id)
     response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
     ensure_supabase_school_exists(school_id)
@@ -77,9 +78,10 @@ async def get_dashboard(
 
 @router.get("/students", response_model=List[EduPayStudentResponse])
 def list_students(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     payload = list_supabase_edupay_students(school_id)
     logger.info(
@@ -94,9 +96,10 @@ def list_students(
 @router.post("/students", response_model=EduPayStudentResponse)
 def create_student(
     payload: EduPayStudentCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     result = create_supabase_edupay_student(school_id, payload.model_dump())
     logger.info(
@@ -109,9 +112,10 @@ def create_student(
 
 @router.get("/fee-structures", response_model=List[EduPayFeeStructureResponse])
 def list_fee_structures(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     payload = list_supabase_edupay_fee_structures(school_id)
     logger.info(
@@ -126,9 +130,10 @@ def list_fee_structures(
 @router.post("/fee-structures", response_model=EduPayFeeStructureResponse)
 def create_fee_structure(
     payload: EduPayFeeStructureCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     result = create_supabase_edupay_fee_structure(school_id, payload.model_dump())
     logger.info(
@@ -141,11 +146,12 @@ def create_fee_structure(
 
 @router.get("/assignments", response_model=List[EduPayFeeAssignmentResponse])
 def list_assignments(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     status_filter: Optional[str] = Query(default=None, alias="status"),
     student_id: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     payload = list_supabase_edupay_assignments(
         school_id,
@@ -163,9 +169,10 @@ def list_assignments(
 
 @router.get("/payments", response_model=List[EduPayPaymentResponse])
 def list_payments(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     payload = list_supabase_edupay_payments(school_id)
     logger.info(
@@ -180,9 +187,10 @@ def list_payments(
 @router.post("/payments", response_model=EduPayPaymentResponse)
 def create_payment(
     payload: EduPayPaymentCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     payment = create_supabase_edupay_payment(
         school_id,
@@ -199,10 +207,11 @@ def create_payment(
 
 @router.get("/parent-portal", response_model=EduPayParentPortalResponse)
 def get_parent_portal(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     parent_id: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     ensure_supabase_school_exists(school_id)
     pid = parent_id
     if not pid:

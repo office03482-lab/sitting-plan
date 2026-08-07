@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.schemas.ai_credit_api import (
     AICreditAdjustmentRequest,
@@ -14,7 +15,6 @@ from app.schemas.ai_credit_api import (
     AICreditWalletResponse,
 )
 from app.services.ai_credit_engine import ai_credit_service
-from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/credits", tags=["AI Credits"])
 
@@ -27,10 +27,11 @@ def require_platform_admin(user: User = Depends(get_authenticated_user)) -> User
 
 @router.get("/wallet", response_model=AICreditWalletResponse)
 def get_credit_wallet_summary(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     return {"data": ai_credit_service.get_balance(profile_id, school_id)}
 
@@ -39,10 +40,11 @@ def get_credit_wallet_summary(
 def get_credit_ledger(
     limit: int = Query(default=50, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     return {"data": ai_credit_service.get_ledger(profile_id, school_id, limit=limit, offset=offset)}
 

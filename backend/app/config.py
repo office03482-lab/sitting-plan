@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     gzip_minimum_size_bytes: int = 1024
     security_headers_enabled: bool = True
     hsts_max_age_seconds: int = 31536000
+    tenant_context_enabled: bool = True
 
     # Bootstrap
     initial_admin_enabled: bool = False
@@ -157,6 +158,7 @@ class Settings(BaseSettings):
         "enable_retrofit_analytics",
         "response_compression_enabled",
         "security_headers_enabled",
+        "tenant_context_enabled",
         mode="before",
     )
     @classmethod

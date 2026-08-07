@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import LearningGoalCreate, LearningGoalResponse
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_study_planner import (
     create_learning_goal,
     get_study_recommendations,
@@ -67,10 +67,11 @@ def require_study_planner_goals_user(
 @router.get("/dashboard", include_in_schema=False)
 @alias_router.get("/dashboard", include_in_schema=False)
 async def api_get_today_planner(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="ai",
         user=user,
@@ -95,10 +96,11 @@ async def api_get_today_planner(
 @router.get("/week")
 @alias_router.get("/study-plan", include_in_schema=False)
 async def api_get_week_planner(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="ai",
         user=user,
@@ -123,10 +125,11 @@ async def api_get_week_planner(
 @router.get("/recommendations")
 @router.get("/tasks", include_in_schema=False)
 async def api_get_study_recommendations(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_view_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="ai",
         user=user,
@@ -151,10 +154,11 @@ async def api_get_study_recommendations(
 @router.post("/goals", response_model=LearningGoalResponse)
 async def api_create_learning_goal(
     payload: LearningGoalCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_study_planner_goals_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="ai",
         user=user,

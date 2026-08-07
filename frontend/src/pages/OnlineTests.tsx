@@ -580,7 +580,7 @@ export default function OnlineTests() {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('/online-tests/create')}
+                onClick={() => navigate('/question-bank')}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 <ClipboardList className="h-4 w-4" />

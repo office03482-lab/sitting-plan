@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from pydantic import BaseModel, EmailStr
 
 from app.middleware.auth import get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_parent_links import (
     create_or_link_parent,
     import_parent_links_from_excel,
@@ -46,18 +46,20 @@ def require_parent_link_admin(
 async def api_list_guardians(
     search: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_parent_link_admin),
 ):
+    school_id = tenant.school_id
     return list_parent_directory(school_id, search=search, limit=limit)
 
 
 @router.get("/students/{student_id}")
 async def api_list_student_parents(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_parent_link_admin),
 ):
+    school_id = tenant.school_id
     return list_student_parents(school_id, student_id)
 
 
@@ -65,9 +67,10 @@ async def api_list_student_parents(
 async def api_create_or_link_parent(
     student_id: str,
     payload: ParentLinkRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_parent_link_admin),
 ):
+    school_id = tenant.school_id
     return create_or_link_parent(
         school_id,
         student_id,
@@ -88,18 +91,20 @@ async def api_create_or_link_parent(
 async def api_unlink_parent(
     student_id: str,
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_parent_link_admin),
 ):
+    school_id = tenant.school_id
     return unlink_parent(school_id, student_id, guardian_id)
 
 
 @router.post("/import")
 async def api_import_parent_links(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_parent_link_admin),
 ):
+    school_id = tenant.school_id
     if not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported for parent import")
     content = await file.read()

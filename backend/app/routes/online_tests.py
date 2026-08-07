@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Uplo
 from fastapi.responses import JSONResponse
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     OnlineTestAnalyticsResponse,
@@ -28,7 +29,6 @@ from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.scope_engine import PermissionScopeContext, build_scope_context
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_lms import _list_parent_linked_students
 from app.services.supabase_online_tests import (
     AIProviderError,
@@ -166,14 +166,14 @@ def require_results_analytics_user(
 
 
 def require_online_tests_view_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_view_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="online_tests.view",
         include_students=True,
         include_teacher_batches=True,
@@ -181,14 +181,14 @@ def require_online_tests_view_scope(
 
 
 def require_online_tests_manage_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_manage_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="online_tests.manage",
         include_students=True,
         include_teacher_batches=True,
@@ -196,7 +196,7 @@ def require_online_tests_manage_scope(
 
 
 def require_online_tests_reports_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_results_analytics_user),
 ) -> PermissionScopeContext:
@@ -208,7 +208,7 @@ def require_online_tests_reports_scope(
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key=permission_key,
         include_students=True,
         include_teacher_batches=True,
@@ -506,11 +506,12 @@ def _build_results_analytics_payload(
 async def api_list_tests(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
         if not profile_id:
@@ -539,10 +540,11 @@ async def api_list_tests(
 @router.post("/tests", response_model=OnlineTestResponse)
 async def api_create_test(
     payload: OnlineTestCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_assigned_test_target(
         school_id,
         scope_context,
@@ -567,11 +569,12 @@ async def api_create_test(
 @router.get("/tests/{test_id}", response_model=OnlineTestResponse)
 async def api_get_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
         if not profile_id:
@@ -586,10 +589,11 @@ async def api_get_test(
 async def api_update_test(
     test_id: str,
     payload: OnlineTestUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only edit online tests in your assigned scope")
     return update_test(school_id, test_id, actor.get("profile_id"), payload.model_dump(exclude_unset=True))
 
@@ -597,10 +601,11 @@ async def api_update_test(
 @router.delete("/tests/{test_id}")
 async def api_delete_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only delete online tests in your assigned scope")
     return delete_test(school_id, test_id, actor.get("profile_id"))
 
@@ -611,11 +616,12 @@ async def api_list_test_questions(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=300),
     section_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
         if not profile_id:
@@ -636,10 +642,11 @@ async def api_list_test_questions(
 async def api_create_test_question(
     test_id: str,
     payload: OnlineTestQuestionCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only edit questions for online tests in your assigned scope")
     data = payload.model_dump(exclude_none=True)
     data["test_id"] = test_id
@@ -666,10 +673,11 @@ async def api_list_question_bank(
     difficulty_level: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=300),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_manage_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     if not scope_context.is_school_wide and scope_context.scope == "own":
         raise HTTPException(status_code=403, detail="Own-scope access cannot browse the shared question bank")
     rows = _list_question_bank_rows(
@@ -694,10 +702,11 @@ async def api_list_question_bank(
 @router.post("/question-bank", response_model=OnlineTestQuestionBankResponse)
 async def api_create_question_bank(
     payload: OnlineTestQuestionBankCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     if not scope_context.is_school_wide and not _normalize_scope_value(scope_context.profile_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Assigned-scope question bank creation requires a staff profile")
     reservation = prepare_route_retrofit(
@@ -718,10 +727,11 @@ async def api_create_question_bank(
 @router.post("/question-bank/import")
 async def api_import_question_bank(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     if not scope_context.is_school_wide and scope_context.scope == "own":
         raise HTTPException(status_code=403, detail="Own-scope access cannot import question bank workbooks")
     if not scope_context.is_school_wide and not _normalize_scope_value(scope_context.profile_id):
@@ -747,10 +757,11 @@ async def api_import_question_bank(
 @router.post("/ai-generate", response_model=OnlineTestAiGenerateResponse)
 async def api_generate_ai_test(
     payload: OnlineTestAiGenerateRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_assigned_test_target(
         school_id,
         scope_context,
@@ -784,10 +795,11 @@ async def api_generate_ai_test(
 async def api_update_question(
     question_id: str,
     payload: OnlineTestQuestionUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     question_row = _get_question_row(school_id, question_id)
     test_row = _get_test_row(school_id, _normalize_scope_value(question_row.get("test_id")))
     _enforce_test_scope(test_row, scope_context, "You can only update questions for online tests in your assigned scope")
@@ -797,10 +809,11 @@ async def api_update_question(
 @router.delete("/questions/{question_id}")
 async def api_delete_question(
     question_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     question_row = _get_question_row(school_id, question_id)
     test_row = _get_test_row(school_id, _normalize_scope_value(question_row.get("test_id")))
     _enforce_test_scope(test_row, scope_context, "You can only delete questions for online tests in your assigned scope")
@@ -810,10 +823,11 @@ async def api_delete_question(
 @router.post("/tests/{test_id}/publish", response_model=OnlineTestResponse)
 async def api_publish_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only publish online tests in your assigned scope")
     return publish_test(school_id, test_id, actor.get("profile_id"))
 
@@ -821,10 +835,11 @@ async def api_publish_test(
 @router.post("/tests/{test_id}/close", response_model=OnlineTestResponse)
 async def api_close_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only close online tests in your assigned scope")
     return close_test(school_id, test_id, actor.get("profile_id"))
 
@@ -832,10 +847,11 @@ async def api_close_test(
 @router.post("/tests/{test_id}/duplicate", response_model=OnlineTestResponse)
 async def api_duplicate_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only duplicate online tests in your assigned scope")
     reservation = prepare_route_retrofit(
         flag_name="tests",
@@ -855,10 +871,11 @@ async def api_duplicate_test(
 @router.post("/tests/{test_id}/unpublish", response_model=OnlineTestResponse)
 async def api_unpublish_test(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_online_tests_manage_scope),
 ):
+    school_id = tenant.school_id
     _enforce_test_scope(_get_test_row(school_id, test_id), scope_context, "You can only unpublish online tests in your assigned scope")
     return unpublish_test(school_id, test_id, actor.get("profile_id"))
 
@@ -866,11 +883,12 @@ async def api_unpublish_test(
 @router.post("/tests/{test_id}/start", response_model=OnlineTestAttemptResponse)
 async def api_start_attempt(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
 ):
     del user
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
@@ -880,13 +898,14 @@ async def api_start_attempt(
 @router.post("/attempts", response_model=OnlineTestAttemptResponse)
 async def api_create_attempt(
     payload: OnlineTestAttemptCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
     x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
     x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
 ):
     del user
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
@@ -904,11 +923,12 @@ async def api_list_attempts(
     student_id: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
         if not profile_id:
@@ -932,11 +952,12 @@ async def api_list_attempts(
 @router.get("/attempts/{attempt_id}", response_model=OnlineTestAttemptResponse)
 async def api_get_attempt(
     attempt_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     attempt = get_attempt(school_id, attempt_id)
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
@@ -957,12 +978,13 @@ async def api_get_attempt(
 async def api_save_attempt(
     attempt_id: str,
     payload: OnlineTestAttemptResponseUpsert,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
     x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
 ):
     del user
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
@@ -974,12 +996,13 @@ async def api_save_attempt(
 @router.post("/attempts/{attempt_id}/submit", response_model=OnlineTestResultResponse)
 async def api_submit_attempt(
     attempt_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_attempt_user),
     x_active_session: str | None = Header(default=None, alias="X-Active-Session"),
 ):
     del user
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip()
     if not profile_id:
         raise HTTPException(status_code=403, detail="Student profile context is missing")
@@ -991,11 +1014,12 @@ async def api_results_analytics(
     test_id: str | None = Query(default=None),
     target_school_id_override: str | None = Query(default=None, alias="target_school_id"),
     global_view: bool = Query(default=False),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_results_analytics_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_reports_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     permission_key = "online_tests.reports"
     if _is_parent_portal_user(user):
         permission_key = "edupay.parent_portal"
@@ -1123,11 +1147,12 @@ async def api_results_analytics(
 @router.get("/results/{result_id}", response_model=OnlineTestResultResponse)
 async def api_get_result(
     result_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     result = get_result(school_id, result_id)
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
@@ -1150,11 +1175,12 @@ async def api_list_results(
     student_id: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_view_user),
     scope_context: PermissionScopeContext = Depends(require_online_tests_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         profile_id = str(actor.get("profile_id") or "").strip()
         if not profile_id:

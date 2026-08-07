@@ -68,6 +68,10 @@ export default function QuestionBuilder() {
   const { id: testId, questionId: bankQuestionId } = useParams<{ id: string; questionId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const navigationState = location.state as {
+    banner?: { type: 'success' | 'error' | 'warning' | 'info'; message: string };
+    tool?: ActiveTool;
+  } | null;
   const { authReady, sessionReady, schoolContextReady } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady;
 
@@ -107,12 +111,16 @@ export default function QuestionBuilder() {
   const [versions] = useState<Array<{ id: string; version: number; created_at: string; change_summary?: string }>>([]);
 
   // State banner from navigation
-  const stateBanner = location.state as { banner?: { type: 'success' | 'error' | 'warning' | 'info'; message: string } } | null;
   useEffect(() => {
-    if (stateBanner?.banner) {
-      setBanner(stateBanner.banner);
-      window.history.replaceState({}, '');
+    if (navigationState?.banner) {
+      setBanner(navigationState.banner);
     }
+    if (navigationState?.tool) {
+      setActiveTool(navigationState.tool);
+      setRightView('tools');
+      setShowFormulaPanel(navigationState.tool === 'formula');
+    }
+    if (navigationState?.banner || navigationState?.tool) window.history.replaceState({}, '');
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

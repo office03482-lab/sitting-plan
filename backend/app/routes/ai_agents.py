@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     AiAgentApproveRequest,
@@ -20,8 +21,6 @@ from app.services.supabase_ai_agents import (
     list_ai_agent_recommendations,
     run_ai_agent_jobs,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
-
 router = APIRouter(prefix="/api/ai-agents", tags=["AI Academic Operating System"])
 alias_router = APIRouter(prefix="/api/ai", tags=["AI Academic Operating System"])
 
@@ -68,10 +67,11 @@ def require_ai_agents_approve_user(
 @router.get("/dashboard", response_model=AiAgentDashboardResponse)
 @alias_router.get("/dashboard", response_model=AiAgentDashboardResponse, include_in_schema=False)
 def api_get_ai_agents_dashboard(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_view_user),
 ):
+    school_id = tenant.school_id
     del user
     return get_ai_agents_dashboard(
         school_id,
@@ -82,10 +82,11 @@ def api_get_ai_agents_dashboard(
 @router.post("/run", response_model=AiAgentRunResponse)
 def api_run_ai_agents(
     payload: AiAgentRunRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_run_user),
 ):
+    school_id = tenant.school_id
     del user
     return run_ai_agent_jobs(
         school_id,
@@ -97,10 +98,11 @@ def api_run_ai_agents(
 @router.get("/recommendations", response_model=list[AiAgentRecommendationResponse])
 @alias_router.get("/recommendations", response_model=list[AiAgentRecommendationResponse], include_in_schema=False)
 def api_list_ai_agent_recommendations(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_view_user),
 ):
+    school_id = tenant.school_id
     del actor, user
     return list_ai_agent_recommendations(school_id)
 
@@ -108,10 +110,11 @@ def api_list_ai_agent_recommendations(
 @router.post("/approve", response_model=AiAgentRecommendationResponse)
 def api_approve_ai_agent_recommendation(
     payload: AiAgentApproveRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_agents_approve_user),
 ):
+    school_id = tenant.school_id
     return approve_ai_agent_recommendation(
         school_id,
         recommendation_id=payload.recommendation_id,

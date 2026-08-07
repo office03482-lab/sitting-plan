@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.schemas import (
     BulkActionDecision,
@@ -20,8 +21,6 @@ from app.services.bulk_action_requests import (
     list_bulk_action_requests,
     reject_bulk_action_request,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
-
 
 router = APIRouter(prefix="/api/bulk-action-requests", tags=["Bulk Action Requests"])
 
@@ -36,10 +35,11 @@ def _require_profile_id(actor: dict) -> str:
 @router.post("", response_model=BulkActionRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_bulk_action_request_endpoint(
     payload: BulkActionRequestCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if not can_request_bulk_action(user, payload.module_name):
         raise HTTPException(status_code=403, detail="You do not have permission to request this bulk action")
     return BulkActionRequestResponse(
@@ -57,10 +57,11 @@ def create_bulk_action_request_endpoint(
 
 @router.get("", response_model=List[BulkActionRequestResponse])
 def list_bulk_action_requests_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     status_filter: Optional[str] = Query(default=None, alias="status"),
     module_name: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return [
         BulkActionRequestResponse(**row)
         for row in list_bulk_action_requests(
@@ -74,10 +75,11 @@ def list_bulk_action_requests_endpoint(
 @router.post("/{request_id}/approve", response_model=BulkActionRequestResponse)
 def approve_bulk_action_request_endpoint(
     request_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     del school_id
     if not is_platform_admin_user(user):
         raise HTTPException(status_code=403, detail="Only Super Admin can approve bulk action requests")
@@ -99,10 +101,11 @@ def approve_bulk_action_request_endpoint(
 def reject_bulk_action_request_endpoint(
     request_id: str,
     payload: BulkActionDecision,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     del school_id
     if not is_platform_admin_user(user):
         raise HTTPException(status_code=403, detail="Only Super Admin can reject bulk action requests")

@@ -19,7 +19,7 @@ class PushNotificationService {
   static const AndroidNotificationChannel _generalChannel = AndroidNotificationChannel(
     'erp_general',
     'ERP General',
-    description: 'School ERP alerts and reminders',
+    description: 'Dr. Girish App alerts and reminders',
     importance: Importance.max,
   );
 

@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends
 
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.services.supabase_exams import list_exams
 from app.services.supabase_invigilators import get_room_assignments
 from app.services.supabase_metrics import get_school_core_counts_cached
@@ -18,8 +18,9 @@ router = APIRouter()
 
 @router.get("/snapshot")
 async def get_admin_office_snapshot(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     exams, rooms, counts = await asyncio.gather(
         asyncio.to_thread(list_exams, school_id),
         asyncio.to_thread(list_rooms, school_id, skip=0, limit=1000),

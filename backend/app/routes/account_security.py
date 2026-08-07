@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.services.supabase_account_security import (
     bulk_generate_student_accounts,
@@ -39,9 +40,6 @@ from app.services.supabase_account_security import (
     set_account_enabled,
     update_user_permissions,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
-
-
 router = APIRouter(prefix="/api/account-security", tags=["Account Security"])
 
 
@@ -85,9 +83,10 @@ async def api_get_portal_overview(
     search: str | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     t0 = time.time()
     result = get_portal_access_overview(
         school_id,
@@ -110,39 +109,43 @@ async def api_get_portal_overview(
 @router.get("/students/{student_id}")
 async def api_get_student_portal_access(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_student_portal_access(school_id, student_id)
 
 
 @router.post("/students/{student_id}/create-login")
 async def api_create_student_login(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return create_or_reset_student_account(school_id, student_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/students/{student_id}/reset-password")
 async def api_reset_student_password(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return create_or_reset_student_account(school_id, student_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/students/{student_id}/disable")
 async def api_disable_student_login(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_student_portal_access(school_id, student_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -153,10 +156,11 @@ async def api_disable_student_login(
 @router.post("/students/{student_id}/enable")
 async def api_enable_student_login(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_student_portal_access(school_id, student_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -167,10 +171,11 @@ async def api_enable_student_login(
 @router.post("/students/{student_id}/force-logout")
 async def api_force_logout_student(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_student_portal_access(school_id, student_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -181,10 +186,11 @@ async def api_force_logout_student(
 @router.post("/students/bulk-generate")
 async def api_bulk_generate_student_accounts(
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return bulk_generate_student_accounts(
         school_id,
         actor_profile_id=actor.get("profile_id"),
@@ -211,10 +217,11 @@ async def api_export_credentials(payload: dict[str, Any] = Body(default_factory=
 async def api_recent_generated_credentials(
     limit: int = Query(default=100, ge=1, le=250),
     created_by_me: bool = Query(default=False),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_recent_generated_credentials(
         school_id,
         created_by=actor.get("profile_id") if created_by_me else None,
@@ -225,9 +232,10 @@ async def api_recent_generated_credentials(
 @router.get("/credentials/profile/{profile_id}")
 async def api_generated_credential_details(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_generated_credential_details(school_id, profile_id)
 
 
@@ -237,9 +245,10 @@ async def api_account_history(
     profile_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return list_account_history(school_id, search=search, profile_id=profile_id, limit=limit, offset=offset)
 
 
@@ -249,27 +258,30 @@ async def api_account_audit_log(
     profile_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return list_account_history(school_id, search=search, profile_id=profile_id, limit=limit, offset=offset)
 
 
 @router.get("/users/{profile_id}/permissions")
 async def api_user_permissions(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_user_permission_summary(school_id, profile_id)
 
 
 @router.get("/users/{profile_id}/permission-summary")
 async def api_user_permission_summary(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_user_permission_summary(school_id, profile_id)
 
 
@@ -277,10 +289,11 @@ async def api_user_permission_summary(
 async def api_update_user_permissions(
     profile_id: str,
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return update_user_permissions(
         school_id,
         profile_id,
@@ -296,10 +309,11 @@ async def api_update_user_permissions(
 async def api_reset_user_permissions_to_template(
     profile_id: str,
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return reset_user_permissions_to_template(
         school_id,
         profile_id,
@@ -320,39 +334,43 @@ async def api_role_permissions(
 @router.get("/parents/{guardian_id}")
 async def api_get_parent_portal_access(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return get_parent_portal_access(school_id, guardian_id)
 
 
 @router.post("/parents/{guardian_id}/create-login")
 async def api_create_parent_login(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/parents/{guardian_id}/reset-password")
 async def api_reset_parent_password(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/parents/{guardian_id}/disable")
 async def api_disable_parent_login(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_parent_portal_access(school_id, guardian_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -363,10 +381,11 @@ async def api_disable_parent_login(
 @router.post("/parents/{guardian_id}/enable")
 async def api_enable_parent_login(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_parent_portal_access(school_id, guardian_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -377,10 +396,11 @@ async def api_enable_parent_login(
 @router.post("/parents/{guardian_id}/force-logout")
 async def api_force_logout_parent(
     guardian_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     portal = get_parent_portal_access(school_id, guardian_id)
     profile_id = str(portal.get("profile_id") or "").strip()
     if not profile_id:
@@ -391,10 +411,11 @@ async def api_force_logout_parent(
 @router.post("/parents/bulk-generate")
 async def api_bulk_generate_parent_accounts(
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return bulk_generate_parent_accounts(
         school_id,
         actor_profile_id=actor.get("profile_id"),
@@ -411,10 +432,11 @@ async def api_bulk_generate_parent_accounts(
 async def api_reset_staff_password(
     staff_member_id: str,
     role_key: str = Query(default="teacher"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return create_or_reset_staff_account(
         school_id,
         staff_member_id,
@@ -426,10 +448,11 @@ async def api_reset_staff_password(
 @router.post("/staff/bulk-generate")
 async def api_bulk_generate_staff_accounts(
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return bulk_generate_staff_accounts(
         school_id,
         actor_profile_id=actor.get("profile_id"),
@@ -443,21 +466,23 @@ async def api_bulk_generate_staff_accounts(
 
 @router.get("/sessions")
 async def api_list_sessions(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return list_active_sessions(school_id)
 
 
 @router.post("/sessions/register")
 async def api_register_session(
     payload: dict[str, Any] = Body(default_factory=dict),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
 ):
+    school_id = tenant.school_id
     session_key = str(payload.get("session_key") or "").strip()
     if not session_key:
         raise HTTPException(status_code=400, detail="session_key is required")
@@ -500,40 +525,44 @@ async def api_logout_current_session(
 @router.post("/sessions/{profile_id}/logout-all")
 async def api_logout_all_profile_sessions(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return force_logout_profile_sessions(school_id, profile_id, actor_profile_id=actor.get("profile_id"), reason="logout_all_devices")
 
 
 @router.post("/sessions/{session_id}/logout-device")
 async def api_logout_device_session(
     session_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return logout_session_by_id(school_id, session_id, actor_profile_id=actor.get("profile_id"))
 
 
 @router.post("/profiles/{profile_id}/disable")
 async def api_disable_profile_account(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return set_account_enabled(school_id, profile_id, actor_profile_id=actor.get("profile_id"), is_enabled=False)
 
 
 @router.post("/profiles/{profile_id}/enable")
 async def api_enable_profile_account(
     profile_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    school_id = tenant.school_id
     return set_account_enabled(school_id, profile_id, actor_profile_id=actor.get("profile_id"), is_enabled=True)
 
 

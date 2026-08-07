@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routes import online_tests
+from app.middleware.tenant_context import TenantContext
 from app.services.scope_engine import PermissionScopeContext
 from app.services import supabase_online_tests
 
@@ -13,7 +14,7 @@ from app.services import supabase_online_tests
 def _build_app() -> FastAPI:
     app = FastAPI()
     app.include_router(online_tests.router)
-    app.dependency_overrides[online_tests.resolve_school_id_from_actor] = lambda: "school-1"
+    app.dependency_overrides[online_tests.get_tenant_context] = lambda: TenantContext(school_id="school-1")
     app.dependency_overrides[online_tests.get_authenticated_actor_context] = lambda: {"profile_id": "profile-1"}
     return app
 

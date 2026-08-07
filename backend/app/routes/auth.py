@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -1027,9 +1027,10 @@ async def login_password(payload: PasswordLoginRequest, request: Request, db: Se
 
 @router.get("/users", response_model=List[UserRolePowerResponse])
 async def list_role_users(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership_rows = _load_school_role_user_rows(school_id, supabase)
     role_ids = [_normalize_supabase_text(row.get("role_id")) for row in membership_rows]
@@ -1042,9 +1043,10 @@ async def list_role_users(
 
 @router.get("/users/administrators", response_model=AdministratorOverviewResponse)
 async def list_administrator_users(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor_user: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership_rows = _load_school_role_user_rows(school_id, supabase)
     role_ids = [_normalize_supabase_text(row.get("role_id")) for row in membership_rows]
@@ -1070,9 +1072,10 @@ async def list_administrator_users(
 @router.post("/users", response_model=UserRolePowerResponse)
 async def create_role_user(
     payload: UserRolePowerCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     username = payload.username.strip().lower()
     supabase = create_supabase_admin_client()
     if not username:
@@ -1201,9 +1204,10 @@ async def create_role_user(
 async def update_role_user(
     user_id: str,
     payload: UserRolePowerUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor_user: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership_rows = _load_school_role_user_rows(school_id, supabase)
     membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)
@@ -1301,9 +1305,10 @@ async def update_role_user(
 @router.delete("/users/{user_id}")
 async def delete_role_user(
     user_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership_rows = _load_school_role_user_rows(school_id, supabase)
     membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)
@@ -1324,9 +1329,10 @@ async def delete_role_user(
 @router.post("/users/{user_id}/reset-password")
 async def reset_role_user_password(
     user_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     _: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership = _find_membership_or_404(school_id, user_id, supabase)
     profile = membership.get("profiles")
@@ -1348,10 +1354,11 @@ async def reset_role_user_password(
 @router.post("/users/{user_id}/transfer-ownership")
 async def transfer_school_admin_ownership(
     user_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_user_management_access),
 ):
+    school_id = tenant.school_id
     supabase = create_supabase_admin_client()
     membership_rows = _load_school_role_user_rows(school_id, supabase)
     membership = next((row for row in membership_rows if _normalize_supabase_text(row.get("profile_id")) == user_id), None)

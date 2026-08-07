@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     BatchAnalyticsResponse,
@@ -22,8 +23,6 @@ from app.services.supabase_analytics import (
     get_student_analytics,
     get_test_analytics,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
-
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
 
@@ -79,10 +78,11 @@ def require_platform_analytics_user(user: User = Depends(get_authenticated_user)
 @router.get("/student/{student_id}", response_model=StudentAnalyticsResponse)
 async def api_get_student_analytics(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_student_analytics_user),
 ):
+    school_id = tenant.school_id
     permission_key = "online_tests.attempt" if _is_student_user(user) else "online_tests.reports"
     reservation = prepare_route_retrofit(
         flag_name="analytics",
@@ -117,10 +117,11 @@ async def api_get_student_analytics(
 @router.get("/test/{test_id}", response_model=TestAnalyticsResponse)
 async def api_get_test_analytics(
     test_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_analytics_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="analytics",
         user=user,
@@ -139,10 +140,11 @@ async def api_get_test_analytics(
 @router.get("/batch/{batch_id}", response_model=BatchAnalyticsResponse)
 async def api_get_batch_analytics(
     batch_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_analytics_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="analytics",
         user=user,
@@ -161,10 +163,11 @@ async def api_get_batch_analytics(
 @router.get("/school/{target_school_id}", response_model=SchoolAnalyticsResponse)
 async def api_get_school_analytics(
     target_school_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_school_analytics_user),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="analytics",
         user=user,

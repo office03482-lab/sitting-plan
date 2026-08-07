@@ -63,7 +63,7 @@ DEFAULT_BRANDING = {
     "theme": "auto",
     "welcome_message": "Welcome back",
     "footer_text": "Powered by the shared SaaS platform",
-    "portal_name": "School ERP",
+    "portal_name": "Dr. Girish App",
 }
 
 DEFAULT_PORTAL_SETTINGS = {
@@ -245,12 +245,13 @@ def _upsert_profile_row(school_id: str, *, actor_profile_id: str | None = None) 
     )
     if existing_rows:
         return dict(existing_rows[0])
+    school = _load_school_row(school_id)
     created = (
         _public_table("school_self_service_profiles")
         .insert(
             {
                 "school_id": school_id,
-                "branding": deepcopy(DEFAULT_BRANDING),
+                "branding": _school_master_branding_seed(school),
                 "portal_settings": deepcopy(DEFAULT_PORTAL_SETTINGS),
                 "domain_settings": deepcopy(DEFAULT_DOMAIN_SETTINGS),
                 "email_templates": deepcopy(DEFAULT_EMAIL_TEMPLATES),
@@ -732,8 +733,8 @@ def _get_public_school_branding_uncached(*, school_hint: str | None = None, host
         resolved_school = dict(rows[0])
     if not resolved_school:
         return {
-            "school_name": "School ERP",
-            "portal_name": "School ERP",
+            "school_name": DEFAULT_BRANDING["portal_name"],
+            "portal_name": DEFAULT_BRANDING["portal_name"],
             "primary_color": DEFAULT_BRANDING["primary_color"],
             "secondary_color": DEFAULT_BRANDING["secondary_color"],
             "accent_color": DEFAULT_BRANDING["accent_color"],
@@ -743,10 +744,13 @@ def _get_public_school_branding_uncached(*, school_hint: str | None = None, host
     profile = profiles.get(school_id, {})
     branding = _merge_dict(deepcopy(DEFAULT_BRANDING), _json_dict(profile.get("branding")))
     domain_settings = _merge_dict(deepcopy(DEFAULT_DOMAIN_SETTINGS), _json_dict(profile.get("domain_settings")))
-    school_name = branding.get("school_name") or _normalize(resolved_school.get("name")) or "School ERP"
+    school_name = branding.get("school_name") or _normalize(resolved_school.get("name")) or DEFAULT_BRANDING["portal_name"]
+    portal_name = branding.get("portal_name") or school_name
+    if str(portal_name).strip() == DEFAULT_BRANDING["portal_name"]:
+        portal_name = school_name
     return {
         "school_name": school_name,
-        "portal_name": branding.get("portal_name") or school_name,
+        "portal_name": portal_name,
         "logo_url": branding.get("logo_url") or (_json_dict(resolved_school.get("metadata")).get("branding") or {}).get("logo_url"),
         "banner_url": branding.get("banner_url"),
         "favicon_url": branding.get("favicon_url"),

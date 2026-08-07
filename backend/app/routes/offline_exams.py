@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     OfflineExamAttendanceCreate,
@@ -19,7 +20,6 @@ from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.scope_engine import PermissionScopeContext, build_scope_context
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_offline_exams import (
     create_exam,
     create_question,
@@ -101,14 +101,14 @@ def require_reports_user(
 
 
 def require_offline_exams_manage_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_manage_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="offline_exams.manage",
         include_students=True,
         include_teacher_batches=True,
@@ -116,14 +116,14 @@ def require_offline_exams_manage_scope(
 
 
 def require_offline_exams_view_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_view_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="offline_exams.view",
         include_students=True,
         include_teacher_batches=True,
@@ -131,14 +131,14 @@ def require_offline_exams_view_scope(
 
 
 def require_offline_exams_reports_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_reports_user),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="offline_exams.reports",
         include_students=True,
         include_teacher_batches=True,

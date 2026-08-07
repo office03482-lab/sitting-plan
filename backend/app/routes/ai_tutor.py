@@ -7,12 +7,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import AiTutorConversationSummaryResponse, AiTutorRequest, AiTutorResponse
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.supabase_ai_tutor import list_ai_conversations, tutor_chat, tutor_explain, tutor_practice, tutor_revision
-from app.services.supabase_context import resolve_school_id_from_actor
 
 router = APIRouter(prefix="/api/ai", tags=["AI Tutor"])
 
@@ -45,7 +45,7 @@ def require_ai_tutor_chat_user(
 @router.post("/chat", response_model=AiTutorResponse)
 async def api_ai_chat(
     payload: AiTutorRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
@@ -54,14 +54,14 @@ async def api_ai_chat(
         user=user,
         actor=actor,
         permission_key="ai_tutor.chat",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_chat",
         credit_amount=1,
         reason="ai_tutor.chat",
     )
     result = tutor_chat(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
@@ -73,14 +73,14 @@ async def api_ai_chat(
 
 @router.get("/conversations", response_model=list[AiTutorConversationSummaryResponse])
 async def api_ai_conversations(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
     target_student_id: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ):
     return list_ai_conversations(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
@@ -92,7 +92,7 @@ async def api_ai_conversations(
 @router.post("/explain", response_model=AiTutorResponse)
 async def api_ai_explain(
     payload: AiTutorRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
@@ -101,14 +101,14 @@ async def api_ai_explain(
         user=user,
         actor=actor,
         permission_key="ai_tutor.chat",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_chat",
         credit_amount=1,
         reason="ai_tutor.explain",
     )
     result = tutor_explain(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
@@ -121,7 +121,7 @@ async def api_ai_explain(
 @router.post("/practice", response_model=AiTutorResponse)
 async def api_ai_practice(
     payload: AiTutorRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
@@ -130,14 +130,14 @@ async def api_ai_practice(
         user=user,
         actor=actor,
         permission_key="ai_tutor.chat",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_chat",
         credit_amount=1,
         reason="ai_tutor.practice",
     )
     result = tutor_practice(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),
@@ -150,7 +150,7 @@ async def api_ai_practice(
 @router.post("/revision", response_model=AiTutorResponse)
 async def api_ai_revision(
     payload: AiTutorRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_ai_tutor_chat_user),
 ):
@@ -159,14 +159,14 @@ async def api_ai_revision(
         user=user,
         actor=actor,
         permission_key="ai_tutor.chat",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_chat",
         credit_amount=1,
         reason="ai_tutor.revision",
     )
     result = tutor_revision(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         user_email=getattr(user, "email", None),

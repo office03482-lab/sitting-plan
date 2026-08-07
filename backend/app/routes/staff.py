@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import JSONResponse, Response
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.schemas import StaffImportResponse
 from app.services.bulk_action_requests import (
@@ -15,7 +16,6 @@ from app.services.bulk_action_requests import (
     is_platform_admin_user,
 )
 from app.services.supabase_admin import get_supabase_admin_client
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.utils.staff_excel import STAFF_TEMPLATE_HEADERS, create_staff_excel_template, parse_staff_excel
 
 router = APIRouter()
@@ -182,9 +182,10 @@ def download_staff_template():
 @router.post("/import", response_model=StaffImportResponse)
 async def import_staff(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported for staff import.")
 
@@ -268,13 +269,14 @@ async def import_staff(
 
 @router.delete("")
 def delete_all_staff_directory_records(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
     staff_type: str | None = Query(default=None),
     search: str | None = Query(default=None),
     category: str | None = Query(default=None),
 ):
+    school_id = tenant.school_id
     if is_platform_admin_user(user):
         return execute_staff_directory_bulk_delete(
             school_id,

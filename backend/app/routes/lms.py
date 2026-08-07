@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     LmsAssignmentCreate,
@@ -31,7 +32,6 @@ from app.schemas import (
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
 from app.services.scope_engine import PermissionScopeContext, build_scope_context
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_lms import (
     _get_assignment_row,
     _get_course_row,
@@ -134,10 +134,11 @@ def require_lms_assignment_user(
 
 
 def require_lms_view_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_view_user),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -149,10 +150,11 @@ def require_lms_view_scope(
 
 
 def require_lms_manage_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_manage_user),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -164,10 +166,11 @@ def require_lms_manage_scope(
 
 
 def require_lms_progress_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_progress_user),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -179,10 +182,11 @@ def require_lms_progress_scope(
 
 
 def require_lms_assignment_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_assignment_user),
 ) -> PermissionScopeContext:
+    school_id = tenant.school_id
     return build_scope_context(
         user=user,
         actor=actor,
@@ -265,11 +269,12 @@ def _filter_courses(rows: list[dict[str, object]], context: PermissionScopeConte
 
 @router.get("/courses", response_model=list[LmsCourseResponse])
 async def api_list_courses(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_lms_view_user),
     scope_context: PermissionScopeContext = Depends(require_lms_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return list_courses(school_id, student=student)
@@ -279,10 +284,11 @@ async def api_list_courses(
 @router.post("/courses", response_model=LmsCourseResponse)
 async def api_create_course(
     payload: LmsCourseCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     if not scope_context.is_school_wide and not _matches_assigned_batch(
         scope_context,
         class_name=payload.target_class_name,
@@ -308,11 +314,12 @@ async def api_create_course(
 @router.get("/courses/{course_id}", response_model=LmsCourseResponse)
 async def api_get_course(
     course_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_lms_view_user),
     scope_context: PermissionScopeContext = Depends(require_lms_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return get_course(school_id, course_id, student=student)
@@ -325,10 +332,11 @@ async def api_get_course(
 async def api_update_course(
     course_id: str,
     payload: LmsCourseUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, course_id)
     _enforce_course_scope(course_row, scope_context, "You can only edit LMS courses in your assigned scope")
     return update_course(school_id, course_id, actor.get("profile_id"), payload.model_dump(exclude_unset=True))
@@ -337,10 +345,11 @@ async def api_update_course(
 @router.delete("/courses/{course_id}")
 async def api_delete_course(
     course_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, course_id)
     _enforce_course_scope(course_row, scope_context, "You can only delete LMS courses in your assigned scope")
     return delete_course(school_id, course_id, actor.get("profile_id"))
@@ -349,9 +358,10 @@ async def api_delete_course(
 @router.get("/modules", response_model=list[LmsCourseModuleResponse])
 async def api_list_modules(
     course_id: str = Query(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_lms_view_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, course_id)
     _enforce_course_scope(course_row, scope_context, "You can only view LMS modules in your assigned scope")
     return list_modules(school_id, course_id)
@@ -360,10 +370,11 @@ async def api_list_modules(
 @router.post("/modules", response_model=LmsCourseModuleResponse)
 async def api_create_module(
     payload: LmsCourseModuleCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, payload.course_id)
     _enforce_course_scope(course_row, scope_context, "You can only create LMS modules in your assigned scope")
     reservation = prepare_route_retrofit(
@@ -385,10 +396,11 @@ async def api_create_module(
 async def api_update_module(
     module_id: str,
     payload: LmsCourseModuleUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     module_row = _get_module_row(school_id, module_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(module_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only edit LMS modules in your assigned scope")
@@ -398,10 +410,11 @@ async def api_update_module(
 @router.delete("/modules/{module_id}")
 async def api_delete_module(
     module_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     module_row = _get_module_row(school_id, module_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(module_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only delete LMS modules in your assigned scope")
@@ -412,9 +425,10 @@ async def api_delete_module(
 async def api_list_lessons(
     course_id: str | None = Query(default=None),
     module_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     scope_context: PermissionScopeContext = Depends(require_lms_view_scope),
 ):
+    school_id = tenant.school_id
     if course_id:
         course_row = _get_course_row(school_id, course_id)
         _enforce_course_scope(course_row, scope_context, "You can only view LMS lessons in your assigned scope")
@@ -428,10 +442,11 @@ async def api_list_lessons(
 @router.post("/lessons", response_model=LmsLessonResponse)
 async def api_create_lesson(
     payload: LmsLessonCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, payload.course_id)
     _enforce_course_scope(course_row, scope_context, "You can only create LMS lessons in your assigned scope")
     reservation = prepare_route_retrofit(
@@ -452,11 +467,12 @@ async def api_create_lesson(
 @router.get("/lessons/{lesson_id}", response_model=LmsLessonResponse)
 async def api_get_lesson(
     lesson_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_lms_view_user),
     scope_context: PermissionScopeContext = Depends(require_lms_view_scope),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return get_lesson(school_id, lesson_id, student=student)
@@ -470,10 +486,11 @@ async def api_get_lesson(
 async def api_update_lesson(
     lesson_id: str,
     payload: LmsLessonUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     lesson_row = _get_lesson_row(school_id, lesson_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(lesson_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only edit LMS lessons in your assigned scope")
@@ -483,10 +500,11 @@ async def api_update_lesson(
 @router.delete("/lessons/{lesson_id}")
 async def api_delete_lesson(
     lesson_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     lesson_row = _get_lesson_row(school_id, lesson_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(lesson_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only delete LMS lessons in your assigned scope")
@@ -496,11 +514,12 @@ async def api_delete_lesson(
 @router.get("/progress", response_model=LmsProgressDashboardResponse)
 async def api_get_progress(
     child_student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_progress_user),
     scope_context: PermissionScopeContext = Depends(require_lms_progress_scope),
 ):
+    school_id = tenant.school_id
     reservation = prepare_route_retrofit(
         flag_name="lms",
         user=user,
@@ -542,10 +561,11 @@ async def api_get_progress(
 @router.post("/progress", response_model=LmsProgressResponse)
 async def api_update_progress(
     payload: LmsProgressUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_progress_user),
 ):
+    school_id = tenant.school_id
     if not _is_student_user(user):
         raise HTTPException(status_code=403, detail="Only students can update lesson progress")
     student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
@@ -567,11 +587,12 @@ async def api_update_progress(
 @router.get("/revision-tracker", response_model=list[LmsRevisionTrackerResponse])
 async def api_list_revision_tracker(
     child_student_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_progress_user),
     scope_context: PermissionScopeContext = Depends(require_lms_progress_scope),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return list_revision_tracker(school_id, str(student.get("id") or "").strip())
@@ -595,10 +616,11 @@ async def api_list_revision_tracker(
 @router.post("/revision-tracker", response_model=LmsRevisionTrackerResponse)
 async def api_upsert_revision_tracker(
     payload: LmsRevisionTrackerUpsert,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_progress_user),
 ):
+    school_id = tenant.school_id
     if not _is_student_user(user):
         raise HTTPException(status_code=403, detail="Only students can update revision tracker status")
     student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
@@ -620,11 +642,12 @@ async def api_upsert_revision_tracker(
 @router.get("/assignments", response_model=list[LmsAssignmentResponse])
 async def api_list_assignments(
     course_id: str | None = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_assignment_user),
     scope_context: PermissionScopeContext = Depends(require_lms_assignment_scope),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return list_assignments(school_id, student=student, course_id=course_id)
@@ -642,10 +665,11 @@ async def api_list_assignments(
 @router.post("/assignments", response_model=LmsAssignmentResponse)
 async def api_create_assignment(
     payload: LmsAssignmentCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     course_row = _get_course_row(school_id, payload.course_id)
     _enforce_course_scope(course_row, scope_context, "You can only create LMS assignments in your assigned scope")
     reservation = prepare_route_retrofit(
@@ -666,11 +690,12 @@ async def api_create_assignment(
 @router.get("/assignments/{assignment_id}", response_model=LmsAssignmentResponse)
 async def api_get_assignment(
     assignment_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_assignment_user),
     scope_context: PermissionScopeContext = Depends(require_lms_assignment_scope),
 ):
+    school_id = tenant.school_id
     if _is_student_user(user):
         student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
         return get_assignment(school_id, assignment_id, student=student)
@@ -684,10 +709,11 @@ async def api_get_assignment(
 async def api_update_assignment(
     assignment_id: str,
     payload: LmsAssignmentUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     assignment_row = _get_assignment_row(school_id, assignment_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(assignment_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only edit LMS assignments in your assigned scope")
@@ -697,10 +723,11 @@ async def api_update_assignment(
 @router.delete("/assignments/{assignment_id}")
 async def api_delete_assignment(
     assignment_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     assignment_row = _get_assignment_row(school_id, assignment_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(assignment_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only delete LMS assignments in your assigned scope")
@@ -711,10 +738,11 @@ async def api_delete_assignment(
 async def api_submit_assignment(
     assignment_id: str,
     payload: LmsAssignmentSubmissionCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_lms_assignment_user),
 ):
+    school_id = tenant.school_id
     if not _is_student_user(user):
         raise HTTPException(status_code=403, detail="Only students can submit assignments")
     student = _get_student_by_profile_id(school_id, str(actor.get("profile_id") or "").strip())
@@ -738,10 +766,11 @@ async def api_grade_assignment_submission(
     assignment_id: str,
     student_id: str,
     payload: LmsAssignmentSubmissionGrade,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_lms_manage_scope),
 ):
+    school_id = tenant.school_id
     assignment_row = _get_assignment_row(school_id, assignment_id)
     course_row = _get_course_row(school_id, _normalize_scope_value(assignment_row.get("course_id")))
     _enforce_course_scope(course_row, scope_context, "You can only grade LMS assignments in your assigned scope")

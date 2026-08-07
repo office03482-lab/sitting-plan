@@ -107,6 +107,7 @@ const SECTION_COLOR: Record<string, string> = {
   attendance: '#f59e0b',
   timetable: '#06b6d4',
   lms: '#8b5cf6',
+  examinations: '#ec4899',
   'online-tests': '#ec4899',
   'live-classes': '#14b8a6',
   'exam-planner': '#f97316',
@@ -173,7 +174,7 @@ export default function Layout({ children }: LayoutProps) {
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    document.title = schoolBranding?.portal_name || 'Dr. Girish App';
+    document.title = activeSchoolName || schoolBranding?.portal_name || 'Dr. Girish App';
     const faviconHref = schoolBranding?.logo_url || bhavyaAxisLogo;
     let favicon = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
     if (!favicon) {
@@ -182,7 +183,7 @@ export default function Layout({ children }: LayoutProps) {
       document.head.appendChild(favicon);
     }
     favicon.href = schoolBranding?.logo_url || schoolBranding?.favicon_url || faviconHref;
-  }, [schoolBranding]);
+  }, [schoolBranding, activeSchoolName]);
 
   // Platform Workspace metric: total number of schools managed by the platform.
   // Only fetched for platform admins so the default "Managing All Schools" panel
@@ -307,36 +308,39 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      key: 'online-tests',
-      name: 'Online Tests',
+      key: 'examinations',
+      name: 'Examinations',
       icon: FileQuestion,
       children: [
         {
-          name: 'Overview',
+          name: 'Dashboard',
           path: '/online-tests',
           permission: ['online_tests', 'online_tests.view', 'online_tests.manage', 'online_tests.attempt', 'online_tests.grade', 'online_tests.reports'],
         },
         {
-          name: 'Create Test',
-          path: '/online-tests/create',
+          name: 'Question Bank',
+          path: '/question-bank',
           permission: ['online_tests', 'online_tests.manage'],
         },
-      ],
-    },
-    {
-      key: 'offline-exams',
-      name: 'Offline Exams',
-      icon: ClipboardCheck,
-      children: [
         {
-          name: 'Overview',
+          name: 'Online Tests',
+          path: '/online-tests',
+          permission: ['online_tests', 'online_tests.view', 'online_tests.manage', 'online_tests.attempt', 'online_tests.grade', 'online_tests.reports'],
+        },
+        {
+          name: 'Offline Exams',
           path: '/offline-exams',
           permission: ['offline_exams', 'offline_exams.view', 'offline_exams.manage', 'offline_exams.reports'],
         },
         {
-          name: 'Create Exam',
-          path: '/offline-exams/create',
-          permission: ['offline_exams', 'offline_exams.manage'],
+          name: 'Paper Generator',
+          path: '/teacher-ai',
+          permission: ['teacher_ai.generate', 'teacher_ai.evaluate', 'teacher_ai.reports'],
+        },
+        {
+          name: 'Reports',
+          path: '/reports',
+          permission: 'admin_office.reports',
         },
       ],
     },
@@ -854,7 +858,7 @@ export default function Layout({ children }: LayoutProps) {
             </div>
             <div className="min-w-0">
               <p className="truncate text-[14px] font-bold text-white">{activeSchoolName || activeSchoolId}</p>
-              <p className="truncate text-[12px] font-medium text-blue-100">School ERP Mode · Active</p>
+              <p className="truncate text-[12px] font-medium text-blue-100">Dr. Girish App Mode · Active</p>
             </div>
           </div>
           <div className="mt-3 flex gap-2">
@@ -921,7 +925,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
               {expanded && (
                 <div className="min-w-0">
-                  <p className="truncate text-[22px] font-bold leading-tight text-white">{schoolBranding?.portal_name || 'Dr. Girish App'}</p>
+                  <p className="truncate text-[22px] font-bold leading-tight text-white">{activeSchoolName || schoolBranding?.portal_name || 'Dr. Girish App'}</p>
                   <p className="truncate text-[13px] font-medium uppercase tracking-[0.16em] text-blue-100/80">
                     {isPlatformAdmin
                       ? activeSchoolId
@@ -1038,12 +1042,12 @@ export default function Layout({ children }: LayoutProps) {
               {/* ── Current School (compact premium glass card) ── */}
               {renderSchoolCard(false)}
 
-              {/* ── School ERP divider (platform admins only) ── */}
+              {/* ── Dr. Girish App divider (platform admins only) ── */}
               {isPlatformAdmin && (
                 <div className="mx-1 mt-4 flex items-center gap-2 border-t border-white/10 pt-3">
                   <span className="h-1.5 w-1.5 rounded-full bg-white/50" />
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">
-                    School ERP
+                    Dr. Girish App
                   </span>
                 </div>
               )}
@@ -1137,7 +1141,7 @@ export default function Layout({ children }: LayoutProps) {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <p className="truncate text-sm font-semibold text-slate-900">{schoolBranding?.portal_name || user?.full_name || 'Dr. Girish App'}</p>
+          <p className="truncate text-sm font-semibold text-slate-900">{activeSchoolName || schoolBranding?.portal_name || user?.full_name || 'Dr. Girish App'}</p>
           <button
             onClick={handleLogout}
             className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700"

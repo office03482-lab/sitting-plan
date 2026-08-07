@@ -16,6 +16,7 @@ from app.middleware.auth import get_authenticated_user, require_permissions
 from app.middleware.observability import SystemObservabilityEngine
 from app.middleware.request_profiler import RequestProfilerMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.tenant_context import TenantContextMiddleware
 
 from app.services.timetable_schema_checks import verify_timetable_schema
 
@@ -104,6 +105,11 @@ try:
     app.add_exception_handler(requests.RequestException, _upstream_connection_error_handler)
 except ImportError:
     pass
+
+# Tenant-context layer (EP-00 F-001): runs before routers, best-effort enrichment,
+# gated by TENANT_CONTEXT_ENABLED. Enforcement is via get_tenant_context dependency.
+if settings.tenant_context_enabled:
+    app.add_middleware(TenantContextMiddleware)
 
 # Add CORS middleware (strict configuration)
 app.add_middleware(

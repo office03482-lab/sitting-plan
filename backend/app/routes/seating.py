@@ -5,8 +5,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status
 from fastapi.responses import StreamingResponse
 from typing import List
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.schemas import GenerateSeatingRequest, SeatingPlanResponse, SeatingPlanImportResponse
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_seating import (
     audit_seating_plan,
     delete_all_seating_plans,
@@ -26,8 +26,9 @@ router = APIRouter()
 @router.post("/generate")
 async def generate_seating_plans_route(
     request: GenerateSeatingRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return generate_seating_plans(
         school_id=school_id,
         exam_id=request.exam_id,
@@ -43,32 +44,36 @@ async def generate_seating_plans_route(
 async def list_plans(
     room_id: str,
     exam_id: str = None,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return list_seating_plans(school_id, exam_id=exam_id, room_id=room_id)
 
 
 @router.get("/plans", response_model=List[SeatingPlanResponse])
 async def list_all_plans(
     exam_id: str = None,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return list_seating_plans(school_id, exam_id=exam_id)
 
 
 @router.get("/{plan_id}/layout")
 async def get_plan_layout(
     plan_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return get_seating_plan_layout(school_id, plan_id)
 
 
 @router.post("/{plan_id}/finalize")
 async def finalize_plan(
     plan_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return finalize_seating_plan(school_id, plan_id)
 
 
@@ -76,8 +81,9 @@ async def finalize_plan(
 async def update_plan_status_route(
     plan_id: str,
     status: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     allowed = {"draft", "reviewed", "finalized", "archived"}
     if status not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {', '.join(sorted(allowed))}")
@@ -87,24 +93,27 @@ async def update_plan_status_route(
 @router.get("/{plan_id}/audit")
 async def audit_plan_route(
     plan_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return audit_seating_plan(school_id, plan_id)
 
 
 @router.delete("/{plan_id}")
 async def delete_plan(
     plan_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return delete_seating_plan(school_id, plan_id)
 
 
 @router.delete("")
 async def delete_all_plans(
     is_admin: bool = False,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -130,8 +139,9 @@ async def download_seating_template():
 async def import_seating_plan(
     file: UploadFile = File(...),
     exam_id: str = None,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     if not file.filename.lower().endswith('.xlsx'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

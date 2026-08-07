@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.middleware.tenant_context import TenantContext
 from app.routes import attendance, invigilators, teachers
 from app.services import supabase_attendance
 
@@ -13,7 +14,7 @@ from app.services import supabase_attendance
 def _build_attendance_app() -> FastAPI:
     app = FastAPI()
     app.include_router(attendance.router)
-    app.dependency_overrides[attendance.resolve_school_id_from_actor] = lambda: "school-ctx"
+    app.dependency_overrides[attendance.get_tenant_context] = lambda: TenantContext(school_id="school-ctx")
     app.dependency_overrides[attendance.get_authenticated_actor_context] = lambda: {
         "profile_id": "profile-1",
         "role": "school_admin",
@@ -31,9 +32,9 @@ def _build_staff_app() -> FastAPI:
     app = FastAPI()
     app.include_router(teachers.router, prefix="/api/teachers")
     app.include_router(invigilators.router)
-    app.dependency_overrides[teachers.resolve_school_id_from_actor] = lambda: "school-ctx"
+    app.dependency_overrides[teachers.get_tenant_context] = lambda: TenantContext(school_id="school-ctx")
     app.dependency_overrides[teachers.get_authenticated_actor_context] = lambda: {"user_id": "user-1"}
-    app.dependency_overrides[invigilators.resolve_school_id_from_actor] = lambda: "school-ctx"
+    app.dependency_overrides[invigilators.get_tenant_context] = lambda: TenantContext(school_id="school-ctx")
     return app
 
 

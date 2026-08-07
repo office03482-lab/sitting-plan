@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from app.middleware.auth import get_authenticated_actor_context
-from app.services.supabase_context import resolve_school_id_from_actor
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.services.supabase_hostels import (
     get_hostel as supabase_get_hostel,
     list_hostel_rooms as supabase_list_hostel_rooms,
@@ -32,9 +32,10 @@ router = APIRouter(prefix="/api/hostels", tags=["Hostels"])
 
 @router.get("", response_model=list[HostelResponse])
 async def list_hostels(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         hostels = supabase_list_hostels(school_id)
         logger.info(
@@ -49,9 +50,10 @@ async def list_hostels(
 @router.get("/{hostel_id}", response_model=HostelResponse)
 async def get_hostel(
     hostel_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         hostel = supabase_get_hostel(school_id, hostel_id)
         logger.info(
@@ -68,9 +70,10 @@ async def get_hostel(
 @router.get("/{hostel_id}/rooms", response_model=list[HostelRoomResponse])
 async def list_hostel_rooms(
     hostel_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         rooms = supabase_list_hostel_rooms(school_id, hostel_id)
         logger.info(
@@ -87,9 +90,10 @@ async def list_hostel_rooms(
 @router.post("", response_model=HostelResponse)
 async def create_hostel(
     payload: HostelCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         hostel = supabase_create_hostel(school_id, payload.model_dump())
         logger.info(
@@ -107,9 +111,10 @@ async def create_hostel(
 async def update_hostel(
     hostel_id: str,
     payload: HostelUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         hostel = supabase_update_hostel(school_id, hostel_id, payload.model_dump(exclude_unset=True))
         logger.info(
@@ -126,9 +131,10 @@ async def update_hostel(
 @router.delete("/{hostel_id}")
 async def delete_hostel(
     hostel_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         result = supabase_delete_hostel(school_id, hostel_id)
         logger.info(
@@ -146,9 +152,10 @@ async def delete_hostel(
 async def add_hostel_room(
     hostel_id: str,
     payload: HostelRoomCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         room = supabase_add_room(school_id, hostel_id, payload.model_dump())
         logger.info(
@@ -167,9 +174,10 @@ async def update_hostel_room(
     hostel_id: str,
     room_id: str,
     payload: HostelRoomUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         room = supabase_update_room(school_id, hostel_id, room_id, payload.model_dump(exclude_unset=True))
         logger.info(
@@ -187,9 +195,10 @@ async def update_hostel_room(
 async def delete_hostel_room(
     hostel_id: str,
     room_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         result = supabase_delete_room(school_id, hostel_id, room_id)
         logger.info(
@@ -334,9 +343,10 @@ def _build_hostel_pdf(report_type: str, rows: list[dict[str, Any]]) -> BytesIO:
 @router.get("/reports/data", response_model=HostelReportResponse)
 async def get_hostel_report_data(
     report_type: str = Query(..., pattern="^(occupancy|allocation|vacancy)$"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         if report_type == "occupancy":
             rows = supabase_get_occupancy_report_data(school_id)
@@ -362,9 +372,10 @@ async def get_hostel_report_data(
 async def export_hostel_report(
     report_type: str = Query(..., pattern="^(occupancy|allocation|vacancy)$"),
     export_format: str = Query(..., pattern="^(pdf|excel|csv)$"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         if report_type == "occupancy":
             rows = supabase_get_occupancy_report_data(school_id)

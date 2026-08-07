@@ -7,7 +7,6 @@ from io import BytesIO, StringIO
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from app.services.supabase_context import resolve_school_id_from_actor
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib import colors
@@ -17,6 +16,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from app.utils.pdf_base import fmt_date_iso
 from app.middleware.auth import get_authenticated_actor_context
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.schemas import (
     InventoryCatalogSet,
     InventoryCatalogSubject,
@@ -299,19 +299,21 @@ def build_pdf_report(report_type: str, rows: List[Dict[str, object]]) -> BytesIO
 
 @router.get("/suppliers", response_model=List[SupplierResponse])
 def list_suppliers(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     search: Optional[str] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_suppliers(school_id, search=search, is_active=is_active)
 
 
 @router.post("/suppliers", response_model=SupplierResponse)
 def create_supplier(
     payload: SupplierCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_supplier(school_id, payload.model_dump())
 
 
@@ -319,35 +321,39 @@ def create_supplier(
 def update_supplier(
     supplier_id: str,
     payload: SupplierUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_update_supplier(school_id, supplier_id, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/suppliers/{supplier_id}")
 def delete_supplier(
     supplier_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_supplier(school_id, supplier_id)
 
 
 @router.get("/subjects", response_model=List[InventorySubjectResponse])
 def list_subjects(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     is_active: Optional[bool] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_subjects(school_id, is_active=is_active)
 
 
 @router.post("/subjects", response_model=InventorySubjectResponse)
 def create_subject(
     payload: InventorySubjectCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_subject(school_id, payload.model_dump())
 
 
@@ -355,36 +361,40 @@ def create_subject(
 def update_subject(
     subject_id: str,
     payload: InventorySubjectUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_update_subject(school_id, subject_id, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/subjects/{subject_id}")
 def delete_subject(
     subject_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_subject(school_id, subject_id)
 
 
 @router.get("/sets", response_model=List[InventorySetResponse])
 def list_sets(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     subject_id: Optional[str] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_sets(school_id, subject_id=subject_id, is_active=is_active)
 
 
 @router.post("/sets", response_model=InventorySetResponse)
 def create_set(
     payload: InventorySetCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_set(school_id, payload.model_dump())
 
 
@@ -392,37 +402,41 @@ def create_set(
 def update_set(
     set_id: str,
     payload: InventorySetUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_update_set(school_id, set_id, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/sets/{set_id}")
 def delete_set(
     set_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_set(school_id, set_id)
 
 
 @router.get("/volumes", response_model=List[InventoryVolumeResponse])
 def list_volumes(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     subject_id: Optional[str] = Query(default=None),
     set_id: Optional[str] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_volumes(school_id, subject_id=subject_id, set_id=set_id, is_active=is_active)
 
 
 @router.post("/volumes", response_model=InventoryVolumeResponse)
 def create_volume(
     payload: InventoryVolumeCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_volume(school_id, payload.model_dump())
 
 
@@ -430,37 +444,41 @@ def create_volume(
 def update_volume(
     volume_id: str,
     payload: InventoryVolumeUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_update_volume(school_id, volume_id, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/volumes/{volume_id}")
 def delete_volume(
     volume_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_volume(school_id, volume_id)
 
 
 @router.get("/catalog", response_model=List[InventoryCatalogSubject])
 def get_inventory_catalog(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     include_inactive: bool = Query(default=True),
 ):
+    school_id = tenant.school_id
     return svc_get_catalog(school_id, include_inactive=include_inactive)
 
 
 @router.get("/materials", response_model=List[MaterialResponse])
 def list_materials(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     search: Optional[str] = Query(default=None),
     subject: Optional[str] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
     is_active: Optional[bool] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_materials(school_id, search=search, subject=subject, batch_name=batch_name, is_active=is_active)
 
 
@@ -477,9 +495,10 @@ def download_material_import_template():
 @router.post("/materials/import", response_model=InventoryMaterialImportResponse)
 async def import_materials_from_excel(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx Excel files are supported")
 
@@ -805,9 +824,10 @@ async def import_materials_from_excel(
 @router.post("/materials", response_model=MaterialResponse)
 def create_material(
     payload: MaterialCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_material(school_id, payload.model_dump())
 
 
@@ -815,122 +835,135 @@ def create_material(
 def update_material(
     material_id: str,
     payload: MaterialUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_update_material(school_id, material_id, payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/materials/{material_id}")
 def delete_material(
     material_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_material(school_id, material_id)
 
 
 @router.get("/stock-in", response_model=List[StockInResponse])
 def list_stock_in(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     supplier_id: Optional[str] = Query(default=None),
     material_id: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_stock_in(school_id, supplier_id=supplier_id, material_id=material_id)
 
 
 @router.post("/stock-in", response_model=StockInResponse)
 def create_stock_in(
     payload: StockInCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_stock_in(school_id, payload.model_dump())
 
 
 @router.delete("/stock-in/{entry_id}")
 def delete_stock_in(
     entry_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_stock_in(school_id, entry_id)
 
 
 @router.get("/stock-out", response_model=List[StockOutResponse])
 def list_stock_out(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     batch_id: Optional[str] = Query(default=None),
     material_id: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_stock_out(school_id, batch_id=batch_id, material_id=material_id)
 
 
 @router.post("/stock-out", response_model=StockOutResponse)
 def create_stock_out(
     payload: StockOutCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_stock_out(school_id, payload.model_dump())
 
 
 @router.delete("/stock-out/{entry_id}")
 def delete_stock_out(
     entry_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_stock_out(school_id, entry_id)
 
 
 @router.get("/student-issues", response_model=List[StudentIssueResponse])
 def list_student_issues(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     batch_id: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
     material_id: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return svc_list_student_issues(school_id, batch_id=batch_id, student_id=student_id, material_id=material_id)
 
 
 @router.post("/student-issues", response_model=StudentIssueResponse)
 def create_student_issues(
     payload: StudentIssueCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_create_student_issue(school_id, payload.model_dump())
 
 
 @router.delete("/student-issues/{entry_id}")
 def delete_student_issue(
     entry_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_inventory_write),
 ):
+    school_id = tenant.school_id
     return svc_delete_student_issue(school_id, entry_id)
 
 
 @router.get("/dashboard", response_model=InventoryDashboardResponse)
 def get_inventory_dashboard(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return svc_get_dashboard(school_id)
 
 
 @router.get("/history/material/{material_id}", response_model=List[InventoryHistoryEntry])
 def get_material_history(
     material_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return svc_get_material_history(school_id, material_id)
 
 
 @router.get("/reports/data", response_model=InventoryReportResponse)
 def get_inventory_report(
     report_type: str = Query(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
     supplier_id: Optional[str] = Query(default=None),
@@ -938,6 +971,7 @@ def get_inventory_report(
     material_id: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     rows = svc_get_report_data(
         school_id, report_type,
         date_from=date_from, date_to=date_to,
@@ -956,7 +990,7 @@ def get_inventory_report(
 def export_inventory_report(
     report_type: str = Query(...),
     export_format: str = Query(..., pattern="^(excel|pdf|csv)$"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
     supplier_id: Optional[str] = Query(default=None),
@@ -964,6 +998,7 @@ def export_inventory_report(
     material_id: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     rows = svc_get_report_data(
         school_id, report_type,
         date_from=date_from, date_to=date_to,

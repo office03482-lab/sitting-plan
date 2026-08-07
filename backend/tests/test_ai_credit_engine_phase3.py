@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routes import credits
+from app.middleware.tenant_context import TenantContext
 from app.services.ai_credit_engine import AICreditService
 
 
@@ -536,7 +537,7 @@ def test_wallet_summary_ledger_and_cost_routes(monkeypatch):
     app.include_router(credits.router)
     app.dependency_overrides[credits.get_authenticated_user] = lambda: type("User", (), {"role_key": "teacher"})()
     app.dependency_overrides[credits.get_authenticated_actor_context] = lambda: {"profile_id": PROFILE_ID, "school_id": SCHOOL_ID}
-    app.dependency_overrides[credits.resolve_school_id_from_actor] = lambda: SCHOOL_ID
+    app.dependency_overrides[credits.get_tenant_context] = lambda: TenantContext(school_id=SCHOOL_ID)
     app.dependency_overrides[credits.require_platform_admin] = lambda: type("User", (), {"role_key": "platform_admin"})()
 
     client = TestClient(app)

@@ -191,7 +191,7 @@ export default function PlatformSchoolPicker({ mode, value, onChange }: Props) {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{school.name}</p>
                       <p className="truncate text-xs text-slate-500">
-                        {school.school_code || school.slug} · School ERP ·{' '}
+                        {school.school_code || school.slug} · Dr. Girish App ·{' '}
                         {school.is_active ? 'Active' : 'Inactive'}
                       </p>
                       {school.subscription?.current_plan ? (

@@ -5,10 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import FinancePredictionsResponse, CampusPredictionsResponse, StudentPredictionsResponse
 from app.services.bulk_action_requests import is_platform_admin_user
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_predictions import (
     get_campus_predictions_dashboard,
     get_finance_predictions_dashboard,
@@ -72,12 +72,13 @@ def require_finance_predictions_user(
 
 @router.get("/student", response_model=StudentPredictionsResponse)
 async def api_get_student_predictions(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_student_predictions_user),
     student_id: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ):
+    school_id = tenant.school_id
     return get_student_predictions_dashboard(
         school_id,
         role_key=_role_key(user),
@@ -91,10 +92,11 @@ async def api_get_student_predictions(
 
 @router.get("/campus", response_model=CampusPredictionsResponse)
 async def api_get_campus_predictions(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_campus_predictions_user),
 ):
+    school_id = tenant.school_id
     del user
     return get_campus_predictions_dashboard(
         school_id,
@@ -104,10 +106,11 @@ async def api_get_campus_predictions(
 
 @router.get("/finance", response_model=FinancePredictionsResponse)
 async def api_get_finance_predictions(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_finance_predictions_user),
 ):
+    school_id = tenant.school_id
     del user
     return get_finance_predictions_dashboard(
         school_id,

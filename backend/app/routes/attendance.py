@@ -17,6 +17,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, user_has_permission
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     AttendanceHolidayCreate,
@@ -90,7 +91,6 @@ from app.services.supabase_attendance import (
     list_subjects as list_supabase_attendance_subjects,
 )
 from app.services.bulk_action_requests import create_bulk_action_request, is_platform_admin_user
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.utils.dashboard_tracing import begin_dashboard_request, finish_dashboard_request
 import logging
 
@@ -631,18 +631,20 @@ async def collect_student_report_records(
 
 @router.get("/overview", response_model=AttendanceOverviewResponse)
 def get_overview(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return AttendanceOverviewResponse(**get_supabase_attendance_overview(school_id))
 
 
 @router.get("/students", response_model=List[AttendanceStudentResponse])
 def list_students(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return list_supabase_attendance_students(
         school_id,
         skip=skip,
@@ -654,9 +656,10 @@ def list_students(
 @router.post("/students", response_model=AttendanceStudentResponse)
 def create_student(
     payload: AttendanceStudentCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     raise HTTPException(
         status_code=400,
         detail="Student Management se student add/edit karein. Attendance module auto-sync karta hai.",
@@ -665,12 +668,13 @@ def create_student(
 
 @router.get("/staff", response_model=List[AttendanceStaffResponse])
 def list_staff(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     return list_supabase_attendance_staff(
         school_id,
         skip=skip,
@@ -682,9 +686,10 @@ def list_staff(
 @router.post("/staff", response_model=AttendanceStaffResponse)
 def create_staff(
     payload: AttendanceStaffCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     raise HTTPException(
         status_code=400,
         detail="Manage Teacher se staff add/edit karein. Attendance module auto-sync karta hai.",
@@ -693,17 +698,19 @@ def create_staff(
 
 @router.get("/subjects", response_model=List[AttendanceSubjectResponse])
 def list_subjects(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return list_supabase_attendance_subjects(school_id)
 
 
 @router.post("/subjects", response_model=AttendanceSubjectResponse)
 def create_subject(
     payload: AttendanceSubjectCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     raise HTTPException(
         status_code=400,
         detail="Subjects are managed via Course/Subject Management. Attendance module reads subjects from there.",
@@ -712,17 +719,19 @@ def create_subject(
 
 @router.get("/settings", response_model=AttendanceSettingResponse)
 def get_settings(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return AttendanceSettingResponse(**get_attendance_settings(school_id))
 
 
 @router.put("/settings", response_model=AttendanceSettingResponse)
 def update_attendance_settings_endpoint(
     payload: AttendanceSettingUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     result = update_attendance_settings(
         school_id,
         minimum_attendance_threshold=payload.minimum_attendance_threshold,
@@ -741,17 +750,19 @@ def update_attendance_settings_endpoint(
 
 @router.get("/holidays", response_model=List[AttendanceHolidayResponse])
 def list_holidays(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return get_supabase_attendance_overview(school_id).get("holidays", [])
 
 
 @router.post("/holidays", response_model=AttendanceHolidayResponse)
 def create_holiday_endpoint(
     payload: AttendanceHolidayCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     holiday = create_holiday(
         school_id,
         {
@@ -773,18 +784,20 @@ def create_holiday_endpoint(
 @router.delete("/holidays/{holiday_id}")
 def delete_holiday_endpoint(
     holiday_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     return delete_holiday(school_id, holiday_id)
 
 
 @router.delete("/holidays")
 def delete_all_holidays_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if is_platform_admin_user(user):
         return delete_all_holidays(school_id)
     return _create_bulk_action_from_route(
@@ -801,9 +814,10 @@ def delete_all_holidays_endpoint(
 def get_teacher_current_class(
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     try:
         return TeacherAttendanceContextResponse(
             **get_supabase_teacher_current_class(
@@ -824,8 +838,9 @@ def get_batch_current_class(
     batch_name: Optional[str] = Query(default=None),
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return TeacherAttendanceContextResponse(
         **get_supabase_batch_current_class(
             school_id,
@@ -845,8 +860,9 @@ def get_batch_day_classes(
     batch_name: Optional[str] = Query(default=None),
     target_date: Optional[date] = Query(default=None),
     current_time: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     payload = list_batch_day_classes(
         school_id,
         class_name=class_name,
@@ -865,8 +881,9 @@ def get_student_marking(
     section: str = Query(...),
     subject_id: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     try:
         return StudentAttendanceMarkingResponse(
             **get_supabase_student_marking(
@@ -885,9 +902,10 @@ def get_student_marking(
 @router.post("/student-marking")
 def save_student_marking(
     payload: StudentAttendanceMarkRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     logger.info("attendance.save.request", extra={"school_id": str(school_id), "date": str(payload.date), "subject_id": str(payload.subject_id), "entries": len(payload.entries)})
     marked_by = payload.marked_by or actor["name"]
     entries_list = [
@@ -922,7 +940,7 @@ def save_student_marking(
 
 @router.get("/student-records", response_model=List[StudentAttendanceRecordResponse])
 async def list_student_records(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
@@ -932,6 +950,7 @@ async def list_student_records(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
 ):
+    school_id = tenant.school_id
     batch_filters = None
     resolved_class_name = class_name
     resolved_section = section
@@ -956,12 +975,13 @@ async def list_student_records(
 
 @router.get("/dashboard", response_model=StudentAttendanceDashboardSummaryResponse)
 def get_student_dashboard(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     date: Optional[date] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
     scope: Optional[str] = Query(default=None),
 ):
+    school_id = tenant.school_id
     return StudentAttendanceDashboardSummaryResponse(
         **get_supabase_student_dashboard(
             school_id,
@@ -979,8 +999,9 @@ async def get_student_calendar(
     class_name: Optional[str] = Query(default=None),
     batch_name: Optional[str] = Query(default=None),
     scope: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return await get_supabase_student_calendar(
         school_id,
         month=month,
@@ -993,9 +1014,10 @@ async def get_student_calendar(
 @router.delete("/student-records/{record_id}")
 def delete_student_record_endpoint(
     record_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     try:
         return delete_student_record(school_id, record_id=record_id)
     except ValueError as exc:
@@ -1004,7 +1026,7 @@ def delete_student_record_endpoint(
 
 @router.delete("/student-records")
 def delete_all_student_records_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
@@ -1013,6 +1035,7 @@ def delete_all_student_records_endpoint(
     actor: Dict[str, str] = Depends(require_write_access),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if is_platform_admin_user(user):
         return delete_all_student_records(
             school_id,
@@ -1042,8 +1065,9 @@ def delete_all_student_records_endpoint(
 @router.get("/student-dashboard/{student_id}", response_model=StudentDashboardResponse)
 def get_student_dashboard_by_id(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail="Student dashboard is computed from records on the frontend in Supabase mode",
@@ -1055,8 +1079,9 @@ def get_staff_marking(
     date: date = Query(...),
     department: str = Query(...),
     search: Optional[str] = Query(default=None),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return StaffAttendanceMarkingResponse(
         **get_supabase_staff_marking(
             school_id,
@@ -1070,9 +1095,10 @@ def get_staff_marking(
 @router.post("/staff-marking")
 def save_staff_marking(
     payload: StaffAttendanceMarkRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     marked_by = payload.marked_by or actor["name"]
     entries_list = [
         {
@@ -1106,7 +1132,7 @@ def save_staff_marking(
 
 @router.get("/staff-records", response_model=List[StaffAttendanceRecordResponse])
 def list_staff_records(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     department: Optional[str] = Query(default=None),
     staff_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
@@ -1115,6 +1141,7 @@ def list_staff_records(
     limit: int = Query(default=100, ge=1, le=500),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     return list_supabase_staff_records(
         school_id,
         department=department,
@@ -1129,9 +1156,10 @@ def list_staff_records(
 @router.delete("/staff-records/{record_id}")
 def delete_staff_record_endpoint(
     record_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     try:
         return delete_supabase_staff_record(school_id, record_id)
     except ValueError as exc:
@@ -1140,7 +1168,7 @@ def delete_staff_record_endpoint(
 
 @router.delete("/staff-records")
 def delete_all_staff_records_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     department: Optional[str] = Query(default=None),
     staff_name: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
@@ -1148,6 +1176,7 @@ def delete_all_staff_records_endpoint(
     actor: Dict[str, str] = Depends(require_write_access),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if is_platform_admin_user(user):
         return delete_all_supabase_staff_records(
             school_id,
@@ -1175,12 +1204,13 @@ def delete_all_staff_records_endpoint(
 @router.get("/staff-dashboard", response_model=StaffDashboardResponse)
 async def get_staff_dashboard(
     response: Response,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     department: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     del actor
     trace = begin_dashboard_request("attendance_staff_dashboard", school_id)
     response.headers["X-Dashboard-Request-Id"] = str(trace["request_id"])
@@ -1202,10 +1232,11 @@ async def get_staff_dashboard(
 
 @router.get("/leaves", response_model=List[AttendanceLeaveResponse])
 def list_leaves(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     status_filter: Optional[str] = Query(default=None, alias="status"),
     actor: Dict[str, str] = Depends(get_authenticated_actor_context),
 ):
+    school_id = tenant.school_id
     return list_supabase_attendance_leaves(
         school_id,
         status_filter=status_filter,
@@ -1216,9 +1247,10 @@ def list_leaves(
 @router.post("/leaves", response_model=AttendanceLeaveResponse)
 def create_leave(
     payload: AttendanceLeaveCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_leave_create_access),
 ):
+    school_id = tenant.school_id
     leave_type_val = payload.leave_type.value if hasattr(payload.leave_type, "value") else str(payload.leave_type)
     result = save_leave_request(
         school_id,
@@ -1243,9 +1275,10 @@ def create_leave(
 def decide_leave(
     leave_id: str,
     payload: AttendanceLeaveDecision,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     if actor.get("role") == UserRole.TEACHER.value:
         raise HTTPException(status_code=403, detail="Teachers cannot approve or reject leave requests")
     status_val = payload.status.value if hasattr(payload.status, "value") else str(payload.status)
@@ -1269,19 +1302,21 @@ def decide_leave(
 @router.delete("/leaves/{leave_id}")
 def delete_leave(
     leave_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     return delete_leave_request(school_id, leave_id)
 
 
 @router.delete("/leaves")
 def delete_all_leaves(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     status_filter: Optional[str] = Query(default=None, alias="status"),
     actor: Dict[str, str] = Depends(require_write_access),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if actor.get("role") == UserRole.TEACHER.value:
         raise HTTPException(status_code=403, detail="Teachers cannot delete all leave requests")
     if is_platform_admin_user(user):
@@ -1298,26 +1333,29 @@ def delete_all_leaves(
 
 @router.get("/notifications", response_model=List[AttendanceNotificationResponse])
 def list_notifications_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
+    school_id = tenant.school_id
     return list_notifications(school_id, limit=50)
 
 
 @router.delete("/notifications/{notification_id}")
 def delete_single_notification(
     notification_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
 ):
+    school_id = tenant.school_id
     return delete_notification(school_id, notification_id)
 
 
 @router.delete("/notifications")
 def delete_all_notifications_endpoint(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: Dict[str, str] = Depends(require_write_access),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if is_platform_admin_user(user):
         return delete_all_notifications(school_id)
     return _create_bulk_action_from_route(
@@ -1335,7 +1373,7 @@ async def get_report_data(
     report_type: str = Query(
         ..., pattern="^(student_summary|staff_summary|leave_summary)$"
     ),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     batch_names: Optional[str] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -1343,6 +1381,7 @@ async def get_report_data(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
 ):
+    school_id = tenant.school_id
     student_records = (
         await collect_student_report_records(
             school_id, class_name, section, batch_names, date_from, date_to
@@ -1382,7 +1421,7 @@ async def export_report(
         ..., pattern="^(student_summary|staff_summary|leave_summary)$"
     ),
     export_format: str = Query(..., pattern="^(excel|pdf|csv)$"),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     batch_names: Optional[str] = Query(default=None),
     class_name: Optional[str] = Query(default=None),
     section: Optional[str] = Query(default=None),
@@ -1390,6 +1429,7 @@ async def export_report(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
 ):
+    school_id = tenant.school_id
     student_records = (
         await collect_student_report_records(
             school_id, class_name, section, batch_names, date_from, date_to
@@ -1458,13 +1498,14 @@ async def export_report(
 
 @router.get("/integrated-students", response_model=List[AttendanceStudentResponse])
 def list_integrated_students(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
     batch: Optional[str] = Query(default=None),
 ):
     """List students directly from Student Management"""
+    school_id = tenant.school_id
     return list_supabase_integrated_students(
         school_id,
         skip=skip,
@@ -1476,7 +1517,7 @@ def list_integrated_students(
 
 @router.get("/integrated-staff", response_model=List[AttendanceStaffResponse])
 def list_integrated_staff(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     search: Optional[str] = Query(default=None),
@@ -1486,6 +1527,7 @@ def list_integrated_staff(
     ),
 ):
     """List staff directly from Teacher and Invigilator Management"""
+    school_id = tenant.school_id
     return list_supabase_integrated_staff(
         school_id,
         skip=skip,
@@ -1498,7 +1540,8 @@ def list_integrated_staff(
 
 @router.get("/integrated-overview")
 def get_integrated_overview(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     """Get attendance overview using integrated Student and Teacher/Invigilator data"""
+    school_id = tenant.school_id
     return get_supabase_integrated_overview(school_id)

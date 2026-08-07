@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.schemas import (
     CouponApplyRequest,
@@ -18,7 +19,6 @@ from app.schemas import (
     RevenueDashboardResponse,
     SubscriptionListResponse,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_monetization import (
     apply_coupon,
     create_order,
@@ -48,10 +48,11 @@ def _is_parent_user(user: User) -> bool:
 @router.post("/api/payments/create-order", response_model=PaymentCreateOrderResponse)
 async def api_create_order(
     payload: PaymentCreateOrderRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     _: dict = Depends(require_permissions("edupay.commerce", "edupay.payments")),
 ):
+    school_id = tenant.school_id
     create_seed_catalog_for_school(school_id, str(actor.get("profile_id") or "").strip() or None)
     return create_order(
         school_id,
@@ -69,10 +70,11 @@ async def api_create_order(
 @router.post("/api/payments/verify", response_model=PaymentVerifyResponse)
 async def api_verify_order(
     payload: PaymentVerifyRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     _: dict = Depends(require_permissions("edupay.commerce", "edupay.payments")),
 ):
+    school_id = tenant.school_id
     return verify_order(
         school_id,
         profile_id=str(actor.get("profile_id") or "").strip() or None,
@@ -87,11 +89,12 @@ async def api_verify_order(
 
 @router.get("/api/subscriptions", response_model=SubscriptionListResponse)
 async def api_subscriptions(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     _: dict = Depends(require_permissions("edupay.subscriptions", "edupay.revenue")),
     school_scope: bool = Query(default=False),
 ):
+    school_id = tenant.school_id
     profile_id = str(actor.get("profile_id") or "").strip() or None
     role_key = str(actor.get("role_key") or actor.get("role") or "").strip().lower()
     return {
@@ -112,9 +115,10 @@ def _utc_now_iso_helper() -> str:
 @router.post("/api/coupons/apply", response_model=CouponApplyResponse)
 async def api_apply_coupon(
     payload: CouponApplyRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     user: User = Depends(get_authenticated_user),
 ):
+    school_id = tenant.school_id
     if not _is_parent_user(user):
         from app.middleware.auth import decode_user_permissions, user_has_permission
         granted = decode_user_permissions(user)
@@ -126,11 +130,12 @@ async def api_apply_coupon(
 
 @router.get("/api/revenue/dashboard", response_model=RevenueDashboardResponse)
 async def api_revenue_dashboard(
-    school_id: Optional[str] = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     _: dict = Depends(require_permissions("edupay.revenue")),
     global_view: bool = Query(default=False),
 ):
+    school_id: Optional[str] = tenant.school_id
     role_key = str(actor.get("role_key") or actor.get("role") or "").strip().lower()
     if global_view and role_key != "platform_admin":
         global_view = False

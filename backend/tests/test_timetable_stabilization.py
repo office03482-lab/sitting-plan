@@ -6,6 +6,7 @@ from io import BytesIO
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.middleware.tenant_context import TenantContext
 from app.models import UserRole
 from app.routes import timetable
 from app.services.scope_engine import PermissionScopeContext
@@ -16,7 +17,7 @@ def _build_app(actor: dict[str, str] | None = None) -> FastAPI:
     app = FastAPI()
     app.include_router(timetable.router, prefix="/api/timetable")
     app.include_router(timetable.utility_router, prefix="/api/timetable")
-    app.dependency_overrides[timetable.resolve_school_id_from_actor] = lambda: "school-1"
+    app.dependency_overrides[timetable.get_tenant_context] = lambda: TenantContext(school_id="school-1")
     app.dependency_overrides[timetable.get_authenticated_actor_context] = lambda: actor or {
         "role": "school_admin",
         "name": "Admin User",

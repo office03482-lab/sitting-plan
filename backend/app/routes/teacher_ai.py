@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import (
     TeacherAiAssignmentRequest,
@@ -18,7 +19,6 @@ from app.schemas import (
 )
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
-from app.services.supabase_context import resolve_school_id_from_actor
 from app.services.supabase_teacher_ai import (
     generate_assignment,
     generate_lesson_plan,
@@ -55,7 +55,7 @@ def require_teacher_ai_user(
 @router.post("/question-paper", response_model=TeacherAiQuestionPaperResponse)
 async def api_teacher_ai_question_paper(
     payload: TeacherAiQuestionPaperRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
@@ -64,14 +64,14 @@ async def api_teacher_ai_question_paper(
         user=user,
         actor=actor,
         permission_key="teacher_ai.generate",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_test_generation",
         credit_amount=5,
         reason="teacher_ai.question_paper",
     )
     result = generate_question_paper(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
@@ -83,7 +83,7 @@ async def api_teacher_ai_question_paper(
 @router.post("/assignment", response_model=TeacherAiAssignmentResponse)
 async def api_teacher_ai_assignment(
     payload: TeacherAiAssignmentRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
@@ -92,14 +92,14 @@ async def api_teacher_ai_assignment(
         user=user,
         actor=actor,
         permission_key="teacher_ai.generate",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_test_generation",
         credit_amount=5,
         reason="teacher_ai.assignment",
     )
     result = generate_assignment(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
@@ -111,7 +111,7 @@ async def api_teacher_ai_assignment(
 @router.post("/lesson-plan", response_model=TeacherAiLessonPlanResponse)
 async def api_teacher_ai_lesson_plan(
     payload: TeacherAiLessonPlanRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
@@ -120,14 +120,14 @@ async def api_teacher_ai_lesson_plan(
         user=user,
         actor=actor,
         permission_key="teacher_ai.generate",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_study_plan",
         credit_amount=3,
         reason="teacher_ai.lesson_plan",
     )
     result = generate_lesson_plan(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
@@ -139,7 +139,7 @@ async def api_teacher_ai_lesson_plan(
 @router.post("/report-comments", response_model=TeacherAiReportCommentsResponse)
 async def api_teacher_ai_report_comments(
     payload: TeacherAiReportCommentsRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
@@ -148,14 +148,14 @@ async def api_teacher_ai_report_comments(
         user=user,
         actor=actor,
         permission_key="teacher_ai.reports",
-        school_id=school_id,
+        school_id=tenant.school_id,
         resource_key="ai_credits_used",
         credit_feature="ai_analytics",
         credit_amount=4,
         reason="teacher_ai.report_comments",
     )
     result = generate_report_comments(
-        school_id,
+        tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,
         payload=payload.model_dump(exclude_none=True),
@@ -166,12 +166,12 @@ async def api_teacher_ai_report_comments(
 
 @alias_router.get("/teacher-assistant", include_in_schema=False)
 async def api_teacher_ai_overview(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_teacher_ai_user),
 ):
     del user
     return get_teacher_ai_overview(
-        school_id,
+        tenant.school_id,
         profile_id=str(actor.get("profile_id") or "").strip() or None,
     )

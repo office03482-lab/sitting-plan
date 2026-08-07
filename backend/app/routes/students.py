@@ -6,7 +6,8 @@ import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse
-from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode, resolve_school_id_from_actor
+from app.middleware.tenant_context import TenantContext, get_tenant_context
+from app.services.supabase_context import ensure_legacy_sqlite_route_available, is_legacy_sqlite_mode
 from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -196,14 +197,14 @@ def _normalize_scope_value(value: Any) -> str:
 
 
 def require_student_directory_scope(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     user: User = Depends(require_permissions("admin_office.students")),
 ) -> PermissionScopeContext:
     return build_scope_context(
         user=user,
         actor=actor,
-        school_id=school_id,
+        school_id=tenant.school_id,
         permission_key="admin_office.students",
         include_students=True,
         include_teacher_batches=True,
@@ -582,7 +583,7 @@ async def download_student_template(
 @router.post("/import", response_model=StudentImportResponse)
 async def import_students(
     file: UploadFile = File(...),
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
@@ -590,6 +591,8 @@ async def import_students(
     """
     Import students from Excel file
     """
+    school_id = tenant.school_id
+
     # Validate file type
     if not file.filename.lower().endswith('.xlsx'):
         raise HTTPException(
@@ -887,7 +890,7 @@ async def import_students(
 @router.post("", response_model=StudentResponse)
 async def create_student(
     student: StudentCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
@@ -895,6 +898,7 @@ async def create_student(
     """
     Create a new student
     """
+    school_id = tenant.school_id
     if not scope_context.is_school_wide and not _student_payload_matches_scope(student.model_dump(exclude_unset=True), scope_context):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only create students within your assigned scope")
     if is_uuid_school_id(school_id):
@@ -976,7 +980,7 @@ async def create_student(
 
 @router.get("", response_model=List[StudentResponse])
 async def list_students(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     skip: int = 0,
@@ -987,6 +991,7 @@ async def list_students(
     """
     List students for a school
     """
+    school_id = tenant.school_id
     if not is_legacy_sqlite_mode():
         rows = list_students_supabase(school_id, batch=batch, skip=0, limit=max(skip + limit, 1000))
         scoped_rows = _filter_students_for_scope(rows, scope_context)
@@ -1007,11 +1012,12 @@ async def list_students(
 
 @router.get("/count")
 async def get_students_count(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     if scope_context.is_school_wide and (not is_legacy_sqlite_mode() or is_uuid_school_id(school_id)):
         total = get_supabase_students_count(school_id)
         logger.info(f"Action completed - User ID: {actor.get('user_id')}, School ID: {school_id}, Returned row count: {total}")
@@ -1029,12 +1035,13 @@ async def get_students_count(
 
 @router.get("/hostel-requests", response_model=List[StudentHostelRequestResponse])
 async def list_hostel_requests(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     status_filter: str | None = None,
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     _enforce_non_own_scope(scope_context, "Own-scope student access cannot browse hostel requests")
     if is_uuid_school_id(school_id):
         requests = list_hostel_requests_supabase(school_id, status_filter=status_filter)
@@ -1067,11 +1074,12 @@ async def list_hostel_requests(
 async def create_or_update_hostel_request(
     student_id: str,
     payload: StudentHostelRequestCreate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     if is_uuid_school_id(school_id):
         target_student = get_student_supabase(school_id, str(student_id).strip())
         _enforce_student_scope(scope_context, target_student, "You can only manage hostel requests for students in your scope")
@@ -1141,11 +1149,12 @@ async def create_or_update_hostel_request(
 async def approve_hostel_request(
     request_id: str,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     _enforce_non_own_scope(scope_context, "Own-scope student access cannot approve hostel requests")
     if is_uuid_school_id(school_id):
         existing_requests = [item for item in list_hostel_requests_supabase(school_id) if _normalize_scope_value(item.get("id")) == _normalize_scope_value(request_id)]
@@ -1233,11 +1242,12 @@ async def approve_hostel_request(
 async def move_hostel_allocation(
     request_id: str,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     _enforce_non_own_scope(scope_context, "Own-scope student access cannot move hostel allocations")
     if is_uuid_school_id(school_id):
         existing_requests = [item for item in list_hostel_requests_supabase(school_id) if _normalize_scope_value(item.get("id")) == _normalize_scope_value(request_id)]
@@ -1323,11 +1333,12 @@ async def move_hostel_allocation(
 async def reject_hostel_request(
     request_id: str,
     payload: StudentHostelRequestDecision,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     _enforce_non_own_scope(scope_context, "Own-scope student access cannot reject hostel requests")
     if is_uuid_school_id(school_id):
         existing_requests = [item for item in list_hostel_requests_supabase(school_id) if _normalize_scope_value(item.get("id")) == _normalize_scope_value(request_id)]
@@ -1378,11 +1389,12 @@ async def reject_hostel_request(
 @router.post("/hostel-requests/{request_id}/vacate", response_model=StudentHostelRequestResponse)
 async def vacate_hostel_allocation(
     request_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     """Vacate a hostel allocation — releases the bed while preserving request history.
 
     The request status stays 'approved' (historical record) but the room
@@ -1443,11 +1455,12 @@ async def vacate_hostel_allocation(
 @router.post("/transfer", response_model=StudentBatchTransferResponse)
 async def transfer_students_to_batch(
     transfer_data: StudentBatchTransferRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
 ):
+    school_id = tenant.school_id
     """
     Transfer selected students or a whole batch to another batch.
     """
@@ -1531,7 +1544,7 @@ async def transfer_students_to_batch(
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
@@ -1539,6 +1552,7 @@ async def get_student(
     """
     Get student by ID
     """
+    school_id = tenant.school_id
     if not is_legacy_sqlite_mode():
         student = get_student_supabase(school_id, student_id)
         _enforce_student_scope(scope_context, student, "You can only view students in your scope")
@@ -1563,10 +1577,11 @@ async def get_student(
 @router.post("/bulk-delete")
 async def bulk_delete_students(
     payload: StudentBulkDeleteRequest,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
 ):
+    school_id = tenant.school_id
     students = get_students_by_ids_supabase(school_id, payload.student_ids)
     if not students:
         return {"message": "Deleted 0 of 0 selected students", "matched": 0, "deleted": 0, "remaining": 0}
@@ -1592,7 +1607,7 @@ async def bulk_delete_students(
 async def update_student(
     student_id: str,
     update_data: StudentUpdate,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
     db: Session = Depends(get_db),
@@ -1600,6 +1615,7 @@ async def update_student(
     """
     Update student information
     """
+    school_id = tenant.school_id
     if is_uuid_school_id(school_id):
         existing_student = get_student_supabase(school_id, student_id)
         _enforce_student_scope(scope_context, existing_student, "You can only update students in your scope")
@@ -1704,13 +1720,14 @@ async def update_student(
 @router.delete("/{student_id}")
 async def delete_student(
     student_id: str,
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
 ):
     """
     Delete student from Supabase
     """
+    school_id = tenant.school_id
     student = get_student_supabase(school_id, student_id)
     if not scope_context.is_school_wide:
         _enforce_student_scope(scope_context, student, "You can only delete students in your assigned scope")
@@ -1721,7 +1738,7 @@ async def delete_student(
 
 @router.delete("")
 async def delete_all_students(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(get_authenticated_user),
     scope_context: PermissionScopeContext = Depends(require_student_directory_scope),
@@ -1729,6 +1746,7 @@ async def delete_all_students(
     """
     Delete all students for a school from Supabase.
     """
+    school_id = tenant.school_id
     ensure_school_wide_scope(scope_context, "Only school-wide student access can delete all students")
     if is_platform_admin_user(user):
         deleted_count = delete_all_students_supabase(school_id)

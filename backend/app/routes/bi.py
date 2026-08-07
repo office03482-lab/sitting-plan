@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User
 from app.schemas import (
     AcademicBiResponse,
@@ -27,8 +28,6 @@ from app.services.supabase_bi import (
     get_platform_dashboard,
     list_saved_reports,
 )
-from app.services.supabase_context import resolve_school_id_from_actor
-
 router = APIRouter(prefix="/api/bi", tags=["Business Intelligence"])
 
 
@@ -57,55 +56,60 @@ def require_bi_platform_user(
 
 @router.get("/academic", response_model=AcademicBiResponse)
 async def api_bi_academic(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
 ):
+    school_id = tenant.school_id
     del user
     return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
 
 @router.get("/attendance", response_model=AcademicBiResponse, include_in_schema=False)
 async def api_bi_attendance(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
 ):
+    school_id = tenant.school_id
     del user
     return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
 
 @router.get("/performance", response_model=AcademicBiResponse, include_in_schema=False)
 async def api_bi_performance(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
 ):
+    school_id = tenant.school_id
     del user
     return get_academic_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
 
 @router.get("/finance", response_model=FinanceBiResponse)
 async def api_bi_finance(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
 ):
+    school_id = tenant.school_id
     del user
     return get_finance_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
 
 @router.get("/operations", response_model=OperationsBiResponse)
 async def api_bi_operations(
-    school_id: str = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
 ):
+    school_id = tenant.school_id
     del user
     return get_operations_dashboard(school_id, period=period, actor_profile_id=actor.get("profile_id"))
 
@@ -122,10 +126,11 @@ async def api_bi_platform(
 
 @router.get("/reports", response_model=list[SavedBiReportResponse])
 async def api_bi_reports(
-    school_id: Optional[str] = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
 ):
+    school_id = tenant.school_id
     return list_saved_reports(
         school_id,
         actor_profile_id=actor.get("profile_id"),
@@ -136,10 +141,11 @@ async def api_bi_reports(
 @router.post("/reports", response_model=SavedBiReportResponse)
 async def api_bi_reports_create(
     payload: SavedBiReportCreateRequest,
-    school_id: Optional[str] = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
 ):
+    school_id = tenant.school_id
     resolved_school_id = None if (payload.dashboard_key == "platform" and is_platform_admin_user(user)) else school_id
     return create_saved_report(
         resolved_school_id,
@@ -157,10 +163,11 @@ async def api_bi_reports_create(
 async def api_bi_reports_export(
     dashboard_key: str = Query(..., pattern="^(academic|finance|operations|platform)$"),
     period: str = Query(default="monthly", pattern="^(daily|weekly|monthly|yearly)$"),
-    school_id: Optional[str] = Depends(resolve_school_id_from_actor),
+    tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
     user: User = Depends(require_bi_school_user),
 ):
+    school_id = tenant.school_id
     if dashboard_key == "platform":
         if not is_platform_admin_user(user):
             raise HTTPException(status_code=403, detail="Only platform administrators can export platform BI dashboards")
