@@ -20,16 +20,13 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
-  const fetchedRef = useRef(false);
 
   const fetchSchools = useCallback(async (signal?: AbortSignal) => {
-    if (fetchedRef.current && schools.length > 0) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiService.listPlatformSchools({ status: 'active' }, { signal });
+      const res = await apiService.listPlatformSchools({ status: 'active' }, { signal, forceFresh: true });
       setSchools(res.data.items || []);
-      fetchedRef.current = true;
     } catch (err: any) {
       if (err?.code !== 'ERR_CANCELED') {
         setError(getRequestErrorMessage(err, 'Schools load nahi ho paaye.'));
@@ -37,7 +34,7 @@ export default function PlatformAdminSchoolSelector({ returnPath, trigger }: Pro
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [schools.length]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();

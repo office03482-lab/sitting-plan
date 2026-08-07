@@ -571,17 +571,73 @@ def _load_guardians_for_scope(
             seen.add(guardian_id)
             normalized_guardian_ids.append(guardian_id)
     query = (
-        _eq_boolean(
-            _schema_table("academic", "guardians", supabase=supabase)
-            .select("id,school_id,profile_id,guardian_code,full_name,email,phone,relation_type,address,metadata,is_active,created_at")
-            .eq("school_id", school_id),
-            "is_active",
-            True,
-        )
+        _schema_table("academic", "guardians", supabase=supabase)
+        .select("id,school_id,profile_id,guardian_code,full_name,email,phone,relation_type,address,metadata,is_active,created_at")
+        .eq("school_id", school_id)
     )
     if normalized_guardian_ids:
         query = query.in_("id", normalized_guardian_ids)
-    return _fetch_all_rows(query.order("full_name"))
+    rows = _fetch_all_rows(query.order("full_name"))
+    # Legacy guardian rows can have a null is_active value. Treat only an
+    # explicit false as inactive so linked parents are still visible.
+    return [row for row in rows if row.get("is_active") is not False]
+
+
+def _backfill_guardians_from_student_contacts(
+    school_id: str,
+    *,
+    student_ids: list[str] | None = None,
+    batch_id: str | None = None,
+    class_name: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    supabase: Any | None = None,
+) -> int:
+    from app.services.supabase_parent_links import create_or_link_parent
+
+    query = (
+        _public_table("students", supabase=supabase)
+        .select("id,school_id,full_name,guardian_name,guardian_phone,metadata,is_active,batch_id,class_name")
+        .eq("school_id", school_id)
+    )
+    if student_ids:
+        query = query.in_("id", [_normalize(item) for item in student_ids if _normalize(item)])
+    if batch_id:
+        query = query.eq("batch_id", batch_id)
+    if class_name:
+        query = query.eq("class_name", class_name)
+    if limit is not None and limit > 0:
+        query = query.range(max(0, offset), max(0, offset) + limit - 1)
+
+    created_links = 0
+    rows = list(query.order("full_name").execute().data or [])
+    for row in rows:
+        if row.get("is_active") is False:
+            continue
+        metadata = _json_object(row.get("metadata"))
+        parent_name = _normalize_optional(row.get("guardian_name")) or _normalize_optional(metadata.get("parent_name"))
+        if not parent_name:
+            continue
+        try:
+            create_or_link_parent(
+                school_id,
+                _normalize(row.get("id")),
+                full_name=parent_name,
+                email=(
+                    _normalize_optional(metadata.get("guardian_email"))
+                    or _normalize_optional(metadata.get("parent_email"))
+                ),
+                phone=_normalize_optional(row.get("guardian_phone")) or _normalize_optional(metadata.get("parent_phone")),
+                relation_type=_normalize_optional(metadata.get("parent_relation")) or "parent",
+                create_login=False,
+            )
+            created_links += 1
+        except Exception:
+            logger.exception(
+                "portal_access_manager.guardian_backfill_failed",
+                extra={"school_id": school_id, "student_id": _normalize(row.get("id"))},
+            )
+    return created_links
 
 
 def _role_user_type(selected_role: str) -> str:
@@ -2126,6 +2182,24 @@ def get_portal_access_overview(
             class_name=class_name,
             supabase=supabase,
         )
+        if not guardians and not guardian_ids:
+            _backfill_guardians_from_student_contacts(
+                school_id,
+                student_ids=student_ids,
+                batch_id=batch_id,
+                class_name=class_name,
+                limit=limit,
+                offset=offset,
+                supabase=supabase,
+            )
+            guardians = _load_guardians_for_scope(
+                school_id,
+                guardian_ids=guardian_ids,
+                student_ids=student_ids,
+                batch_id=batch_id,
+                class_name=class_name,
+                supabase=supabase,
+            )
         profile_ids = list(dict.fromkeys(_normalize(g.get("profile_id")) for g in guardians if _normalize_optional(g.get("profile_id"))))
         t1 = time.time()
         profiles_dict = _load_profiles_batch(profile_ids, supabase=supabase)

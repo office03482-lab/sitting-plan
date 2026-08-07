@@ -889,6 +889,17 @@ export default function PortalAccessManager() {
     void loadTabData(activeTab);
   }, [activeTab, loadTabData, loading]);
 
+  useEffect(() => {
+    if (!activeSchoolId) return;
+    loadedTabsRef.current = {};
+    void refreshAll();
+  }, [activeSchoolId, refreshAll]);
+
+  useEffect(() => {
+    if (loading || activeTab !== 'parent') return;
+    void loadParentOverview();
+  }, [activeTab, activeSchoolId, loadParentOverview, loading]);
+
   const studentRecords = useMemo(() => {
     const rows = studentOverview?.records || [];
     return rows.filter((record) => {

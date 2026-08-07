@@ -479,12 +479,6 @@ export default function Layout({ children }: LayoutProps) {
       ],
     },
     {
-      key: 'predictions',
-      name: 'Predictions',
-      icon: TrendingUp,
-      children: [{ name: 'Predictions', path: '/predictions', permission: 'ai_agents.view' }],
-    },
-    {
       key: 'enterprise-bi',
       name: 'Enterprise BI',
       icon: BarChart3,
@@ -977,7 +971,6 @@ export default function Layout({ children }: LayoutProps) {
             <div className="space-y-1.5">
               {dashboardSection && renderNavItem(dashboardSection, true)}
               {renderCollapsedPlatform()}
-              {renderSchoolCard(true)}
               {sections
                 .filter((s) => s.key !== 'dashboard')
                 .map((s) => renderNavItem(s, true))}
@@ -1040,7 +1033,6 @@ export default function Layout({ children }: LayoutProps) {
                 })()}
 
               {/* ── Current School (compact premium glass card) ── */}
-              {renderSchoolCard(false)}
 
               {/* ── Dr. Girish App divider (platform admins only) ── */}
               {isPlatformAdmin && (
