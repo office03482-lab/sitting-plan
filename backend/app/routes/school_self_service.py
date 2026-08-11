@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
 
-from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, user_has_permission
 from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas.school_self_service import (
@@ -48,7 +48,12 @@ def _role_key(user: User) -> str:
 def require_school_admin_user(user: User = Depends(get_authenticated_user)) -> User:
     from app.services.bulk_action_requests import is_platform_admin_user
     role_key = _role_key(user)
-    if is_platform_admin_user(user) or role_key == "school_admin" or (getattr(user, "role", None) == UserRole.ADMIN and role_key != "platform_admin"):
+    if (
+        is_platform_admin_user(user)
+        or role_key == "school_admin"
+        or (getattr(user, "role", None) == UserRole.ADMIN and role_key != "platform_admin")
+        or user_has_permission(user, "school_self_service")
+    ):
         return user
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only School Admin can manage school self-service settings")
 

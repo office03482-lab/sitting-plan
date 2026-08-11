@@ -1,154 +1,124 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { BookOpenCheck, CalendarClock, SearchCheck, Sparkles, Target } from 'lucide-react';
+import { FormEvent, useMemo, useState } from 'react';
+import { BookOpenCheck, SearchCheck, Sparkles, Target } from 'lucide-react';
 
 import { Alert } from '@components/Alert';
 import { LoadingSpinner } from '@components/LoadingSpinner';
 import { apiService, getRequestErrorMessage } from '@services/api';
 import { useAuth } from '@/contexts/AuthProvider';
-import type { AiTutorResponse, DoubtSolverResponse, LmsProgressDashboard, StudyPlan, StudyPlannerWeek } from '@types';
+import type { AiTutorResponse, DoubtSolverResponse } from '@types';
 
 const cardClass = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm';
 
-type AssistantTab = 'doubt' | 'explain' | 'mcqs' | 'plan' | 'weak-topics';
+type AssistantTab = 'doubt' | 'practice';
 
 export default function AiStudyAssistantPage() {
   const { authReady, sessionReady, schoolContextReady, session } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady && !!session;
 
   const [tab, setTab] = useState<AssistantTab>('doubt');
+  const [subject, setSubject] = useState('');
+  const [chapter, setChapter] = useState('');
   const [topic, setTopic] = useState('');
   const [question, setQuestion] = useState('');
   const [ocrText, setOcrText] = useState('');
-  const [dashboard, setDashboard] = useState<LmsProgressDashboard | null>(null);
-  const [todayPlan, setTodayPlan] = useState<StudyPlan | null>(null);
-  const [weekPlan, setWeekPlan] = useState<StudyPlannerWeek | null>(null);
-  const [recommendations, setRecommendations] = useState<Record<string, unknown> | null>(null);
-  const [tutorResult, setTutorResult] = useState<AiTutorResponse | null>(null);
+  const [difficulty, setDifficulty] = useState('medium');
+  const [questionCount, setQuestionCount] = useState('5');
+  const [practiceResult, setPracticeResult] = useState<AiTutorResponse | null>(null);
   const [doubtResult, setDoubtResult] = useState<DoubtSolverResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [bootstrapLoading, setBootstrapLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!canRunRequests) return;
-    void loadAssistantData();
-  }, [canRunRequests]);
-
-  const weakTopics = useMemo(() => {
-    const plannerWeak = Array.isArray(recommendations?.weak_topics) ? recommendations?.weak_topics as string[] : [];
-    const dashboardWeak = dashboard?.student_dashboard?.topic_analysis.weak || dashboard?.ai_insights.weak_chapters || [];
-    return Array.from(new Set([...plannerWeak, ...dashboardWeak].filter(Boolean)));
-  }, [dashboard, recommendations]);
-
-  const weeklyFocus = useMemo(() => {
-    const plan = weekPlan?.weekly_plan as { weekly_focus?: unknown } | undefined;
-    return Array.isArray(plan?.weekly_focus) ? (plan?.weekly_focus as string[]) : [];
-  }, [weekPlan]);
-
-  const loadAssistantData = async () => {
-    try {
-      setBootstrapLoading(true);
-      setError('');
-      const [progressRes, todayRes, weekRes, recommendationRes] = await Promise.all([
-        apiService.getLmsProgress(),
-        apiService.getStudyPlannerToday(),
-        apiService.getStudyPlannerWeek(),
-        apiService.getStudyPlannerRecommendations(),
-      ]);
-      setDashboard(progressRes.data);
-      setTodayPlan(todayRes.data as unknown as StudyPlan);
-      setWeekPlan(weekRes.data as StudyPlannerWeek);
-      setRecommendations(recommendationRes.data as Record<string, unknown>);
-    } catch (requestError) {
-      setError(getRequestErrorMessage(requestError, 'AI Study Assistant load nahi hua.'));
-    } finally {
-      setBootstrapLoading(false);
-    }
-  };
+  const canSubmitPractice = useMemo(
+    () => Boolean(subject.trim() && chapter.trim() && topic.trim() && Number(questionCount) > 0),
+    [subject, chapter, topic, questionCount],
+  );
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!topic.trim() && !question.trim() && !ocrText.trim()) {
-      setError('Topic ya question dena zaroori hai.');
-      return;
-    }
+    if (!canRunRequests) return;
     try {
       setLoading(true);
       setError('');
-      setTutorResult(null);
+      setPracticeResult(null);
       setDoubtResult(null);
+
       if (tab === 'doubt') {
+        if (!question.trim() && !ocrText.trim()) {
+          setError('Question ya extracted text dena zaroori hai.');
+          return;
+        }
         const response = await apiService.solveTextDoubt({
           question: question.trim() || undefined,
           extracted_text: ocrText.trim() || undefined,
-          metadata: { source: 'ai_study_assistant' },
+          metadata: {
+            source: 'student_ai',
+            subject: subject.trim() || undefined,
+            chapter: chapter.trim() || undefined,
+            topic: topic.trim() || undefined,
+          },
         });
         setDoubtResult(response.data);
-      } else if (tab === 'explain') {
-        const response = await apiService.aiTutorExplain({
-          topic: topic.trim() || undefined,
-          question: question.trim() || undefined,
-        });
-        setTutorResult(response.data);
-      } else if (tab === 'mcqs') {
-        const response = await apiService.aiTutorPractice({
-          topic: topic.trim() || undefined,
-          question: question.trim() || undefined,
-        });
-        setTutorResult(response.data);
-      } else {
-        const response = await apiService.aiTutorRevision({
-          topic: topic.trim() || weakTopics[0] || undefined,
-          question: question.trim() || undefined,
-        });
-        setTutorResult(response.data);
+        return;
       }
+
+      if (!canSubmitPractice) {
+        setError('Subject, chapter, topic, aur count dena zaroori hai.');
+        return;
+      }
+
+      const response = await apiService.aiTutorPractice({
+        topic: `${subject.trim()} - ${chapter.trim()} - ${topic.trim()}`,
+        question: `Generate ${questionCount} ${difficulty} practice questions for ${subject.trim()} / ${chapter.trim()} / ${topic.trim()}.`,
+        metadata: {
+          source: 'student_ai',
+          subject: subject.trim(),
+          chapter: chapter.trim(),
+          topic: topic.trim(),
+          difficulty,
+          question_count: Number(questionCount),
+        },
+      });
+      setPracticeResult(response.data);
     } catch (requestError) {
-      setError(getRequestErrorMessage(requestError, 'AI Study Assistant response generate nahi hua.'));
+      setError(getRequestErrorMessage(requestError, 'Student AI response generate nahi hua.'));
     } finally {
       setLoading(false);
     }
   };
 
-  if (bootstrapLoading) {
-    return <LoadingSpinner message="AI Study Assistant load ho raha hai..." />;
+  if (!canRunRequests) {
+    return <LoadingSpinner message="Student AI load ho raha hai..." />;
   }
-
-  const modeButtons: Array<{ key: AssistantTab; label: string }> = [
-    { key: 'doubt', label: 'Ask Doubt' },
-    { key: 'explain', label: 'Explain Topic' },
-    { key: 'mcqs', label: 'Generate MCQs' },
-    { key: 'plan', label: 'Study Plan' },
-    { key: 'weak-topics', label: 'Weak Topics' },
-  ];
 
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="rounded-[2rem] bg-[linear-gradient(135deg,_#0f172a_0%,_#1d4ed8_55%,_#38bdf8_100%)] p-8 text-white shadow-xl">
         <p className="text-sm font-semibold uppercase tracking-[0.28em] text-sky-100/80">Student AI</p>
-        <h1 className="mt-3 text-3xl font-bold">AI Study Assistant</h1>
+        <h1 className="mt-3 text-3xl font-bold">Doubt Solver & Topic Practice</h1>
         <p className="mt-3 max-w-3xl text-sm text-sky-50/90">
-          One place for doubts, topic explanations, MCQ practice, study planning, and weak-topic coaching grounded in attendance, online tests, LMS progress, and assignments.
+          Sirf do AI tools available hain: academic doubt solving aur chapter/topic based practice generation.
         </p>
       </div>
 
       {error ? <Alert type="error" message={error} onClose={() => setError('')} /> : null}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={Target} label="Learning Score" value={`${Math.round(dashboard?.student_dashboard?.overall_learning_score || 0)}%`} helper="From LMS, tests, and assignments" />
-        <MetricCard icon={CalendarClock} label="Today's Plan" value={`${todayPlan?.tasks.length || 0} tasks`} helper={`${todayPlan?.completion_percentage || 0}% completed`} />
-        <MetricCard icon={SearchCheck} label="Weak Topics" value={String(weakTopics.length)} helper="Need focused revision" />
-        <MetricCard icon={BookOpenCheck} label="Recommended Tests" value={String((dashboard?.ai_insights.recommended_tests || []).length)} helper="Next high-impact attempts" />
+      <section className="grid gap-4 md:grid-cols-3">
+        <MetricCard icon={Target} label="Subject Scoped" value={subject.trim() || 'Not set'} helper="Current academic context" />
+        <MetricCard icon={SearchCheck} label="Active Topic" value={topic.trim() || 'Not set'} helper="Use for grounded answers" />
+        <MetricCard icon={BookOpenCheck} label="Practice Count" value={questionCount || '0'} helper="Requested generated questions" />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <div className={cardClass}>
-          <div className="grid gap-2 sm:grid-cols-5">
-            {modeButtons.map((item) => (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {[
+              { key: 'doubt', label: 'Ask Doubt' },
+              { key: 'practice', label: 'Topic Practice' },
+            ].map((item) => (
               <button
                 key={item.key}
                 type="button"
-                onClick={() => setTab(item.key)}
+                onClick={() => setTab(item.key as AssistantTab)}
                 className={`rounded-2xl px-3 py-3 text-sm font-semibold transition ${tab === item.key ? 'bg-slate-900 text-white' : 'border border-slate-300 text-slate-700 hover:bg-slate-100'}`}
               >
                 {item.label}
@@ -156,100 +126,101 @@ export default function AiStudyAssistantPage() {
             ))}
           </div>
 
-          {tab === 'plan' ? (
-            <div className="mt-5 space-y-4">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Today's Tasks</p>
-                <div className="mt-3 space-y-3">
-                  {(todayPlan?.tasks || []).map((task, index) => (
-                    <div key={`${task.title}-${index}`} className="rounded-2xl bg-white p-4">
-                      <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                      <p className="mt-1 text-sm text-slate-600">{task.description}</p>
-                    </div>
-                  ))}
-                  {!todayPlan?.tasks.length ? <p className="text-sm text-slate-500">No planner tasks generated yet.</p> : null}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Weekly Focus</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {weeklyFocus.length ? weeklyFocus.map((item) => (
-                    <span key={item} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">{item}</span>
-                  )) : <p className="text-sm text-slate-500">Weekly focus not available.</p>}
-                </div>
-              </div>
-            </div>
-          ) : tab === 'weak-topics' ? (
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
-                <p className="text-sm font-semibold text-rose-700">Weak Topics</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {weakTopics.length ? weakTopics.map((item) => (
-                    <span key={item} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-rose-700">{item}</span>
-                  )) : <p className="text-sm text-rose-700">No weak topics detected yet.</p>}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">AI Recommendations</p>
-                <div className="mt-3 space-y-2">
-                  {(dashboard?.student_dashboard?.today_tasks || dashboard?.ai_insights.revision_suggestions || []).map((item) => (
-                    <div key={item} className="rounded-2xl bg-white px-3 py-3 text-sm text-slate-700">{item}</div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <form onSubmit={submit} className="mt-5 grid gap-3">
-              <input
-                value={topic}
-                onChange={(event) => setTopic(event.target.value)}
-                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
-                placeholder="Topic, e.g. Ray Optics"
-              />
-              <textarea
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
-                rows={4}
-                placeholder={tab === 'doubt' ? 'Type your doubt or paste the question' : 'What do you want help with?'}
-              />
-              {tab === 'doubt' ? (
-                <textarea
-                  value={ocrText}
-                  onChange={(event) => setOcrText(event.target.value)}
+          <form onSubmit={submit} className="mt-5 grid gap-3">
+            <input
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+              placeholder="Subject, e.g. Physics"
+            />
+            <input
+              value={chapter}
+              onChange={(event) => setChapter(event.target.value)}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+              placeholder="Chapter, e.g. Current Electricity"
+            />
+            <input
+              value={topic}
+              onChange={(event) => setTopic(event.target.value)}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+              placeholder="Topic, e.g. Ohm's Law"
+            />
+
+            {tab === 'practice' ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <select
+                  value={difficulty}
+                  onChange={(event) => setDifficulty(event.target.value)}
                   className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
-                  rows={3}
-                  placeholder="Optional OCR or handwritten text"
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={questionCount}
+                  onChange={(event) => setQuestionCount(event.target.value)}
+                  className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                  placeholder="Question count"
                 />
-              ) : null}
-              <button disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70">
-                <Sparkles className="h-4 w-4" />
-                {loading ? 'Generating...' : 'Run Assistant'}
-              </button>
-            </form>
-          )}
+              </div>
+            ) : null}
+
+            <textarea
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+              rows={4}
+              placeholder={tab === 'doubt' ? 'Type your academic doubt here' : 'Optional extra instruction for practice generation'}
+            />
+
+            {tab === 'doubt' ? (
+              <textarea
+                value={ocrText}
+                onChange={(event) => setOcrText(event.target.value)}
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm"
+                rows={3}
+                placeholder="Optional extracted image text"
+              />
+            ) : null}
+
+            <button
+              disabled={loading || (tab === 'practice' && !canSubmitPractice)}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-70"
+            >
+              <Sparkles className="h-4 w-4" />
+              {loading ? 'Running...' : tab === 'doubt' ? 'Solve Doubt' : 'Generate Practice'}
+            </button>
+          </form>
         </div>
 
         <div className={cardClass}>
-          {loading ? <LoadingSpinner message="AI Study Assistant working..." /> : null}
-          {!loading && !tutorResult && !doubtResult && tab !== 'plan' && tab !== 'weak-topics' ? (
+          {loading ? <LoadingSpinner message="Student AI working..." /> : null}
+          {!loading && !practiceResult && !doubtResult ? (
             <div className="space-y-3 text-sm text-slate-600">
-              <p>This assistant merges:</p>
+              <p>Available workflows:</p>
               <ul className="space-y-2">
-                <li>AI Tutor for explanation and practice</li>
-                <li>Doubt Solver for direct question solving</li>
-                <li>Study Planner for daily focus and weak-topic guidance</li>
+                <li>Doubt Solver: direct answer, step-by-step explanation, and common mistakes.</li>
+                <li>Topic Practice: chapter/topic-specific practice questions with explanations.</li>
               </ul>
             </div>
           ) : null}
-          {!loading && tutorResult ? (
+
+          {!loading && practiceResult ? (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-slate-900">{tutorResult.topic}</h2>
-              <Panel title="Explanation" items={[tutorResult.explanation, ...tutorResult.key_points]} />
-              <Panel title="Practice / Revision" items={[...tutorResult.revision_plan, ...tutorResult.challenge_questions]} />
-              <Panel title="MCQs / Questions" items={tutorResult.practice_questions.map((item) => `${item.level.toUpperCase()}: ${item.question}`)} />
+              <h2 className="text-lg font-semibold text-slate-900">{practiceResult.topic}</h2>
+              <Panel
+                title="Practice Questions"
+                items={practiceResult.practice_questions.map((item) => `${item.level.toUpperCase()}: ${item.question}`)}
+              />
+              <Panel title="Answer Strategy" items={practiceResult.answer_strategy} />
+              <Panel title="Revision Notes" items={practiceResult.revision_notes} />
             </div>
           ) : null}
+
           {!loading && doubtResult ? (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-slate-900">{doubtResult.detected_topic || 'Solved Doubt'}</h2>

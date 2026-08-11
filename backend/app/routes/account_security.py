@@ -43,6 +43,17 @@ from app.services.supabase_account_security import (
 router = APIRouter(prefix="/api/account-security", tags=["Account Security"])
 
 
+def _ensure_dict_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    return payload if isinstance(payload, dict) else {}
+
+
+def _actor_profile_id(actor: dict[str, Any] | None) -> str | None:
+    if not isinstance(actor, dict):
+        return None
+    value = str(actor.get("profile_id") or "").strip()
+    return value or None
+
+
 def require_access_control_user(
     _: User = Depends(require_permissions("admin_office.access_control")),
     user: User = Depends(get_authenticated_user),
@@ -190,10 +201,11 @@ async def api_bulk_generate_student_accounts(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     return bulk_generate_student_accounts(
         school_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         student_ids=[str(item) for item in list(payload.get("student_ids") or [])],
         batch_id=str(payload.get("batch_id") or "").strip() or None,
         class_name=str(payload.get("class_name") or "").strip() or None,
@@ -204,6 +216,7 @@ async def api_bulk_generate_student_accounts(
 
 @router.post("/credentials/export")
 async def api_export_credentials(payload: dict[str, Any] = Body(default_factory=dict), _: User = Depends(require_access_control_user)):
+    payload = _ensure_dict_payload(payload)
     rows = list(payload.get("rows") or [])
     content = create_credentials_workbook(rows)
     return Response(
@@ -224,7 +237,7 @@ async def api_recent_generated_credentials(
     school_id = tenant.school_id
     return get_recent_generated_credentials(
         school_id,
-        created_by=actor.get("profile_id") if created_by_me else None,
+        created_by=_actor_profile_id(actor) if created_by_me else None,
         limit=limit,
     )
 
@@ -293,11 +306,12 @@ async def api_update_user_permissions(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     return update_user_permissions(
         school_id,
         profile_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         selected_role=str(payload.get("selected_role") or payload.get("role") or "").strip() or None,
         permission_template=str(payload.get("permission_template") or "").strip() or None,
         permissions=[str(item) for item in list(payload.get("permissions") or [])],
@@ -313,11 +327,12 @@ async def api_reset_user_permissions_to_template(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     return reset_user_permissions_to_template(
         school_id,
         profile_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         selected_role=str(payload.get("selected_role") or payload.get("role") or "").strip() or None,
         permission_template=str(payload.get("permission_template") or "").strip() or None,
     )
@@ -349,7 +364,7 @@ async def api_create_parent_login(
     _: User = Depends(require_access_control_user),
 ):
     school_id = tenant.school_id
-    return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=actor.get("profile_id"))
+    return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=_actor_profile_id(actor))
 
 
 @router.post("/parents/{guardian_id}/reset-password")
@@ -360,7 +375,7 @@ async def api_reset_parent_password(
     _: User = Depends(require_access_control_user),
 ):
     school_id = tenant.school_id
-    return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=actor.get("profile_id"))
+    return create_or_reset_parent_account(school_id, guardian_id, actor_profile_id=_actor_profile_id(actor))
 
 
 @router.post("/parents/{guardian_id}/disable")
@@ -415,10 +430,11 @@ async def api_bulk_generate_parent_accounts(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     return bulk_generate_parent_accounts(
         school_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         guardian_ids=[str(item) for item in list(payload.get("guardian_ids") or [])],
         student_ids=[str(item) for item in list(payload.get("student_ids") or [])],
         batch_id=str(payload.get("batch_id") or "").strip() or None,
@@ -440,7 +456,7 @@ async def api_reset_staff_password(
     return create_or_reset_staff_account(
         school_id,
         staff_member_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         selected_role=role_key,
     )
 
@@ -452,10 +468,11 @@ async def api_bulk_generate_staff_accounts(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(require_access_control_user),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     return bulk_generate_staff_accounts(
         school_id,
-        actor_profile_id=actor.get("profile_id"),
+        actor_profile_id=_actor_profile_id(actor),
         staff_member_ids=[str(item) for item in list(payload.get("staff_member_ids") or [])],
         staff_type=str(payload.get("staff_type") or "").strip() or None,
         permission_template=str(payload.get("permission_template") or "").strip() or None,
@@ -482,17 +499,18 @@ async def api_register_session(
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
 ):
+    payload = _ensure_dict_payload(payload)
     school_id = tenant.school_id
     session_key = str(payload.get("session_key") or "").strip()
     if not session_key:
         raise HTTPException(status_code=400, detail="session_key is required")
-    profile_id = str(actor.get("profile_id") or getattr(user, "id", "")).strip()
-    membership_id = str(actor.get("membership_id") or "").strip() or None
+    profile_id = str(_actor_profile_id(actor) or getattr(user, "id", "")).strip()
+    membership_id = str((actor or {}).get("membership_id") or "").strip() or None if isinstance(actor, dict) else None
     return register_active_session(
         school_id=school_id,
         profile_id=profile_id,
         membership_id=membership_id,
-        role_key=str(getattr(user, "role_key", "") or actor.get("role") or "").strip(),
+        role_key=str(getattr(user, "role_key", "") or ((actor or {}).get("role") if isinstance(actor, dict) else "") or "").strip(),
         session_key=session_key,
         device_id=str(payload.get("device_id") or "").strip() or "browser",
         device_name=str(payload.get("device_name") or "").strip() or None,
@@ -509,7 +527,8 @@ async def api_session_heartbeat(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(get_authenticated_user),
 ):
-    return heartbeat_active_session(str(actor.get("profile_id") or "").strip(), str(payload.get("session_key") or "").strip())
+    payload = _ensure_dict_payload(payload)
+    return heartbeat_active_session(str(_actor_profile_id(actor) or "").strip(), str(payload.get("session_key") or "").strip())
 
 
 @router.post("/sessions/logout-current")
@@ -518,7 +537,8 @@ async def api_logout_current_session(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(get_authenticated_user),
 ):
-    logout_session(str(actor.get("profile_id") or "").strip(), str(payload.get("session_key") or "").strip())
+    payload = _ensure_dict_payload(payload)
+    logout_session(str(_actor_profile_id(actor) or "").strip(), str(payload.get("session_key") or "").strip())
     return {"status": "ok"}
 
 
@@ -571,7 +591,7 @@ async def api_complete_password_change(
     actor: dict[str, Any] = Depends(get_authenticated_actor_context),
     _: User = Depends(get_authenticated_user),
 ):
-    profile_id = str(actor.get("profile_id") or "").strip()
+    profile_id = str(_actor_profile_id(actor) or "").strip()
     if not profile_id:
         raise HTTPException(status_code=400, detail="Profile context missing")
     return complete_password_change(profile_id)

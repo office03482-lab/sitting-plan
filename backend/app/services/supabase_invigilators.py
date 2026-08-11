@@ -1,7 +1,7 @@
 """Supabase-native invigilator management repository.
 
 Uses `staff_members` table with `staff_type = 'invigilator'` for invigilator
-records, and `room_invigilators` for room assignments.
+records, and `exam.invigilator_assignments` for room assignments.
 """
 
 from __future__ import annotations
@@ -13,6 +13,9 @@ from fastapi import HTTPException
 
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_rooms import _serialize_room
+
+_INVIGILATOR_ASSIGNMENT_TABLE_CANDIDATES = ("invigilator_assignments", "room_invigilators")
+_preferred_invigilator_assignment_table = "invigilator_assignments"
 
 
 def _normalize(value: Any) -> str:
@@ -106,8 +109,68 @@ def _enrich_assignments_with_relations(rows: list[dict[str, Any]]) -> list[dict[
     return result
 
 
+def _is_missing_invigilator_assignment_table_error(error: Exception) -> bool:
+    text = str(error or "").lower()
+    return (
+        "pgrst205" in text
+        or "could not find the table" in text
+        or "not found in the schema cache" in text
+    )
+
+
+def _execute_assignment_query(build_query):
+    global _preferred_invigilator_assignment_table
+
+    ordered_candidates = [_preferred_invigilator_assignment_table] + [
+        candidate
+        for candidate in _INVIGILATOR_ASSIGNMENT_TABLE_CANDIDATES
+        if candidate != _preferred_invigilator_assignment_table
+    ]
+    last_error: Exception | None = None
+    for table_name in ordered_candidates:
+        try:
+            response = build_query(table_name).execute()
+            _preferred_invigilator_assignment_table = table_name
+            return response
+        except Exception as error:
+            last_error = error
+            if _is_missing_invigilator_assignment_table_error(error):
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unable to execute invigilator assignment query")
+
+
 def _assignment_query():
-    return get_supabase_admin_client().schema("exam").table("invigilator_assignments")
+    return get_supabase_admin_client().schema("exam").table(_preferred_invigilator_assignment_table)
+
+
+def _build_assignment_query(
+    table_name: str,
+    *,
+    school_id: str,
+    room_id: str | int | None = None,
+    invigilator_id: str | int | None = None,
+    assignment_id: str | int | None = None,
+    is_active: bool | None = None,
+):
+    query = (
+        get_supabase_admin_client()
+        .schema("exam")
+        .table(table_name)
+        .select("*")
+        .eq("school_id", school_id)
+    )
+    if room_id is not None:
+        query = query.eq("room_id", room_id)
+    if invigilator_id is not None:
+        query = query.eq("staff_member_id", invigilator_id)
+    if assignment_id is not None:
+        query = query.eq("id", assignment_id)
+    if is_active is not None:
+        query = query.eq("is_active", is_active)
+    return query
 
 
 def _load_invigilator_map(school_id: str, invigilator_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -342,9 +405,16 @@ def update_invigilator(
 
 def delete_invigilator(school_id: str, invigilator_id: str | int) -> dict[str, Any]:
     get_invigilator(school_id, invigilator_id)
-    _assignment_query().update(
-        {"is_active": False}
-    ).eq("staff_member_id", invigilator_id).eq("school_id", school_id).execute()
+    _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .update({"is_active": False})
+            .eq("staff_member_id", invigilator_id)
+            .eq("school_id", school_id)
+        )
+    )
     response = (
         get_supabase_admin_client()
         .table("staff_members")
@@ -369,23 +439,18 @@ def get_room_assignments(
     limit: int = 100,
     room_map: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    query = (
-        _assignment_query()
-        .select("*")
-        .eq("school_id", school_id)
-    )
-    if room_id is not None:
-        query = query.eq("room_id", room_id)
-    if invigilator_id is not None:
-        query = query.eq("staff_member_id", invigilator_id)
-    if is_active is not None:
-        query = query.eq("is_active", is_active)
-
-    response = (
-        query
-        .order("created_at")
-        .range(skip, skip + limit - 1)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            _build_assignment_query(
+                table_name,
+                school_id=school_id,
+                room_id=room_id,
+                invigilator_id=invigilator_id,
+                is_active=is_active,
+            )
+            .order("created_at")
+            .range(skip, skip + limit - 1)
+        )
     )
     rows = list(response.data or [])
     return _hydrate_assignment_relations(school_id, rows, room_map=room_map)
@@ -406,14 +471,15 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
 
     get_invigilator(school_id, invigilator_id)
 
-    existing_resp = (
-        _assignment_query()
-        .select("*")
-        .eq("room_id", room_id)
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
+    existing_resp = _execute_assignment_query(
+        lambda table_name: (
+            _build_assignment_query(
+                table_name,
+                school_id=school_id,
+                room_id=room_id,
+                is_active=True,
+            ).limit(1)
+        )
     )
     existing_rows = list(existing_resp.data or [])
     if existing_rows:
@@ -425,11 +491,14 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
             update_data["exam_id"] = payload["exam_id"]
         if "notes" in payload:
             update_data["notes"] = payload["notes"]
-        response = (
-            _assignment_query()
-            .update(update_data)
-            .eq("id", existing["id"])
-            .execute()
+        response = _execute_assignment_query(
+            lambda table_name: (
+                get_supabase_admin_client()
+                .schema("exam")
+                .table(table_name)
+                .update(update_data)
+                .eq("id", existing["id"])
+            )
         )
         rows = list(response.data or [])
         if rows:
@@ -445,7 +514,14 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
         "notes": payload.get("notes"),
         "is_active": True,
     }
-    response = _assignment_query().insert(row).execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .insert(row)
+        )
+    )
     rows = list(response.data or [])
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to create room assignment")
@@ -453,13 +529,15 @@ def create_room_assignment(school_id: str, payload: dict[str, Any]) -> dict[str,
 
 
 def get_room_invigilators(school_id: str, room_id: str | int) -> list[dict[str, Any]]:
-    response = (
-        _assignment_query()
-        .select("*")
-        .eq("room_id", room_id)
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            _build_assignment_query(
+                table_name,
+                school_id=school_id,
+                room_id=room_id,
+                is_active=True,
+            )
+        )
     )
     rows = list(response.data or [])
     result = []
@@ -477,13 +555,14 @@ def get_room_invigilators(school_id: str, room_id: str | int) -> list[dict[str, 
 def update_room_assignment(
     school_id: str, assignment_id: str | int, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    response = (
-        _assignment_query()
-        .select("*")
-        .eq("id", assignment_id)
-        .eq("school_id", school_id)
-        .limit(1)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            _build_assignment_query(
+                table_name,
+                school_id=school_id,
+                assignment_id=assignment_id,
+            ).limit(1)
+        )
     )
     rows = list(response.data or [])
     if not rows:
@@ -495,15 +574,19 @@ def update_room_assignment(
     if "invigilator_id" in payload and payload["invigilator_id"] is not None:
         new_invigilator_id = payload["invigilator_id"]
         get_invigilator(school_id, new_invigilator_id)
-        dup_check = (
-            _assignment_query()
-            .select("id")
-            .eq("room_id", current["room_id"])
-            .eq("staff_member_id", new_invigilator_id)
-            .neq("id", assignment_id)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
+        dup_check = _execute_assignment_query(
+            lambda table_name: (
+                get_supabase_admin_client()
+                .schema("exam")
+                .table(table_name)
+                .select("id")
+                .eq("school_id", school_id)
+                .eq("room_id", current["room_id"])
+                .eq("staff_member_id", new_invigilator_id)
+                .neq("id", assignment_id)
+                .eq("is_active", True)
+                .limit(1)
+            )
         )
         if list(dup_check.data or []):
             raise HTTPException(
@@ -522,11 +605,14 @@ def update_room_assignment(
     if not update_payload:
         return _serialize_room_assignment(current)
 
-    response = (
-        _assignment_query()
-        .update(update_payload)
-        .eq("id", assignment_id)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .update(update_payload)
+            .eq("id", assignment_id)
+        )
     )
     rows = list(response.data or [])
     if rows:
@@ -535,40 +621,57 @@ def update_room_assignment(
 
 
 def delete_room_assignment(school_id: str, assignment_id: str | int) -> dict[str, Any]:
-    response = (
-        _assignment_query()
-        .select("*")
-        .eq("id", assignment_id)
-        .eq("school_id", school_id)
-        .limit(1)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            _build_assignment_query(
+                table_name,
+                school_id=school_id,
+                assignment_id=assignment_id,
+            ).limit(1)
+        )
     )
     rows = list(response.data or [])
     if not rows:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    _assignment_query().update(
-        {"is_active": False}
-    ).eq("id", assignment_id).execute()
+    _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .update({"is_active": False})
+            .eq("id", assignment_id)
+        )
+    )
     return {"message": "Invigilator assignment removed from room"}
 
 
 def delete_all_room_assignments(school_id: str) -> dict[str, Any]:
-    response = (
-        _assignment_query()
-        .select("id")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .select("id")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+        )
     )
     rows = list(response.data or [])
     count = len(rows)
     if not count:
         return {"message": "No active invigilator assignments found", "deleted_count": 0}
 
-    _assignment_query().update(
-        {"is_active": False}
-    ).eq("school_id", school_id).eq("is_active", True).execute()
+    _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .update({"is_active": False})
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+        )
+    )
     return {
         "message": "All invigilator assignments removed successfully",
         "deleted_count": count,
@@ -578,12 +681,15 @@ def delete_all_room_assignments(school_id: str) -> dict[str, Any]:
 def get_invigilator_with_rooms(school_id: str, invigilator_id: str | int) -> dict[str, Any]:
     invigilator = get_invigilator(school_id, invigilator_id)
 
-    response = (
-        _assignment_query()
-        .select("*")
-        .eq("staff_member_id", invigilator_id)
-        .eq("school_id", school_id)
-        .execute()
+    response = _execute_assignment_query(
+        lambda table_name: (
+            get_supabase_admin_client()
+            .schema("exam")
+            .table(table_name)
+            .select("*")
+            .eq("staff_member_id", invigilator_id)
+            .eq("school_id", school_id)
+        )
     )
     rows = list(response.data or [])
     room_assignments = _hydrate_assignment_relations(school_id, rows)

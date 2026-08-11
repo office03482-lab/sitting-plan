@@ -1,121 +1,37 @@
-"""Grounded AI tutor routes."""
+"""Student practice AI routes."""
 
 from __future__ import annotations
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
 from app.middleware.tenant_context import TenantContext, get_tenant_context
-from app.models import User, UserRole
-from app.schemas import AiTutorConversationSummaryResponse, AiTutorRequest, AiTutorResponse
+from app.models import User
+from app.schemas import AiTutorRequest, AiTutorResponse
 from app.services.bulk_action_requests import is_platform_admin_user
 from app.services.route_retrofit import commit_route_retrofit, prepare_route_retrofit
-from app.services.supabase_ai_tutor import list_ai_conversations, tutor_chat, tutor_explain, tutor_practice, tutor_revision
+from app.services.supabase_ai_tutor import tutor_practice
 
-router = APIRouter(prefix="/api/ai", tags=["AI Tutor"])
+router = APIRouter(prefix="/api/ai", tags=["Student Practice AI"])
 
 
 def _role_key(user: User) -> str:
     return str(getattr(user, "role_key", "") or "").strip().lower()
 
 
-def _is_teacher_user(user: User) -> bool:
-    return getattr(user, "role", None) == UserRole.TEACHER or _role_key(user) == "teacher"
-
-
 def _is_student_user(user: User) -> bool:
     return str(getattr(user, "user_type", "") or "").strip().lower() == "student" or _role_key(user) == "student"
 
 
-def _is_school_admin_user(user: User) -> bool:
-    return getattr(user, "role", None) == UserRole.ADMIN and not is_platform_admin_user(user)
-
-
-def require_ai_tutor_chat_user(
-    _: User = Depends(require_permissions("ai_tutor.chat", "ai_tutor.review", "ai_tutor.manage")),
+def require_student_practice_user(
+    _: User = Depends(require_permissions("ai_tutor.chat")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
-    if _is_student_user(user) or _is_teacher_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user):
+    if _is_student_user(user):
         return user
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to the AI tutor")
-
-
-@router.post("/chat", response_model=AiTutorResponse)
-async def api_ai_chat(
-    payload: AiTutorRequest,
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_ai_tutor_chat_user),
-):
-    reservation = prepare_route_retrofit(
-        flag_name="ai",
-        user=user,
-        actor=actor,
-        permission_key="ai_tutor.chat",
-        school_id=tenant.school_id,
-        resource_key="ai_credits_used",
-        credit_feature="ai_chat",
-        credit_amount=1,
-        reason="ai_tutor.chat",
-    )
-    result = tutor_chat(
-        tenant.school_id,
-        role_key=_role_key(user),
-        profile_id=str(actor.get("profile_id") or "").strip() or None,
-        user_email=getattr(user, "email", None),
-        payload=payload.model_dump(exclude_none=True),
-    )
-    commit_route_retrofit(reservation)
-    return result
-
-
-@router.get("/conversations", response_model=list[AiTutorConversationSummaryResponse])
-async def api_ai_conversations(
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_ai_tutor_chat_user),
-    target_student_id: Optional[str] = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
-):
-    return list_ai_conversations(
-        tenant.school_id,
-        role_key=_role_key(user),
-        profile_id=str(actor.get("profile_id") or "").strip() or None,
-        user_email=getattr(user, "email", None),
-        target_student_id=target_student_id,
-        limit=limit,
-    )
-
-
-@router.post("/explain", response_model=AiTutorResponse)
-async def api_ai_explain(
-    payload: AiTutorRequest,
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_ai_tutor_chat_user),
-):
-    reservation = prepare_route_retrofit(
-        flag_name="ai",
-        user=user,
-        actor=actor,
-        permission_key="ai_tutor.chat",
-        school_id=tenant.school_id,
-        resource_key="ai_credits_used",
-        credit_feature="ai_chat",
-        credit_amount=1,
-        reason="ai_tutor.explain",
-    )
-    result = tutor_explain(
-        tenant.school_id,
-        role_key=_role_key(user),
-        profile_id=str(actor.get("profile_id") or "").strip() or None,
-        user_email=getattr(user, "email", None),
-        payload=payload.model_dump(exclude_none=True),
-    )
-    commit_route_retrofit(reservation)
-    return result
+    if is_platform_admin_user(user):
+        return user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only students can use the practice generator")
 
 
 @router.post("/practice", response_model=AiTutorResponse)
@@ -123,7 +39,7 @@ async def api_ai_practice(
     payload: AiTutorRequest,
     tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_ai_tutor_chat_user),
+    user: User = Depends(require_student_practice_user),
 ):
     reservation = prepare_route_retrofit(
         flag_name="ai",
@@ -137,35 +53,6 @@ async def api_ai_practice(
         reason="ai_tutor.practice",
     )
     result = tutor_practice(
-        tenant.school_id,
-        role_key=_role_key(user),
-        profile_id=str(actor.get("profile_id") or "").strip() or None,
-        user_email=getattr(user, "email", None),
-        payload=payload.model_dump(exclude_none=True),
-    )
-    commit_route_retrofit(reservation)
-    return result
-
-
-@router.post("/revision", response_model=AiTutorResponse)
-async def api_ai_revision(
-    payload: AiTutorRequest,
-    tenant: TenantContext = Depends(get_tenant_context),
-    actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_ai_tutor_chat_user),
-):
-    reservation = prepare_route_retrofit(
-        flag_name="ai",
-        user=user,
-        actor=actor,
-        permission_key="ai_tutor.chat",
-        school_id=tenant.school_id,
-        resource_key="ai_credits_used",
-        credit_feature="ai_chat",
-        credit_amount=1,
-        reason="ai_tutor.revision",
-    )
-    result = tutor_revision(
         tenant.school_id,
         role_key=_role_key(user),
         profile_id=str(actor.get("profile_id") or "").strip() or None,

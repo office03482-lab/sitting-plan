@@ -123,6 +123,29 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
     const rad = ((angleDeg - 90) * Math.PI) / 180;
     return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
   };
+  const handPolygon = (angleDeg: number, length: number, backLength: number, baseWidth: number, neckWidth: number, tipInset: number) => {
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    const ux = Math.cos(rad);
+    const uy = Math.sin(rad);
+    const nx = -uy;
+    const ny = ux;
+    const tipX = cx + ux * length;
+    const tipY = cy + uy * length;
+    const neckX = cx + ux * (length - tipInset);
+    const neckY = cy + uy * (length - tipInset);
+    const backX = cx - ux * backLength;
+    const backY = cy - uy * backLength;
+
+    return [
+      `${backX + nx * (baseWidth * 0.34)},${backY + ny * (baseWidth * 0.34)}`,
+      `${cx + nx * (baseWidth * 0.5)},${cy + ny * (baseWidth * 0.5)}`,
+      `${neckX + nx * (neckWidth * 0.5)},${neckY + ny * (neckWidth * 0.5)}`,
+      `${tipX},${tipY}`,
+      `${neckX - nx * (neckWidth * 0.5)},${neckY - ny * (neckWidth * 0.5)}`,
+      `${cx - nx * (baseWidth * 0.5)},${cy - ny * (baseWidth * 0.5)}`,
+      `${backX - nx * (baseWidth * 0.34)},${backY - ny * (baseWidth * 0.34)}`,
+    ].join(' ');
+  };
 
   const outerTicks = useMemo(
     () =>
@@ -164,9 +187,32 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
   const minuteHandR = watchR * 0.77;
   const secondHandR = watchR * 0.86;
 
-  const hourTip = polar(hourHandR, hourAngleDeg);
-  const minuteTip = polar(minuteHandR, minuteAngleDeg);
   const secondTip = polar(secondHandR, secondAngleDeg);
+  const hourHandPoints = handPolygon(hourAngleDeg, hourHandR, 13 * scale, 13.5 * scale, 2.4 * scale, 11 * scale);
+  const minuteHandPoints = handPolygon(minuteAngleDeg, minuteHandR, 14 * scale, 8.2 * scale, 1.7 * scale, 12 * scale);
+  const hourHandInnerPoints = handPolygon(hourAngleDeg, hourHandR * 0.87, 7 * scale, 4.8 * scale, 0.9 * scale, 10 * scale);
+  const minuteHandInnerPoints = handPolygon(minuteAngleDeg, minuteHandR * 0.91, 7 * scale, 2.6 * scale, 0.7 * scale, 11 * scale);
+  const secondTail = polar(20 * scale, secondAngleDeg + 180);
+  const starOuter = 48 * scale;
+  const starInner = 16 * scale;
+  const starPoints = Array.from({ length: 16 }, (_, i) => {
+    const angle = i * 22.5;
+    const radius = i % 2 === 0 ? starOuter : starInner;
+    const p = polar(radius, angle);
+    return `${p.x},${p.y}`;
+  }).join(' ');
+  const longStarPoints = Array.from({ length: 16 }, (_, i) => {
+    const angle = i * 22.5;
+    const radius = i % 2 === 0 ? 64 * scale : 12 * scale;
+    const p = polar(radius, angle);
+    return `${p.x},${p.y}`;
+  }).join(' ');
+  const innerStarPoints = Array.from({ length: 16 }, (_, i) => {
+    const angle = i * 22.5;
+    const radius = i % 2 === 0 ? 30 * scale : 10 * scale;
+    const p = polar(radius, angle);
+    return `${p.x},${p.y}`;
+  }).join(' ');
 
   return (
     <g id="antique-inner-watch" pointerEvents="none">
@@ -184,13 +230,13 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
         </linearGradient>
       </defs>
 
-      <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#2b180d" strokeWidth="5" strokeOpacity={0.18} />
-      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="#FF4B23" strokeWidth="2.5" strokeOpacity={0.5} />
+      <circle cx={cx} cy={cy} r={watchR + 5} fill="none" stroke="#9b6a15" strokeWidth="5" strokeOpacity={0.4} />
+      <circle cx={cx} cy={cy} r={watchR + 1} fill="none" stroke="#d4a63a" strokeWidth="2.5" strokeOpacity={0.82} />
 
-      <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#4a3825" strokeWidth="1.5" strokeOpacity={0.32} />
+      <circle cx={cx} cy={cy} r={watchR - 3} fill="#ffffff" stroke="#d2a640" strokeWidth="1.5" strokeOpacity={0.62} />
 
-      <circle cx={cx} cy={cy} r={watchR - 12} fill="none" stroke="#2b241c" strokeWidth="1.2" strokeOpacity={0.55} />
-      <circle cx={cx} cy={cy} r={watchR - 31} fill="none" stroke="#3c3328" strokeWidth="1" strokeOpacity={0.45} />
+      <circle cx={cx} cy={cy} r={watchR - 12} fill="none" stroke="#c69733" strokeWidth="1.2" strokeOpacity={0.82} />
+      <circle cx={cx} cy={cy} r={watchR - 31} fill="none" stroke="#d4aa48" strokeWidth="1" strokeOpacity={0.7} />
 
       <g>
         {outerTicks.map((t) => (
@@ -200,14 +246,14 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
             y1={t.p1.y}
             x2={t.p2.x}
             y2={t.p2.y}
-            stroke="#211c17"
+            stroke="#c89d3a"
             strokeWidth={t.major ? 1.8 : 0.85}
             opacity={t.major ? 0.92 : 0.72}
           />
         ))}
       </g>
 
-      <g fill="#a64a3a" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="600">
+      <g fill="#111111" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="600">
         {RED_LABELS.map((label, i) => {
           const angle = i * 30;
           const p = polar(139 * scale, angle);
@@ -219,9 +265,9 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
         })}
       </g>
 
-      <circle cx={cx} cy={cy} r={127 * scale} fill="none" stroke="#292219" strokeWidth="1.2" />
+      <circle cx={cx} cy={cy} r={127 * scale} fill="none" stroke="#cca045" strokeWidth="1.2" />
 
-      <g fill="#211c17" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="700">
+      <g fill="#111111" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="700">
         {ROMANS.map((roman, i) => {
           const angle = i * 30;
           const p = polar(119 * scale, angle);
@@ -233,7 +279,7 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
         })}
       </g>
 
-      <circle cx={cx} cy={cy} r={112 * scale} fill="none" stroke="#2b241c" strokeWidth="1.2" />
+      <circle cx={cx} cy={cy} r={112 * scale} fill="none" stroke="#c89e43" strokeWidth="1.2" />
 
       <g>
         {innerTicks.map((t) => (
@@ -243,21 +289,35 @@ function AntiqueInnerWatchFace({ cx, cy, watchR, realTime }: AntiqueInnerWatchFa
             y1={t.p1.y}
             x2={t.p2.x}
             y2={t.p2.y}
-            stroke="#332a20"
+            stroke="#caa04c"
             strokeWidth={t.major ? 1.25 : 0.65}
             opacity={t.major ? 0.86 : 0.6}
           />
         ))}
       </g>
 
-      <circle cx={cx} cy={cy} r={97 * scale} fill="none" stroke="#594a38" strokeWidth="0.8" opacity="0.8" />
-      <circle cx={cx} cy={cy} r={84 * scale} fill="none" stroke="#665642" strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.65" />
-
-      <path d={`M ${cx} ${cy} L ${hourTip.x} ${hourTip.y}`} fill="none" stroke="#211c17" strokeWidth={4} strokeLinecap="round" />
-      <path d={`M ${cx} ${cy} L ${minuteTip.x} ${minuteTip.y}`} fill="none" stroke="#463d31" strokeWidth={2.4} strokeLinecap="round" />
-      <path d={`M ${cx} ${cy} L ${secondTip.x} ${secondTip.y}`} fill="none" stroke="#a64a3a" strokeWidth={1.4} strokeLinecap="round" />
-      <circle cx={cx} cy={cy} r={3.6 * scale} fill="#2b180d" />
-      <circle cx={cx} cy={cy} r={2.1 * scale} fill="#d8d0ad" />
+      <circle cx={cx} cy={cy} r={97 * scale} fill="none" stroke="#d1a84d" strokeWidth="0.8" opacity="0.9" />
+      <circle cx={cx} cy={cy} r={84 * scale} fill="none" stroke="#deb662" strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.82" />
+      <polygon points={longStarPoints} fill="#4f7fca" opacity="0.12" />
+      <polygon points={starPoints} fill="#3468b8" opacity="0.2" />
+      <polygon points={innerStarPoints} fill="#8eb5f0" opacity="0.34" />
+      <circle cx={cx} cy={cy} r={31 * scale} fill="none" stroke="rgba(218, 184, 86, 0.24)" strokeWidth="1" />
+      <circle cx={cx} cy={cy} r={22 * scale} fill="none" stroke="rgba(218, 184, 86, 0.18)" strokeWidth="0.8" />
+      <polygon points={hourHandPoints} fill="url(#goldHand)" stroke="#5f3a06" strokeWidth={1.35} />
+      <polygon points={hourHandInnerPoints} fill="#fff6c8" opacity="0.92" />
+      <polygon points={minuteHandPoints} fill="url(#goldHand)" stroke="#5f3a06" strokeWidth={1.15} />
+      <polygon points={minuteHandInnerPoints} fill="#fff8d7" opacity="0.94" />
+      <path
+        d={`M ${secondTail.x} ${secondTail.y} L ${secondTip.x} ${secondTip.y}`}
+        fill="none"
+        stroke="#111111"
+        strokeWidth={1.05}
+        strokeLinecap="round"
+      />
+      <circle cx={cx} cy={cy} r={12 * scale} fill="url(#goldHand)" stroke="#5a3605" strokeWidth="1.8" />
+      <circle cx={cx} cy={cy} r={8.8 * scale} fill="#d79d2d" stroke="#fff0ac" strokeWidth="1.2" />
+      <circle cx={cx} cy={cy} r={5.2 * scale} fill="#a96d12" stroke="#f7df96" strokeWidth="0.9" />
+      <circle cx={cx} cy={cy} r={2.6 * scale} fill="#fff4c8" />
     </g>
   );
 }
@@ -557,16 +617,16 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
   const cX = w / 2;
   const cY = h / 2;
   const compassR = size / 2;
-  const innerFaceR = compassR - 4;
-  const majorTickOuterR = compassR - 8;
-  const majorTickInnerR = compassR - 22;
-  const mediumTickOuterR = compassR - 10;
-  const mediumTickInnerR = compassR - 21;
-  const minorTickOuterR = compassR - 12;
-  const minorTickInnerR = compassR - 20;
-  const degreeLabelR = compassR - 30;
+  const innerFaceR = compassR - 60;
+  const majorTickOuterR = compassR - 14;
+  const majorTickInnerR = compassR - 34;
+  const mediumTickOuterR = compassR - 16;
+  const mediumTickInnerR = compassR - 30;
+  const minorTickOuterR = compassR - 18;
+  const minorTickInnerR = compassR - 28;
+  const degreeLabelR = compassR - 40;
   const cardinalR = compassR + 22;
-  const watchR = compassR * 0.8;
+  const watchR = innerFaceR - 32;
   const crosshairHalf = 16;
   const ballPlayableR = compassR - INSTRUMENT_BAND;
 
@@ -587,6 +647,11 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
     const angle = DIRECTION_ANGLES[dir];
     const rad = (angle * Math.PI) / 180;
     return { label: dir, x: cX + cardinalR * Math.sin(rad), y: cY - cardinalR * Math.cos(rad), isNorth: dir === 'N' };
+  });
+  const outerOrbPositions = [30, 60, 120, 150, 210, 240, 300, 330].map((deg) => {
+    const rad = (deg * Math.PI) / 180;
+    const r = compassR - 18;
+    return { deg, x: cX + r * Math.sin(rad), y: cY - r * Math.cos(rad) };
   });
 
   const arcR = compassR - 2;
@@ -623,44 +688,71 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                 <filter id="compassShadow" x="-10%" y="-10%" width="120%" height="120%">
                   <feDropShadow dx={0} dy={2} stdDeviation={5} floodColor="rgba(0,0,0,0.18)" />
                 </filter>
-                <linearGradient id="compassBackGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#9EE8E3" />
-                  <stop offset="38%" stopColor="#B7DDF4" />
-                  <stop offset="65%" stopColor="#C9DFE4" />
-                  <stop offset="100%" stopColor="#D6EEF2" />
+                <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx={0} dy={0} stdDeviation={7} floodColor="rgba(241, 190, 69, 0.28)" />
+                </filter>
+                <linearGradient id="outerGoldStroke" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#8d5f0d" />
+                  <stop offset="18%" stopColor="#e4b74b" />
+                  <stop offset="45%" stopColor="#fff1aa" />
+                  <stop offset="70%" stopColor="#d39c2e" />
+                  <stop offset="100%" stopColor="#7a5108" />
                 </linearGradient>
-                <radialGradient id="faceGrad" cx="50%" cy="50%" r="50%">
-                  <stop offset="0%" stopColor="#FFFFFF" />
-                  <stop offset="65%" stopColor="#F4F6F8" />
-                  <stop offset="100%" stopColor="#EEF1F4" />
+                <radialGradient id="outerNavyFace" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#13294b" />
+                  <stop offset="70%" stopColor="#071226" />
+                  <stop offset="100%" stopColor="#030914" />
                 </radialGradient>
+                <radialGradient id="ivoryFace" cx="50%" cy="46%" r="58%">
+                  <stop offset="0%" stopColor="#fffdf5" />
+                  <stop offset="58%" stopColor="#f7efd9" />
+                  <stop offset="100%" stopColor="#ead9b3" />
+                </radialGradient>
+                <linearGradient id="badgeNavy" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#0f2746" />
+                  <stop offset="55%" stopColor="#071226" />
+                  <stop offset="100%" stopColor="#020812" />
+                </linearGradient>
+                <linearGradient id="goldHand" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#8c5c0f" />
+                  <stop offset="35%" stopColor="#f4c95d" />
+                  <stop offset="65%" stopColor="#fff2ac" />
+                  <stop offset="100%" stopColor="#b67b18" />
+                </linearGradient>
               </defs>
 
               <circle
                 cx={cX} cy={cY} r={compassR}
-                fill="url(#compassBackGrad)" stroke="#FF4B23" strokeWidth={2}
+                fill="url(#outerNavyFace)" stroke="url(#outerGoldStroke)" strokeWidth={8}
                 filter="url(#compassShadow)"
               />
+              <circle cx={cX} cy={cY} r={compassR - 10} fill="none" stroke="url(#outerGoldStroke)" strokeWidth={1.8} opacity={0.95} />
+              <circle cx={cX} cy={cY} r={compassR - 26} fill="none" stroke="rgba(244, 199, 88, 0.22)" strokeWidth={1.2} />
 
               <circle
                 cx={cX} cy={cY} r={innerFaceR}
-                fill="url(#compassBackGrad)" stroke="rgba(200,208,220,0.25)" strokeWidth={0.5}
+                fill="url(#ivoryFace)" stroke="url(#outerGoldStroke)" strokeWidth={2}
               />
-              <circle cx={cX} cy={cY} r={innerFaceR} fill="url(#compassBackGrad)" />
-              <circle cx={cX} cy={cY} r={compassR - 10} fill="none" stroke="rgba(255,75,35,0.16)" strokeWidth={8} />
-              <circle cx={cX} cy={cY} r={compassR - 34} fill="none" stroke="rgba(15,23,42,0.08)" strokeWidth={1} />
+              <circle cx={cX} cy={cY} r={innerFaceR - 10} fill="none" stroke="rgba(190, 145, 42, 0.62)" strokeWidth={1.5} />
+              <circle cx={cX} cy={cY} r={compassR - 34} fill="none" stroke="rgba(247, 214, 120, 0.22)" strokeWidth={1} />
 
-              {/* Orange heading arc */}
               <path
                 d={arcPath}
-                fill="none" stroke="#FF4B23" strokeWidth={4} strokeLinecap="round" opacity={0.9}
+                fill="none" stroke="url(#outerGoldStroke)" strokeWidth={3.5} strokeLinecap="round" opacity={0.95}
               />
 
-              {/* Triangular heading marker */}
               <polygon
                 points={markerPoints}
-                fill="#FF4B23" opacity={0.95}
+                fill="url(#goldHand)" opacity={1}
+                filter="url(#goldGlow)"
               />
+
+              {outerOrbPositions.map(({ deg, x, y }) => (
+                <g key={`orb-${deg}`} filter="url(#goldGlow)">
+                  <circle cx={x} cy={y} r={6.5} fill="url(#goldHand)" stroke="#fff0a3" strokeWidth={1} />
+                  <circle cx={x} cy={y} r={3.2} fill="#b97c17" opacity={0.85} />
+                </g>
+              ))}
 
               {/* Rotating dial */}
               <g transform={`rotate(${-heading}, ${cX}, ${cY})`}>
@@ -674,19 +766,19 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                     y1 = cY - majorTickOuterR * Math.cos(rad);
                     x2 = cX + majorTickInnerR * Math.sin(rad);
                     y2 = cY - majorTickInnerR * Math.cos(rad);
-                    sw = 2; color = 'rgba(55,61,70,0.7)';
+                    sw = 2; color = 'rgba(235, 188, 74, 0.88)';
                   } else if (t.tier === 'medium') {
                     x1 = cX + mediumTickOuterR * Math.sin(rad);
                     y1 = cY - mediumTickOuterR * Math.cos(rad);
                     x2 = cX + mediumTickInnerR * Math.sin(rad);
                     y2 = cY - mediumTickInnerR * Math.cos(rad);
-                    sw = 1.2; color = 'rgba(55,61,70,0.45)';
+                    sw = 1.2; color = 'rgba(218, 175, 66, 0.62)';
                   } else {
                     x1 = cX + minorTickOuterR * Math.sin(rad);
                     y1 = cY - minorTickOuterR * Math.cos(rad);
                     x2 = cX + minorTickInnerR * Math.sin(rad);
                     y2 = cY - minorTickInnerR * Math.cos(rad);
-                    sw = 0.6; color = 'rgba(70,76,86,0.25)';
+                    sw = 0.7; color = 'rgba(212, 169, 63, 0.38)';
                   }
                   return (
                     <line key={`t-${t.angle}`} x1={x1} y1={y1} x2={x2} y2={y2}
@@ -697,37 +789,47 @@ export default function InteractiveCompass({ reducedMotion = false }: Props) {
                 {/* Degree labels */}
                 {degreeLabelPositions.map(({ deg, x, y }) => (
                   <text key={`d-${deg}`} x={x} y={y} textAnchor="middle" dominantBaseline="central"
-                    fill="#34383F" fontSize={deg === 0 ? 12 : 10}
-                    fontWeight={deg === 0 ? 700 : 500}
-                    fontFamily="'Nunito', 'DM Sans', sans-serif">
+                    fill={deg === 0 ? '#fff2b5' : '#f0c75b'} fontSize={deg === 0 ? 14 : 11}
+                    fontWeight={deg === 0 ? 800 : 700}
+                    fontFamily="Georgia, 'Times New Roman', serif">
                     {deg}
-                  </text>
-                ))}
-
-                {/* Cardinal letters */}
-                {cardinalPositions.map(({ label, x, y }) => (
-                  <text key={`c-${label}`} x={x} y={y} textAnchor="middle" dominantBaseline="central"
-                    fill="#FF4B23"
-                    fontSize={14} fontWeight={800}
-                    fontFamily="'Nunito', 'DM Sans', sans-serif"
-                    letterSpacing="0.5">
-                    {label}
                   </text>
                 ))}
               </g>
 
               {/* Antique inner watch (white face) */}
               <AntiqueInnerWatchFace cx={cX} cy={cY} watchR={watchR} realTime={realTime} />
-              {/* Crosshair (fixed) */}
               <line x1={cX - crosshairHalf} y1={cY} x2={cX + crosshairHalf} y2={cY}
-                stroke="#4A4F57" strokeWidth={1} opacity={0.3} />
+                stroke="rgba(174, 132, 36, 0.22)" strokeWidth={1} opacity={0.4} />
               <line x1={cX} y1={cY - crosshairHalf} x2={cX} y2={cY + crosshairHalf}
-                stroke="#4A4F57" strokeWidth={1} opacity={0.3} />
-              <circle cx={cX} cy={cY} r={2.5} fill="#4A4F57" opacity={0.5} />
+                stroke="rgba(174, 132, 36, 0.22)" strokeWidth={1} opacity={0.4} />
+              <circle cx={cX} cy={cY} r={2.5} fill="#a7771b" opacity={0.68} />
 
-              {/* Playable boundary */}
               <circle cx={cX} cy={cY} r={ballPlayableR}
-                fill="none" stroke="rgba(160,170,190,0.3)" strokeWidth={0.5} strokeDasharray="3 5" />
+                fill="none" stroke="rgba(186, 145, 43, 0.14)" strokeWidth={0.5} strokeDasharray="3 5" />
+
+              {cardinalPositions.map(({ label, x, y }) => (
+                <g key={`badge-${label}`} transform={`translate(${x}, ${y})`} filter="url(#goldGlow)">
+                  <circle r={26} fill="url(#badgeNavy)" stroke="url(#outerGoldStroke)" strokeWidth={3.2} />
+                  <circle r={20} fill="none" stroke="rgba(255, 236, 150, 0.35)" strokeWidth={1} />
+                  <polygon points="0,-35 4,-26 0,-22 -4,-26" fill="url(#goldHand)" />
+                  <polygon points="35,0 26,4 22,0 26,-4" fill="url(#goldHand)" />
+                  <polygon points="0,35 4,26 0,22 -4,26" fill="url(#goldHand)" />
+                  <polygon points="-35,0 -26,4 -22,0 -26,-4" fill="url(#goldHand)" />
+                  <text
+                    x="0"
+                    y="1"
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="#ffe8a0"
+                    fontSize="19"
+                    fontWeight="800"
+                    fontFamily="Georgia, 'Times New Roman', serif"
+                  >
+                    {label}
+                  </text>
+                </g>
+              ))}
             </svg>
 
             {/* Ball layer */}

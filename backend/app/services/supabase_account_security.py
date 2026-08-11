@@ -28,11 +28,13 @@ SESSION_LIMITS = {
     "platform_admin": None,
 }
 DEFAULT_STUDENT_PERMISSIONS = [
+    "lms.view",
     "lms.progress",
     "lms.assignments",
     "online_tests.attempt",
-    "study_planner.view",
-    "study_planner.goals",
+    "offline_exams.view",
+    "timetable.view",
+    "live_classes.join",
     "ai_tutor.chat",
     "doubt_solver.solve",
 ]
@@ -54,7 +56,7 @@ DEFAULT_TEACHER_PERMISSIONS = [
     "online_tests.manage",
     "online_tests.grade",
     "offline_exams.view",
-    "teacher_ai.generate",
+    "offline_exams.manage",
 ]
 PORTAL_PERMISSION_TEMPLATES = {
     "student": {
@@ -103,9 +105,6 @@ PORTAL_PERMISSION_TEMPLATES = {
             "online_tests.grade",
             "offline_exams.view",
             "offline_exams.manage",
-            "study_planner.reports",
-            "teacher_ai.generate",
-            "teacher_ai.reports",
         ],
     },
     "academic_coordinator": {
@@ -126,9 +125,6 @@ PORTAL_PERMISSION_TEMPLATES = {
             "offline_exams.view",
             "offline_exams.manage",
             "offline_exams.reports",
-            "teacher_ai.generate",
-            "teacher_ai.reports",
-            "study_planner.reports",
         ],
     },
     "exam_cell": {
@@ -206,6 +202,74 @@ def _public_table(name: str, *, supabase: Any | None = None):
 def _schema_table(schema: str, name: str, *, supabase: Any | None = None):
     client = supabase or _client()
     return client.schema(schema).table(name)
+
+
+def _load_auth_user_by_id(profile_id: str | None, *, client: Any | None = None) -> Any | None:
+    normalized_profile_id = _normalize_optional(profile_id)
+    if not normalized_profile_id:
+        return None
+    auth_client = client or _client()
+    try:
+        response = auth_client.auth.admin.get_user_by_id(normalized_profile_id)
+    except Exception:
+        return None
+    return getattr(response, "user", None)
+
+
+def _find_auth_user_by_email(login_email: str, *, client: Any | None = None) -> Any | None:
+    normalized_email = _normalize(login_email).lower()
+    if not normalized_email:
+        return None
+    auth_client = client or _client()
+    page = 1
+    per_page = 200
+    while True:
+        try:
+            response = auth_client.auth.admin.list_users(page=page, per_page=per_page)
+        except Exception:
+            return None
+        users = list(getattr(response, "users", None) or [])
+        for user in users:
+            if _normalize(getattr(user, "email", None)).lower() == normalized_email:
+                return user
+        if len(users) < per_page:
+            return None
+        page += 1
+
+
+def _reassign_profile_references(previous_profile_id: str, next_profile_id: str) -> None:
+    if not previous_profile_id or not next_profile_id or previous_profile_id == next_profile_id:
+        return
+    _public_table("school_memberships").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+    _public_table("generated_credentials").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+    _public_table("ai_credit_wallets").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+    _public_table("students").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+    _public_table("staff_members").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+    _schema_table("academic", "guardians").update({"profile_id": next_profile_id}).eq("profile_id", previous_profile_id).execute()
+
+    try:
+        current = _load_profile(previous_profile_id)
+    except HTTPException:
+        current = {}
+    if current:
+        archived_email = _normalize_optional(current.get("email"))
+        archived_display_name = _normalize(current.get("display_name")) or previous_profile_id
+        archived_metadata = _merge_metadata(
+            current.get("metadata"),
+            {
+                "merged_into_profile_id": next_profile_id,
+                "account_migrated_at": _now_iso(),
+                "account_migration_reason": "missing_auth_user",
+            },
+        )
+        _public_table("profiles").update(
+            {
+                "email": f"archived+{previous_profile_id}@local.invalid" if archived_email else None,
+                "display_name": f"{archived_display_name} (archived)",
+                "is_active": False,
+                "metadata": archived_metadata,
+            }
+        ).eq("id", previous_profile_id).execute()
 
 
 def _fetch_all_rows(query: Any, *, page_size: int = 1000) -> list[dict[str, Any]]:
@@ -1071,7 +1135,7 @@ def _ensure_membership_role(
         permissions=role_permissions,
         selected_role=selected_role,
     )
-    return _ensure_managed_role(
+    role_row = _ensure_managed_role(
         school_id,
         profile_id,
         full_name=full_name,
@@ -1081,6 +1145,9 @@ def _ensure_membership_role(
         metadata_updates={"scope_assignments": normalized_scope_assignments},
         supabase=_client(),
     )
+    if not isinstance(role_row, dict) or not _normalize(role_row.get("id")):
+        raise HTTPException(status_code=500, detail="Managed role provisioning returned invalid data")
+    return role_row
 
 
 def _upsert_membership(
@@ -1378,9 +1445,11 @@ def _create_or_update_auth_user(
 ) -> str:
     validate_password_strength(password)
     client = _client()
-    if profile_id:
+    normalized_profile_id = _normalize_optional(profile_id)
+    auth_user = _load_auth_user_by_id(normalized_profile_id, client=client)
+    if normalized_profile_id and auth_user:
         client.auth.admin.update_user_by_id(
-            profile_id,
+            normalized_profile_id,
             {
                 "email": login_email,
                 "password": password,
@@ -1393,7 +1462,29 @@ def _create_or_update_auth_user(
                 },
             },
         )
-        return profile_id
+        return normalized_profile_id
+
+    existing_auth_user = _find_auth_user_by_email(login_email, client=client)
+    if existing_auth_user:
+        existing_auth_user_id = _normalize_optional(getattr(existing_auth_user, "id", None))
+        if existing_auth_user_id:
+            client.auth.admin.update_user_by_id(
+                existing_auth_user_id,
+                {
+                    "email": login_email,
+                    "password": password,
+                    "user_metadata": {
+                        "full_name": full_name,
+                        "display_name": username,
+                        "username": username,
+                        "school_id": school_id,
+                        "selected_role": selected_role,
+                    },
+                },
+            )
+            if normalized_profile_id and normalized_profile_id != existing_auth_user_id:
+                _reassign_profile_references(normalized_profile_id, existing_auth_user_id)
+            return existing_auth_user_id
 
     response = client.auth.admin.create_user(
         {
@@ -1413,6 +1504,8 @@ def _create_or_update_auth_user(
     new_profile_id = _normalize_optional(getattr(created_user, "id", None))
     if not new_profile_id:
         raise HTTPException(status_code=500, detail="Failed to create portal login")
+    if normalized_profile_id and normalized_profile_id != new_profile_id:
+        _reassign_profile_references(normalized_profile_id, new_profile_id)
     return new_profile_id
 
 
@@ -1476,7 +1569,8 @@ def create_or_reset_student_account(
     username = _student_username(_normalize(student.get("roll_number")))
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(student.get("profile_id"))
-    if create_missing_only and profile_id:
+    auth_user = _load_auth_user_by_id(profile_id)
+    if create_missing_only and profile_id and auth_user:
         result = get_student_portal_access(school_id, student_id)
         result["skipped"] = True
         result["skip_reason"] = "account_exists"
@@ -1559,7 +1653,8 @@ def create_or_reset_parent_account(
     username = _parent_username(_normalize_optional(guardian.get("guardian_code")), guardian_id)
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(guardian.get("profile_id"))
-    if create_missing_only and profile_id:
+    auth_user = _load_auth_user_by_id(profile_id)
+    if create_missing_only and profile_id and auth_user:
         result = get_parent_portal_access(school_id, guardian_id)
         result["skipped"] = True
         result["skip_reason"] = "account_exists"
@@ -1643,7 +1738,8 @@ def create_or_reset_staff_account(
     username = _staff_username(_normalize(staff_member.get("employee_code")), selected_role=selected_role)
     generated_password = password or generate_secure_password()
     profile_id = _normalize_optional(staff_member.get("profile_id"))
-    if create_missing_only and profile_id:
+    auth_user = _load_auth_user_by_id(profile_id)
+    if create_missing_only and profile_id and auth_user:
         membership = _load_school_membership(school_id, profile_id)
         role_data = membership.get("roles") if isinstance(membership, dict) else None
         if isinstance(role_data, list):

@@ -220,7 +220,7 @@ async def unhandled_exception_handler(request, exc):
 
 
 # Import routes after app creation
-from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, entitlement, credits, online_tests, analytics, offline_exams, lms, live_classes, study_planner, parent_portal, parent_links, ai_tutor, doubts, teacher_ai, monetization, bi, predictions, ai_agents, ai_assistants, ai_provider, uploads, account_security, billing, school_self_service, question_bank
+from app.routes import attendance, auth, students, rooms, seating, reports, exams, teachers, timetable, settings as settings_router, batches, invigilators, inventory, edupay, hostels, dashboard, staff, admin_office, bulk_action_requests, platform, entitlement, credits, online_tests, analytics, offline_exams, lms, live_classes, parent_portal, parent_links, ai_tutor, doubts, monetization, bi, predictions, ai_provider, uploads, account_security, billing, school_self_service, question_bank
 
 # Include routers
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["Authentication"])
@@ -378,15 +378,6 @@ app.include_router(
 )
 
 app.include_router(
-    study_planner.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
-)
-app.include_router(
-    study_planner.alias_router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("study_planner", "edupay.parent_portal"))],
-)
-
-app.include_router(
     parent_portal.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("parent_intelligence", "edupay.parent_portal"))],
 )
@@ -403,20 +394,11 @@ app.include_router(
 
 app.include_router(
     doubts.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("doubt_solver"))],
+    dependencies=[Depends(get_authenticated_user)],
 )
 app.include_router(
     doubts.alias_router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("doubt_solver"))],
-)
-
-app.include_router(
-    teacher_ai.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("teacher_ai"))],
-)
-app.include_router(
-    teacher_ai.alias_router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("teacher_ai"))],
+    dependencies=[Depends(get_authenticated_user)],
 )
 
 app.include_router(
@@ -434,19 +416,6 @@ app.include_router(
 app.include_router(
     predictions.router,
     dependencies=[Depends(get_authenticated_user), Depends(require_permissions("predictions", "edupay.parent_portal"))],
-)
-
-app.include_router(
-    ai_agents.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
-)
-app.include_router(
-    ai_agents.alias_router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents"))],
-)
-app.include_router(
-    ai_assistants.router,
-    dependencies=[Depends(get_authenticated_user), Depends(require_permissions("ai_agents", "predictions", "bi"))],
 )
 
 app.include_router(

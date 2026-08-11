@@ -60,6 +60,14 @@ def require_parent_view_user(
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to the parent portal")
 
 
+def require_parent_ai_user(
+    user: User = Depends(get_authenticated_user),
+) -> User:
+    if _is_parent_user(user):
+        return user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only linked parents can use the parent AI assistant")
+
+
 def require_parent_scope(
     tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
@@ -367,10 +375,20 @@ def api_ai_ask(
     payload: AiAskRequest,
     tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_parent_view_user),
+    user: User = Depends(require_parent_ai_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     school_id = tenant.school_id
+    if payload.student_id:
+        visible_students = _load_visible_students(
+            school_id,
+            scope_context,
+            actor,
+            user,
+            student_id=payload.student_id,
+        )
+        if not visible_students:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can ask only about your linked child")
     return _build_parent_ai_response(
         school_id,
         [],
@@ -388,7 +406,7 @@ def api_get_recommendations(
     student_id: str | None = Query(default=None),
     tenant: TenantContext = Depends(get_tenant_context),
     actor: dict = Depends(get_authenticated_actor_context),
-    user: User = Depends(require_parent_view_user),
+    user: User = Depends(require_parent_ai_user),
     scope_context: PermissionScopeContext = Depends(require_parent_scope),
 ):
     school_id = tenant.school_id

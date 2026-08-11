@@ -273,7 +273,7 @@ export function getDefaultRouteForUser(user?: User | null, portalIntent?: Portal
   if (portalIntent === 'parent_portal' || user.role === 'parent') return '/parent/dashboard';
   if (user.role_key === 'school_admin' || user.role === 'admin') return DEFAULT_HOME_ROUTE;
   if (user.role_key === 'parent' || user.permissions?.includes('parent_intelligence.view') || user.permissions?.includes('edupay.parent_portal')) return '/parent/dashboard';
-  if (user.role === 'teacher' && user.permissions?.includes('teacher_ai.generate')) return '/teacher-ai';
+  if (user.role === 'teacher' && user.permissions?.includes('online_tests.manage')) return '/question-bank';
   if (user.permissions?.includes('doubt_solver.solve')) return '/ai-study-assistant';
   if (user.role === 'store_manager') return '/inventory';
   if (user.role === 'teacher') return user.permissions?.includes('attendance') ? '/attendance-management' : '/timetable';
@@ -854,6 +854,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             error.conflict = detail;
             throw error;
           }
+          if (response.status === 401) {
+            const error = new Error(
+              typeof detail === 'string' ? detail : payload?.error || payload?.message || 'Invalid or expired authentication token',
+            ) as Error & { code?: string };
+            error.code = 'auth_token_invalid';
+            throw error;
+          }
           throw new Error(typeof detail === 'string' ? detail : payload?.message || 'Session registration failed');
         });
         window.clearTimeout(timeoutId);
@@ -864,6 +871,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         window.clearTimeout(timeoutId);
         if ((error as any)?.code === 'session_limit_exceeded') {
+          throw error;
+        }
+        if ((error as any)?.code === 'auth_token_invalid') {
           throw error;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1159,6 +1169,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setSessionRegistrationReady(false);
               setSessionRegistrationError((regError as any)?.conflict?.message || 'Existing session detected.');
               setAuthError((regError as any)?.conflict?.message || 'Existing session detected.');
+              return;
+            }
+            if ((regError as any)?.code === 'auth_token_invalid') {
+              clearAuthState({
+                redirectToLogin: true,
+                reason: regError instanceof Error ? regError.message : 'Invalid or expired authentication token',
+              });
               return;
             }
             console.warn('[auth-sync] session registration non-fatal:', regError);
@@ -1570,6 +1587,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionRegistrationFingerprintRef.current = storeUser.id;
       })
       .catch(async (error: any) => {
+        if (error?.code === 'auth_token_invalid') {
+          clearAppUserBootstrapCache();
+          clearPersistedAuthArtifacts();
+          usePlatformAdminSchoolStore.getState().clearActiveSchool();
+          setSession(null);
+          setSessionRegistrationReady(false);
+          setSessionRegistrationError(null);
+          sessionRegistrationInFlightRef.current = null;
+          failedSessionFingerprintRef.current = null;
+          lastProfileBootstrapUserIdRef.current = null;
+          activeSyncFingerprintRef.current = null;
+          sessionRegistrationFingerprintRef.current = null;
+          portalIntentRef.current = 'school_erp';
+          logoutStore();
+          setAuthStatus('UNAUTHENTICATED');
+          setAuthError(error?.message || 'Invalid or expired authentication token');
+          setLoading(false);
+          setInitialized(true);
+          initializedRef.current = true;
+          AuthInitializationRegistry.fail(error?.message || 'Invalid or expired authentication token', 'UNAUTHENTICATED');
+          redirectToLogin();
+          return;
+        }
         const detail = error?.conflict;
         if (error?.code === 'session_limit_exceeded') {
           setAuthError(

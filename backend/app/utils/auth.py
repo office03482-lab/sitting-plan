@@ -16,7 +16,7 @@ from app.config import settings
 # Password hashing
 # Keep pbkdf2 first so new hashes do not depend on bcrypt backend quirks.
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
-_DECODED_TOKEN_CACHE: dict[str, tuple[float, Optional[dict]]] = {}
+_DECODED_TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
 _TOKEN_CACHE_TTL_SECONDS = 300
 
 
@@ -87,16 +87,16 @@ def decode_token(token: str) -> Optional[dict]:
     cached = _DECODED_TOKEN_CACHE.get(token_cache_key)
     now = time.monotonic()
     if cached:
-      expires_at, payload = cached
-      if now < expires_at:
-          jwt_exp = payload.get("exp")
-          if jwt_exp is None or time.time() < jwt_exp:
-              logger.info("decode_token.cache_hit")
-              return payload
-          logger.info("decode_token.cache_hit_but_jwt_expired")
-      _DECODED_TOKEN_CACHE.pop(token_cache_key, None)
+        expires_at, payload = cached
+        if now < expires_at:
+            jwt_exp = payload.get("exp")
+            if jwt_exp is None or time.time() < jwt_exp:
+                logger.info("decode_token.cache_hit")
+                return payload
+            logger.info("decode_token.cache_hit_but_jwt_expired")
+        _DECODED_TOKEN_CACHE.pop(token_cache_key, None)
 
-    def _cache_payload(payload: Optional[dict]) -> Optional[dict]:
+    def _cache_payload(payload: dict) -> dict:
         _DECODED_TOKEN_CACHE[token_cache_key] = (now + _TOKEN_CACHE_TTL_SECONDS, payload)
         return payload
 
@@ -189,7 +189,7 @@ def decode_token(token: str) -> Optional[dict]:
             logger.info("decode_token.supabase_auth_api_failed", extra={"error": str(exc)})
 
     logger.warning("decode_token.all_attempts_failed")
-    _cache_payload(None)
+    _DECODED_TOKEN_CACHE.pop(token_cache_key, None)
     return None
 
 

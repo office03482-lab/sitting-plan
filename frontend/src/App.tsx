@@ -43,8 +43,6 @@ const OfflineExamQuestionBuilder = lazy(() => import('@pages/OfflineExamQuestion
 const QuestionBankList = lazy(() => import('@pages/QuestionBankList'));
 const QuestionBuilder = lazy(() => import('@pages/QuestionBuilder'));
 const AiStudyAssistantPage = lazy(() => import('@pages/AiStudyAssistantPage'));
-const SchoolAiAssistantPage = lazy(() => import('@pages/SchoolAiAssistantPage'));
-const TeacherAiAssistantPage = lazy(() => import('@pages/TeacherAiAssistantPage'));
 const ParentIntelligencePortal = lazy(() => import('@pages/ParentIntelligencePortal'));
 const ParentDashboard = lazy(() => import('@pages/ParentDashboard'));
 const ParentAcademicProgress = lazy(() => import('@pages/ParentAcademicProgress'));
@@ -96,7 +94,13 @@ function RouteFallback() {
   return <LoadingSpinner message="Page load ho rahi hai..." />;
 }
 
-function SchoolAdminRoute({ children }: { children: JSX.Element }) {
+function SchoolAdminRoute({
+  children,
+  requiredPermissions = ['school_self_service'],
+}: {
+  children: JSX.Element;
+  requiredPermissions?: string[];
+}) {
   const { user } = useAuth();
 
   if (!user) {
@@ -104,7 +108,9 @@ function SchoolAdminRoute({ children }: { children: JSX.Element }) {
   }
 
   return (
-    <ProtectedRoute allowedRoles={['admin', 'school_admin', 'platform_admin']} requiredPermissions={['settings']}>
+    <ProtectedRoute
+      requiredPermissions={requiredPermissions}
+    >
       {children}
     </ProtectedRoute>
   );
@@ -279,16 +285,8 @@ function AppShell() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/school-ai-assistant"
-          element={
-            <ProtectedRoute requiredPermissions={['ai_agents.view', 'predictions.campus', 'predictions.finance', 'predictions.manage', 'bi.academic']}>
-              <SchoolAiAssistantPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/predictions" element={<Navigate to="/school-ai-assistant" replace />} />
-        <Route path="/ai-command-center" element={<Navigate to="/school-ai-assistant" replace />} />
+        <Route path="/predictions" element={<Navigate to="/bi" replace />} />
+        <Route path="/ai-command-center" element={<Navigate to="/bi" replace />} />
         <Route
           path="/courses"
           element={
@@ -460,22 +458,15 @@ function AppShell() {
         <Route
           path="/ai-study-assistant"
           element={
-            <ProtectedRoute requiredPermissions={['study_planner.view', 'study_planner.goals', 'ai_tutor.chat', 'doubt_solver.solve', 'lms.progress']}>
+            <StudentRoute>
               <AiStudyAssistantPage />
-            </ProtectedRoute>
+            </StudentRoute>
           }
         />
-        <Route path="/study-planner" element={<Navigate to="/ai-study-assistant" replace />} />
-        <Route path="/ai-tutor" element={<Navigate to="/ai-study-assistant" replace />} />
+        <Route path="/study-planner" element={<Navigate to="/my-learning" replace />} />
+        <Route path="/ai-tutor" element={<Navigate to="/my-learning" replace />} />
         <Route path="/doubts" element={<Navigate to="/ai-study-assistant" replace />} />
-        <Route
-          path="/teacher-ai"
-          element={
-            <ProtectedRoute requiredPermissions={['teacher_ai.generate', 'teacher_ai.evaluate', 'teacher_ai.reports']}>
-              <TeacherAiAssistantPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/teacher-ai" element={<Navigate to="/question-bank" replace />} />
         <Route
           path="/parent-intelligence"
           element={
@@ -503,7 +494,7 @@ function AppShell() {
         <Route
           path="/school-self-service/branding"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.branding']}>
               <SchoolBrandingPage />
             </SchoolAdminRoute>
           }
@@ -511,7 +502,7 @@ function AppShell() {
         <Route
           path="/school-self-service/preferences"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.preferences']}>
               <SchoolPreferencesPage />
             </SchoolAdminRoute>
           }
@@ -519,7 +510,7 @@ function AppShell() {
         <Route
           path="/school-self-service/portal-settings"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.portal_settings']}>
               <SchoolPortalSettingsPage />
             </SchoolAdminRoute>
           }
@@ -527,7 +518,7 @@ function AppShell() {
         <Route
           path="/school-self-service/email-templates"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.email_templates']}>
               <SchoolEmailTemplatesPage />
             </SchoolAdminRoute>
           }
@@ -535,7 +526,7 @@ function AppShell() {
         <Route
           path="/school-self-service/messaging-templates"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.messaging_templates']}>
               <SchoolSmsTemplatesPage />
             </SchoolAdminRoute>
           }
@@ -543,7 +534,7 @@ function AppShell() {
         <Route
           path="/school-self-service/storage"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.storage']}>
               <SchoolStorageCenterPage />
             </SchoolAdminRoute>
           }
@@ -551,7 +542,7 @@ function AppShell() {
         <Route
           path="/school-self-service/backups"
           element={
-            <SchoolAdminRoute>
+            <SchoolAdminRoute requiredPermissions={['school_self_service', 'school_self_service.backups']}>
               <SchoolBackupCenterPage />
             </SchoolAdminRoute>
           }

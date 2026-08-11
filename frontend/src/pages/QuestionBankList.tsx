@@ -55,8 +55,9 @@ const statusColor: Record<string, string> = {
 export default function QuestionBankList() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const { authReady, sessionReady, schoolContextReady } = useAuth();
+  const { authReady, sessionReady, schoolContextReady, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady;
+  const canUseExamAi = user?.role === 'admin' || ['school_admin', 'platform_admin'].includes(String(user?.role_key || '').toLowerCase());
 
   const [questions, setQuestions] = useState<BankQuestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -197,24 +198,26 @@ export default function QuestionBankList() {
             icon: Upload,
             onClick: () => fileInputRef.current?.click(),
           },
-          {
-            label: 'AI Question Generator',
-            helper: 'Open the existing AI builder',
-            icon: Bot,
-            onClick: () => navigate('/question-bank/add', { state: { tool: 'ai' } }),
-          },
-          {
-            label: 'OCR Import',
-            helper: 'Capture questions from images',
-            icon: ScanText,
-            onClick: () => navigate('/question-bank/add', { state: { tool: 'ocr' } }),
-          },
-          {
-            label: 'PDF Import',
-            helper: 'Extract questions from PDFs',
-            icon: FileUp,
-            onClick: () => navigate('/question-bank/add', { state: { tool: 'pdf' } }),
-          },
+          ...(canUseExamAi ? [
+            {
+              label: 'AI Question Generator',
+              helper: 'Generate preview-only questions',
+              icon: Bot,
+              onClick: () => navigate('/question-bank/add', { state: { tool: 'ai' } }),
+            },
+            {
+              label: 'OCR Import',
+              helper: 'Image OCR workflow',
+              icon: ScanText,
+              onClick: () => navigate('/question-bank/add', { state: { tool: 'ocr' } }),
+            },
+            {
+              label: 'PDF Import',
+              helper: 'PDF extraction workflow',
+              icon: FileUp,
+              onClick: () => navigate('/question-bank/add', { state: { tool: 'pdf' } }),
+            },
+          ] : []),
           {
             label: 'Review Questions',
             helper: 'Focus on review-ready entries',

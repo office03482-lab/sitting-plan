@@ -15,6 +15,7 @@ from app.models import User
 from app.services.scope_engine import PermissionScopeContext, build_scope_context, ensure_school_wide_scope
 from app.models import SeatingPlan, Student, Room, Invigilator, RoomInvigilator
 from app.services.supabase_admin import fetch_all, get_supabase_admin_client
+from app.services.supabase_seating import _execute_exam_seating_query
 from app.services.supabase_context import (
     is_legacy_sqlite_mode,
     resolve_school_id_from_exam_context,
@@ -275,16 +276,18 @@ def _build_supabase_room_plans(school_id: str, exam_id: str, plan_type: str | No
 def _build_supabase_single_room_plan(school_id: str, plan_id: str) -> dict:
     supabase = get_supabase_admin_client()
     try:
-        response = (
-            supabase
-            .schema("exam")
-            .table("seating_plans")
-            .select("id, exam_id, room_id, plan_name, plan_type, plan_metadata, batch_distribution")
-            .eq("id", plan_id)
-            .eq("school_id", school_id)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
+        response = _execute_exam_seating_query(
+            supabase,
+            lambda table_name: (
+                supabase
+                .schema("exam")
+                .table(table_name)
+                .select("id, exam_id, room_id, plan_name, plan_type, plan_metadata, batch_distribution")
+                .eq("id", plan_id)
+                .eq("school_id", school_id)
+                .eq("is_active", True)
+                .limit(1)
+            ),
         )
     except APIError as exc:
         raise HTTPException(status_code=404, detail="Plan not found") from exc

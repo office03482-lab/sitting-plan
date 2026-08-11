@@ -130,23 +130,10 @@ ALLOWED_PERMISSIONS = {
     "live_classes.join",
     "live_classes.attendance",
     "live_classes.reports",
-    "study_planner",
-    "study_planner.view",
-    "study_planner.goals",
-    "study_planner.reports",
     "ai_tutor",
     "ai_tutor.chat",
-    "ai_tutor.review",
-    "ai_tutor.manage",
     "doubt_solver",
     "doubt_solver.solve",
-    "doubt_solver.review",
-    "doubt_solver.manage",
-    "doubt_solver.escalate",
-    "teacher_ai",
-    "teacher_ai.generate",
-    "teacher_ai.evaluate",
-    "teacher_ai.reports",
     "parent_intelligence",
     "parent_intelligence.view",
     "parent_intelligence.alerts",
@@ -177,11 +164,14 @@ ALLOWED_PERMISSIONS = {
     "predictions.campus",
     "predictions.finance",
     "predictions.manage",
-    "ai_agents",
-    "ai_agents.view",
-    "ai_agents.run",
-    "ai_agents.approve",
-    "ai_agents.reports",
+    "school_self_service",
+    "school_self_service.branding",
+    "school_self_service.preferences",
+    "school_self_service.portal_settings",
+    "school_self_service.email_templates",
+    "school_self_service.messaging_templates",
+    "school_self_service.storage",
+    "school_self_service.backups",
     "settings",
 }
 
@@ -238,26 +228,11 @@ PERMISSION_CHILDREN = {
         "live_classes.attendance",
         "live_classes.reports",
     ],
-    "study_planner": [
-        "study_planner.view",
-        "study_planner.goals",
-        "study_planner.reports",
-    ],
     "ai_tutor": [
         "ai_tutor.chat",
-        "ai_tutor.review",
-        "ai_tutor.manage",
     ],
     "doubt_solver": [
         "doubt_solver.solve",
-        "doubt_solver.review",
-        "doubt_solver.manage",
-        "doubt_solver.escalate",
-    ],
-    "teacher_ai": [
-        "teacher_ai.generate",
-        "teacher_ai.evaluate",
-        "teacher_ai.reports",
     ],
     "parent_intelligence": [
         "parent_intelligence.view",
@@ -294,11 +269,14 @@ PERMISSION_CHILDREN = {
         "predictions.finance",
         "predictions.manage",
     ],
-    "ai_agents": [
-        "ai_agents.view",
-        "ai_agents.run",
-        "ai_agents.approve",
-        "ai_agents.reports",
+    "school_self_service": [
+        "school_self_service.branding",
+        "school_self_service.preferences",
+        "school_self_service.portal_settings",
+        "school_self_service.email_templates",
+        "school_self_service.messaging_templates",
+        "school_self_service.storage",
+        "school_self_service.backups",
     ],
 }
 
@@ -315,6 +293,52 @@ def _permission_catalog_from_static_config() -> dict[str, Any]:
         "module_children": {key: list(value) for key, value in PERMISSION_CHILDREN.items()},
         "module_labels": {key: _make_permission_label(key) for key in PERMISSION_CHILDREN},
         "permission_labels": {key: _make_permission_label(key.split(".", 1)[1] if "." in key else key) for key in ALLOWED_PERMISSIONS},
+    }
+
+
+def _merge_permission_catalog_with_fallback(catalog: dict[str, Any]) -> dict[str, Any]:
+    fallback = _permission_catalog_from_static_config()
+    fallback_allowed = set(fallback.get("allowed_permissions") or set())
+    catalog_allowed = set(catalog.get("allowed_permissions") or set())
+    merged_allowed = fallback_allowed | catalog_allowed
+
+    merged_children: dict[str, list[str]] = {}
+    fallback_children = dict(fallback.get("module_children") or {})
+    catalog_children = dict(catalog.get("module_children") or {})
+    for module_key in sorted(set(fallback_children) | set(catalog_children)):
+        merged_children[module_key] = sorted(
+            set(fallback_children.get(module_key) or []) | set(catalog_children.get(module_key) or [])
+        )
+
+    merged_module_labels = {
+        **dict(fallback.get("module_labels") or {}),
+        **dict(catalog.get("module_labels") or {}),
+    }
+    merged_permission_labels = {
+        **dict(fallback.get("permission_labels") or {}),
+        **dict(catalog.get("permission_labels") or {}),
+    }
+
+    for permission_key in sorted(merged_allowed):
+        module_key = permission_key.split(".", 1)[0]
+        merged_module_labels.setdefault(module_key, _make_permission_label(module_key))
+        merged_permission_labels.setdefault(
+            permission_key,
+            _make_permission_label(permission_key.split(".", 1)[1] if "." in permission_key else permission_key),
+        )
+        if "." in permission_key:
+            merged_children.setdefault(module_key, [])
+            if permission_key not in merged_children[module_key]:
+                merged_children[module_key].append(permission_key)
+                merged_children[module_key].sort()
+        else:
+            merged_children.setdefault(module_key, merged_children.get(module_key, []))
+
+    return {
+        "allowed_permissions": merged_allowed,
+        "module_children": merged_children,
+        "module_labels": merged_module_labels,
+        "permission_labels": merged_permission_labels,
     }
 
 
@@ -368,9 +392,10 @@ def _load_permission_catalog(supabase=None, *, force_refresh: bool = False) -> d
             "module_labels": module_labels,
             "permission_labels": permission_labels,
         }
-        _PERMISSION_CATALOG_CACHE["catalog"] = catalog
+        merged_catalog = _merge_permission_catalog_with_fallback(catalog)
+        _PERMISSION_CATALOG_CACHE["catalog"] = merged_catalog
         _PERMISSION_CATALOG_CACHE["expires_at"] = now + _PERMISSION_CATALOG_CACHE_TTL_SECONDS
-        return catalog
+        return merged_catalog
     except Exception:
         _PERMISSION_CATALOG_CACHE["catalog"] = fallback
         _PERMISSION_CATALOG_CACHE["expires_at"] = now + _PERMISSION_CATALOG_CACHE_TTL_SECONDS

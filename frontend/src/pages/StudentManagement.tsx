@@ -481,7 +481,7 @@ export default function StudentManagement() {
   const [parentPortalLoadingMap, setParentPortalLoadingMap] = useState<Record<string, boolean>>({});
 
   // Modal states
-  const [showModal, setShowModal] = useState(false);
+  const [showModal, setShowModal] = useState(() => location.hash === '#add');
   const [editStudent, setEditStudent] = useState<Student | null>(null);
   const [studentForm, setStudentForm] = useState<StudentFormState>(studentInitialForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -544,7 +544,7 @@ export default function StudentManagement() {
         return;
       }
       if (state?.directoryEditStudent) return;
-      setTimeout(() => openAddModal(), 0);
+      openAddModal();
       return;
     }
 

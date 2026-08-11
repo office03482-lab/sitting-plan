@@ -9,7 +9,6 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
-from app.services.ai_provider import AIProviderError, generate_text, chat
 from app.services.supabase_admin import get_supabase_admin_client
 from app.services.supabase_lms import _list_parent_linked_students, get_progress_dashboard, list_assignments
 from app.services.supabase_online_tests import list_results, list_tests
@@ -1035,85 +1034,6 @@ def _build_child_dashboard(school_id: str, student: dict[str, Any]) -> dict[str,
         "latest_test_result": latest_test,
         "fee_status": fee_status,
     }
-
-
-# ─── AI Assistant (Phase 8) ────────────────────────────────────────────
-
-def ai_ask(school_id: str, *, profile_id: str | None, user_email: str | None, student_id: str | None, question: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    linked = _resolve_parent_students(school_id, profile_id, user_email)
-
-    if student_id:
-        linked = [s for s in linked if _normalize(s.get("id")) == student_id]
-
-    context_parts = []
-    for s in linked:
-        sid = _normalize(s.get("id"))
-        sname = _normalize(s.get("full_name")) or "Student"
-        dash = _build_child_dashboard(school_id, s)
-        att = _build_attendance(school_id, s)
-        assign = _build_assignments(school_id, s)
-        test = _build_test_results(school_id, s)
-        academic = _build_academic_progress(school_id, s)
-        attendance_overall = att.get("overall", {})
-        assignment_summary = assign.get("summary", {})
-        weak_topics = list(academic.get("weak_topics") or [])[:3]
-        strong_topics = list(academic.get("strong_topics") or [])[:3]
-
-        context_parts.append(
-            f"--- {sname} (ID: {sid}) ---\n"
-            f"Class: {dash.get('class_name')} {dash.get('section')}\n"
-            f"Attendance: {attendance_overall.get('attendance_percentage', dash.get('attendance_percentage'))}% "
-            f"({attendance_overall.get('present_days', dash.get('present_days'))} present, "
-            f"{attendance_overall.get('absent_days', dash.get('absent_days'))} absent)\n"
-            f"Learning Score: {dash.get('learning_score')}%\n"
-            f"Pending Assignments: {dash.get('pending_assignments')}\n"
-            f"Fee Status: {(dash.get('fee_status') or {}).get('status')} (Due: ₹{(dash.get('fee_status') or {}).get('due_amount', 0):.0f})\n"
-            f"Latest Test: {(dash.get('latest_test_result') or {}).get('title', 'N/A')} - {(dash.get('latest_test_result') or {}).get('percentage', 0)}%\n"
-            f"Upcoming Tests: {len(dash.get('upcoming_tests', []))}\n"
-            f"Assignment Summary: pending={assignment_summary.get('pending', 0)}, submitted={assignment_summary.get('submitted', 0)}, graded={assignment_summary.get('graded', 0)}, late={assignment_summary.get('late', 0)}\n"
-            f"Test Average: {test.get('average_percentage')}% over {test.get('total_tests')} tests\n"
-            f"Weak Topics: {weak_topics}\n"
-            f"Strong Topics: {strong_topics}"
-        )
-
-    context = "\n\n".join(context_parts)
-
-    system_prompt = (
-        "You are the Aspire Academy Parent AI Assistant. "
-        "Answer only from the grounded student data provided below. "
-        "Use attendance, assignments, test scores, course progress, and topic analysis whenever relevant. "
-        "Do not invent facts or give generic advice that is not supported by the data. "
-        "If something is missing, say that clearly. "
-        "Use simple, supportive language for a parent and keep the answer concise in 3-6 sentences.\n\n"
-        f"STUDENT DATA:\n{context}"
-    )
-
-    messages = [{"role": "assistant", "content": system_prompt}]
-    if history:
-        messages.extend(history[-10:])
-    messages.append({"role": "user", "content": question})
-
-    try:
-        answer = chat(messages)
-    except AIProviderError:
-        answer = "I'm sorry, I'm having trouble connecting right now. Please try again in a moment."
-
-    return {
-        "answer": answer,
-        "context_students": [
-            {"student_id": _normalize(s.get("id")), "student_name": _normalize(s.get("full_name")) or "Student"}
-            for s in linked
-        ],
-    }
-
-
-# ─── Generate Recommendations (Phase 8) ────────────────────────────────
-
-def generate_recommendations(school_id: str, *, profile_id: str | None, user_email: str | None, student_id: str | None = None) -> list[dict[str, Any]]:
-    linked = _resolve_parent_students(school_id, profile_id, user_email)
-    if student_id:
-        linked = [s for s in linked if _normalize(s.get("id")) == student_id]
-    return [_build_recommendations(school_id, s) for s in linked]
 
 
 def _build_recommendations(school_id: str, student: dict[str, Any]) -> dict[str, Any]:

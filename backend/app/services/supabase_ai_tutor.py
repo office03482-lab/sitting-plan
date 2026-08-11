@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 from uuid import UUID
 
@@ -113,6 +114,13 @@ def _role_scope(role_key: str) -> str:
     normalized = _normalize(role_key).lower()
     if normalized in {"teacher", "school_admin", "platform_admin", "admin"}:
         return "teacher"
+    return "student"
+
+
+def _student_tool_role_key(role_key: str) -> str:
+    normalized = _normalize(role_key).lower()
+    if normalized == "platform_admin":
+        return "platform_admin"
     return "student"
 
 
@@ -240,7 +248,7 @@ def _find_matching_study_plan(school_id: str, student_id: str | None, topic: str
         return []
     rows = list(
         _analytics_table("study_plans")
-        .select("id,scope,plan_date,summary,metadata,generated_at")
+        .select("id,scope,plan_date,summary,metadata")
         .eq("school_id", school_id)
         .eq("student_id", student_id)
         .is_("deleted_at", "null")
@@ -302,7 +310,7 @@ def _resolve_student_context(
     user_email: str | None,
     target_student_id: str | None,
 ) -> dict[str, Any] | None:
-    normalized_role = _normalize(role_key).lower()
+    normalized_role = _student_tool_role_key(role_key)
     if normalized_role == "student":
         if not profile_id:
             raise HTTPException(status_code=403, detail="Student profile context is missing")
@@ -556,6 +564,91 @@ def _practice_payload(topic: str, context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dedupe_practice_questions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        question = _normalize(item.get("question"))
+        if not question:
+            continue
+        level = _normalize(item.get("level")).lower() or "medium"
+        key = re.sub(r"\s+", " ", question).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"level": level, "question": question})
+    return deduped
+
+
+def _practice_generation_prompt(
+    topic: str,
+    requested_count: int,
+    context: dict[str, Any],
+    existing_questions: list[dict[str, Any]] | None = None,
+) -> str:
+    request_metadata = _normalize_json_object(context.get("request_metadata"))
+    existing = [item.get("question") for item in (existing_questions or []) if _normalize(item.get("question"))]
+    return (
+        "You are a school ERP student practice generator.\n"
+        "Return strict JSON only.\n"
+        "Task: generate exactly the requested number of unique practice questions.\n"
+        "Output schema: {\"practice_questions\":[{\"level\":\"easy|medium|hard\",\"question\":\"...\"}],\"answer_strategy\":[\"...\"],\"insufficiency_reason\":null}\n"
+        "Rules:\n"
+        "- Stay strictly inside the requested subject/chapter/topic.\n"
+        "- Do not return duplicates.\n"
+        "- Questions must be classroom-appropriate and answerable.\n"
+        "- Keep wording concise and exam-relevant.\n"
+        f"- Requested count: {requested_count}\n"
+        f"- Subject: {_normalize(request_metadata.get('subject')) or 'not provided'}\n"
+        f"- Chapter: {_normalize(request_metadata.get('chapter')) or 'not provided'}\n"
+        f"- Topic: {_normalize(request_metadata.get('topic')) or topic}\n"
+        f"- Difficulty: {_normalize(request_metadata.get('difficulty')) or _normalize(context.get('difficulty_band')) or 'medium'}\n"
+        f"- Existing accepted questions to avoid: {existing}\n"
+        f"- Weak topics: {list(context.get('weak_topic_history') or [])[:4]}\n"
+        f"- Strong topics: {list(context.get('strong_topic_history') or [])[:4]}\n"
+    )
+
+
+def _generate_practice_questions(topic: str, requested_count: int, context: dict[str, Any]) -> dict[str, Any]:
+    fallback = _practice_payload(topic, context)
+    accepted = _dedupe_practice_questions(list(fallback.get("practice_questions") or []))
+    answer_strategy = [_normalize(item) for item in list(fallback.get("answer_strategy") or []) if _normalize(item)]
+    insufficiency_reason: str | None = None
+
+    attempts = 0
+    while len(accepted) < requested_count and attempts < 3:
+        attempts += 1
+        missing_count = requested_count - len(accepted)
+        try:
+            generated = generate_json(_practice_generation_prompt(topic, missing_count, context, accepted))
+        except AIProviderError:
+            break
+
+        values = generated.get("answer_strategy")
+        if isinstance(values, list):
+            cleaned = [_normalize(item) for item in values if _normalize(item)]
+            if cleaned:
+                answer_strategy = cleaned
+
+        generated_questions = generated.get("practice_questions")
+        if isinstance(generated_questions, list):
+            accepted = _dedupe_practice_questions(accepted + [dict(item) for item in generated_questions if isinstance(item, dict)])
+
+        insufficiency_reason = _normalize(generated.get("insufficiency_reason")) or insufficiency_reason
+
+    accepted = accepted[:requested_count]
+    if len(accepted) < requested_count and not insufficiency_reason:
+        insufficiency_reason = "Insufficient grounded unique questions were generated for the requested count."
+
+    return {
+        "practice_questions": accepted,
+        "answer_strategy": answer_strategy,
+        "requested_count": requested_count,
+        "returned_count": len(accepted),
+        "insufficiency_reason": insufficiency_reason,
+    }
+
+
 def _revision_payload(topic: str, context: dict[str, Any]) -> dict[str, Any]:
     lesson = next(iter(context.get("recommended_lessons") or []), {})
     flash_cards = [
@@ -602,7 +695,7 @@ def _persist_context(
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
             "profile_id": _normalize_optional_uuid(profile_id),
-            "role_key": _normalize(role_key) or "student",
+            "role_key": _student_tool_role_key(role_key),
             "topic": topic,
             "mode": mode,
             "class_level": class_level,
@@ -674,7 +767,7 @@ def _persist_conversation(
             "profile_id": _normalize_optional_uuid(profile_id),
             "context_id": _normalize_optional_uuid(context_id),
             "recommendation_id": _normalize_optional_uuid(recommendation_id),
-            "role_key": _normalize(role_key) or "student",
+            "role_key": _student_tool_role_key(role_key),
             "mode": mode,
             "topic": topic,
             "user_prompt": user_prompt,
@@ -793,8 +886,10 @@ def _tutor_response(
         target_student_id=target_student_id,
     )
     context = _build_context_snapshot(school_id, role_key=role_key, topic=topic, student=student)
+    context["request_metadata"] = _normalize_json_object(payload.get("metadata"))
     explanation_block = _explanation_sections(topic, context)
-    practice_block = _practice_payload(topic, context)
+    requested_count = max(1, min(int(context["request_metadata"].get("question_count") or 5), 10))
+    practice_block = _generate_practice_questions(topic, requested_count, context)
     revision_block = _revision_payload(topic, context)
 
     response_text = explanation_block["explanation"]
@@ -835,6 +930,9 @@ def _tutor_response(
     response_payload = {
         "mode": mode,
         "topic": topic,
+        "requested_count": requested_count,
+        "returned_count": int(practice_block.get("returned_count") or len(practice_block.get("practice_questions") or [])),
+        "insufficiency_reason": practice_block.get("insufficiency_reason"),
         "student_profile": {
             "student_id": _normalize((student or {}).get("id")) or None,
             "student_name": _normalize((student or {}).get("full_name")) or None,

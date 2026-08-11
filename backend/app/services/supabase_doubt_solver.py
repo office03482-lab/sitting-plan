@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.services.ai_provider import AIProviderError, generate_json
 from app.services.supabase_ai_tutor import (
     _ai_table,
     _build_context_snapshot,
@@ -69,6 +70,13 @@ def _utc_now_iso() -> str:
 
 def _normalize_text(raw: str) -> str:
     return re.sub(r"\s+", " ", _normalize(raw)).strip()
+
+
+def _student_tool_role_key(role_key: str) -> str:
+    normalized = _normalize(role_key).lower()
+    if normalized == "platform_admin":
+        return "platform_admin"
+    return "student"
 
 
 def _detect_language(text: str, fallback: str | None = None) -> str:
@@ -252,6 +260,129 @@ def _stepwise_solution(subject: str, topic: str, text: str, equations: list[str]
     }
 
 
+def _extract_first_number(pattern: str, text: str) -> float | None:
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _deterministic_solution(subject: str, topic: str, text: str) -> dict[str, Any] | None:
+    lowered = text.lower()
+
+    if any(keyword in lowered for keyword in ("ohm", "resistor", "voltage", "current", "resistance")):
+        voltage = _extract_first_number(r"(\d+(?:\.\d+)?)\s*v", text)
+        resistance = _extract_first_number(r"(\d+(?:\.\d+)?)\s*(?:ohm|Ω)", text)
+        if voltage is not None and resistance not in (None, 0) and "current" in lowered:
+            current = voltage / resistance
+            return {
+                "explanation": "Use Ohm's Law. Current is equal to voltage divided by resistance.",
+                "final_answer": f"{current:g} A",
+                "shortcut_method": "Apply I = V / R after identifying the given voltage and resistance.",
+                "common_mistakes": [
+                    "Multiplying V and R instead of dividing.",
+                    "Forgetting the final unit ampere (A).",
+                    "Using the wrong required quantity in the formula.",
+                ],
+                "step_by_step": [
+                    f"Given values: V = {voltage:g} V and R = {resistance:g} ohm.",
+                    "Required quantity: current I.",
+                    "Formula: I = V / R.",
+                    f"Substitution: I = {voltage:g} / {resistance:g}.",
+                    f"Calculation: I = {current:g}.",
+                    f"Final answer: {current:g} A.",
+                ],
+            }
+
+    linear_match = re.search(r"([+-]?\d*)x([+-]\d+)?=([+-]?\d+)", text.replace(" ", ""), flags=re.IGNORECASE)
+    if linear_match:
+        a_raw, b_raw, c_raw = linear_match.groups()
+        a = -1 if a_raw == "-" else 1 if a_raw in {"", "+"} else int(a_raw)
+        b = int(b_raw or "0")
+        c = int(c_raw)
+        if a != 0:
+            result = (c - b) / a
+            return {
+                "explanation": "Rearrange the linear equation and divide by the coefficient of x.",
+                "final_answer": f"x = {result:g}",
+                "shortcut_method": "For ax + b = c, use x = (c - b) / a.",
+                "common_mistakes": [
+                    "Changing the sign incorrectly while moving the constant term.",
+                    "Forgetting to divide by the coefficient of x.",
+                ],
+                "step_by_step": [
+                    f"Equation: {a}x + ({b}) = {c}.",
+                    f"Move the constant term: {a}x = {c} - ({b}) = {c - b:g}.",
+                    f"Divide by {a}: x = {c - b:g} / {a}.",
+                    f"Final answer: x = {result:g}.",
+                ],
+            }
+
+    if any(keyword in lowered for keyword in ("mole", "moles")) and "molar mass" in lowered:
+        mass = _extract_first_number(r"(\d+(?:\.\d+)?)\s*g", text)
+        molar_mass = _extract_first_number(r"molar mass(?:\s+of)?(?:\s+[A-Za-z0-9]+)?\s*(\d+(?:\.\d+)?)\s*g", text)
+        if mass is not None and molar_mass not in (None, 0):
+            moles = mass / molar_mass
+            return {
+                "explanation": "Number of moles is mass divided by molar mass.",
+                "final_answer": f"{moles:g} mol",
+                "shortcut_method": "Use n = m / M.",
+                "common_mistakes": [
+                    "Multiplying mass and molar mass instead of dividing.",
+                    "Ignoring the mol unit in the final answer.",
+                ],
+                "step_by_step": [
+                    f"Given values: mass = {mass:g} g and molar mass = {molar_mass:g} g/mol.",
+                    "Required quantity: number of moles n.",
+                    "Formula: n = m / M.",
+                    f"Substitution: n = {mass:g} / {molar_mass:g}.",
+                    f"Calculation: n = {moles:g}.",
+                    f"Final answer: {moles:g} mol.",
+                ],
+            }
+
+    return None
+
+
+def _ai_solution(subject: str, topic: str, text: str, context: dict[str, Any]) -> dict[str, Any] | None:
+    prompt = (
+        "You are an academic doubt solver.\n"
+        "Return strict JSON only with keys: interpretation, given, formula, calculation, result, unit, explanation, common_mistakes, step_by_step, uncertainty.\n"
+        "Rules:\n"
+        "- Prioritize correctness over generic language.\n"
+        "- For numerical questions, identify values, formula, substitution, calculation, and final answer with units.\n"
+        "- For conceptual questions, explain directly and clearly.\n"
+        "- If the information is incomplete or ambiguous, set uncertainty and do not invent values.\n"
+        f"- Detected subject: {subject}\n"
+        f"- Detected topic: {topic}\n"
+        f"- Context summary: {context.get('analytics_summary')}\n"
+        f"- Question: {text}\n"
+    )
+    try:
+        generated = generate_json(prompt)
+    except AIProviderError:
+        return None
+    uncertainty = _normalize(generated.get("uncertainty"))
+    result_text = _normalize(generated.get("result"))
+    unit = _normalize(generated.get("unit"))
+    final_answer = f"{result_text} {unit}".strip() if result_text else None
+    explanation = _normalize(generated.get("explanation")) or uncertainty or ""
+    step_by_step = [_normalize(item) for item in list(generated.get("step_by_step") or []) if _normalize(item)]
+    common_mistakes = [_normalize(item) for item in list(generated.get("common_mistakes") or []) if _normalize(item)]
+    if not explanation:
+        return None
+    return {
+        "explanation": explanation,
+        "final_answer": final_answer,
+        "shortcut_method": _normalize(generated.get("formula")) or None,
+        "common_mistakes": common_mistakes,
+        "step_by_step": step_by_step or ([uncertainty] if uncertainty else []),
+    }
+
+
 def _recommendations_bundle(school_id: str, student: dict[str, Any] | None, topic: str) -> list[dict[str, Any]]:
     student_id = _normalize((student or {}).get("id")) or None
     lesson_rows = _find_matching_lessons(school_id, student, topic)[:2]
@@ -288,7 +419,7 @@ def _persist_doubt_session(
             "school_id": school_id,
             "student_id": _normalize_optional_uuid(student_id),
             "profile_id": _normalize_optional_uuid(profile_id),
-            "role_key": _normalize(role_key) or "student",
+            "role_key": _student_tool_role_key(role_key),
             "input_type": input_type,
             "source_language": source_language,
             "detected_subject": detected_subject,
@@ -515,9 +646,10 @@ def _solve_doubt(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     target_student_id = _normalize(payload.get("target_student_id")) or None
+    normalized_role = _student_tool_role_key(role_key)
     student = _resolve_student_context(
         school_id,
-        role_key=role_key,
+        role_key=normalized_role,
         profile_id=profile_id,
         user_email=user_email,
         target_student_id=target_student_id,
@@ -530,7 +662,7 @@ def _solve_doubt(
     numericals = _extract_numericals(extracted_text)
     mcqs = _extract_mcqs(extracted_text)
     diagrams = _extract_diagrams(extracted_text)
-    context = _build_context_snapshot(school_id, role_key=role_key, topic=topic, student=student)
+    context = _build_context_snapshot(school_id, role_key=normalized_role, topic=topic, student=student)
     confidence = _confidence_score(
         input_type=input_type,
         text=extracted_text,
@@ -538,7 +670,11 @@ def _solve_doubt(
         topic_confidence=topic_confidence,
         entity_count=len(equations) + len(numericals) + len(mcqs) + len(diagrams),
     )
-    solution = _stepwise_solution(subject, topic, extracted_text, equations, numericals, context)
+    solution = _deterministic_solution(subject, topic, extracted_text)
+    if solution is None:
+        solution = _ai_solution(subject, topic, extracted_text, context)
+    if solution is None:
+        solution = _stepwise_solution(subject, topic, extracted_text, equations, numericals, context)
     recommendations = _recommendations_bundle(school_id, student, topic)
     escalate = confidence < 62
     escalation_status = "pending_teacher" if escalate else "not_required"
@@ -547,7 +683,7 @@ def _solve_doubt(
         school_id,
         student_id=_normalize((student or {}).get("id")) or None,
         profile_id=profile_id,
-        role_key=role_key,
+        role_key=normalized_role,
         input_type=input_type,
         source_language=source_language,
         detected_subject=subject,
@@ -614,7 +750,7 @@ def _solve_doubt(
             f"Low-confidence doubt needs teacher review for {topic or subject}.",
             "system",
             user_name=_normalize((student or {}).get("full_name")) or None,
-            user_role=role_key,
+            user_role=normalized_role,
             metadata={
                 "module": MODULE_KEY,
                 "event": "teacher_escalation",

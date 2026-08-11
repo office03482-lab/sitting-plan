@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user, require_permissions
+from app.middleware.auth import get_authenticated_actor_context, get_authenticated_user
 from app.middleware.tenant_context import TenantContext, get_tenant_context
 from app.models import User, UserRole
 from app.schemas import DoubtHistoryResponse, DoubtInputBase, DoubtSolverResponse
@@ -21,25 +21,18 @@ def _role_key(user: User) -> str:
     return str(getattr(user, "role_key", "") or "").strip().lower()
 
 
-def _is_teacher_user(user: User) -> bool:
-    return getattr(user, "role", None) == UserRole.TEACHER or _role_key(user) == "teacher"
-
-
 def _is_student_user(user: User) -> bool:
-    return str(getattr(user, "user_type", "") or "").strip().lower() == "student" or _role_key(user) == "student"
-
-
-def _is_school_admin_user(user: User) -> bool:
-    return getattr(user, "role", None) == UserRole.ADMIN and not is_platform_admin_user(user)
+    user_type = str(getattr(user, "user_type", "") or "").strip().lower()
+    role_key = _role_key(user)
+    return user_type == "student" or role_key == "student" or role_key.startswith("managed_")
 
 
 def require_doubt_solver_user(
-    _: User = Depends(require_permissions("doubt_solver.solve", "doubt_solver.review", "doubt_solver.manage", "doubt_solver.escalate")),
     user: User = Depends(get_authenticated_user),
 ) -> User:
-    if _is_student_user(user) or _is_teacher_user(user) or _is_school_admin_user(user) or is_platform_admin_user(user):
+    if _is_student_user(user) or is_platform_admin_user(user):
         return user
-    raise HTTPException(status_code=403, detail="You do not have access to the doubt solver")
+    raise HTTPException(status_code=403, detail="Only students can use the doubt solver")
 
 
 @router.post("/text", response_model=DoubtSolverResponse)

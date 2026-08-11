@@ -123,7 +123,7 @@ export default function ParentIntelligencePortal() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Parent Intelligence Portal</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Attendance, tests, LMS progress, live classes, study planner, hostel, assignments, aur risk signals ko ek combined parent view mein surface kiya gaya hai.
+          Attendance, tests, LMS progress, live classes, assignments, aur risk signals ko ek combined parent view mein surface kiya gaya hai.
         </p>
       </div>
 

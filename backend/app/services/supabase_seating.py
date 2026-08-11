@@ -11,6 +11,9 @@ from app.services.supabase_admin import get_supabase_admin_client
 from app.services.seating_engine import SeatingAlgorithmEngine
 from app.utils.academic_batches import split_batch_to_class_section
 
+_SEATING_TABLE_CANDIDATES = ("seating_plans", "seating")
+_preferred_exam_seating_table = "seating_plans"
+
 
 def _sanitize_lookup_ids(values: Iterable[str]) -> list[str]:
     normalized = []
@@ -55,18 +58,20 @@ def _fetch_latest_plan_id(
     room_id: str,
     plan_name: str,
 ) -> str | None:
-    response = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("id")
-        .eq("school_id", school_id)
-        .eq("exam_id", exam_id)
-        .eq("room_id", room_id)
-        .eq("plan_name", plan_name)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
+    response = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .select("id")
+            .eq("school_id", school_id)
+            .eq("exam_id", exam_id)
+            .eq("room_id", room_id)
+            .eq("plan_name", plan_name)
+            .order("created_at", desc=True)
+            .limit(1)
+        ),
     )
     rows = list(response.data or [])
     if not rows:
@@ -106,6 +111,36 @@ def _is_plan_type_constraint_error(error: Exception) -> bool:
 
 def _normalize_batch_key(value: Any) -> str:
     return " ".join(str(value or "").replace("|", " | ").split()).strip().lower()
+
+
+def _is_missing_exam_seating_table_error(error: Exception) -> bool:
+    text = str(error or "")
+    lowered = text.lower()
+    return "pgrst205" in lowered and "exam.seating_plans" in lowered
+
+
+def _execute_exam_seating_query(supabase: Any, build_query) -> Any:
+    global _preferred_exam_seating_table
+
+    ordered_candidates = [_preferred_exam_seating_table] + [
+        candidate for candidate in _SEATING_TABLE_CANDIDATES if candidate != _preferred_exam_seating_table
+    ]
+
+    last_error: Exception | None = None
+    for table_name in ordered_candidates:
+        try:
+            response = build_query(table_name).execute()
+            _preferred_exam_seating_table = table_name
+            return response
+        except Exception as error:
+            last_error = error
+            if table_name == "seating_plans" and _is_missing_exam_seating_table_error(error):
+                continue
+            raise
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unable to execute exam seating query")
 
 
 def _fetch_batch_lookup(school_id: str, selected_batches: Iterable[str]) -> dict[str, dict[str, Any]]:
@@ -272,19 +307,25 @@ def list_seating_plans_with_lookups(
     room_lookup: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     supabase = get_supabase_admin_client()
-    query = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("*")
-        .eq("school_id", school_id)
-        .eq("is_active", True)
+    def build_query(table_name: str):
+        query = (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .select("*")
+            .eq("school_id", school_id)
+            .eq("is_active", True)
+        )
+        if exam_id:
+            query = query.eq("exam_id", exam_id)
+        if room_id:
+            query = query.eq("room_id", room_id)
+        return query.order("created_at", desc=True)
+
+    response = _execute_exam_seating_query(
+        supabase,
+        build_query,
     )
-    if exam_id:
-        query = query.eq("exam_id", exam_id)
-    if room_id:
-        query = query.eq("room_id", room_id)
-    response = query.order("created_at", desc=True).execute()
     rows = list(response.data or [])
     effective_exam_lookup = exam_lookup or _fetch_exam_lookup([row.get("exam_id") for row in rows])
     effective_room_lookup = room_lookup or _fetch_room_lookup([row.get("room_id") for row in rows])
@@ -296,15 +337,17 @@ def list_seating_plans_with_lookups(
 
 def get_seating_plan_layout(school_id: str, plan_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    result = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("*")
-        .eq("id", plan_id)
-        .eq("school_id", school_id)
-        .single()
-        .execute()
+    result = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .select("*")
+            .eq("id", plan_id)
+            .eq("school_id", school_id)
+            .single()
+        ),
     )
     row = result.data
     if not row:
@@ -336,15 +379,17 @@ def finalize_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
 
 def update_plan_status(school_id: str, plan_id: str, status: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    updated = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .update({"status": status})
-        .eq("id", plan_id)
-        .eq("school_id", school_id)
-        .select("id")
-        .execute()
+    updated = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .update({"status": status})
+            .eq("id", plan_id)
+            .eq("school_id", school_id)
+            .select("id")
+        ),
     )
     if not list(updated.data or []):
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -353,15 +398,17 @@ def update_plan_status(school_id: str, plan_id: str, status: str) -> dict[str, A
 
 def audit_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    result = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("*")
-        .eq("id", plan_id)
-        .eq("school_id", school_id)
-        .single()
-        .execute()
+    result = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .select("*")
+            .eq("id", plan_id)
+            .eq("school_id", school_id)
+            .single()
+        ),
     )
     row = result.data
     if not row:
@@ -414,15 +461,17 @@ def audit_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
 
 def delete_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    deleted = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .delete()
-        .eq("id", plan_id)
-        .eq("school_id", school_id)
-        .select("id")
-        .execute()
+    deleted = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .delete()
+            .eq("id", plan_id)
+            .eq("school_id", school_id)
+            .select("id")
+        ),
     )
     if not list(deleted.data or []):
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -431,17 +480,24 @@ def delete_seating_plan(school_id: str, plan_id: str) -> dict[str, Any]:
 
 def delete_all_seating_plans(school_id: str) -> dict[str, Any]:
     supabase = get_supabase_admin_client()
-    existing = (
-        supabase
-        .schema("exam")
-        .table("seating_plans")
-        .select("id")
-        .eq("school_id", school_id)
-        .execute()
+    existing = _execute_exam_seating_query(
+        supabase,
+        lambda table_name: (
+            supabase
+            .schema("exam")
+            .table(table_name)
+            .select("id")
+            .eq("school_id", school_id)
+        ),
     )
     rows = list(existing.data or [])
     if rows:
-        supabase.schema("exam").table("seating_plans").delete().eq("school_id", school_id).execute()
+        _execute_exam_seating_query(
+            supabase,
+            lambda table_name: (
+                supabase.schema("exam").table(table_name).delete().eq("school_id", school_id)
+            ),
+        )
     return {
         "message": f"All {len(rows)} seating plans deleted successfully",
         "deleted_count": len(rows),
@@ -660,12 +716,14 @@ def generate_seating_plans(
             }
 
             try:
-                insert_resp = (
-                    supabase
-                    .schema("exam")
-                    .table("seating_plans")
-                    .insert(plan_row)
-                    .execute()
+                insert_resp = _execute_exam_seating_query(
+                    supabase,
+                    lambda table_name: (
+                        supabase
+                        .schema("exam")
+                        .table(table_name)
+                        .insert(plan_row)
+                    ),
                 )
             except Exception as error:
                 if pt != "all_in_one" or not _is_plan_type_constraint_error(error):
@@ -675,12 +733,14 @@ def generate_seating_plans(
                     **plan_row,
                     "plan_type": "strict",
                 }
-                insert_resp = (
-                    supabase
-                    .schema("exam")
-                    .table("seating_plans")
-                    .insert(compatibility_row)
-                    .execute()
+                insert_resp = _execute_exam_seating_query(
+                    supabase,
+                    lambda table_name: (
+                        supabase
+                        .schema("exam")
+                        .table(table_name)
+                        .insert(compatibility_row)
+                    ),
                 )
             inserted = list(insert_resp.data or [])
             inserted_id = str(inserted[0].get("id") or "").strip() if inserted else ""

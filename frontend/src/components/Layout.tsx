@@ -26,8 +26,6 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
-  TrendingUp,
   UserCheck,
   UserCog,
   Users,
@@ -67,7 +65,7 @@ type MenuSection = {
 };
 
 /* ── premium design tokens ─────────────────────────────────────────────── */
-const SIDEBAR_BG = 'linear-gradient(180deg, #1D4ED8 0%, #2563EB 50%, #0F3D91 100%)';
+const SIDEBAR_BG = 'linear-gradient(180deg, #081632 0%, #0b1c43 48%, #102a63 100%)';
 const SIDEBAR_FONT = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif";
 
 const IconChip = ({ icon: Icon, color }: { icon: LucideIcon; color: string }) => (
@@ -82,19 +80,19 @@ const IconChip = ({ icon: Icon, color }: { icon: LucideIcon; color: string }) =>
 const itemBase = (active: boolean) =>
   `group relative flex w-full items-center gap-3 rounded-2xl pl-2 pr-3 text-left transition-all duration-200 h-[48px] ${
     active
-      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/40 ring-1 ring-white/25'
-      : 'bg-white/5 text-blue-100 hover:bg-white/10 hover:text-white hover:shadow-lg hover:-translate-y-px'
+      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-[#fff1b3] shadow-lg shadow-blue-500/40 ring-1 ring-white/25'
+      : 'bg-white/5 text-[#f4c95d] hover:bg-white/10 hover:text-[#fff1b3] hover:shadow-lg hover:-translate-y-px'
   }`;
 
 const childBase = (active: boolean) =>
   `group relative flex w-full items-center gap-3 rounded-xl pl-3 pr-3 text-left text-[13px] transition-all duration-200 h-[40px] ${
     active
-      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30 font-semibold'
-      : 'text-blue-200 hover:bg-white/10 hover:text-white'
+      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-[#fff1b3] shadow-md shadow-blue-500/30 font-semibold'
+      : 'text-[#f4c95d] hover:bg-white/10 hover:text-[#fff1b3]'
   }`;
 
 const labelCls = (active: boolean) =>
-  `min-w-0 flex-1 truncate text-[14px] ${active ? 'font-bold text-white' : 'font-semibold text-blue-100'}`;
+  `min-w-0 flex-1 truncate text-[14px] ${active ? 'font-bold text-[#fff1b3]' : 'font-semibold text-[#f4c95d]'}`;
 
 const LeftAccent = () => <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-full bg-white" />;
 
@@ -121,7 +119,6 @@ const SECTION_COLOR: Record<string, string> = {
   'school-self-service': '#22d3ee',
   'parent-portal': '#d946ef',
   'student-portal': '#fb7185',
-  'ai-assistants': '#7c3aed',
   predictions: '#c026d3',
   'enterprise-bi': '#0891b2',
   reports: '#0d9488',
@@ -146,12 +143,7 @@ export default function Layout({ children }: LayoutProps) {
   const { signOut, canAccess: authCanAccess } = useAuth();
   const { activeSchoolId, activeSchoolName, schoolBranding, setSchoolBranding, clearActiveSchool } = usePlatformAdminSchoolStore();
   const brandingFetchKeyRef = useRef<string | null>(null);
-  const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = user?.role_key === 'platform_admin';
-  const roleKey = String(user?.role_key || '').toLowerCase();
-  const isStudentAiUser = roleKey === 'student' || user?.role === 'student';
-  const isTeacherAiUser = roleKey === 'teacher' || user?.role === 'teacher';
-  const isSchoolAiUser = isAdmin || roleKey === 'school_admin' || roleKey === 'platform_admin';
   const currentRoute = `${location.pathname}${location.hash || ''}`;
 
   const brandAccent = schoolBranding?.accent_color || '#22d3ee';
@@ -333,11 +325,6 @@ export default function Layout({ children }: LayoutProps) {
           permission: ['offline_exams', 'offline_exams.view', 'offline_exams.manage', 'offline_exams.reports'],
         },
         {
-          name: 'Paper Generator',
-          path: '/teacher-ai',
-          permission: ['teacher_ai.generate', 'teacher_ai.evaluate', 'teacher_ai.reports'],
-        },
-        {
           name: 'Reports',
           path: '/reports',
           permission: 'admin_office.reports',
@@ -427,16 +414,15 @@ export default function Layout({ children }: LayoutProps) {
       key: 'school-self-service',
       name: 'School Self-Service',
       icon: SlidersHorizontal,
-      permission: 'settings',
-      roles: ['admin', 'school_admin', 'platform_admin'],
+      permission: 'school_self_service',
       children: [
-        { name: 'School Branding', path: '/school-self-service/branding', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'School Preferences', path: '/school-self-service/preferences', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'Portal Settings', path: '/school-self-service/portal-settings', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'Email Templates', path: '/school-self-service/email-templates', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'SMS / WhatsApp', path: '/school-self-service/messaging-templates', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'Storage Center', path: '/school-self-service/storage', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
-        { name: 'Backup Center', path: '/school-self-service/backups', permission: 'settings', roles: ['admin', 'school_admin', 'platform_admin'] },
+        { name: 'School Branding', path: '/school-self-service/branding', permission: 'school_self_service.branding' },
+        { name: 'School Preferences', path: '/school-self-service/preferences', permission: 'school_self_service.preferences' },
+        { name: 'Portal Settings', path: '/school-self-service/portal-settings', permission: 'school_self_service.portal_settings' },
+        { name: 'Email Templates', path: '/school-self-service/email-templates', permission: 'school_self_service.email_templates' },
+        { name: 'SMS / WhatsApp', path: '/school-self-service/messaging-templates', permission: 'school_self_service.messaging_templates' },
+        { name: 'Storage Center', path: '/school-self-service/storage', permission: 'school_self_service.storage' },
+        { name: 'Backup Center', path: '/school-self-service/backups', permission: 'school_self_service.backups' },
       ],
     },
     {
@@ -461,22 +447,6 @@ export default function Layout({ children }: LayoutProps) {
       icon: GraduationCap,
       roles: ['student'],
       children: [{ name: 'Dashboard', path: '/student/dashboard' }],
-    },
-    {
-      key: 'ai-assistants',
-      name: 'AI Assistants',
-      icon: Sparkles,
-      children: [
-        ...(isStudentAiUser
-          ? [{ name: 'AI Study Assistant', path: '/ai-study-assistant', permission: 'study_planner.view' }]
-          : []),
-        ...(isTeacherAiUser
-          ? [{ name: 'Teacher AI Assistant', path: '/teacher-ai', permission: 'teacher_ai.generate' }]
-          : []),
-        ...(isSchoolAiUser
-          ? [{ name: 'School AI Assistant', path: '/school-ai-assistant', permission: 'ai_agents.view' }]
-          : []),
-      ],
     },
     {
       key: 'enterprise-bi',
@@ -678,9 +648,9 @@ export default function Layout({ children }: LayoutProps) {
             <IconChip icon={Icon} color={color} />
             <span className={labelCls(active)}>{section.name}</span>
             {isOpen ? (
-              <ChevronDown className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-blue-200'}`} />
+              <ChevronDown className={`h-4 w-4 shrink-0 ${active ? 'text-[#fff1b3]' : 'text-[#f4c95d]'}`} />
             ) : (
-              <ChevronRight className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-blue-200'}`} />
+              <ChevronRight className={`h-4 w-4 shrink-0 ${active ? 'text-[#fff1b3]' : 'text-[#f4c95d]'}`} />
             )}
           </button>
           {isOpen && (
@@ -919,7 +889,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
               {expanded && (
                 <div className="min-w-0">
-                  <p className="truncate text-[22px] font-bold leading-tight text-white">{activeSchoolName || schoolBranding?.portal_name || 'Dr. Girish App'}</p>
+                  <p className="truncate text-[22px] font-bold leading-tight text-[#f4c95d]">{activeSchoolName || schoolBranding?.portal_name || 'Dr. Girish App'}</p>
                   <p className="truncate text-[13px] font-medium uppercase tracking-[0.16em] text-blue-100/80">
                     {isPlatformAdmin
                       ? activeSchoolId
@@ -943,6 +913,7 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         {/* ── Search ── */}
+        {renderSchoolCard(!expanded)}
         <div className="shrink-0 px-3 py-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" />
@@ -995,16 +966,16 @@ export default function Layout({ children }: LayoutProps) {
                         onClick={() => toggleSection('__platform')}
                         className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 ${
                           platformActive
-                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30'
-                            : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                            ? 'bg-gradient-to-r from-[#f4c95d] to-[#d9a62d] text-[#0b1c43] shadow-md shadow-[#d9a62d]/30'
+                            : 'text-[#0b1c43] hover:bg-[#f4c95d] hover:text-[#0b1c43]'
                         }`}
                       >
                         <IconChip icon={ShieldCheck} color="#3b82f6" />
-                        <span className="flex-1 text-[13px] font-bold uppercase tracking-[0.1em] text-white/90">
+                        <span className="flex-1 text-[13px] font-bold uppercase tracking-[0.1em] text-[#0b1c43]">
                           Platform Management
                         </span>
                         <ChevronRight
-                          className={`h-4 w-4 text-blue-200 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+                          className={`h-4 w-4 text-[#0b1c43] transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
                         />
                       </button>
                       {open && (
@@ -1017,11 +988,11 @@ export default function Layout({ children }: LayoutProps) {
                                 onClick={() => handleNavigate(item.path)}
                                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] transition-all duration-200 ${
                                   a
-                                    ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-md shadow-blue-500/30 font-semibold'
-                                    : 'text-blue-100 hover:bg-white/10 hover:text-white'
+                                    ? 'bg-gradient-to-r from-[#f4c95d] to-[#d9a62d] text-[#0b1c43] shadow-md shadow-[#d9a62d]/30 font-semibold'
+                                    : 'text-[#0b1c43] hover:bg-[#f4c95d] hover:text-[#0b1c43]'
                                 }`}
                               >
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/40" />
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#0b1c43]/70" />
                                 <span className="min-w-0 flex-1 truncate">{item.name}</span>
                               </button>
                             );

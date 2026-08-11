@@ -1,67 +1,71 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, GraduationCap, Lock, Mail, Monitor, School, Users } from 'lucide-react';
+import { Eye, EyeOff, GraduationCap, Lock, Mail, Monitor, MoveRight, School, ShieldCheck, Users } from 'lucide-react';
+
 import bhavyaAxisLogo from '@/assets/bhavya-axis-logo-removebg-preview.png';
+import InteractiveCompass from '@components/login/InteractiveCompass';
 import { useAuth } from '@/contexts/AuthProvider';
 import { apiService } from '@services/api';
 import type { PortalIntent, SchoolPublicBranding } from '@types';
-import InteractiveCompass from '@components/login/InteractiveCompass';
 
 const DEFAULT_BRANDING: SchoolPublicBranding = {
-  school_name: 'Dr. Girish App',
-  portal_name: 'Dr. Girish App',
+  school_name: 'School ERP',
+  portal_name: 'School ERP',
   tagline: '',
   logo_url: '',
   banner_url: '',
   favicon_url: '',
   background_image_url: '',
-  welcome_message: 'Welcome back',
-  footer_text: 'Admin creates users and roles. Login ke baad assigned modules hi dikhenge.',
-  primary_color: '#0f766e',
-  secondary_color: '#1d4ed8',
-  accent_color: '#f59e0b',
+  welcome_message: 'Welcome Back!',
+  footer_text: 'Use the account provided by your school',
+  primary_color: '#091a45',
+  secondary_color: '#0f2f77',
+  accent_color: '#f5b41f',
   theme: 'auto',
 };
 
 const SCHOOL_CONTEXT_REQUIRED_HINT = 'School context is required for username login';
 const SCHOOL_CONTEXT_MESSAGE = 'Please select a school before using a username. Alternatively, log in with your email.';
 
-const TABS: { key: PortalIntent; label: string; Icon: typeof School | typeof GraduationCap | typeof Users }[] = [
-  { key: 'school_erp', label: 'Dr. Girish App', Icon: School },
+const TABS: { key: PortalIntent; label: string; Icon: typeof School | typeof GraduationCap | typeof Users | typeof Monitor }[] = [
+  { key: 'school_erp', label: 'School ERP', Icon: School },
   { key: 'student_portal', label: 'Student', Icon: GraduationCap },
   { key: 'parent_portal', label: 'Parent', Icon: Users },
   { key: 'platform_admin', label: 'Admin', Icon: Monitor },
 ];
 
-const PORTAL_DETAILS: Record<PortalIntent, {
-  subtitle: string;
-  buttonText: string;
-  helperText: string;
-  welcomeMessage: string;
-}> = {
+const PORTAL_DETAILS: Record<
+  PortalIntent,
+  {
+    heading: string;
+    subtitle: string;
+    buttonText: string;
+    helperText: string;
+  }
+> = {
   school_erp: {
+    heading: 'School ERP',
     subtitle: 'Login to your school workspace',
-    buttonText: 'Login to Dr. Girish App',
-    helperText: 'Use the account provided by your school.',
-    welcomeMessage: 'Welcome back! Please enter your details.',
+    buttonText: 'Login to School ERP',
+    helperText: 'Use the account provided by your school',
   },
   student_portal: {
-    subtitle: 'Login to Student Portal',
+    heading: 'Student Portal',
+    subtitle: 'Login to your student workspace',
     buttonText: 'Login to Student Portal',
-    helperText: 'Access your learning, tests, results, and student services.',
-    welcomeMessage: 'Welcome back! Please enter your details.',
+    helperText: 'Use the credentials shared by your school',
   },
   parent_portal: {
-    subtitle: 'Login to Parent Portal',
+    heading: 'Parent Portal',
+    subtitle: 'Login to your parent workspace',
     buttonText: 'Login to Parent Portal',
-    helperText: 'Access your linked student information and parent services.',
-    welcomeMessage: 'Welcome back! Please enter your details.',
+    helperText: 'Use the credentials linked with your child',
   },
   platform_admin: {
+    heading: 'Admin Portal',
     subtitle: 'Login to platform administration',
-    buttonText: 'Login as Platform Admin',
-    helperText: 'Restricted to authorized platform administrators.',
-    welcomeMessage: 'Welcome back! Please enter your details.',
+    buttonText: 'Login as Admin',
+    helperText: 'Restricted access for authorized administrators',
   },
 };
 
@@ -87,50 +91,9 @@ export default function Login() {
   const [sessionConflict, setSessionConflict] = useState<any | null>(null);
   const [branding, setBranding] = useState<SchoolPublicBranding>(DEFAULT_BRANDING);
   const [portalIntent, setPortalIntent] = useState<PortalIntent>('school_erp');
-
-  const shellRef = useRef<HTMLDivElement>(null);
-  const [masterScale, setMasterScale] = useState(1);
-
-  useEffect(() => {
-    function compute() {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const availW = Math.max(vw - 48, 200);
-      const availH = Math.max(vh - 48, 200);
-
-      // Stacked mode for narrower viewports — no zoom needed
-      const isStacked = vw < 1000;
-      if (isStacked) {
-        setMasterScale(1);
-        return;
-      }
-
-      // Side-by-side mode — scale to fit both width and height
-      const scaleW = availW / 1200;
-      const scaleH = availH / 600;
-      const scale = Math.min(scaleW, scaleH, 1);
-      setMasterScale(scale);
-    }
-    compute();
-    const vis = window.visualViewport;
-    window.addEventListener('resize', compute);
-    if (vis) vis.addEventListener('resize', compute);
-    return () => {
-      window.removeEventListener('resize', compute);
-      if (vis) vis.removeEventListener('resize', compute);
-    };
-  }, []);
+  const [rememberMe, setRememberMe] = useState(true);
 
   const portalDetail = PORTAL_DETAILS[portalIntent];
-
-  const tabPieceColor: Record<PortalIntent, { text: string; bg: string; ring: string; btnFrom: string; btnTo: string; btnShadow: string }> = {
-    school_erp: { text: '#3b82f6', bg: '#eff6ff', ring: 'rgba(59,130,246,0.15)', btnFrom: '#3b82f6', btnTo: '#1d4ed8', btnShadow: 'rgba(59,130,246,0.3)' },
-    student_portal: { text: '#ca8a04', bg: '#fefce8', ring: 'rgba(202,138,4,0.15)', btnFrom: '#eab308', btnTo: '#ca8a04', btnShadow: 'rgba(234,179,8,0.3)' },
-    parent_portal: { text: '#ef4444', bg: '#fef2f2', ring: 'rgba(239,68,68,0.15)', btnFrom: '#ef4444', btnTo: '#b91c1c', btnShadow: 'rgba(239,68,68,0.3)' },
-    platform_admin: { text: '#f97316', bg: '#fff7ed', ring: 'rgba(249,115,22,0.15)', btnFrom: '#f97316', btnTo: '#c2410c', btnShadow: 'rgba(249,115,22,0.3)' },
-  };
-
-  const activeTabStyle = tabPieceColor[portalIntent];
 
   const schoolHint = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -148,22 +111,21 @@ export default function Login() {
     (async () => {
       try {
         const response = await apiService.getPublicSchoolBranding(schoolHint ? { school: schoolHint } : {});
-        if (!active) return;
-        setBranding(response.data);
+        if (active) setBranding(response.data);
       } catch {
-        if (active) {
-          setBranding(DEFAULT_BRANDING);
-        }
+        if (active) setBranding(DEFAULT_BRANDING);
       }
     })();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [schoolHint]);
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.title = branding?.school_name || branding?.portal_name || 'Sign In';
+      document.title = branding.school_name || branding.portal_name || 'Sign In';
     }
-    const faviconUrl = branding?.favicon_url;
+    const faviconUrl = branding.favicon_url;
     if (!faviconUrl || typeof document === 'undefined') return;
     let favicon = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
     if (!favicon) {
@@ -172,7 +134,7 @@ export default function Login() {
       document.head.appendChild(favicon);
     }
     favicon.href = faviconUrl;
-  }, [branding?.favicon_url]);
+  }, [branding.favicon_url, branding.portal_name, branding.school_name]);
 
   if (user) return <Navigate to={getDefaultRoute(user)} replace />;
 
@@ -186,6 +148,7 @@ export default function Login() {
       setError(SCHOOL_CONTEXT_MESSAGE);
       return;
     }
+
     setLoading(true);
     setError(null);
     setSessionConflict(null);
@@ -194,7 +157,6 @@ export default function Login() {
     } catch (requestError: any) {
       if (requestError?.code === 'session_limit_exceeded') {
         setSessionConflict(requestError?.conflict || null);
-        setError(null);
         return;
       }
       const rawMessage =
@@ -203,7 +165,6 @@ export default function Login() {
         requestError?.message ||
         requestError?.error_description ||
         'Login failed';
-      setSessionConflict(null);
       setError(toFriendlyLoginError(String(rawMessage)));
     } finally {
       setLoading(false);
@@ -215,92 +176,81 @@ export default function Login() {
     await submitLogin();
   };
 
-  const handleTabChange = (tab: PortalIntent) => {
-    setPortalIntent(tab);
-    setError(null);
-    setSessionConflict(null);
-  };
-
   const message = error || authError || null;
 
   return (
     <div className="login-page">
-      <div className="login-bg-gradient" />
-      <div className="login-bg-radial" />
-      <div className="login-bg-vignette" />
+      <div className="login-page__backdrop" />
 
-      <div ref={shellRef} className="login-shell" style={{ '--master-scale': masterScale } as React.CSSProperties}>
-        <div className="auth-panel">
-          <div className="auth-panel-inner">
+      <div className="login-shell">
+        <section className="auth-side">
+          <div
+            className="auth-card"
+            style={
+              branding.background_image_url
+                ? {
+                    backgroundImage: `radial-gradient(circle at 18% 8%, rgba(72, 103, 255, 0.28) 0%, transparent 32%), linear-gradient(180deg, rgba(9, 24, 67, 0.97) 0%, rgba(7, 18, 50, 0.99) 100%), url(${branding.background_image_url})`,
+                  }
+                : undefined
+            }
+          >
+            <div className="auth-card__border" />
+
             <div className="auth-logo-wrap">
-              <img
-                src={branding?.logo_url || bhavyaAxisLogo}
-                alt={branding?.school_name || 'School logo'}
-                className="auth-logo"
-              />
+              <img src={branding.logo_url || bhavyaAxisLogo} alt={branding.school_name || 'School logo'} className="auth-logo" />
             </div>
 
-            <p className="auth-portal-label">— Choose your portal —</p>
+            <div className="portal-header">
+              <span className="portal-header__line" />
+              <p className="portal-header__label">Choose Your Portal</p>
+              <span className="portal-header__line" />
+            </div>
 
-            <div className="portal-selector" role="tablist">
+            <div className="portal-tabs" role="tablist">
               {TABS.map(({ key, label, Icon }) => {
-                const isSelected = portalIntent === key;
-                const pc = tabPieceColor[key];
+                const active = portalIntent === key;
                 return (
                   <button
                     key={key}
+                    type="button"
                     role="tab"
-                    aria-selected={isSelected}
-                    onClick={() => handleTabChange(key)}
-                    className={`portal-tab ${isSelected ? 'portal-tab--active' : ''}`}
-                    style={isSelected ? {
-                      color: pc.text,
-                      boxShadow: `0 4px 12px ${pc.ring}, 0 1px 3px rgba(0,0,0,0.04)`,
-                    } : undefined}
+                    aria-selected={active}
+                    onClick={() => {
+                      setPortalIntent(key);
+                      setError(null);
+                      setSessionConflict(null);
+                    }}
+                    className={`portal-tab ${active ? 'portal-tab--active' : ''}`}
                   >
-                    <span
-                      className="portal-tab-icon"
-                      style={isSelected ? {
-                        background: pc.bg,
-                        color: pc.text,
-                      } : undefined}
-                    >
-                      <Icon className="portal-tab-icon-svg" />
-                    </span>
-                    <span className="portal-tab-label">{label}</span>
-                    {isSelected && <span className="portal-tab-indicator" style={{ background: pc.text }} />}
+                    <span className="portal-tab__icon"><Icon className="portal-tab__icon-svg" /></span>
+                    <span className="portal-tab__label">{label}</span>
                   </button>
                 );
               })}
             </div>
 
-            <h1 className="auth-heading">
-              {portalIntent === 'school_erp' ? (branding?.school_name || branding?.portal_name || 'Dr. Girish App') :
-               portalIntent === 'student_portal' ? 'Student Portal' :
-               portalIntent === 'parent_portal' ? 'Parent Portal' :
-               'Platform Administration'}
-            </h1>
+            <h1 className="auth-title">{portalDetail.heading}</h1>
             <p className="auth-subtitle">{portalDetail.subtitle}</p>
 
             <form onSubmit={handleSubmit} className="auth-form">
               <div className="auth-field">
-                <label className="auth-field-label">Email</label>
+                <label className="auth-field__label">{portalIntent === 'school_erp' ? 'Email' : 'Email or Username'}</label>
                 <div className="auth-input-wrap">
-                  <Mail className="auth-input-icon" />
+                  <Mail className="auth-input__icon" />
                   <input
                     type="text"
                     value={identifier}
                     onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="Enter your email"
+                    placeholder={portalIntent === 'school_erp' ? 'Enter your email' : 'Enter your email or username'}
                     className="auth-input"
                   />
                 </div>
               </div>
 
               <div className="auth-field">
-                <label className="auth-field-label">Password</label>
+                <label className="auth-field__label">Password</label>
                 <div className="auth-input-wrap">
-                  <Lock className="auth-input-icon" />
+                  <Lock className="auth-input__icon" />
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={password}
@@ -310,457 +260,513 @@ export default function Login() {
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword((current) => !current)}
                     className="auth-password-toggle"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowPassword((current) => !current)}
                   >
-                    {showPassword ? <EyeOff className="auth-input-icon" /> : <Eye className="auth-input-icon" />}
+                    {showPassword ? <EyeOff className="auth-input__icon" /> : <Eye className="auth-input__icon" />}
                   </button>
                 </div>
+              </div>
+
+              <div className="auth-utility-row">
+                <label className="auth-checkbox">
+                  <input type="checkbox" checked={rememberMe} onChange={() => setRememberMe((current) => !current)} />
+                  <span>Remember me</span>
+                </label>
+                <button
+                  type="button"
+                  className="auth-link-btn"
+                  onClick={() => setError('Forgot password flow abhi configured nahi hai. Admin se temporary password le sakte ho.')}
+                >
+                  Forgot Password?
+                </button>
               </div>
 
               <div className="auth-message-zone" aria-live="polite">
                 {sessionConflict ? (
                   <div className="auth-session-conflict">
-                    <div className="auth-conflict-info">
-                      <p className="auth-conflict-title">Existing session detected.</p>
-                      <p className="auth-conflict-detail">
+                    <div className="auth-session-conflict__info">
+                      <p className="auth-session-conflict__title">Existing session detected.</p>
+                      <p className="auth-session-conflict__detail">
                         {sessionConflict?.current_session?.device_name || 'Another device'} | {sessionConflict?.current_session?.browser || 'Browser'}
-                        {sessionConflict?.current_session?.last_activity ? ` · Last activity: ${sessionConflict.current_session.last_activity}` : ''}
                       </p>
                     </div>
                     <button
                       type="button"
                       disabled={loading}
                       onClick={() => void submitLogin({ forceTakeover: true })}
-                      className="auth-conflict-btn"
+                      className="auth-session-conflict__btn"
                     >
                       Continue Here
                     </button>
                   </div>
                 ) : message ? (
                   <div className="auth-error-box" role="alert">
-                    <p className="auth-error-text">
+                    <p className="auth-error-box__text">
                       {message.includes('Session registration timeout') || message.includes('session registration')
                         ? 'Login verified, but application session setup could not complete. Please try again.'
                         : message}
                     </p>
-                    {message.includes('Failed to fetch') || message.includes('NetworkError') || message.includes('network') ? (
-                      <code className="auth-error-url">{`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`}</code>
-                    ) : null}
                   </div>
                 ) : null}
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="auth-submit-btn"
-                style={{
-                  background: `linear-gradient(90deg, ${activeTabStyle.btnFrom} 0%, ${activeTabStyle.btnTo} 50%, ${activeTabStyle.btnFrom} 100%)`,
-                  boxShadow: `0 6px 24px ${activeTabStyle.btnShadow}`,
-                  '--btn-shadow': activeTabStyle.btnShadow,
-                } as React.CSSProperties}
-              >
+              <button type="submit" disabled={loading} className="auth-submit-btn">
                 {loading ? (
-                  <span className="auth-submit-loading">
+                  <span className="auth-submit-btn__loading">
                     <svg className="auth-spinner" viewBox="0 0 24 24" fill="none">
                       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
                     </svg>
                     Signing In...
                   </span>
                 ) : (
-                  portalDetail.buttonText
+                  <>
+                    <MoveRight className="auth-submit-btn__icon" />
+                    <span>{portalDetail.buttonText}</span>
+                  </>
                 )}
               </button>
 
               <p className="auth-helper">{portalDetail.helperText}</p>
             </form>
-          </div>
-        </div>
 
-        <div className="compass-experience">
-          <InteractiveCompass activePortal={portalIntent} />
-        </div>
+            {(branding.footer_text || DEFAULT_BRANDING.footer_text) !== portalDetail.helperText ? (
+              <footer className="auth-footer">
+                <ShieldCheck className="auth-footer__icon" />
+                <span>{branding.footer_text || DEFAULT_BRANDING.footer_text}</span>
+              </footer>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="hero-side">
+          <div className="hero-side__glow hero-side__glow--one" />
+          <div className="hero-side__glow hero-side__glow--two" />
+          <div className="hero-compass-wrap">
+            <InteractiveCompass activePortal={portalIntent} />
+          </div>
+        </section>
       </div>
 
       <style>{`
         .login-page {
           position: relative;
-          min-height: 100vh;
+          min-height: 100dvh;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding:
-            max(24px, env(safe-area-inset-top, 0px))
-            max(20px, env(safe-area-inset-right, 0px))
-            max(24px, env(safe-area-inset-bottom, 0px))
-            max(20px, env(safe-area-inset-left, 0px));
-          overflow-x: hidden;
-          overflow-y: auto;
-          background: #0b1120;
+          padding: 16px;
+          overflow: hidden;
+          background: #06142f;
           font-family: 'Nunito', 'DM Sans', sans-serif;
+          box-sizing: border-box;
         }
 
-        .login-bg-gradient {
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(
-            135deg,
-            #071426 0%,
-            #10213d 38%,
-            #172554 66%,
-            #083344 100%
-          );
-        }
-
-        .login-bg-radial {
+        .login-page__backdrop {
           position: absolute;
           inset: 0;
           background:
-            radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
-            radial-gradient(circle at 82% 70%, rgba(20, 184, 166, 0.18) 0%, transparent 38%),
-            radial-gradient(circle at 60% 15%, rgba(139, 92, 246, 0.14) 0%, transparent 30%);
-        }
-
-        .login-bg-vignette {
-          position: absolute;
-          inset: 0;
-          background: radial-gradient(ellipse 100% 100% at center, transparent 40%, rgba(0, 0, 0, 0.5) 100%);
-          pointer-events: none;
+            radial-gradient(circle at 18% 12%, rgba(56, 101, 255, 0.24) 0%, transparent 26%),
+            radial-gradient(circle at 84% 84%, rgba(38, 180, 255, 0.12) 0%, transparent 22%),
+            linear-gradient(135deg, #07142d 0%, #0b1c43 48%, #081632 100%);
         }
 
         .login-shell {
           position: relative;
           z-index: 1;
-          display: flex;
+          display: grid;
+          grid-template-columns: minmax(420px, 560px) minmax(720px, 1fr);
           width: 100%;
-          max-width: 1200px;
-          max-height: 600px;
-          zoom: var(--master-scale, 1);
-          border-radius: 28px;
-          border: 1px solid rgba(255, 255, 255, 0.25);
-          background: rgba(255, 255, 255, 0.12);
-          backdrop-filter: blur(24px);
-          -webkit-backdrop-filter: blur(24px);
+          max-width: 1400px;
+          height: min(780px, calc(100dvh - 24px));
+          max-height: calc(100dvh - 24px);
+          border-radius: 38px;
+          border: 1px solid rgba(224, 176, 67, 0.5);
+          background: linear-gradient(180deg, rgba(7, 19, 47, 0.94) 0%, rgba(6, 16, 40, 0.94) 100%);
           box-shadow:
-            0 24px 80px rgba(0, 0, 0, 0.3),
-            0 8px 32px rgba(0, 0, 0, 0.15),
-             inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            0 34px 90px rgba(0, 0, 0, 0.42),
+            inset 0 1px 0 rgba(255, 255, 255, 0.04);
+          overflow: hidden;
         }
 
-        .auth-panel {
-          width: clamp(320px, 35%, 420px);
-          flex-shrink: 0;
-          background: transparent;
-          padding: 12px;
+        .auth-side {
+          padding: 16px;
+          min-height: 0;
         }
 
-        .auth-panel-inner {
-          border-radius: 20px;
-          padding: 28px 32px 24px;
+        .auth-card {
+          position: relative;
           height: 100%;
+          min-height: 0;
+          border-radius: 30px;
+          padding: 16px 24px 18px;
           display: flex;
           flex-direction: column;
-          justify-content: center;
-          background: linear-gradient(135deg, #99f6e4 0%, #bae6fd 30%, #bfdbfe 55%, #fde68a 100%);
+          background:
+            radial-gradient(circle at 18% 8%, rgba(72, 103, 255, 0.28) 0%, transparent 32%),
+            linear-gradient(180deg, rgba(9, 24, 67, 0.97) 0%, rgba(7, 18, 50, 0.99) 100%);
+          border: 1px solid rgba(221, 181, 79, 0.25);
+          box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.05),
+            0 24px 44px rgba(0, 0, 0, 0.26);
+          color: #ffffff;
+          background-size: cover;
+          background-position: center;
+          overflow: hidden;
+        }
+
+        .auth-card__border {
+          position: absolute;
+          inset: -10px;
+          border-radius: 34px;
+          border: 2px solid rgba(245, 190, 72, 0.22);
+          pointer-events: none;
         }
 
         .auth-logo-wrap {
           display: flex;
           justify-content: center;
-          margin-bottom: 16px;
+          margin-bottom: 14px;
         }
 
         .auth-logo {
-          height: 72px;
           width: auto;
+          max-height: 70px;
           object-fit: contain;
+          filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.28));
         }
 
-        .auth-portal-label {
-          text-align: center;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.16em;
+        .portal-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+
+        .portal-header__line {
+          flex: 1;
+          height: 1px;
+          background: linear-gradient(90deg, transparent 0%, rgba(247, 194, 82, 0.85) 100%);
+        }
+
+        .portal-header__line:last-child {
+          background: linear-gradient(90deg, rgba(247, 194, 82, 0.85) 0%, transparent 100%);
+        }
+
+        .portal-header__label {
+          margin: 0;
+          white-space: nowrap;
           text-transform: uppercase;
-          color: #94a3b8;
-          margin-bottom: 12px;
+          letter-spacing: 0.12em;
+          font-size: 12px;
+          font-weight: 800;
+          color: #ffc950;
         }
 
-        .portal-selector {
+        .portal-tabs {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
-          gap: 6px;
-          background: rgba(255,255,255,0.6);
-          backdrop-filter: blur(8px);
-          border-radius: 16px;
-          padding: 6px;
+          gap: 8px;
+          padding: 8px;
+          border-radius: 22px;
           margin-bottom: 16px;
-          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
+          background: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+          border: 1px solid rgba(255, 204, 97, 0.12);
         }
 
         .portal-tab {
-          position: relative;
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 4px;
-          padding: 10px 4px 8px;
-          border-radius: 12px;
-          font-size: 11px;
-          font-weight: 700;
-          line-height: 1.2;
-          color: #94a3b8;
-          transition: all 0.2s ease;
-          cursor: pointer;
-          border: none;
+          justify-content: center;
+          gap: 8px;
+          min-height: 76px;
+          padding: 8px 6px;
+          border-radius: 16px;
+          border: 1px solid transparent;
           background: transparent;
-          outline: none;
+          color: #c8d6f2;
+          cursor: pointer;
+          transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
         }
 
         .portal-tab:hover {
-          color: #64748b;
-          background: rgba(255, 255, 255, 0.5);
-        }
-
-        .portal-tab:focus-visible {
-          box-shadow: 0 0 0 2px #0f766e;
+          transform: translateY(-1px);
+          background: rgba(255, 255, 255, 0.03);
         }
 
         .portal-tab--active {
-          background: #fff;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+          background: linear-gradient(180deg, rgba(12, 31, 84, 1) 0%, rgba(7, 19, 56, 1) 100%);
+          border-color: rgba(255, 200, 72, 0.72);
+          color: #ffc950;
+          box-shadow: 0 14px 24px rgba(0, 0, 0, 0.22);
         }
 
-        .portal-tab-icon {
-          display: flex;
+        .portal-tab__icon {
+          display: inline-flex;
           align-items: center;
           justify-content: center;
-          padding: 6px;
-          border-radius: 8px;
-          color: #94a3b8;
-          transition: all 0.2s ease;
+          width: 34px;
+          height: 34px;
+          border-radius: 0;
+          background: transparent;
         }
 
-        .portal-tab-icon-svg {
-          width: 16px;
-          height: 16px;
+        .portal-tab--active .portal-tab__icon {
+          background: transparent;
         }
 
-        .portal-tab-label {
+        .portal-tab__icon-svg {
+          width: 18px;
+          height: 18px;
+        }
+
+        .portal-tab__label {
           font-size: 11px;
-          font-weight: 700;
-        }
-
-        .portal-tab-indicator {
-          position: absolute;
-          bottom: 0;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 20px;
-          height: 3px;
-          border-radius: 999px;
-        }
-
-        .auth-heading {
-          text-align: center;
-          font-size: 22px;
           font-weight: 800;
-          letter-spacing: 0.3px;
-          color: #0f172a;
-          margin-bottom: 2px;
+          line-height: 1.2;
+          text-align: center;
+        }
+
+        .portal-tab--active .portal-tab__label {
+          color: #ffc950;
+        }
+
+        .auth-title {
+          margin: 0;
+          text-align: center;
+          font-size: 25px;
+          line-height: 1.1;
+          font-weight: 900;
+          color: #f8fbff;
         }
 
         .auth-subtitle {
+          margin: 6px 0 14px;
           text-align: center;
           font-size: 13px;
-          font-weight: 500;
-          color: #94a3b8;
-          margin-bottom: 16px;
+          font-weight: 600;
+          color: #b4c3e1;
         }
 
         .auth-form {
-          flex: 1;
           display: flex;
           flex-direction: column;
+          flex: 1;
         }
 
         .auth-field {
           margin-bottom: 12px;
         }
 
-        .auth-field-label {
+        .auth-field__label {
           display: block;
+          margin-bottom: 5px;
           font-size: 12px;
           font-weight: 800;
-          letter-spacing: 0.3px;
-          color: #0f172a;
-          margin-bottom: 6px;
+          color: #ffc950;
         }
 
         .auth-input-wrap {
           display: flex;
           align-items: center;
-          border: 1.5px solid #ccddee;
-          border-radius: 12px;
-          background: rgba(255,255,255,0.85);
-          backdrop-filter: blur(4px);
-          padding: 0 14px;
-          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+          gap: 10px;
+          min-height: 48px;
+          padding: 0 16px;
+          border-radius: 14px;
+          border: 1px solid rgba(255, 210, 104, 0.16);
+          background: linear-gradient(180deg, rgba(15, 31, 78, 0.98) 0%, rgba(9, 23, 62, 0.98) 100%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+          overflow: hidden;
         }
 
         .auth-input-wrap:focus-within {
-          border-color: #10b981;
-          box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+          border-color: rgba(255, 205, 92, 0.75);
+          box-shadow:
+            0 0 0 4px rgba(245, 180, 31, 0.1),
+            inset 0 1px 0 rgba(255,255,255,0.05);
         }
 
-        .auth-input-icon {
+        .auth-input__icon {
           width: 18px;
           height: 18px;
+          color: #d2def2;
           flex-shrink: 0;
-          color: #94a3b8;
         }
 
         .auth-input {
           flex: 1;
-          background: transparent;
+          width: 100%;
+          height: 46px;
+          min-width: 0;
+          margin: 0;
           border: none;
           outline: none;
-          padding: 12px 0 12px 10px;
-          font-size: 14px;
-          color: #334155;
+          background: transparent;
+          box-shadow: none;
+          appearance: none;
+          -webkit-appearance: none;
+          color: #ffffff;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 46px;
+          padding: 0;
+          font-family: 'Nunito', 'DM Sans', sans-serif;
+          border-radius: 0;
+          vertical-align: middle;
         }
 
         .auth-input::placeholder {
-          color: #cbd5e1;
+          color: #a8badc;
+          line-height: 46px;
+        }
+
+        .auth-input:-webkit-autofill,
+        .auth-input:-webkit-autofill:hover,
+        .auth-input:-webkit-autofill:focus,
+        .auth-input:-webkit-autofill:active {
+          -webkit-text-fill-color: #ffffff;
+          -webkit-box-shadow: 0 0 0 1000px rgba(10, 24, 64, 0.98) inset;
+          box-shadow: 0 0 0 1000px rgba(10, 24, 64, 0.98) inset;
+          transition: background-color 9999s ease-out 0s;
+          caret-color: #ffffff;
+          border: none;
         }
 
         .auth-password-toggle {
-          margin-left: 4px;
-          color: #94a3b8;
-          transition: color 0.2s ease;
-          cursor: pointer;
           border: none;
-          background: none;
-          padding: 4px;
+          background: transparent;
+          padding: 0;
+          cursor: pointer;
+          color: #d2def2;
         }
 
-        .auth-password-toggle:hover {
-          color: #0ea5e9;
+        .auth-utility-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+
+        .auth-checkbox {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 12px;
+          font-weight: 700;
+          color: #eef4ff;
+          cursor: pointer;
+        }
+
+        .auth-checkbox input {
+          width: 16px;
+          height: 16px;
+          accent-color: #f5b41f;
+        }
+
+        .auth-link-btn {
+          border: none;
+          background: transparent;
+          padding: 0;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 800;
+          color: #ffc950;
         }
 
         .auth-message-zone {
-          min-height: 52px;
+          min-height: 36px;
+          margin-bottom: 10px;
           display: flex;
-          flex-direction: column;
-          justify-content: center;
-          margin-bottom: 12px;
-          flex-shrink: 0;
+          align-items: center;
+        }
+
+        .auth-error-box,
+        .auth-session-conflict {
+          width: 100%;
+          border-radius: 14px;
+          padding: 12px 14px;
         }
 
         .auth-error-box {
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          border-radius: 12px;
-          padding: 8px 12px;
+          border: 1px solid rgba(255, 137, 137, 0.36);
+          background: rgba(99, 19, 31, 0.42);
+          color: #ffd6d6;
+        }
+
+        .auth-error-box__text {
+          margin: 0;
           font-size: 12px;
-          color: #b91c1c;
-        }
-
-        .auth-error-text {
-          font-weight: 600;
-          line-height: 1.45;
-        }
-
-        .auth-error-url {
-          display: block;
-          margin-top: 4px;
-          font-size: 11px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          word-break: break-all;
+          line-height: 1.5;
+          font-weight: 700;
         }
 
         .auth-session-conflict {
           display: flex;
           align-items: center;
           gap: 12px;
-          background: #fff7ed;
-          border: 1px solid #fed7aa;
-          border-radius: 12px;
-          padding: 8px 12px;
-          min-height: 52px;
-          font-size: 12px;
-          color: #9a3412;
+          border: 1px solid rgba(255, 205, 92, 0.34);
+          background: rgba(80, 54, 7, 0.34);
+          color: #fff2ca;
         }
 
-        .auth-conflict-info {
+        .auth-session-conflict__info {
           flex: 1;
           min-width: 0;
         }
 
-        .auth-conflict-title {
-          font-weight: 700;
+        .auth-session-conflict__title {
+          margin: 0 0 2px;
           font-size: 12px;
+          font-weight: 800;
         }
 
-        .auth-conflict-detail {
-          margin-top: 2px;
+        .auth-session-conflict__detail {
+          margin: 0;
           font-size: 11px;
-          opacity: 0.85;
+          opacity: 0.9;
+          white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          white-space: nowrap;
         }
 
-        .auth-conflict-btn {
+        .auth-session-conflict__btn {
           flex-shrink: 0;
-          margin-top: 0;
-          border-radius: 999px;
-          background: #ea580c;
-          color: #fff;
-          font-size: 11px;
-          font-weight: 700;
-          padding: 7px 14px;
           border: none;
+          border-radius: 999px;
+          padding: 10px 14px;
+          background: linear-gradient(180deg, #ffd05a 0%, #d69306 100%);
+          color: #12264f;
+          font-size: 11px;
+          font-weight: 900;
           cursor: pointer;
-          transition: background 0.2s ease;
-        }
-
-        .auth-conflict-btn:hover {
-          background: #c2410c;
-        }
-
-        .auth-conflict-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
         }
 
         .auth-submit-btn {
           width: 100%;
-          border: none;
+          min-height: 50px;
           border-radius: 999px;
-          padding: 14px 24px;
-          font-size: 15px;
-          font-weight: 800;
-          letter-spacing: 0.5px;
-          color: #fff;
-          background-size: 200% 100%;
-          transition: all 0.25s ease;
+          border: 1px solid rgba(255, 197, 78, 0.84);
+          background: transparent;
+          color: #ffc950;
+          font-size: 14px;
+          font-weight: 900;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
           cursor: pointer;
-          margin-bottom: 12px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
         .auth-submit-btn:hover:not(:disabled) {
-          filter: brightness(1.1);
           transform: translateY(-1px);
-          box-shadow: 0 8px 32px var(--btn-shadow, rgba(59,130,246,0.3));
-        }
-
-        .auth-submit-btn:active:not(:disabled) {
-          transform: translateY(0);
-          filter: brightness(0.95);
-          box-shadow: 0 4px 16px var(--btn-shadow, rgba(59,130,246,0.25));
+          box-shadow:
+            0 14px 24px rgba(0, 0, 0, 0.22),
+            inset 0 1px 0 rgba(255,255,255,0.04);
         }
 
         .auth-submit-btn:disabled {
@@ -768,10 +774,14 @@ export default function Login() {
           cursor: not-allowed;
         }
 
-        .auth-submit-loading {
+        .auth-submit-btn__icon {
+          width: 18px;
+          height: 18px;
+        }
+
+        .auth-submit-btn__loading {
           display: inline-flex;
           align-items: center;
-          justify-content: center;
           gap: 8px;
         }
 
@@ -781,30 +791,77 @@ export default function Login() {
           animation: auth-spin 0.8s linear infinite;
         }
 
-        @keyframes auth-spin {
-          to { transform: rotate(360deg); }
-        }
-
         .auth-helper {
+          margin: 10px 0 0;
           text-align: center;
           font-size: 12px;
-          color: #94a3b8;
+          line-height: 1.55;
+          color: #9fb1d8;
         }
 
-        .compass-experience {
-          flex: 1;
+        .auth-footer {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: auto;
+          padding-top: 10px;
+          border-top: 1px solid rgba(255, 205, 92, 0.12);
+          color: #eef5ff;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .auth-footer__icon {
+          width: 18px;
+          height: 18px;
+          color: #ffc950;
+          flex-shrink: 0;
+        }
+
+        .hero-side {
+          position: relative;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 16px;
-          position: relative;
           overflow: hidden;
-          background:
-            linear-gradient(135deg, #071426 0%, #10213d 38%, #172554 66%, #083344 100%),
-            radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
-            radial-gradient(circle at 82% 70%, rgba(20, 184, 166, 0.18) 0%, transparent 38%),
-            radial-gradient(circle at 60% 15%, rgba(139, 92, 246, 0.14) 0%, transparent 30%);
-          background-blend-mode: normal, normal, normal, normal;
+          padding: 18px 24px;
+          min-height: 0;
+        }
+
+        .hero-side__glow {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(22px);
+          pointer-events: none;
+          opacity: 0.55;
+        }
+
+        .hero-side__glow--one {
+          width: 220px;
+          height: 220px;
+          right: 90px;
+          top: 110px;
+          background: rgba(51, 170, 255, 0.16);
+        }
+
+        .hero-side__glow--two {
+          width: 180px;
+          height: 180px;
+          left: 120px;
+          bottom: 80px;
+          background: rgba(255, 197, 78, 0.08);
+        }
+
+        .hero-compass-wrap {
+          position: relative;
+          z-index: 1;
+          width: 100%;
+          max-width: 760px;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 0;
         }
 
         .compass-shell {
@@ -813,13 +870,17 @@ export default function Login() {
           align-items: center;
           justify-content: center;
           width: 100%;
-          max-width: 560px;
+          max-width: 700px;
           gap: 10px;
+          height: 100%;
           padding: 4px;
+          min-height: 0;
         }
 
         .compass-stage {
-          width: 100%;
+          width: min(100%, 690px, calc(100dvh - 130px));
+          max-width: 100%;
+          max-height: 100%;
           aspect-ratio: 1;
           position: relative;
           display: flex;
@@ -839,6 +900,7 @@ export default function Login() {
         .compass-ball-layer {
           position: absolute;
           inset: 0;
+          display: none;
         }
 
         .compass-ball {
@@ -881,15 +943,6 @@ export default function Login() {
           font-size: 10px;
         }
 
-        .compass-ball-logo-img {
-          width: 70%;
-          height: 70%;
-          object-fit: contain;
-          border-radius: 50%;
-          pointer-events: none;
-          z-index: 1;
-        }
-
         .compass-ball[data-active="true"] {
           box-shadow:
             0 4px 14px rgba(0, 0, 0, 0.35),
@@ -898,12 +951,6 @@ export default function Login() {
             0 0 0 4px var(--ball-glow, rgba(59, 130, 246, 0.4)),
             0 0 24px var(--ball-glow, rgba(59, 130, 246, 0.15)) !important;
           border-color: var(--ball-glow, rgba(59, 130, 246, 0.5)) !important;
-        }
-
-        .compass-bearing-display,
-        .compass-bearing-text,
-        .compass-bearing-degrees {
-          /* removed - replaced by compass-heading-display */
         }
 
         .compass-ball[data-kind="logo"] {
@@ -937,21 +984,13 @@ export default function Login() {
           pointer-events: none;
         }
 
-        .compass-heading-display {
-          text-align: center;
-          padding: 0 0 10px;
+        .compass-ball-logo-img {
+          width: 70%;
+          height: 70%;
+          object-fit: contain;
+          border-radius: 50%;
           pointer-events: none;
-          white-space: nowrap;
-          width: 100%;
-        }
-
-        .compass-heading-degrees {
-          font-size: 30px;
-          font-weight: 800;
-          color: #FFFFFF;
-          letter-spacing: 0.8px;
-          font-family: 'Nunito', 'DM Sans', sans-serif;
-          text-shadow: 0 3px 16px rgba(0,0,0,0.28);
+          z-index: 1;
         }
 
         .compass-ball[data-kind="logo"][data-active="true"] {
@@ -964,451 +1003,115 @@ export default function Login() {
             0 0 24px rgba(249, 115, 22, 0.12) !important;
         }
 
-        .compass-debug-overlay {
-          position: absolute;
-          inset: 0;
-          pointer-events: none;
-          z-index: 30;
-        }
-
-        .compass-debug-center {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: 8px;
-          height: 8px;
-          transform: translate(-50%, -50%);
-          border-radius: 50%;
-          background: red;
-        }
-
-        .compass-debug-circle {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          transform: translate(-50%, -50%);
-          border: 1px solid rgba(255, 0, 0, 0.8);
-          border-radius: 50%;
-        }
-
-        .compass-debug-circle-playable {
-          width: calc(100% - 112px);
-          height: calc(100% - 112px);
-        }
-
-        .compass-debug-circle-outer {
-          width: calc(100% - 4px);
-          height: calc(100% - 4px);
-        }
-
-        .compass-debug-ball {
-          position: absolute;
-          transform: translate(-50%, -50%);
-          padding: 2px 4px;
-          border-radius: 4px;
-          background: rgba(255, 0, 0, 0.8);
-          color: white;
-          font-size: 10px;
-          white-space: nowrap;
-        }
-
-        @media (max-height: 720px) {
-          .auth-panel-inner {
-            padding: 24px 28px 20px;
-          }
-          .auth-logo {
-            height: 60px;
-            margin-bottom: 16px;
-          }
-          .auth-heading {
-            font-size: 20px;
-          }
-          .auth-subtitle {
-            margin-bottom: 16px;
-          }
-          .auth-field {
-            margin-bottom: 12px;
-          }
-          .auth-message-zone {
-            min-height: 48px;
-            margin-bottom: 10px;
-          }
-          .auth-submit-btn {
-            padding: 12px 22px;
-            margin-bottom: 12px;
+        @keyframes auth-spin {
+          to {
+            transform: rotate(360deg);
           }
         }
 
-        @media (max-height: 660px) {
-          .auth-panel-inner {
-            padding: 18px 22px 16px;
-          }
-          .auth-logo {
-            height: 52px;
-            margin-bottom: 12px;
-          }
-          .auth-portal-label {
-            font-size: 10px;
-            margin-bottom: 10px;
-          }
-          .portal-selector {
-            padding: 5px;
-            gap: 5px;
-            margin-bottom: 14px;
-          }
-          .portal-tab {
-            padding: 8px 4px 6px;
-          }
-          .portal-tab-icon {
-            padding: 5px;
-          }
-          .portal-tab-icon-svg {
-            width: 14px;
-            height: 14px;
-          }
-          .auth-heading {
-            font-size: 18px;
-          }
-          .auth-subtitle {
-            font-size: 12px;
-            margin-bottom: 14px;
-          }
-          .auth-field {
-            margin-bottom: 10px;
-          }
-          .auth-message-zone {
-            min-height: 44px;
-            margin-bottom: 8px;
-          }
-          .auth-field-label {
-            font-size: 11px;
-          }
-          .auth-input {
-            padding: 10px 0 10px 8px;
-            font-size: 13px;
-          }
-          .auth-submit-btn {
-            padding: 11px 20px;
-            font-size: 14px;
-            margin-bottom: 10px;
-          }
-          .auth-helper {
-            font-size: 11px;
-          }
-          .compass-experience {
-            min-height: 340px;
-          }
-          .compass-shell {
-            max-width: 340px;
-          }
-        }
-
-        @media (max-height: 600px) {
-          .auth-panel-inner {
-            padding: 14px 18px 12px;
-          }
-          .auth-logo {
-            height: 44px;
-            margin-bottom: 10px;
-          }
-          .auth-portal-label {
-            font-size: 9px;
-            margin-bottom: 8px;
-          }
-          .portal-selector {
-            padding: 4px;
-            gap: 4px;
-            margin-bottom: 10px;
-            border-radius: 12px;
-          }
-          .portal-tab {
-            padding: 6px 3px;
-            font-size: 9px;
-            min-height: 38px;
-            border-radius: 10px;
-          }
-          .portal-tab-icon {
-            padding: 4px;
-          }
-          .portal-tab-icon-svg {
-            width: 12px;
-            height: 12px;
-          }
-          .auth-heading {
-            font-size: 15px;
-          }
-          .auth-subtitle {
-            font-size: 11px;
-            margin-bottom: 10px;
-          }
-          .auth-field {
-            margin-bottom: 8px;
-          }
-          .auth-field-label {
-            font-size: 10px;
-            margin-bottom: 4px;
-          }
-          .auth-input-wrap {
-            border-radius: 10px;
-            padding: 0 10px;
-          }
-          .auth-input {
-            padding: 8px 0 8px 6px;
-            font-size: 12px;
-          }
-          .auth-input-icon {
-            width: 14px;
-            height: 14px;
-          }
-          .auth-submit-btn {
-            padding: 9px 16px;
-            font-size: 12px;
-            border-radius: 999px;
-            margin-bottom: 8px;
-          }
-          .auth-helper {
-            font-size: 10px;
-          }
-          .auth-message-zone {
-            min-height: 40px;
-            margin-bottom: 6px;
-          }
-          .auth-error-box,
-          .auth-session-conflict {
-            padding: 6px 10px;
-            font-size: 11px;
-            border-radius: 10px;
-          }
-          .auth-conflict-btn {
-            padding: 5px 10px;
-            font-size: 10px;
-          }
-          .compass-experience {
-            min-height: 260px;
-            padding: 8px;
-          }
-          .compass-shell {
-            max-width: 260px;
-            gap: 6px;
-          }
-          .compass-heading-degrees {
-            font-size: 16px;
-          }
-          .compass-ball {
-            font-size: 8px;
-          }
-        }
-
-        @media (max-width: 1000px) {
+        @media (max-width: 1180px) {
           .login-shell {
-            flex-direction: column;
-            max-width: 520px;
-            max-height: none;
+            grid-template-columns: 1fr;
+            max-width: 680px;
+            height: auto;
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
           }
 
-          .auth-panel {
-            width: 100%;
-          }
-
-          .compass-experience {
+          .hero-side {
             min-height: 340px;
-            padding: 12px;
+            padding-top: 8px;
           }
 
-          .compass-shell {
-            max-width: 420px;
-          }
-
-          .compass-heading-degrees {
-            font-size: 22px;
-          }
-
-          .compass-ball {
-            font-size: 10px;
+          .compass-stage {
+            width: min(100%, 540px, calc(100dvh - 220px));
           }
         }
 
         @media (max-width: 768px) {
           .login-page {
-            padding: 10px;
-            min-height: 100dvh;
+            padding: 12px;
+            overflow: auto;
           }
 
           .login-shell {
-            border-radius: 20px;
-            min-height: auto;
+            border-radius: 24px;
+            height: auto;
+            max-height: none;
           }
 
-          .auth-panel {
-            padding: 6px;
+          .auth-side,
+          .hero-side {
+            padding: 12px;
           }
 
-          .auth-panel-inner {
-            padding: 18px 14px 16px;
+          .auth-card {
+            padding: 20px 18px 18px;
           }
 
-          .auth-logo {
-            height: 52px;
-            margin-bottom: 12px;
+          .auth-card__border {
+            inset: -6px;
           }
 
-          .auth-portal-label {
-            font-size: 10px;
-            margin-bottom: 10px;
-          }
-
-          .portal-selector {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px;
-            padding: 6px;
-            margin-bottom: 16px;
+          .portal-tabs {
+            grid-template-columns: repeat(2, 1fr);
           }
 
           .portal-tab {
-            padding: 10px 6px;
-            font-size: 11px;
-            min-height: 48px;
+            min-height: 86px;
           }
 
-          .portal-tab-icon {
-            padding: 6px;
+          .auth-title {
+            font-size: 28px;
           }
 
-          .portal-tab-icon-svg {
-            width: 16px;
-            height: 16px;
+          .auth-utility-row {
+            flex-direction: column;
+            align-items: flex-start;
           }
 
-          .portal-tab-indicator {
-            width: 28px;
-            height: 3px;
-            bottom: 2px;
-          }
-
-          .auth-heading {
-            font-size: 18px;
-          }
-
-          .auth-subtitle {
-            font-size: 12px;
-            margin-bottom: 14px;
-          }
-
-          .auth-field {
-            margin-bottom: 10px;
-          }
-
-          .auth-field-label {
-            font-size: 11px;
-          }
-
-          .auth-input {
-            padding: 10px 0 10px 8px;
-            font-size: 14px;
-          }
-
-          .auth-submit-btn {
-            padding: 13px 20px;
-            font-size: 14px;
-          }
-
-          .auth-message-zone {
-            min-height: 48px;
-          }
-
-          .auth-error-box,
           .auth-session-conflict {
-            padding: 8px 10px;
-            font-size: 12px;
+            flex-direction: column;
+            align-items: flex-start;
           }
 
-          .compass-experience {
-            min-height: 240px;
-            padding: 6px;
+          .auth-session-conflict__btn {
+            width: 100%;
           }
 
-          .compass-shell {
-            max-width: 280px;
+          .hero-side {
+            min-height: 300px;
           }
 
-          .compass-heading-degrees {
-            font-size: 18px;
-          }
-
-          .compass-ball {
-            font-size: 8px;
+          .compass-stage {
+            width: min(100%, 400px, calc(100dvh - 360px));
           }
         }
 
-        @media (max-width: 380px) {
+        @media (max-width: 480px) {
           .login-page {
-            padding: 6px;
+            padding: 8px;
           }
 
-          .auth-panel-inner {
-            padding: 14px 10px 12px;
+          .portal-tab__label {
+            font-size: 12px;
           }
 
-          .auth-logo {
-            height: 44px;
-            margin-bottom: 10px;
+          .auth-title {
+            font-size: 24px;
           }
 
-          .portal-selector {
-            gap: 4px;
-            padding: 4px;
+          .auth-subtitle,
+          .auth-helper {
+            font-size: 12px;
           }
 
-          .portal-tab {
-            padding: 8px 4px;
+          .compass-stage {
+            width: min(100%, 300px, calc(100dvh - 420px));
+          }
+
+          .compass-ball-label {
             font-size: 10px;
-            min-height: 44px;
-          }
-
-          .portal-tab-icon {
-            padding: 4px;
-          }
-
-          .portal-tab-icon-svg {
-            width: 14px;
-            height: 14px;
-          }
-
-          .auth-heading {
-            font-size: 16px;
-          }
-
-          .auth-input {
-            padding: 8px 0 8px 6px;
-            font-size: 13px;
-          }
-
-          .auth-submit-btn {
-            padding: 11px 16px;
-            font-size: 13px;
-          }
-
-          .auth-message-zone {
-            min-height: 44px;
-            margin-bottom: 8px;
-          }
-
-          .compass-experience {
-            min-height: 180px;
-            padding: 4px;
-          }
-
-          .compass-shell {
-            max-width: 200px;
-          }
-
-          .compass-heading-degrees {
-            font-size: 14px;
-          }
-
-          .compass-ball {
-            font-size: 7px;
           }
         }
       `}</style>
