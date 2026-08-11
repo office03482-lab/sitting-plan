@@ -6,10 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
+from app.middleware.auth import get_authenticated_user
 from app.middleware.tenant_context import TenantContext, get_tenant_context
+from app.models import User
+from app.services.approved_exam_ai import generate_question_preview
+from app.services.exam_ocr_import import generate_exam_import_preview
 from app.services import supabase_question_bank as qb_service
 
 router = APIRouter(prefix="/api/question-bank", tags=["Question Bank"])
@@ -17,6 +21,81 @@ router = APIRouter(prefix="/api/question-bank", tags=["Question Bank"])
 
 def _school_id(tenant: TenantContext) -> str:
     return tenant.school_id
+
+
+def _is_exam_ai_admin(user: User) -> bool:
+    role_key = str(getattr(user, "role_key", "") or "").strip().lower()
+    return role_key in {"school_admin", "platform_admin"} or getattr(user, "role", None) == "admin"
+
+
+def require_exam_ai_user(user: User = Depends(get_authenticated_user)) -> User:
+    if _is_exam_ai_admin(user):
+        return user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only school or platform admins can use examination AI")
+
+
+def _ensure_unique_question_prompt(school_id: str, prompt_text: str, *, exclude_question_id: str | None = None) -> None:
+    duplicate = qb_service.find_duplicate_question(school_id, prompt_text, exclude_question_id=exclude_question_id)
+    if duplicate:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "A matching question already exists in the Question Bank",
+                "existing_question_id": duplicate.get("id"),
+            },
+        )
+
+
+class QuestionPreviewGenerateRequest(BaseModel):
+    class_name: str | None = None
+    subject: str
+    chapter: str
+    topic: str
+    difficulty: str = "medium"
+    question_type: str = "single_choice"
+    question_count: int = 5
+    marks: float = 1
+    language: str = "en"
+    exam_pattern: str | None = None
+    exam_type_slug: str = "custom"
+
+
+@router.post("/ai/generate-preview")
+def api_generate_question_preview(
+    body: QuestionPreviewGenerateRequest,
+    tenant: TenantContext = Depends(get_tenant_context),
+    _: User = Depends(require_exam_ai_user),
+):
+    return generate_question_preview(_school_id(tenant), body.model_dump(exclude_none=True))
+
+
+@router.post("/ai/import-preview")
+async def api_generate_import_preview(
+    file: UploadFile = File(...),
+    class_name: str | None = Form(default=None),
+    subject: str | None = Form(default=None),
+    chapter: str | None = Form(default=None),
+    topic: str | None = Form(default=None),
+    difficulty: str = Form(default="medium"),
+    marks: float = Form(default=1),
+    language: str = Form(default="en"),
+    exam_pattern: str | None = Form(default=None),
+    exam_type_slug: str = Form(default="custom"),
+    tenant: TenantContext = Depends(get_tenant_context),
+    _: User = Depends(require_exam_ai_user),
+):
+    payload = {
+        "class_name": class_name,
+        "subject": subject,
+        "chapter": chapter,
+        "topic": topic,
+        "difficulty": difficulty,
+        "marks": marks,
+        "language": language,
+        "exam_pattern": exam_pattern,
+        "exam_type_slug": exam_type_slug,
+    }
+    return await generate_exam_import_preview(_school_id(tenant), payload, file)
 
 
 # ─── Exam Types ──────────────────────────────────────────────
@@ -171,7 +250,10 @@ class QuestionCreate(BaseModel):
 
 @router.post("/questions")
 def api_create_question(body: QuestionCreate, tenant: TenantContext = Depends(get_tenant_context)):
-    return qb_service.create_question(_school_id(tenant), body.model_dump(exclude_unset=True))
+    sid = _school_id(tenant)
+    payload = body.model_dump(exclude_unset=True)
+    _ensure_unique_question_prompt(sid, str(payload.get("prompt_text") or ""))
+    return qb_service.create_question(sid, payload)
 
 
 class QuestionUpdate(BaseModel):
@@ -222,6 +304,8 @@ def api_update_question(question_id: str, body: QuestionUpdate, tenant: TenantCo
     update_data = body.model_dump(exclude_unset=True)
     if not update_data:
         return existing
+    if "prompt_text" in update_data:
+        _ensure_unique_question_prompt(sid, str(update_data.get("prompt_text") or ""), exclude_question_id=question_id)
 
     # Create version snapshot before update
     new_version = (existing.get("version") or 1) + 1

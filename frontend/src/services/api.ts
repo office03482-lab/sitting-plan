@@ -8,14 +8,12 @@ import type {
   ManageableSchoolListResponse, SchoolBackupHistoryResponse, SchoolBrandAsset, SchoolPublicBranding, SchoolSelfServiceProfile, SchoolStorageOverview,
   ParentGuardianLink, ParentLinkImportResult, PortalAccessStatus, BulkPortalGenerationResult, ActiveSessionRecord, AdministratorOverviewResponse,
   PortalPermissionTemplate, PortalOverviewResponse, GeneratedCredentialRecord, AccountHistoryResponse, PortalPermissionSummary, PortalRolePermissionTemplate,
-  BatchAnalytics, LearningGoal, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, StudyPlannerWeek, TestAnalyticsDetail,
+  BatchAnalytics, LiveClassAttendance, LiveClassRecording, LiveClassSession, LmsAssignment, LmsAssignmentSubmission, LmsCourse, LmsCourseModule, LmsLesson, LmsProgressDashboard, LmsProgressItem, OnlineTest, OnlineTestAnalytics, OnlineTestAttempt, OnlineTestQuestion, OnlineTestQuestionBankItem, OnlineTestResult, ParentAlertsResponse, ParentDashboardResponse, ParentInsightsResponse, ParentRiskScoreResponse, PlatformAnalytics, SchoolAnalytics, StorageUploadResponse, StudentAnalytics, TestAnalyticsDetail,
   OfflineExam, OfflineExamAnalytics, OfflineExamAttendance, OfflineExamEvaluation, OfflineExamHallTicket, OfflineExamQuestion, OfflineExamResult, OfflineExamSeatingPlan,
   CommerceCouponResponse, CommerceOrderResponse, CommercePaymentVerifyResponse, CommerceSubscriptionsResponse, RevenueDashboard,
   DoubtHistoryItem, DoubtSolverInput, DoubtSolverResponse,
-  TeacherAiAssignmentResponse, TeacherAiLessonPlanResponse, TeacherAiQuestionPaperResponse, TeacherAiReportCommentsResponse,
   AcademicBiDashboard, FinanceBiDashboard, OperationsBiDashboard, PlatformBiDashboard, SavedBiReport, BiReportExportResponse,
   CampusPredictionsDashboard, FinancePredictionsDashboard, StudentPredictionsDashboard,
-  AiAgentDashboard, AiAgentRecommendation, AiAgentRunResponse,
 } from '@types';
 import { usePlatformAdminSchoolStore } from '@store/platformAdminSchool';
 
@@ -136,6 +134,7 @@ function readStoredAuthUser(): any | null {
 
 export const ACTIVE_SESSION_STORAGE_KEY = 'active_session_key';
 export const ACTIVE_DEVICE_STORAGE_KEY = 'active_device_id';
+const AUTH_INVALID_TOKEN_MESSAGE = 'invalid or expired authentication token';
 
 /**
  * Single source of truth for the *currently registered* active session key.
@@ -248,6 +247,46 @@ function waitForRetry(delayMs: number) {
   return new Promise((resolve) => window.setTimeout(resolve, delayMs));
 }
 
+function clearPersistedAuthArtifacts() {
+  try {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user');
+  } catch {
+    // best-effort cleanup
+  }
+  clearRegisteredActiveSessionKey();
+}
+
+function isInvalidAuthenticationTokenError(error: any): boolean {
+  const status = Number(error?.response?.status || error?.status || 0);
+  const detail = String(error?.response?.data?.detail || error?.response?.data?.error || error?.message || '')
+    .trim()
+    .toLowerCase();
+  return status === 401 && detail.includes(AUTH_INVALID_TOKEN_MESSAGE);
+}
+
+let authResetInProgress = false;
+
+function handleInvalidAuthenticationToken() {
+  if (authResetInProgress) return;
+  authResetInProgress = true;
+  clearPersistedAuthArtifacts();
+  try {
+    window.dispatchEvent(new CustomEvent('app:auth-invalidated', { detail: { reason: 'invalid_token' } }));
+  } catch {
+    // no-op
+  }
+  if (!window.location.pathname.startsWith('/login')) {
+    const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.replace(`/login?reason=session-expired&next=${encodeURIComponent(next)}`);
+    return;
+  }
+  window.location.reload();
+}
+
 function getSafeGetRetryDelayMs(attempt: number, isTimeout: boolean) {
   if (isTimeout) {
     // Cold-start / server-wake: give the server more time to spin up
@@ -355,6 +394,11 @@ class ApiService {
     this.api.interceptors.response.use(
       (response) => response,
       async (error) => {
+        if (isInvalidAuthenticationTokenError(error)) {
+          handleInvalidAuthenticationToken();
+          return Promise.reject(error);
+        }
+
         if (!isSafeRetryableRequest(error)) {
           return Promise.reject(error);
         }
@@ -962,6 +1006,81 @@ class ApiService {
     return this.api.post<Record<string, unknown>>('/question-bank/questions', data);
   }
 
+  async generateQBQuestionPreview(data: Record<string, unknown>) {
+    return this.api.post<{
+      questions: Array<{
+        question_text: string;
+        question_type: string;
+        options: string[];
+        correct_answer: string;
+        explanation: string;
+        subject: string;
+        chapter: string;
+        topic: string;
+        difficulty: string;
+        marks: number;
+        duplicate_check?: {
+          is_duplicate: boolean;
+          exact_matches: Array<{ id: string; prompt_text: string }>;
+          normalized_matches: Array<{ id: string; prompt_text: string }>;
+        };
+      }>;
+      generated_count: number;
+      requires_human_review: boolean;
+      source: string;
+    }>('/question-bank/ai/generate-preview', data);
+  }
+
+  async generateQBImportPreview(formData: FormData) {
+    return this.api.post<{
+      upload: {
+        file_name: string;
+        content_type?: string;
+        storage_path?: string;
+        url?: string;
+        size?: number;
+      };
+      extraction: {
+        file_kind: 'pdf' | 'image';
+        page_count: number;
+        method: string;
+        source_question_count: number;
+        pages: Array<{
+          page_number: number;
+          method: string;
+          extracted_text: string;
+          detected_question_numbers: string[];
+          low_confidence_segments: string[];
+        }>;
+      };
+      questions: Array<{
+        question_text: string;
+        question_type: string;
+        options: string[];
+        correct_answer: string;
+        explanation: string;
+        subject: string;
+        chapter: string;
+        topic: string;
+        difficulty: string;
+        marks: number;
+        page_numbers: number[];
+        missing_fields: string[];
+        review_required: boolean;
+        duplicate_check?: {
+          is_duplicate: boolean;
+          exact_matches: Array<{ id: string; prompt_text: string }>;
+          normalized_matches: Array<{ id: string; prompt_text: string }>;
+        };
+      }>;
+      generated_count: number;
+      requires_human_review: boolean;
+      source: string;
+    }>('/question-bank/ai/import-preview', formData, {
+      timeout: 180000,
+    });
+  }
+
   async updateQBQuestion(questionId: string, data: Record<string, unknown>) {
     return this.api.put<Record<string, unknown>>(`/question-bank/questions/${questionId}`, data);
   }
@@ -1042,34 +1161,6 @@ class ApiService {
     return this.api.get<FinancePredictionsDashboard>('/predictions/finance');
   }
 
-  async getAiAgentsDashboard() {
-    return this.api.get<AiAgentDashboard>('/ai-agents/dashboard');
-  }
-
-  async runAiAgents(data: { agent_key?: string | null } = {}) {
-    return this.api.post<AiAgentRunResponse>('/ai-agents/run', data);
-  }
-
-  async listAiAgentRecommendations() {
-    return this.api.get<AiAgentRecommendation[]>('/ai-agents/recommendations');
-  }
-
-  async approveAiAgentRecommendation(data: { recommendation_id: string; decision: 'approved' | 'rejected'; notes?: string }) {
-    return this.api.post<AiAgentRecommendation>('/ai-agents/approve', data);
-  }
-
-  async getStudyPlannerToday() {
-    return this.api.get<Record<string, unknown>>('/study-planner/today');
-  }
-
-  async getStudyPlannerWeek() {
-    return this.api.get<StudyPlannerWeek | Record<string, unknown>>('/study-planner/week');
-  }
-
-  async getStudyPlannerRecommendations() {
-    return this.api.get<Record<string, unknown>>('/study-planner/recommendations');
-  }
-
   async getParentIntelligenceDashboard() {
     return this.api.get<ParentDashboardResponse>('/parent/dashboard');
   }
@@ -1105,20 +1196,8 @@ class ApiService {
     return this.api.post<{ message: string; student_id: string; student_name: string; preferred_date?: string }>('/parent/communication/request-meeting', data);
   }
 
-  async aiTutorChat(data: Record<string, unknown>) {
-    return this.api.post<import('@types').AiTutorResponse>('/ai/chat', data);
-  }
-
-  async aiTutorExplain(data: Record<string, unknown>) {
-    return this.api.post<import('@types').AiTutorResponse>('/ai/explain', data);
-  }
-
   async aiTutorPractice(data: Record<string, unknown>) {
     return this.api.post<import('@types').AiTutorResponse>('/ai/practice', data);
-  }
-
-  async aiTutorRevision(data: Record<string, unknown>) {
-    return this.api.post<import('@types').AiTutorResponse>('/ai/revision', data);
   }
 
   async solveTextDoubt(data: DoubtSolverInput) {
@@ -1135,41 +1214,6 @@ class ApiService {
 
   async getDoubtHistory(params: { target_student_id?: string; limit?: number } = {}) {
     return this.api.get<DoubtHistoryItem[]>('/doubts/history', { params });
-  }
-
-  async generateTeacherQuestionPaper(data: Record<string, unknown>) {
-    return this.api.post<TeacherAiQuestionPaperResponse>('/teacher-ai/question-paper', data);
-  }
-
-  async generateTeacherAssignment(data: Record<string, unknown>) {
-    return this.api.post<TeacherAiAssignmentResponse>('/teacher-ai/assignment', data);
-  }
-
-  async generateTeacherLessonPlan(data: Record<string, unknown>) {
-    return this.api.post<TeacherAiLessonPlanResponse>('/teacher-ai/lesson-plan', data);
-  }
-
-  async generateTeacherReportComments(data: Record<string, unknown>) {
-    return this.api.post<TeacherAiReportCommentsResponse>('/teacher-ai/report-comments', data);
-  }
-
-  async askSchoolAiAssistant(data: { question: string }) {
-    return this.api.post<import('@types').SchoolAiAssistantResponse>('/ai-assistants/school/query', data);
-  }
-
-  async createStudyPlannerGoal(data: {
-    target_student_id?: string | null;
-    goal_type: string;
-    exam_mode?: string | null;
-    title: string;
-    description?: string | null;
-    target_date?: string | null;
-    target_value?: number | null;
-    current_value?: number | null;
-    status?: string;
-    metadata?: Record<string, unknown>;
-  }) {
-    return this.api.post<LearningGoal>('/study-planner/goals', data);
   }
 
   // ==================== LMS ====================

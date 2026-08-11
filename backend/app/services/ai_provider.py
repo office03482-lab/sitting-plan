@@ -182,6 +182,35 @@ def generate_json(prompt: str) -> dict[str, Any]:
         raise AIProviderError("AI service temporarily unavailable") from exc
 
 
+def generate_json_parts(parts: list[Any], *, temperature: float = 0.3) -> dict[str, Any]:
+    if not parts:
+        raise AIProviderError("At least one content part is required")
+
+    try:
+        model = _build_gemini_model()
+        response = model.generate_content(
+            parts,
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": temperature,
+            },
+            request_options=_provider_request_options(),
+        )
+        text = _extract_text(response)
+        payload = json.loads(text)
+        if not isinstance(payload, dict):
+            raise AIProviderError("Gemini JSON response was not an object")
+        return payload
+    except AIProviderError:
+        raise
+    except Exception as exc:
+        if _is_quota_exhaustion(exc):
+            logger.warning("Gemini quota exhausted for multimodal JSON generation: %s", exc)
+            raise AIQuotaError("Gemini daily quota exceeded") from exc
+        logger.exception("Gemini multimodal JSON generation failed")
+        raise AIProviderError("AI service temporarily unavailable") from exc
+
+
 def chat(messages: list[dict[str, Any]]) -> str:
     if not messages:
         raise AIProviderError("At least one chat message is required")

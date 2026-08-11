@@ -4,6 +4,7 @@ All operations use the Supabase PostgREST client.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +15,39 @@ from app.services.supabase_admin import get_supabase_admin_client
 
 def _client():
     return get_supabase_admin_client()
+
+
+def _normalize_search_fragment(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    # PostgREST `or(...)` filters break on reserved punctuation and wildcard-heavy
+    # AI/OCR output. Keep duplicate-search deterministic by reducing the search
+    # term to a safe alphanumeric fragment.
+    text = re.sub(r"[^0-9A-Za-z\s-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:80]
+
+
+def _normalized_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^0-9a-z\s]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _matches_search(row: dict[str, Any], search: Any) -> bool:
+    normalized_search = _normalized_text(search)
+    if not normalized_search:
+        return True
+    tokens = [token for token in normalized_search.split() if token]
+    if not tokens:
+        return True
+    haystacks = [
+        _normalized_text(row.get("prompt_text")),
+        _normalized_text(row.get("question_code")),
+    ]
+    searchable = " ".join(part for part in haystacks if part)
+    return all(token in searchable for token in tokens)
 
 
 # ─── Exam Types ──────────────────────────────────────────────
@@ -112,8 +146,12 @@ def list_questions(school_id: str, filters: dict[str, Any] | None = None, skip: 
             q = q.eq("question_type", filters["question_type"])
         if filters.get("status"):
             q = q.eq("status", filters["status"])
-        if filters.get("search"):
-            q = q.or_(f"prompt_text.ilike.%{filters['search']}%,question_code.ilike.%{filters['search']}%")
+    search_value = (filters or {}).get("search")
+    if search_value:
+        resp = q.order("created_at", desc=True).limit(max(skip + limit, 500)).execute()
+        rows = [dict(row) for row in list(resp.data or [])]
+        matched = [row for row in rows if _matches_search(row, search_value)]
+        return matched[skip : skip + limit]
     resp = q.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
     return resp.data or []
 
@@ -121,6 +159,26 @@ def list_questions(school_id: str, filters: dict[str, Any] | None = None, skip: 
 def get_question(question_id: str, school_id: str) -> dict[str, Any] | None:
     resp = _client().table("qb_questions").select("*").eq("id", question_id).eq("school_id", school_id).single().execute()
     return resp.data if resp.data else None
+
+
+def find_duplicate_question(
+    school_id: str,
+    prompt_text: str,
+    *,
+    exclude_question_id: str | None = None,
+) -> dict[str, Any] | None:
+    normalized_candidate = _normalized_text(prompt_text)
+    if not normalized_candidate:
+        return None
+
+    rows = list_questions(school_id, None, 0, 500)
+    for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        if exclude_question_id and row_id == exclude_question_id:
+            continue
+        if _normalized_text(row.get("prompt_text")) == normalized_candidate:
+            return row
+    return None
 
 
 def create_question(school_id: str, payload: dict[str, Any]) -> dict[str, Any]:

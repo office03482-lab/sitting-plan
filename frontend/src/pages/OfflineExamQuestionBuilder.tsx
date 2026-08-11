@@ -283,7 +283,7 @@ export default function OfflineExamQuestionBuilder() {
     updateCurrentField('prompt_text', (currentDraft?.prompt_text || '') + formula);
   };
 
-  const handleAIGenerated = (questions: Array<{ prompt: string; options: string[]; answer: string; explanation: string }>) => {
+  const handleAIGenerated = (questions: ImportedQuestionPayload[]) => {
     for (const q of questions) {
       const draft = createEmptyOfflineExamQuestionDraft(questionDrafts.length + 1);
       draft.prompt_text = q.prompt;
@@ -299,15 +299,23 @@ export default function OfflineExamQuestionBuilder() {
     setBanner({ type: 'success', message: `${questions.length} AI questions added.` });
   };
 
-  const handleOCRImport = (data: { prompt: string; options: string[]; answer: string; explanation: string }) => {
-    updateCurrentField('prompt_text', data.prompt);
-    updateCurrentField('option_lines', data.options.join('\n'));
-    updateCurrentField('answer_lines', data.answer);
-    if (data.explanation) updateCurrentField('explanation', data.explanation);
-    setBanner({ type: 'success', message: 'OCR content imported into current question.' });
+  const handleOCRImport = (questions: ImportedQuestionPayload[]) => {
+    for (const q of questions) {
+      const draft = createEmptyOfflineExamQuestionDraft(questionDrafts.length + 1);
+      draft.prompt_text = q.prompt;
+      draft.option_lines = q.options.join('\n');
+      draft.answer_lines = q.answer;
+      draft.explanation = q.explanation;
+      draft.subjects = subjectFilter ? [subjectFilter] : [];
+      draft.subject = subjectFilter;
+      draft.chapter = chapterFilter;
+      draft.topic = topicFilter;
+      setQuestionDrafts((prev) => [...prev, draft]);
+    }
+    setBanner({ type: 'success', message: `${questions.length} OCR questions added.` });
   };
 
-  const handlePDFImport = (questions: Array<{ prompt: string; options: string[]; answer: string; explanation: string }>) => {
+  const handlePDFImport = (questions: ImportedQuestionPayload[]) => {
     for (const q of questions) {
       const draft = createEmptyOfflineExamQuestionDraft(questionDrafts.length + 1);
       draft.prompt_text = q.prompt;
@@ -847,12 +855,26 @@ export default function OfflineExamQuestionBuilder() {
               )}
               {activeTool === 'ocr' && (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-                  <OCRPanel onImported={handleOCRImport} onClose={() => setActiveTool(null)} />
+                  <OCRPanel
+                    currentExam={examType}
+                    currentSubject={subjectFilter}
+                    currentChapter={chapterFilter}
+                    currentTopic={topicFilter}
+                    onImported={handleOCRImport}
+                    onClose={() => setActiveTool(null)}
+                  />
                 </div>
               )}
               {activeTool === 'pdf' && (
                 <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3">
-                  <PDFImportPanel onImported={handlePDFImport} onClose={() => setActiveTool(null)} />
+                  <PDFImportPanel
+                    currentExam={examType}
+                    currentSubject={subjectFilter}
+                    currentChapter={chapterFilter}
+                    currentTopic={topicFilter}
+                    onImported={handlePDFImport}
+                    onClose={() => setActiveTool(null)}
+                  />
                 </div>
               )}
               {activeTool === 'formula' && (
@@ -910,3 +932,4 @@ export default function OfflineExamQuestionBuilder() {
     </div>
   );
 }
+  type ImportedQuestionPayload = { prompt: string; options: string[]; answer: string; explanation: string };

@@ -53,6 +53,7 @@ import {
 
 type ActiveTool = 'ai' | 'ocr' | 'pdf' | 'formula' | 'history' | null;
 type RightPanelView = 'tools' | 'preview';
+type ImportedQuestionPayload = { prompt: string; options: string[]; answer: string; explanation: string };
 
 const sf = 'w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-100';
 const sl = 'mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500';
@@ -72,8 +73,9 @@ export default function QuestionBuilder() {
     banner?: { type: 'success' | 'error' | 'warning' | 'info'; message: string };
     tool?: ActiveTool;
   } | null;
-  const { authReady, sessionReady, schoolContextReady } = useAuth();
+  const { authReady, sessionReady, schoolContextReady, user } = useAuth();
   const canRunRequests = authReady && sessionReady && schoolContextReady;
+  const canUseExamAi = user?.role === 'admin' || ['school_admin', 'platform_admin'].includes(String(user?.role_key || '').toLowerCase());
 
   const [test, setTest] = useState<OnlineTest | null>(null);
   const [questionDrafts, setQuestionDrafts] = useState<QuestionDraft[]>([createEmptyQuestionDraft(1)]);
@@ -379,7 +381,7 @@ export default function QuestionBuilder() {
     updateCurrentField('prompt_text', (currentDraft?.prompt_text || '') + formula);
   };
 
-  const handleAIGenerated = (questions: Array<{ prompt: string; options: string[]; answer: string; explanation: string }>) => {
+  const handleAIGenerated = (questions: ImportedQuestionPayload[]) => {
     for (const q of questions) {
       const draft = createEmptyQuestionDraft(questionDrafts.length + 1);
       draft.prompt_text = q.prompt;
@@ -391,15 +393,22 @@ export default function QuestionBuilder() {
     setBanner({ type: 'success', message: `${questions.length} AI questions added.` });
   };
 
-  const handleOCRImport = (data: { prompt: string; options: string[]; answer: string; explanation: string }) => {
-    updateCurrentField('prompt_text', data.prompt);
-    updateCurrentField('option_lines', data.options.join('\n'));
-    updateCurrentField('answer_lines', data.answer);
-    if (data.explanation) updateCurrentField('explanation', data.explanation);
-    setBanner({ type: 'success', message: 'OCR content imported into current question.' });
+  const handleOCRImport = (questions: ImportedQuestionPayload[]) => {
+    for (const q of questions) {
+      const draft = createEmptyQuestionDraft(questionDrafts.length + 1);
+      draft.prompt_text = q.prompt;
+      draft.option_lines = q.options.join('\n');
+      draft.answer_lines = q.answer;
+      draft.explanation = q.explanation;
+      draft.subject = subjectFilter;
+      draft.chapter = chapterFilter;
+      draft.topic = topicFilter;
+      setQuestionDrafts((prev) => [...prev, draft]);
+    }
+    setBanner({ type: 'success', message: `${questions.length} OCR questions added.` });
   };
 
-  const handlePDFImport = (questions: Array<{ prompt: string; options: string[]; answer: string; explanation: string }>) => {
+  const handlePDFImport = (questions: ImportedQuestionPayload[]) => {
     for (const q of questions) {
       const draft = createEmptyQuestionDraft(questionDrafts.length + 1);
       draft.prompt_text = q.prompt;
@@ -886,9 +895,11 @@ export default function QuestionBuilder() {
             <div className="p-4 space-y-3">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Tools</h3>
               {[
-                { key: 'ai' as const, label: 'AI Generator', icon: Bot, color: 'violet' },
-                { key: 'ocr' as const, label: 'OCR Scanner', icon: ImageIcon, color: 'emerald' },
-                { key: 'pdf' as const, label: 'PDF Import', icon: FileUp, color: 'rose' },
+                ...(canUseExamAi ? [
+                  { key: 'ai' as const, label: 'AI Generator', icon: Bot, color: 'violet' },
+                  { key: 'ocr' as const, label: 'OCR Scanner', icon: ImageIcon, color: 'emerald' },
+                  { key: 'pdf' as const, label: 'PDF Import', icon: FileUp, color: 'rose' },
+                ] : []),
                 { key: 'formula' as const, label: 'Formula Builder', icon: Wand2, color: 'amber' },
                 { key: 'history' as const, label: 'Version History', icon: History, color: 'blue' },
               ].map((tool) => (
@@ -908,12 +919,26 @@ export default function QuestionBuilder() {
               )}
               {activeTool === 'ocr' && (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-                  <OCRPanel onImported={handleOCRImport} onClose={() => setActiveTool(null)} />
+                  <OCRPanel
+                    currentExam={examType}
+                    currentSubject={subjectFilter}
+                    currentChapter={chapterFilter}
+                    currentTopic={topicFilter}
+                    onImported={handleOCRImport}
+                    onClose={() => setActiveTool(null)}
+                  />
                 </div>
               )}
               {activeTool === 'pdf' && (
                 <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3">
-                  <PDFImportPanel onImported={handlePDFImport} onClose={() => setActiveTool(null)} />
+                  <PDFImportPanel
+                    currentExam={examType}
+                    currentSubject={subjectFilter}
+                    currentChapter={chapterFilter}
+                    currentTopic={topicFilter}
+                    onImported={handlePDFImport}
+                    onClose={() => setActiveTool(null)}
+                  />
                 </div>
               )}
               {activeTool === 'formula' && (
