@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArrowRight,
   BookOpen,
   Boxes,
+  CheckCircle2,
   Download,
   FileText,
   History,
@@ -42,7 +44,7 @@ import type {
 } from '@types';
 
 type TabKey = 'dashboard' | 'materials' | 'suppliers' | 'stock-in' | 'stock-out' | 'reports';
-type MasterTabKey = 'subjects' | 'sets' | 'volumes';
+type MaterialWorkflowStep = 1 | 2 | 3 | 4 | 5;
 
 type MaterialFormState = {
   name: string;
@@ -142,6 +144,18 @@ const initialStudentIssueForm = {
   remarks: '',
 };
 
+const materialWorkflowFlow: Array<{
+  step: MaterialWorkflowStep;
+  title: string;
+  description: string;
+}> = [
+  { step: 1, title: 'Select Material', description: 'Catalog se material choose karo ya naya material start karo.' },
+  { step: 2, title: 'Enter Details', description: 'Existing detail fields ko clean groups me bharo.' },
+  { step: 3, title: 'Stock Information', description: 'Stock-related settings aur batch mapping review karo.' },
+  { step: 4, title: 'Review', description: 'Save se pehle entered data confirm karo.' },
+  { step: 5, title: 'Complete', description: 'Existing save ke baad success state yahin show hogi.' },
+];
+
 const initialReportFilters = {
   report_type: 'current_inventory',
   date_from: '',
@@ -194,14 +208,16 @@ function OverlayPanel({
   description?: string;
   onClose: () => void;
   children: ReactNode;
-  mode?: 'drawer' | 'modal';
+  mode?: 'drawer' | 'modal' | 'workspace';
 }) {
   if (!open) return null;
 
   const alignmentClass =
     mode === 'drawer'
       ? 'ml-auto flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl'
-      : 'flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[1.75rem] bg-white shadow-2xl';
+      : mode === 'workspace'
+        ? 'flex h-full max-h-[92vh] w-full max-w-[min(90vw,1280px)] flex-col overflow-hidden rounded-[1.9rem] bg-white shadow-2xl'
+        : 'flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[1.75rem] bg-white shadow-2xl';
 
   return (
     <div className="fixed inset-0 z-[70] bg-slate-950/55 p-4 backdrop-blur-sm">
@@ -227,57 +243,6 @@ function OverlayPanel({
     </div>
   );
 }
-
-const inventoryFeatureCards: Array<{
-  key: TabKey;
-  title: string;
-  description: string;
-  icon: typeof BookOpen;
-  color: 'amber' | 'blue' | 'emerald' | 'slate' | 'red' | 'indigo';
-}> = [
-  {
-    key: 'dashboard',
-    title: 'Inventory Dashboard',
-    description: 'Watch stock health, recent movements, and low stock alerts.',
-    icon: Boxes,
-    color: 'indigo',
-  },
-  {
-    key: 'materials',
-    title: 'Material Master',
-    description: 'Manage categorized subjects, sets, volumes, and materials.',
-    icon: BookOpen,
-    color: 'amber',
-  },
-  {
-    key: 'suppliers',
-    title: 'Suppliers',
-    description: 'Maintain supplier records for purchases and stock receipts.',
-    icon: Truck,
-    color: 'blue',
-  },
-  {
-    key: 'stock-in',
-    title: 'Stock In',
-    description: 'Record purchased or incoming material quantities quickly.',
-    icon: PackagePlus,
-    color: 'emerald',
-  },
-  {
-    key: 'stock-out',
-    title: 'Batch Distribution',
-    description: 'Issue books and materials to linked student batches.',
-    icon: Send,
-    color: 'red',
-  },
-  {
-    key: 'reports',
-    title: 'Reports & Export',
-    description: 'Run inventory reports and export them to Excel or PDF.',
-    icon: FileText,
-    color: 'slate',
-  },
-];
 
 export default function InventoryManagement() {
   const navigate = useNavigate();
@@ -321,13 +286,13 @@ export default function InventoryManagement() {
   const [materialImportFile, setMaterialImportFile] = useState<File | null>(null);
   const [materialImporting, setMaterialImporting] = useState(false);
   const [materialImportResult, setMaterialImportResult] = useState<InventoryMaterialImportResponse | null>(null);
-
   const [subjectForm, setSubjectForm] = useState<SubjectFormState>(initialSubjectForm);
   const [editingSubjectId, setEditingSubjectId] = useState<string | number | null>(null);
   const [setForm, setSetForm] = useState<SetFormState>(initialSetForm);
   const [editingSetId, setEditingSetId] = useState<string | number | null>(null);
   const [volumeForm, setVolumeForm] = useState<VolumeFormState>(initialVolumeForm);
   const [editingVolumeId, setEditingVolumeId] = useState<string | number | null>(null);
+  const [showCategoryForm, setShowCategoryForm] = useState(false);
 
   const [supplierForm, setSupplierForm] = useState(initialSupplierForm);
   const [editingSupplierId, setEditingSupplierId] = useState<string | number | null>(null);
@@ -336,7 +301,14 @@ export default function InventoryManagement() {
   const [stockOutForm, setStockOutForm] = useState(initialStockOutForm);
   const [studentIssueForm, setStudentIssueForm] = useState(initialStudentIssueForm);
   const [reportFilters, setReportFilters] = useState(initialReportFilters);
-  const [activeMasterTab, setActiveMasterTab] = useState<MasterTabKey>('subjects');
+  const [materialWorkflowStep, setMaterialWorkflowStep] = useState<MaterialWorkflowStep>(1);
+  const [materialWorkflowCompletion, setMaterialWorkflowCompletion] = useState<'created' | 'updated' | null>(null);
+  const [materialWorkflowSummary, setMaterialWorkflowSummary] = useState<{
+    name: string;
+    subject: string;
+    set: string;
+    volume: string;
+  } | null>(null);
   const [activeMaterialOverlay, setActiveMaterialOverlay] = useState<null | 'material' | 'upload' | 'history'>(null);
   const [distributionMode, setDistributionMode] = useState<'batch' | 'student'>('batch');
   const [selectedStudentIssueDetail, setSelectedStudentIssueDetail] = useState<any | null>(null);
@@ -354,19 +326,10 @@ export default function InventoryManagement() {
 
     switch (hash) {
       case '#materials':
-        setActiveTab('materials');
-        break;
       case '#materials-subjects':
-        setActiveTab('materials');
-        setActiveMasterTab('subjects');
-        break;
       case '#materials-sets':
-        setActiveTab('materials');
-        setActiveMasterTab('sets');
-        break;
       case '#materials-volumes':
         setActiveTab('materials');
-        setActiveMasterTab('volumes');
         break;
       case '#suppliers':
         setActiveTab('suppliers');
@@ -411,20 +374,9 @@ export default function InventoryManagement() {
       reports: 'reports',
     };
 
-    const masterMap: Record<string, MasterTabKey> = {
-      'materials-subjects': 'subjects',
-      'materials-sets': 'sets',
-      'materials-volumes': 'volumes',
-    };
-
     const nextTab = tabMap[normalizedHash];
     if (nextTab) {
       setActiveTab(nextTab);
-    }
-
-    const nextMaster = masterMap[normalizedHash];
-    if (nextMaster) {
-      setActiveMasterTab(nextMaster);
     }
   }, [location.hash]);
 
@@ -677,6 +629,34 @@ export default function InventoryManagement() {
     [materials]
   );
 
+  const materialCategories = useMemo(
+    () =>
+      inventorySubjects
+        .filter((subject) => subject.is_active || materialSubjectFilter === subject.name)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [inventorySubjects, materialSubjectFilter]
+  );
+
+  const visibleSetList = useMemo(
+    () =>
+      inventorySets
+        .filter((inventorySet) => !materialSubjectFilter || inventorySet.subject_name === materialSubjectFilter)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [inventorySets, materialSubjectFilter]
+  );
+
+  const visibleVolumeList = useMemo(
+    () =>
+      inventoryVolumes
+        .filter((volume) => !materialSubjectFilter || volume.subject_name === materialSubjectFilter)
+        .sort(
+          (left, right) =>
+            Number(left.volume_number || 0) - Number(right.volume_number || 0) ||
+            String(left.set_name || '').localeCompare(String(right.set_name || ''))
+        ),
+    [inventoryVolumes, materialSubjectFilter]
+  );
+
   const setWiseInventorySummary = useMemo(() => {
     const summary = new Map<string, { setName: string; subjectName: string; totalStock: number; materialCount: number }>();
 
@@ -916,12 +896,12 @@ export default function InventoryManagement() {
 
   const materialMasterStats = useMemo(
     () => ({
-      subjects: groupedCatalog.length,
+      subjects: materialCategories.length,
       materials: filteredMaterials.length,
       sets: setWiseInventorySummary.length,
       stock: filteredMaterials.reduce((sum, item) => sum + Number(item.current_stock || 0), 0),
     }),
-    [filteredMaterials, groupedCatalog.length, setWiseInventorySummary.length]
+    [filteredMaterials, materialCategories.length, setWiseInventorySummary.length]
   );
 
   const supplierMaterialSummary = useMemo(() => {
@@ -989,9 +969,10 @@ export default function InventoryManagement() {
   const selectedHistoryMaterial = materials.find((item) => item.id === historyMaterialId);
   const selectedSidebarMaterial = materials.find((item) => sameId(item.id, selectedMaterialId)) ?? filteredMaterials[0] ?? null;
   const selectedCatalogSetStock = scopedMaterials.reduce((sum, item) => sum + Number(item.current_stock || 0), 0);
-  const recentStockInPreview = [...stockInEntries]
-    .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime())
-    .slice(0, 4);
+  const selectedFormSubject = inventorySubjects.find((item) => sameId(item.id, materialForm.subject_id)) ?? null;
+  const selectedFormSet = inventorySets.find((item) => sameId(item.id, materialForm.set_id)) ?? null;
+  const selectedFormVolume = inventoryVolumes.find((item) => sameId(item.id, materialForm.volume_id)) ?? null;
+  const materialDetailsReady = Boolean(materialForm.subject_id && materialForm.set_id && materialForm.name.trim());
   const reportColumns = reportData?.rows[0] ? Object.keys(reportData.rows[0].values) : [];
 
   const resetMaterialForm = () => {
@@ -1002,6 +983,7 @@ export default function InventoryManagement() {
   const resetSubjectForm = () => {
     setSubjectForm(initialSubjectForm);
     setEditingSubjectId(null);
+    setShowCategoryForm(false);
   };
 
   const resetSetForm = () => {
@@ -1012,6 +994,23 @@ export default function InventoryManagement() {
   const resetVolumeForm = () => {
     setVolumeForm(initialVolumeForm);
     setEditingVolumeId(null);
+  };
+
+  const startNewMaterialWorkflow = () => {
+    resetMaterialForm();
+    setMaterialWorkflowSummary(null);
+    setMaterialWorkflowCompletion(null);
+    setActiveMaterialOverlay('material');
+    setMaterialWorkflowStep(1);
+  };
+
+  const closeMaterialWorkflow = () => {
+    setActiveMaterialOverlay(null);
+    if (materialWorkflowStep === 5) {
+      setMaterialWorkflowStep(1);
+      setMaterialWorkflowCompletion(null);
+      setMaterialWorkflowSummary(null);
+    }
   };
 
   const resetSupplierForm = () => {
@@ -1079,15 +1078,15 @@ export default function InventoryManagement() {
     try {
       if (editingSubjectId) {
         await apiService.updateInventorySubject(editingSubjectId, subjectForm);
-        setAlert({ type: 'success', message: 'Subject updated successfully' });
+        setAlert({ type: 'success', message: 'Category updated successfully' });
       } else {
         await apiService.createInventorySubject(subjectForm);
-        setAlert({ type: 'success', message: 'Subject added successfully' });
+        setAlert({ type: 'success', message: 'Category added successfully' });
       }
       resetSubjectForm();
       await refreshMaterials();
     } catch (error: any) {
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to save subject') });
+      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to save category') });
     }
   };
 
@@ -1097,17 +1096,20 @@ export default function InventoryManagement() {
       name: subject.name,
       is_active: subject.is_active,
     });
+    setShowCategoryForm(true);
   };
 
   const handleDeleteSubject = async (subjectId: string | number) => {
-    if (!canManageInventory || !window.confirm('Delete this subject?')) return;
+    if (!canManageInventory || !window.confirm('Delete this category?')) return;
     try {
       await apiService.deleteInventorySubject(subjectId);
-      if (sameId(editingSubjectId, subjectId)) resetSubjectForm();
-      setAlert({ type: 'success', message: 'Subject deleted successfully' });
+      if (sameId(editingSubjectId, subjectId)) {
+        resetSubjectForm();
+      }
+      setAlert({ type: 'success', message: 'Category deleted successfully' });
       await refreshMaterials();
     } catch (error: any) {
-      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to delete subject') });
+      setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to delete category') });
     }
   };
 
@@ -1205,6 +1207,13 @@ export default function InventoryManagement() {
     event.preventDefault();
     if (!canManageInventory) return;
     try {
+      const wasEditing = Boolean(editingMaterialId);
+      setMaterialWorkflowSummary({
+        name: materialForm.name,
+        subject: selectedFormSubject?.name || '',
+        set: selectedFormSet?.name || '',
+        volume: selectedFormVolume ? `Volume ${selectedFormVolume.volume_number}` : '',
+      });
       const payload = {
         name: materialForm.name,
         subject_id: materialForm.subject_id || null,
@@ -1226,8 +1235,9 @@ export default function InventoryManagement() {
         await apiService.createMaterial(payload);
         setAlert({ type: 'success', message: 'Material added successfully' });
       }
+      setMaterialWorkflowCompletion(wasEditing ? 'updated' : 'created');
+      setMaterialWorkflowStep(5);
       resetMaterialForm();
-      setActiveMaterialOverlay(null);
       await refreshMaterials();
     } catch (error: any) {
       setAlert({ type: 'error', message: getApiErrorMessage(error, 'Failed to save material') });
@@ -1248,7 +1258,10 @@ export default function InventoryManagement() {
       is_active: item.is_active,
     });
     setActiveTab('materials');
+    setMaterialWorkflowCompletion(null);
+    setMaterialWorkflowSummary(null);
     setActiveMaterialOverlay('material');
+    setMaterialWorkflowStep(2);
   };
 
   const handleDeleteMaterial = async (materialId: string | number) => {
@@ -1535,53 +1548,15 @@ export default function InventoryManagement() {
         </div>
 
         <div className="space-y-5">
-          <section className="rounded-[1.5rem] bg-white p-4 shadow-xl">
-            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-indigo-600">Inventory Functions</p>
-                <h2 className="mt-1 text-2xl font-bold text-slate-900">Top Section Bar</h2>
-                <p className="text-sm text-slate-500">Section select karo, aur content neeche khulega.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => loadInventoryData(false)}
-                className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
-              >
-                {refreshing ? 'Refreshing...' : 'Refresh Data'}
-              </button>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-              {inventoryFeatureCards.map((feature) => {
-                const Icon = feature.icon;
-                const colors = getFeatureColorClasses(feature.color);
-                const active = activeTab === feature.key;
-
-                return (
-                  <button
-                    key={feature.key}
-                    type="button"
-                    onClick={() => setActiveTab(feature.key)}
-                    className={`rounded-[1.25rem] border p-4 text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
-                      active
-                        ? 'border-slate-900 bg-white ring-2 ring-slate-900'
-                        : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`${colors.bg} rounded-2xl p-3`}>
-                        <Icon className={`${colors.text} h-5 w-5`} />
-                      </div>
-                      <div>
-                        <h2 className="text-sm font-semibold text-slate-900">{feature.title}</h2>
-                        <p className="mt-1 text-xs text-slate-500">{feature.description}</p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => loadInventoryData(false)}
+              className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100"
+            >
+              {refreshing ? 'Refreshing...' : 'Refresh Data'}
+            </button>
+          </div>
 
           <div className="min-w-0 space-y-5">
         {activeTab === 'dashboard' && (
@@ -1661,715 +1636,798 @@ export default function InventoryManagement() {
         )}
 
         {activeTab === 'materials' && (
-          <div className="grid gap-6 xl:grid-cols-[1.18fr,0.82fr]">
-            <section className="space-y-6">
-              <section className="rounded-[1.7rem] border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-indigo-50 p-5 shadow-xl">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="max-w-3xl">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">Material Master</p>
-                    <h2 className="mt-1.5 text-2xl font-bold text-slate-900">Organized Material Workspace</h2>
-                    <p className="mt-2 text-xs text-slate-600">
-                      Subject, set, volume, aur material stock ko clean cards aur structured browsing flow mein arrange kiya gaya hai.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => loadInventoryData(false)}
-                    className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100"
-                  >
+          <div className="space-y-6">
+            <section className="rounded-[1.7rem] border border-slate-200 bg-white p-5 shadow-xl">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">Material Master</p>
+                  <h2 className="mt-1.5 text-2xl font-bold text-slate-900">Manage all inventory materials</h2>
+                  <p className="mt-2 text-sm text-slate-600">Search, filter, open, edit aur add materials from one clean workspace.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => loadInventoryData(false)} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100">
                     {refreshing ? 'Refreshing...' : 'Refresh Data'}
                   </button>
+                  <button type="button" disabled={!canManageInventory} onClick={startNewMaterialWorkflow} className={primaryButtonClass}>
+                    Add Material
+                  </button>
                 </div>
+              </div>
 
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  <MiniActionCard title="Subjects" description={`${materialMasterStats.subjects} subject groups`} actionLabel="Browse" tone="indigo" />
-                  <MiniActionCard title="Materials" description={`${materialMasterStats.materials} filtered records`} actionLabel="Registry" tone="amber" />
-                  <MiniActionCard title="Sets" description={`${materialMasterStats.sets} set summaries`} actionLabel="Structure" tone="blue" />
-                  <MiniActionCard title="Stock" description={`${materialMasterStats.stock} total visible units`} actionLabel="Live Count" tone="emerald" />
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Materials</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{materialMasterStats.materials}</p>
                 </div>
-
-                <div className="mt-4 grid gap-3 xl:grid-cols-3">
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-white p-3 shadow-sm">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Search Material</label>
-                    <input
-                      value={materialSearch}
-                      onChange={(e) => setMaterialSearch(e.target.value)}
-                      placeholder="Search material, set, subject, volume"
-                      className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                    />
-                  </div>
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-white p-3 shadow-sm">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subject Filter</label>
-                    <select value={materialSubjectFilter} onChange={(e) => setMaterialSubjectFilter(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
-                      <option value="">All subjects</option>
-                      {materialSubjects.map((subject) => (
-                        <option key={subject} value={subject}>{subject}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-white p-3 shadow-sm">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Batch Filter</label>
-                    <select value={materialBatchFilter} onChange={(e) => setMaterialBatchFilter(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
-                      <option value="">All batches</option>
-                      {materialBatches.map((batchName) => (
-                        <option key={batchName} value={batchName}>{batchName}</option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Current Stock</p>
+                  <p className="mt-2 text-2xl font-bold text-blue-700">{materialMasterStats.stock}</p>
                 </div>
-              </section>
-
-              <section className="rounded-[1.7rem] border border-slate-200 bg-white p-4 shadow-xl">
-                <div className="grid gap-4 xl:grid-cols-[0.34fr,0.24fr,0.42fr]">
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Browse Catalog</p>
-                        <p className="text-xs text-slate-500">Subject list se set aur materials ko quickly open karo.</p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                        {groupedCatalog.length} subject(s)
-                      </span>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {groupedCatalog.map((subject) => (
-                        <button
-                          key={subject.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCatalogSubjectId(subject.id);
-                            setSelectedCatalogSetId(subject.sets[0]?.id ?? null);
-                          }}
-                          className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
-                            selectedCatalogSubject?.id === subject.id
-                              ? 'border-slate-900 bg-slate-900 text-white'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="font-semibold">{subject.name}</p>
-                            <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                              selectedCatalogSubject?.id === subject.id ? 'bg-white/15 text-slate-100' : 'bg-slate-100 text-slate-600'
-                            }`}>
-                              {subject.sets.length}
-                            </span>
-                          </div>
-                          <p className={`mt-1 text-xs ${selectedCatalogSubject?.id === subject.id ? 'text-slate-200' : 'text-slate-500'}`}>
-                            {subject.sets.length} set(s) available
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-sm font-semibold text-slate-900">Selected Details</p>
-                    <div className="mt-3 space-y-3">
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Subject</p>
-                        <p className="mt-1 font-semibold text-slate-900">{selectedCatalogSubject?.name || 'No subject selected'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Set</p>
-                        <p className="mt-1 font-semibold text-slate-900">{selectedCatalogSet?.name || 'No set selected'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Material</p>
-                        <p className="mt-1 font-semibold text-slate-900">{selectedSidebarMaterial?.name || 'No material selected'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Records</p>
-                        <p className="mt-1 font-semibold text-slate-900">{scopedMaterials.length} available</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Stock</p>
-                        <p className="mt-1 text-xl font-bold text-blue-700">{selectedCatalogSetStock}</p>
-                      </div>
-                    </div>
-                    {selectedSidebarMaterial && (
-                      <div className="mt-3 grid gap-2">
-                        <button type="button" onClick={() => handleEditMaterial(selectedSidebarMaterial)} className={warningButtonClass}>
-                          Edit Selected
-                        </button>
-                        <button type="button" onClick={() => handleLoadHistory(selectedSidebarMaterial.id)} className={infoButtonClass}>
-                          Open History
-                        </button>
-                        {canManageInventory && (
-                          <button type="button" onClick={() => handleDeleteMaterial(selectedSidebarMaterial.id)} className={dangerButtonClass}>
-                            Delete Selected
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-[1.25rem] border border-slate-200 bg-white p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Material Entry Panel</p>
-                        <p className="text-xs text-slate-500">Add ya edit material overlay drawer mein open hoga.</p>
-                      </div>
-                      {editingMaterialId ? (
-                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-                          Editing Mode
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-3 space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Selection Flow</p>
-                        <p className="mt-2 text-sm font-medium text-slate-700">Subject {'->'} Set {'->'} Volume {'->'} Material</p>
-                        <p className="mt-2 text-xs text-slate-500">
-                          Form ab page ke andar squeeze nahi hoga. Proper overlay panel mein open karke kaam hoga.
-                        </p>
-                      </div>
-
-                      <div className="grid gap-2">
-                        <button
-                          type="button"
-                          disabled={!canManageInventory}
-                          onClick={() => {
-                            if (!editingMaterialId) resetMaterialForm();
-                            setActiveMaterialOverlay('material');
-                          }}
-                          className={primaryButtonClass}
-                        >
-                          {editingMaterialId ? 'Open Edit Material Panel' : 'Open Add Material Panel'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveMaterialOverlay('upload')}
-                          className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Open Bulk Upload Panel
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!selectedSidebarMaterial}
-                          onClick={() => selectedSidebarMaterial && handleLoadHistory(selectedSidebarMaterial.id)}
-                          className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Open Stock Trail Panel
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Low Stock</p>
+                  <p className="mt-2 text-2xl font-bold text-rose-600">{dashboard?.low_stock_items?.length || 0}</p>
                 </div>
-              </section>
-
-              <section className="grid items-start gap-3 xl:grid-cols-[1.22fr,0.78fr]">
-                <div className="grid gap-3 self-start">
-                  <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Material Registry</p>
-                        <h3 className="mt-1.5 text-lg font-bold text-slate-900">Full Material List</h3>
-                      </div>
-                      <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
-                        {filteredMaterials.length} records
-                      </div>
-                    </div>
-                    <div className="mt-4 overflow-hidden rounded-[1.25rem] border border-slate-200">
-                      <div className="max-h-[20rem] overflow-auto">
-                        <table className="min-w-full text-xs">
-                          <thead className="sticky top-0 bg-white">
-                            <tr className="border-b border-slate-200 text-left text-slate-500">
-                              <th className="px-3 py-2.5">Material Name</th>
-                              <th className="px-3 py-2.5">Subject</th>
-                              <th className="px-3 py-2.5">Set</th>
-                              <th className="px-3 py-2.5">Volume</th>
-                              <th className="px-3 py-2.5">Current Stock</th>
-                              <th className="px-3 py-2.5">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredMaterials.length ? (
-                              filteredMaterials.map((item) => (
-                                <tr
-                                  key={item.id}
-                                  onClick={() => setSelectedMaterialId(item.id)}
-                                  className={`cursor-pointer border-b border-slate-100 ${selectedSidebarMaterial?.id === item.id ? 'bg-blue-50/70' : 'hover:bg-slate-50'}`}
-                                >
-                                  <td className="px-3 py-3 font-semibold text-slate-900">{item.name}</td>
-                                  <td className="px-3 py-3">{item.subject || '-'}</td>
-                                  <td className="px-3 py-3">{item.set_name || '-'}</td>
-                                  <td className="px-3 py-3">{item.volume_name && item.volume_number ? `V${item.volume_number}` : '-'}</td>
-                                  <td className="px-3 py-3">
-                                    <span className={item.current_stock <= item.low_stock_threshold ? 'font-semibold text-rose-600' : 'font-semibold text-emerald-600'}>
-                                      {item.current_stock}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-3">
-                                    <div className="flex flex-wrap gap-2">
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedMaterialId(item.id); handleLoadHistory(item.id); }} className={infoButtonClass}>
-                                        Open
-                                      </button>
-                                      {canManageInventory && (
-                                        <>
-                                          <button type="button" onClick={(e) => { e.stopPropagation(); handleEditMaterial(item); }} className={warningButtonClass}>
-                                            Edit
-                                          </button>
-                                          <button type="button" onClick={(e) => { e.stopPropagation(); handleDeleteMaterial(item.id); }} className={dangerButtonClass}>
-                                            Delete
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))
-                            ) : (
-                              <tr>
-                                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No materials matched the current filters.</td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-[1fr,1fr]">
-                    <div className="grid gap-3">
-                      <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Low Stock Alerts</p>
-                        <h3 className="mt-1.5 text-base font-bold text-slate-900">Threshold Watchlist</h3>
-                        <div className="mt-3 space-y-2.5">
-                          {(dashboard?.low_stock_items || []).slice(0, 4).map((item) => (
-                            <div key={item.id} className="rounded-xl border border-rose-100 bg-rose-50 p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="font-semibold text-slate-900">{item.name}</p>
-                                  <p className="text-xs text-slate-500">{item.subject || '-'} | {item.set_name || '-'}</p>
-                                </div>
-                                <div className="text-right">
-                                  <p className="font-bold text-rose-700">{item.current_stock}</p>
-                                  <p className="text-xs text-rose-500">Low</p>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                          {!(dashboard?.low_stock_items || []).length && (
-                            <div className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">No low stock alerts right now.</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recent Stock In</p>
-                      <h3 className="mt-1.5 text-base font-bold text-slate-900">Latest Entries</h3>
-                      <div className="mt-3 space-y-2.5">
-                        {recentStockInPreview.map((entry) => (
-                          <div key={entry.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="font-semibold text-slate-900">{entry.material_name}</p>
-                                <p className="text-xs text-slate-500">{entry.supplier_name}</p>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-bold text-emerald-700">{entry.quantity_received}</p>
-                                <p className="text-xs text-slate-500">{new Date(entry.date || '').toLocaleDateString()}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {!recentStockInPreview.length && (
-                          <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No stock-in entries available yet.</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Structure</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{materialMasterStats.subjects + materialMasterStats.sets}</p>
                 </div>
+              </div>
 
-                <div className="grid gap-4">
-                  <div className="grid gap-4">
-                    <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Set-wise Stock Count</p>
-                          <h3 className="mt-1.5 text-base font-bold text-slate-900">Set Summary</h3>
-                          <p className="mt-1 text-xs text-slate-500">Har set ka total stock aur material entries ek hi jagah.</p>
-                        </div>
-                        <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
-                          {setWiseInventorySummary.length} set(s)
-                        </div>
-                      </div>
-                      <div className="mt-3 max-h-[22rem] space-y-2.5 overflow-y-auto pr-1">
-                        {setWiseInventorySummary.length ? setWiseInventorySummary.slice(0, 4).map((item) => (
-                          <div key={`${item.subjectName}-${item.setName}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="font-semibold text-slate-900">{item.setName}</p>
-                                <p className="mt-1 text-xs text-slate-500">{item.subjectName || 'No subject mapped'}</p>
-                              </div>
-                              <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                                {item.materialCount} material(s)
-                              </div>
-                            </div>
-                            <div className="mt-2.5 flex items-end justify-between gap-3 rounded-xl bg-white px-3 py-2.5">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Current Stock</p>
-                                <p className="mt-1 text-xl font-bold text-blue-700">{item.totalStock}</p>
-                              </div>
-                              <p className="text-xs text-slate-500">Set total visible count</p>
-                            </div>
-                          </div>
-                        )) : (
-                          <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Abhi set-wise stock summary available nahi hai.</div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Stock History</p>
-                          <h3 className="mt-1.5 text-base font-bold text-slate-900">Selected Material Trail</h3>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {selectedSidebarMaterial ? `${selectedSidebarMaterial.name} ke latest movements` : 'Kisi material ko open karte hi uska trail yahan dikhega.'}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
-                          {historyEntries.length} entries
-                        </div>
-                      </div>
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          disabled={!selectedSidebarMaterial}
-                          onClick={() => selectedSidebarMaterial && handleLoadHistory(selectedSidebarMaterial.id)}
-                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Open Trail Panel
-                        </button>
-                      </div>
-                      <div className="mt-3 max-h-[22rem] space-y-2.5 overflow-y-auto pr-1">
-                        {historyEntries.length ? historyEntries.slice(0, 4).map((entry) => (
-                          <div key={`${entry.entry_kind}-${entry.entry_id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex gap-3">
-                                <div className={`mt-1 h-2.5 w-2.5 rounded-full ${entry.entry_kind === 'stock_in' ? 'bg-emerald-500' : entry.entry_kind === 'student_issue' ? 'bg-blue-500' : 'bg-amber-500'}`} />
-                                <div>
-                                  <p className="font-semibold text-slate-900">{entry.entry_kind === 'stock_in' ? 'Stock In' : entry.entry_kind === 'student_issue' ? 'Student Issue' : 'Stock Out'}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{entry.counterparty}</p>
-                                  <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
-                                    {entry.date ? new Date(entry.date).toLocaleDateString() : 'No date'}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className={`text-base font-bold ${entry.entry_kind === 'stock_in' ? 'text-emerald-600' : entry.entry_kind === 'student_issue' ? 'text-blue-600' : 'text-amber-600'}`}>
-                                  {entry.entry_kind === 'stock_in' ? '+' : '-'}{entry.quantity}
-                                </p>
-                                <p className="text-[11px] text-slate-400">units</p>
-                              </div>
-                            </div>
-                          </div>
-                        )) : (
-                          <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Choose a material to view its trail.</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
+              <div className="mt-5 grid gap-3 lg:grid-cols-[1.2fr,0.8fr,0.8fr]">
+                <input
+                  value={materialSearch}
+                  onChange={(e) => setMaterialSearch(e.target.value)}
+                  placeholder="Search materials..."
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                />
+                <select value={materialSubjectFilter} onChange={(e) => setMaterialSubjectFilter(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm">
+                  <option value="">All categories</option>
+                  {materialCategories.map((subject) => (
+                    <option key={subject.id} value={subject.name}>{subject.name}</option>
+                  ))}
+                </select>
+                <select value={materialBatchFilter} onChange={(e) => setMaterialBatchFilter(e.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm">
+                  <option value="">All batches</option>
+                  {materialBatches.map((batchName) => (
+                    <option key={batchName} value={batchName}>{batchName}</option>
+                  ))}
+                </select>
+              </div>
             </section>
 
-            <aside className="xl:sticky xl:top-5 xl:self-start">
-              <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-xl">
-                <div className="border-b border-slate-100 px-6 py-5">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
-                      <BookOpen className="h-5 w-5" />
+            <section className="grid gap-4 xl:grid-cols-[0.28fr,0.72fr]">
+              <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">Categories</p>
+                  {canManageInventory ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCategoryForm((current) => {
+                          const next = !current;
+                          if (!next) {
+                            resetSubjectForm();
+                          }
+                          return next;
+                        });
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {showCategoryForm ? 'Close' : '+ Add Category'}
+                    </button>
+                  ) : null}
+                </div>
+                {showCategoryForm ? (
+                  <form onSubmit={handleSaveSubject} className="mt-4 rounded-[1.1rem] border border-slate-200 bg-slate-50 p-3">
+                    <label className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Category Name</label>
+                    <input
+                      value={subjectForm.name}
+                      onChange={(e) => setSubjectForm((current) => ({ ...current, name: e.target.value }))}
+                      placeholder="Enter category name"
+                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    />
+                    <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={subjectForm.is_active}
+                        onChange={(e) => setSubjectForm((current) => ({ ...current, is_active: e.target.checked }))}
+                      />
+                      Active category
+                    </label>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="submit"
+                        disabled={!canManageInventory || !subjectForm.name.trim()}
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {editingSubjectId ? 'Update Category' : 'Save Category'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetSubjectForm}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-slate-900">Material Master</h3>
-                      <p className="mt-1 text-sm text-slate-500">Subjects, sets, aur volumes ko yahin se manage karo.</p>
+                  </form>
+                ) : null}
+                <div className="mt-4 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMaterialSubjectFilter('');
+                      if (groupedCatalog[0]) {
+                        setSelectedCatalogSubjectId(groupedCatalog[0].id);
+                        setSelectedCatalogSetId(groupedCatalog[0].sets[0]?.id ?? null);
+                      }
+                    }}
+                    className={`w-full rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${!materialSubjectFilter ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white'}`}
+                  >
+                    All
+                  </button>
+                  {materialCategories.map((subject) => (
+                    <div
+                      key={subject.id}
+                      className={`flex items-center gap-2 rounded-xl border px-2 py-2 transition ${materialSubjectFilter === subject.name ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white'}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMaterialSubjectFilter(subject.name);
+                          setSelectedCatalogSubjectId(subject.id);
+                          const linkedSubject = catalog.find((item) => sameId(item.id, subject.id));
+                          setSelectedCatalogSetId(linkedSubject?.sets[0]?.id ?? null);
+                        }}
+                        className="flex-1 text-left text-sm font-semibold"
+                      >
+                        <span>{subject.name}</span>
+                        <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${materialSubjectFilter === subject.name ? 'bg-white/15 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                          {materials.filter((item) => sameId(item.subject_id, subject.id)).length}
+                        </span>
+                      </button>
+                      {canManageInventory ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleEditSubject(subject)}
+                            className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${materialSubjectFilter === subject.name ? 'bg-white/15 text-white hover:bg-white/20' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSubject(subject.id)}
+                            className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${materialSubjectFilter === subject.name ? 'bg-rose-500/20 text-white hover:bg-rose-500/30' : 'bg-rose-100 text-rose-700 hover:bg-rose-200'}`}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : null}
                     </div>
-                  </div>
+                  ))}
                 </div>
 
-                <div className="px-6 py-5">
-                  <div className="flex gap-2 rounded-2xl bg-slate-50 p-1">
-                    {[
-                      { key: 'subjects' as const, label: 'Subjects' },
-                      { key: 'sets' as const, label: 'Sets' },
-                      { key: 'volumes' as const, label: 'Volumes' },
-                    ].map((tab) => {
-                      const active = activeMasterTab === tab.key;
-                      return (
+                <div className="mt-5 rounded-[1.1rem] border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-slate-900">{editingSetId ? 'Edit Set' : 'Add New Set'}</h4>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">{visibleSetList.length}</span>
+                  </div>
+                  <form onSubmit={handleSaveSet} className="mt-3 grid gap-3">
+                    <select
+                      required
+                      disabled={!canManageInventory}
+                      value={setForm.subject_id}
+                      onChange={(e) => setSetForm({ ...setForm, subject_id: e.target.value })}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    >
+                      <option value="">Select subject</option>
+                      {inventorySubjects.map((subject) => (
+                        <option key={subject.id} value={subject.id}>{subject.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      required
+                      disabled={!canManageInventory}
+                      value={setForm.name}
+                      onChange={(e) => setSetForm({ ...setForm, name: e.target.value })}
+                      placeholder="Enter set name"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    />
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        disabled={!canManageInventory}
+                        type="checkbox"
+                        checked={setForm.is_active}
+                        onChange={(e) => setSetForm({ ...setForm, is_active: e.target.checked })}
+                      />
+                      Active set
+                    </label>
+                    <div className="flex gap-2">
+                      <button disabled={!canManageInventory} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        {editingSetId ? 'Update Set' : 'Add Set'}
+                      </button>
+                      {editingSetId ? (
                         <button
-                          key={tab.key}
                           type="button"
-                          onClick={() => setActiveMasterTab(tab.key)}
-                          className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                            active ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                          }`}
+                          onClick={resetSetForm}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
-                          {tab.label}
+                          Cancel
                         </button>
+                      ) : null}
+                    </div>
+                  </form>
+                  <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {visibleSetList.map((inventorySet) => {
+                      const matchingMaterials = materials.filter((item) => sameId(item.set_id, inventorySet.id));
+                      const setStock = matchingMaterials.reduce((sum, item) => sum + Number(item.current_stock || 0), 0);
+                      return (
+                        <div key={inventorySet.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">{inventorySet.name}</p>
+                              <p className="text-xs text-slate-500">{inventorySet.subject_name || 'No subject linked'}</p>
+                              <p className="mt-1 text-[11px] font-semibold text-blue-700">{setStock} in stock</p>
+                            </div>
+                            {canManageInventory ? (
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => handleEditSet(inventorySet)} className={warningButtonClass}>Edit</button>
+                                <button type="button" onClick={() => handleDeleteSet(inventorySet.id)} className={dangerButtonClass}>Delete</button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
+                </div>
 
-                  <div className="mt-5 space-y-5">
-                    {activeMasterTab === 'subjects' && (
-                      <>
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
-                          <h4 className="text-lg font-semibold text-slate-900">{editingSubjectId ? 'Edit Subject' : 'Add New Subject'}</h4>
-                          <form onSubmit={handleSaveSubject} className="mt-4 grid gap-3">
-                            <input required disabled={!canManageInventory} value={subjectForm.name} onChange={(e) => setSubjectForm({ ...subjectForm, name: e.target.value })} placeholder="Enter subject name" className="rounded-xl border border-slate-200 bg-white px-4 py-3" />
-                            <label className="flex items-center gap-3 text-sm text-slate-600">
-                              <input disabled={!canManageInventory} type="checkbox" checked={subjectForm.is_active} onChange={(e) => setSubjectForm({ ...subjectForm, is_active: e.target.checked })} />
-                              Active subject
-                            </label>
-                            <button disabled={!canManageInventory} className={primaryButtonClass}>
-                              {editingSubjectId ? 'Update Subject' : 'Add Subject'}
-                            </button>
-                          </form>
-                        </div>
-
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <h4 className="text-lg font-semibold text-slate-900">Subject List</h4>
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                              {inventorySubjects.length}
-                            </span>
+                <div className="mt-5 rounded-[1.1rem] border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-slate-900">{editingVolumeId ? 'Edit Volume' : 'Add New Volume'}</h4>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">{visibleVolumeList.length}</span>
+                  </div>
+                  <form onSubmit={handleSaveVolume} className="mt-3 grid gap-3">
+                    <select
+                      required
+                      disabled={!canManageInventory}
+                      value={volumeForm.subject_id}
+                      onChange={(e) => setVolumeForm({ ...volumeForm, subject_id: e.target.value, set_id: '' })}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    >
+                      <option value="">Select subject</option>
+                      {inventorySubjects.map((subject) => (
+                        <option key={subject.id} value={subject.id}>{subject.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      required
+                      disabled={!canManageInventory}
+                      value={volumeForm.set_id}
+                      onChange={(e) => setVolumeForm({ ...volumeForm, set_id: e.target.value })}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    >
+                      <option value="">Select set</option>
+                      {inventorySets.filter((item) => !volumeForm.subject_id || sameId(item.subject_id, volumeForm.subject_id)).map((inventorySet) => (
+                        <option key={inventorySet.id} value={inventorySet.id}>{inventorySet.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      required
+                      disabled={!canManageInventory}
+                      type="number"
+                      min="1"
+                      value={volumeForm.volume_number}
+                      onChange={(e) => setVolumeForm({ ...volumeForm, volume_number: e.target.value })}
+                      placeholder="Volume number"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    />
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        disabled={!canManageInventory}
+                        type="checkbox"
+                        checked={volumeForm.is_active}
+                        onChange={(e) => setVolumeForm({ ...volumeForm, is_active: e.target.checked })}
+                      />
+                      Active volume
+                    </label>
+                    <div className="flex gap-2">
+                      <button disabled={!canManageInventory} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        {editingVolumeId ? 'Update Volume' : 'Add Volume'}
+                      </button>
+                      {editingVolumeId ? (
+                        <button
+                          type="button"
+                          onClick={resetVolumeForm}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
+                    </div>
+                  </form>
+                  <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {visibleVolumeList.map((volume) => (
+                      <div key={volume.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900">Volume {volume.volume_number}</p>
+                            <p className="text-xs text-slate-500">{volume.subject_name || 'No subject'} / {volume.set_name || 'No set'}</p>
                           </div>
-                          <div className="mt-4 space-y-2">
-                            {inventorySubjects.map((subject) => (
-                              <div key={subject.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
-                                <div>
-                                  <p className="font-semibold text-slate-900">{subject.name}</p>
-                                  <p className="text-xs text-slate-500">{subject.is_active ? 'Active' : 'Inactive'}</p>
+                          {canManageInventory ? (
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => handleEditVolume(volume)} className={warningButtonClass}>Edit</button>
+                              <button type="button" onClick={() => handleDeleteVolume(volume.id)} className={dangerButtonClass}>Delete</button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Materials</p>
+                    <p className="text-xs text-slate-500">Main material management list</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setActiveMaterialOverlay('upload')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                      Bulk Upload
+                    </button>
+                    <button type="button" disabled={!selectedSidebarMaterial} onClick={() => selectedSidebarMaterial && handleEditMaterial(selectedSidebarMaterial)} className={warningButtonClass}>
+                      Edit Selected
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-[1.25rem] border border-slate-200">
+                  <div className="max-h-[32rem] overflow-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="sticky top-0 bg-white">
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-3 py-3">Material</th>
+                          <th className="px-3 py-3">Category</th>
+                          <th className="px-3 py-3">Unit</th>
+                          <th className="px-3 py-3">Stock</th>
+                          <th className="px-3 py-3">Status</th>
+                          <th className="px-3 py-3">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMaterials.length ? (
+                          filteredMaterials.map((item) => (
+                            <tr
+                              key={item.id}
+                              onClick={() => setSelectedMaterialId(item.id)}
+                              className={`cursor-pointer border-b border-slate-100 ${selectedSidebarMaterial?.id === item.id ? 'bg-blue-50/70' : 'hover:bg-slate-50'}`}
+                            >
+                              <td className="px-3 py-3 font-semibold text-slate-900">{item.name}</td>
+                              <td className="px-3 py-3">{item.subject || '-'}</td>
+                              <td className="px-3 py-3">{item.unit_type || '-'}</td>
+                              <td className="px-3 py-3">
+                                <span className={item.current_stock <= item.low_stock_threshold ? 'font-semibold text-rose-600' : 'font-semibold text-emerald-600'}>
+                                  {item.current_stock}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3">{item.is_active ? 'Active' : 'Inactive'}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-wrap gap-2">
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedMaterialId(item.id); handleLoadHistory(item.id); }} className={infoButtonClass}>
+                                    Open
+                                  </button>
+                                  {canManageInventory && (
+                                    <>
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); handleEditMaterial(item); }} className={warningButtonClass}>
+                                        Edit
+                                      </button>
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); handleDeleteMaterial(item.id); }} className={dangerButtonClass}>
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
-                                {canManageInventory && (
-                                  <div className="flex gap-2">
-                                    <button type="button" onClick={() => handleEditSubject(subject)} className={warningButtonClass}>Edit</button>
-                                    <button type="button" onClick={() => handleDeleteSubject(subject.id)} className={dangerButtonClass}>Delete</button>
-                                  </div>
-                                )}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={6} className="px-3 py-8 text-center text-slate-500">No materials matched the current filters.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+            <OverlayPanel
+              open={activeMaterialOverlay === 'material'}
+              mode="workspace"
+              title="Material Master"
+              description={editingMaterialId ? 'Existing material ko focused workflow me update karo.' : 'Add ya manage material using one focused step at a time.'}
+              onClose={closeMaterialWorkflow}
+            >
+              <div className="grid gap-5">
+                <ol className="flex items-center gap-0 overflow-x-auto pb-1">
+                  {materialWorkflowFlow.map((item, index) => {
+                    const active = materialWorkflowStep === item.step;
+                    const complete = materialWorkflowStep > item.step;
+                    const isLast = index === materialWorkflowFlow.length - 1;
+                    return (
+                      <li key={item.step} className={`flex items-center ${isLast ? 'flex-none' : 'min-w-[12rem] flex-1'}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                            active
+                              ? 'bg-blue-600 text-white ring-4 ring-blue-600/15'
+                              : complete
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-white text-slate-400 ring-1 ring-slate-200'
+                          }`}>
+                            {complete ? <CheckCircle2 className="h-4 w-4" /> : item.step}
+                          </div>
+                          <span className={`whitespace-nowrap text-xs font-semibold ${active ? 'text-blue-700' : complete ? 'text-emerald-600' : 'text-slate-400'}`}>
+                            {item.title}
+                          </span>
+                        </div>
+                        {!isLast && <div className={`mx-2 h-0.5 flex-1 rounded-full ${complete ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {materialWorkflowStep === 1 && (
+                  <div className="grid gap-4">
+                    <div className="grid gap-3 lg:grid-cols-3">
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Search Material</label>
+                        <input
+                          value={materialSearch}
+                          onChange={(e) => setMaterialSearch(e.target.value)}
+                          placeholder="Search material, set, subject, volume"
+                          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm"
+                        />
+                      </div>
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subject Filter</label>
+                        <select value={materialSubjectFilter} onChange={(e) => setMaterialSubjectFilter(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm">
+                          <option value="">All subjects</option>
+                          {materialSubjects.map((subject) => (
+                            <option key={subject} value={subject}>{subject}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Batch Filter</label>
+                        <select value={materialBatchFilter} onChange={(e) => setMaterialBatchFilter(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm">
+                          <option value="">All batches</option>
+                          {materialBatches.map((batchName) => (
+                            <option key={batchName} value={batchName}>{batchName}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 xl:grid-cols-[0.28fr,0.42fr,0.3fr]">
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Categories</p>
+                            <p className="text-xs text-slate-500">Subject list se catalog narrow karo.</p>
+                          </div>
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{groupedCatalog.length}</span>
+                        </div>
+                        <div className="mt-4 max-h-[22rem] space-y-2 overflow-y-auto pr-1">
+                          {groupedCatalog.map((subject) => (
+                            <button
+                              key={subject.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedCatalogSubjectId(subject.id);
+                                setSelectedCatalogSetId(subject.sets[0]?.id ?? null);
+                              }}
+                              className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                                selectedCatalogSubject?.id === subject.id
+                                  ? 'border-slate-900 bg-slate-900 text-white'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="font-semibold">{subject.name}</p>
+                                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                  selectedCatalogSubject?.id === subject.id ? 'bg-white/15 text-slate-100' : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {subject.sets.length}
+                                </span>
                               </div>
-                            ))}
+                              <p className={`mt-1 text-xs ${selectedCatalogSubject?.id === subject.id ? 'text-slate-200' : 'text-slate-500'}`}>
+                                {subject.sets.length} set(s) available
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">Available Materials</p>
+                            <p className="text-xs text-slate-500">Selected subject/set ke matching records.</p>
+                          </div>
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{scopedMaterials.length} record(s)</span>
+                        </div>
+                        <div className="mt-4 max-h-[22rem] space-y-2 overflow-y-auto pr-1">
+                          {scopedMaterials.length ? scopedMaterials.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setSelectedMaterialId(item.id)}
+                              className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                                selectedSidebarMaterial?.id === item.id
+                                  ? 'border-blue-200 bg-blue-50'
+                                  : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-semibold text-slate-900">{item.name}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{item.subject || '-'} / {item.set_name || '-'}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className={`text-sm font-bold ${item.current_stock <= item.low_stock_threshold ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                    {item.current_stock}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500">stock</p>
+                                </div>
+                              </div>
+                            </button>
+                          )) : (
+                            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                              No materials matched the current filters.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">Selected Material</p>
+                        <p className="mt-1 text-xs text-slate-500">Current selection yahan verify karo.</p>
+                        <div className="mt-4 space-y-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Subject</p>
+                            <p className="mt-1 font-semibold text-slate-900">{selectedCatalogSubject?.name || 'No subject selected'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Set</p>
+                            <p className="mt-1 font-semibold text-slate-900">{selectedCatalogSet?.name || 'No set selected'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Material</p>
+                            <p className="mt-1 font-semibold text-slate-900">{selectedSidebarMaterial?.name || 'No material selected'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                            <p className="mt-1 font-semibold text-slate-900">{selectedSidebarMaterial ? (selectedSidebarMaterial.is_active ? 'Active' : 'Inactive') : 'No selection'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Current Stock</p>
+                            <p className="mt-1 text-xl font-bold text-blue-700">{selectedSidebarMaterial?.current_stock ?? selectedCatalogSetStock}</p>
                           </div>
                         </div>
-                      </>
-                    )}
+                      </div>
+                    </div>
 
-                    {activeMasterTab === 'sets' && (
-                      <>
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
-                          <h4 className="text-lg font-semibold text-slate-900">{editingSetId ? 'Edit Set' : 'Add New Set'}</h4>
-                          <form onSubmit={handleSaveSet} className="mt-4 grid gap-3">
-                            <select required disabled={!canManageInventory} value={setForm.subject_id} onChange={(e) => setSetForm({ ...setForm, subject_id: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="rounded-[1.25rem] border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <button type="button" onClick={closeMaterialWorkflow} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                          Cancel
+                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedSidebarMaterial && (
+                            <button
+                              type="button"
+                              onClick={() => handleEditMaterial(selectedSidebarMaterial)}
+                              className={warningButtonClass}
+                            >
+                              Edit Selected
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setMaterialWorkflowStep(2)}
+                            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                          >
+                            Continue <ArrowRight className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {(materialWorkflowStep === 2 || materialWorkflowStep === 3 || materialWorkflowStep === 4) && (
+                  <form onSubmit={handleSaveMaterial} className="grid gap-4">
+                    {materialWorkflowStep === 2 && (
+                      <div className="grid gap-4 xl:grid-cols-[1.08fr,0.92fr]">
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Basic Information</p>
+                          <div className="mt-4 grid gap-3 md:grid-cols-3">
+                            <select required disabled={!canManageInventory} value={materialForm.subject_id} onChange={(e) => setMaterialForm({ ...materialForm, subject_id: e.target.value, set_id: '', volume_id: '' })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
                               <option value="">Select subject</option>
-                              {inventorySubjects.map((subject) => (
+                              {activeSubjects.map((subject) => (
                                 <option key={subject.id} value={subject.id}>{subject.name}</option>
                               ))}
                             </select>
-                            <input required disabled={!canManageInventory} value={setForm.name} onChange={(e) => setSetForm({ ...setForm, name: e.target.value })} placeholder="Enter set name" className="rounded-xl border border-slate-200 bg-white px-4 py-3" />
-                            <label className="flex items-center gap-3 text-sm text-slate-600">
-                              <input disabled={!canManageInventory} type="checkbox" checked={setForm.is_active} onChange={(e) => setSetForm({ ...setForm, is_active: e.target.checked })} />
-                              Active set
-                            </label>
-                            <button disabled={!canManageInventory} className={primaryButtonClass}>
-                              {editingSetId ? 'Update Set' : 'Add Set'}
-                            </button>
-                          </form>
+                            <select required disabled={!canManageInventory || !materialForm.subject_id} value={materialForm.set_id} onChange={(e) => setMaterialForm({ ...materialForm, set_id: e.target.value, volume_id: '' })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
+                              <option value="">Select set</option>
+                              {filteredSetOptions.map((inventorySet) => (
+                                <option key={inventorySet.id} value={inventorySet.id}>{inventorySet.name}</option>
+                              ))}
+                            </select>
+                            <select disabled={!canManageInventory || !materialForm.set_id} value={materialForm.volume_id} onChange={(e) => setMaterialForm({ ...materialForm, volume_id: e.target.value })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
+                              <option value="">Select volume</option>
+                              {filteredVolumeOptions.map((volume) => (
+                                <option key={volume.id} value={volume.id}>Volume {volume.volume_number}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <input required disabled={!canManageInventory} value={materialForm.name} onChange={(e) => setMaterialForm({ ...materialForm, name: e.target.value })} placeholder="Material name" className="mt-3 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm" />
                         </div>
 
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <h4 className="text-lg font-semibold text-slate-900">Set List</h4>
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                              {inventorySets.length}
-                            </span>
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Additional Information</p>
+                          <textarea disabled={!canManageInventory} value={materialForm.description} onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })} placeholder="Description" className="mt-4 min-h-[260px] w-full rounded-xl border border-slate-200 px-4 py-3 text-sm" />
+                        </div>
+                      </div>
+                    )}
+
+                    {materialWorkflowStep === 3 && (
+                      <div className="grid gap-4 xl:grid-cols-[0.9fr,1.1fr]">
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Stock Controls</p>
+                          <div className="mt-4 grid gap-3">
+                            <select disabled={!canManageInventory} value={materialForm.unit_type} onChange={(e) => setMaterialForm({ ...materialForm, unit_type: e.target.value as MaterialUnitType })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
+                              {unitTypeOptions.map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                            <input disabled={!canManageInventory} type="number" min="0" value={materialForm.low_stock_threshold} onChange={(e) => setMaterialForm({ ...materialForm, low_stock_threshold: Number(e.target.value) })} placeholder="Low stock threshold" className="rounded-xl border border-slate-200 px-4 py-3 text-sm" />
+                            <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
+                              <input disabled={!canManageInventory} type="checkbox" checked={materialForm.is_active} onChange={(e) => setMaterialForm({ ...materialForm, is_active: e.target.checked })} />
+                              Active material
+                            </label>
                           </div>
-                          <div className="mt-4 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
-                            {inventorySets.map((inventorySet) => {
-                              const matchingMaterials = materials.filter((item) => item.set_id === inventorySet.id);
-                              const setStock = matchingMaterials.reduce((sum, item) => sum + Number(item.current_stock || 0), 0);
+                        </div>
+
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Connected Batches</p>
+                              <p className="mt-1 text-sm text-slate-600">Existing batch mapping yahin select karo.</p>
+                            </div>
+                            <button type="button" onClick={() => navigate('/batches')} className={infoButtonClass}>
+                              Manage Batches
+                            </button>
+                          </div>
+                          <div className="mt-4 flex max-h-56 flex-wrap gap-2 overflow-y-auto">
+                            {connectedBatchOptions.filter((batch) => batch.is_active).map((batch) => {
+                              const selected = materialForm.batch_names.includes(batch.name);
                               return (
-                                <div key={inventorySet.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
-                                  <div>
-                                    <p className="font-semibold text-slate-900">{inventorySet.name}</p>
-                                    <p className="text-xs text-slate-500">{inventorySet.subject_name}</p>
-                                    <p className="mt-1 text-xs font-semibold text-blue-700">{setStock} in stock</p>
-                                  </div>
-                                  {canManageInventory && (
-                                    <div className="flex gap-2">
-                                      <button type="button" onClick={() => handleEditSet(inventorySet)} className={warningButtonClass}>Edit</button>
-                                      <button type="button" onClick={() => handleDeleteSet(inventorySet.id)} className={dangerButtonClass}>Delete</button>
-                                    </div>
-                                  )}
-                                </div>
+                                <button
+                                  key={batch.id}
+                                  type="button"
+                                  disabled={!canManageInventory}
+                                  onClick={() => toggleMaterialBatch(batch.name)}
+                                  className={`rounded-full border px-3 py-2 text-xs font-medium transition ${
+                                    selected
+                                      ? 'border-slate-900 bg-slate-900 text-white'
+                                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                                  }`}
+                                >
+                                  {batch.name}
+                                </button>
                               );
                             })}
                           </div>
                         </div>
-                      </>
+                      </div>
                     )}
 
-                    {activeMasterTab === 'volumes' && (
-                      <>
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
-                          <h4 className="text-lg font-semibold text-slate-900">{editingVolumeId ? 'Edit Volume' : 'Add New Volume'}</h4>
-                          <form onSubmit={handleSaveVolume} className="mt-4 grid gap-3">
-                            <select required disabled={!canManageInventory} value={volumeForm.subject_id} onChange={(e) => setVolumeForm({ ...volumeForm, subject_id: e.target.value, set_id: '' })} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                              <option value="">Select subject</option>
-                              {inventorySubjects.map((subject) => (
-                                <option key={subject.id} value={subject.id}>{subject.name}</option>
-                              ))}
-                            </select>
-                            <select required disabled={!canManageInventory} value={volumeForm.set_id} onChange={(e) => setVolumeForm({ ...volumeForm, set_id: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                              <option value="">Select set</option>
-                              {inventorySets.filter((item) => !volumeForm.subject_id || sameId(item.subject_id, volumeForm.subject_id)).map((inventorySet) => (
-                                <option key={inventorySet.id} value={inventorySet.id}>{inventorySet.name}</option>
-                              ))}
-                            </select>
-                            <input required disabled={!canManageInventory} type="number" min="1" value={volumeForm.volume_number} onChange={(e) => setVolumeForm({ ...volumeForm, volume_number: e.target.value })} placeholder="Volume number" className="rounded-xl border border-slate-200 bg-white px-4 py-3" />
-                            <label className="flex items-center gap-3 text-sm text-slate-600">
-                              <input disabled={!canManageInventory} type="checkbox" checked={volumeForm.is_active} onChange={(e) => setVolumeForm({ ...volumeForm, is_active: e.target.checked })} />
-                              Active volume
-                            </label>
-                            <button disabled={!canManageInventory} className={primaryButtonClass}>
-                              {editingVolumeId ? 'Update Volume' : 'Add Volume'}
-                            </button>
-                          </form>
-                        </div>
-
-                        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <h4 className="text-lg font-semibold text-slate-900">Volume List</h4>
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                              {inventoryVolumes.length}
-                            </span>
-                          </div>
-                          <div className="mt-4 max-h-[26rem] space-y-2 overflow-y-auto pr-1">
-                            {inventoryVolumes.map((volume) => (
-                              <div key={volume.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
-                                <div>
-                                  <p className="font-semibold text-slate-900">Volume {volume.volume_number}</p>
-                                  <p className="text-xs text-slate-500">{volume.subject_name} / {volume.set_name}</p>
-                                </div>
-                                {canManageInventory && (
-                                  <div className="flex gap-2">
-                                    <button type="button" onClick={() => handleEditVolume(volume)} className={warningButtonClass}>Edit</button>
-                                    <button type="button" onClick={() => handleDeleteVolume(volume.id)} className={dangerButtonClass}>Delete</button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                    {materialWorkflowStep === 4 && (
+                      <div className="grid gap-4 xl:grid-cols-3">
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Material</p>
+                          <div className="mt-4 space-y-3 text-sm text-slate-600">
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Name</p><p className="mt-1 font-semibold text-slate-900">{materialForm.name || '-'}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Subject</p><p className="mt-1 font-semibold text-slate-900">{selectedFormSubject?.name || '-'}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Set</p><p className="mt-1 font-semibold text-slate-900">{selectedFormSet?.name || '-'}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Volume</p><p className="mt-1 font-semibold text-slate-900">{selectedFormVolume ? `Volume ${selectedFormVolume.volume_number}` : 'Not linked'}</p></div>
                           </div>
                         </div>
-                      </>
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Details</p>
+                          <div className="mt-4 space-y-3 text-sm text-slate-600">
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Description</p><p className="mt-1 whitespace-pre-wrap text-slate-900">{materialForm.description || 'No description added'}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Unit Type</p><p className="mt-1 font-semibold text-slate-900">{materialForm.unit_type}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Status</p><p className="mt-1 font-semibold text-slate-900">{materialForm.is_active ? 'Active' : 'Inactive'}</p></div>
+                          </div>
+                        </div>
+                        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Stock</p>
+                          <div className="mt-4 space-y-3 text-sm text-slate-600">
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Low Stock Threshold</p><p className="mt-1 font-semibold text-slate-900">{materialForm.low_stock_threshold}</p></div>
+                            <div><p className="text-xs uppercase tracking-wide text-slate-500">Connected Batches</p><p className="mt-1 text-slate-900">{materialForm.batch_names.length ? materialForm.batch_names.join(', ') : 'No batches linked'}</p></div>
+                          </div>
+                        </div>
+                      </div>
                     )}
-                  </div>
-                </div>
-              </div>
-            </aside>
 
-            <OverlayPanel
-              open={activeMaterialOverlay === 'material'}
-              mode="drawer"
-              title={editingMaterialId ? 'Edit Material' : 'Add Material'}
-              description="Subject, set, volume, batches, aur stock threshold yahin se manage karo."
-              onClose={() => {
-                setActiveMaterialOverlay(null);
-                if (!editingMaterialId) resetMaterialForm();
-              }}
-            >
-              <form onSubmit={handleSaveMaterial} className="grid gap-4">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <select required disabled={!canManageInventory} value={materialForm.subject_id} onChange={(e) => setMaterialForm({ ...materialForm, subject_id: e.target.value, set_id: '', volume_id: '' })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
-                    <option value="">Select subject</option>
-                    {activeSubjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>{subject.name}</option>
-                    ))}
-                  </select>
-                  <select required disabled={!canManageInventory || !materialForm.subject_id} value={materialForm.set_id} onChange={(e) => setMaterialForm({ ...materialForm, set_id: e.target.value, volume_id: '' })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
-                    <option value="">Select set</option>
-                    {filteredSetOptions.map((inventorySet) => (
-                      <option key={inventorySet.id} value={inventorySet.id}>{inventorySet.name}</option>
-                    ))}
-                  </select>
-                  <select disabled={!canManageInventory || !materialForm.set_id} value={materialForm.volume_id} onChange={(e) => setMaterialForm({ ...materialForm, volume_id: e.target.value })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
-                    <option value="">Select volume</option>
-                    {filteredVolumeOptions.map((volume) => (
-                      <option key={volume.id} value={volume.id}>Volume {volume.volume_number}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <input required disabled={!canManageInventory} value={materialForm.name} onChange={(e) => setMaterialForm({ ...materialForm, name: e.target.value })} placeholder="Material name" className="rounded-xl border border-slate-200 px-4 py-3 text-sm" />
-
-                <div className="grid gap-3 md:grid-cols-[1.15fr,0.85fr]">
-                  <textarea disabled={!canManageInventory} value={materialForm.description} onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })} placeholder="Description" className="min-h-[120px] rounded-xl border border-slate-200 px-4 py-3 text-sm" />
-                  <div className="grid gap-3">
-                    <select disabled={!canManageInventory} value={materialForm.unit_type} onChange={(e) => setMaterialForm({ ...materialForm, unit_type: e.target.value as MaterialUnitType })} className="rounded-xl border border-slate-200 px-4 py-3 text-sm">
-                      {unitTypeOptions.map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                    <input disabled={!canManageInventory} type="number" min="0" value={materialForm.low_stock_threshold} onChange={(e) => setMaterialForm({ ...materialForm, low_stock_threshold: Number(e.target.value) })} placeholder="Low stock threshold" className="rounded-xl border border-slate-200 px-4 py-3 text-sm" />
-                    <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
-                      <input disabled={!canManageInventory} type="checkbox" checked={materialForm.is_active} onChange={(e) => setMaterialForm({ ...materialForm, is_active: e.target.checked })} />
-                      Active material
-                    </label>
-                  </div>
-                </div>
-
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Connected Batches</p>
-                      <p className="text-xs text-slate-500">Optional batch mapping for issue filtering.</p>
-                    </div>
-                    <button type="button" onClick={() => navigate('/batches')} className={infoButtonClass}>
-                      Manage Batches
-                    </button>
-                  </div>
-                  <div className="mt-3 flex max-h-36 flex-wrap gap-2 overflow-y-auto">
-                    {connectedBatchOptions.filter((batch) => batch.is_active).map((batch) => {
-                      const selected = materialForm.batch_names.includes(batch.name);
-                      return (
-                        <button
-                          key={batch.id}
-                          type="button"
-                          disabled={!canManageInventory}
-                          onClick={() => toggleMaterialBatch(batch.name)}
-                          className={`rounded-full border px-3 py-2 text-xs font-medium transition ${
-                            selected
-                              ? 'border-slate-900 bg-slate-900 text-white'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
-                          }`}
-                        >
-                          {batch.name}
+                    <div className="rounded-[1.25rem] border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <button type="button" onClick={() => setMaterialWorkflowStep(materialWorkflowStep === 2 ? 1 : materialWorkflowStep === 3 ? 2 : 3)} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                          Back
                         </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                        <div className="flex flex-wrap gap-2">
+                          {materialWorkflowStep === 2 && (
+                            <button type="button" disabled={!materialDetailsReady} onClick={() => setMaterialWorkflowStep(3)} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                              Continue <ArrowRight className="h-4 w-4" />
+                            </button>
+                          )}
+                          {materialWorkflowStep === 3 && (
+                            <button type="button" onClick={() => setMaterialWorkflowStep(4)} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">
+                              Continue <ArrowRight className="h-4 w-4" />
+                            </button>
+                          )}
+                          {materialWorkflowStep === 4 && (
+                            <button disabled={!canManageInventory} className={primaryButtonClass}>
+                              {editingMaterialId ? 'Update Material' : 'Add Material'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </form>
+                )}
 
-                <div className="flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMaterialOverlay(null);
-                      resetMaterialForm();
-                    }}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
-                  >
-                    Cancel
-                  </button>
-                  <button disabled={!canManageInventory} className={primaryButtonClass}>
-                    {editingMaterialId ? 'Update Material' : 'Add Material'}
-                  </button>
-                </div>
-              </form>
+                {materialWorkflowStep === 5 && (
+                  <div className="rounded-[1.25rem] border border-emerald-200 bg-white p-8">
+                    <div className="mx-auto max-w-xl text-center">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                        <CheckCircle2 className="h-7 w-7" />
+                      </div>
+                      <h4 className="mt-4 text-2xl font-bold text-slate-900">Material {materialWorkflowCompletion === 'updated' ? 'Updated' : 'Created'}</h4>
+                      <p className="mt-2 text-sm text-slate-500">
+                        {materialWorkflowSummary?.name || 'Material'} successfully saved.
+                      </p>
+                      {materialWorkflowSummary && (
+                        <div className="mt-5 rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4 text-left">
+                          <p className="font-semibold text-slate-900">{materialWorkflowSummary.name}</p>
+                          <p className="mt-1 text-sm text-slate-500">
+                            {[materialWorkflowSummary.subject, materialWorkflowSummary.set, materialWorkflowSummary.volume].filter(Boolean).join(' / ') || 'No mapping summary'}
+                          </p>
+                        </div>
+                      )}
+                      <div className="mt-6 flex flex-wrap justify-center gap-2">
+                        <button type="button" onClick={() => setMaterialWorkflowStep(1)} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                          View Material
+                        </button>
+                        <button type="button" disabled={!canManageInventory} onClick={startNewMaterialWorkflow} className={primaryButtonClass}>
+                          Create Another
+                        </button>
+                        <button type="button" onClick={closeMaterialWorkflow} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </OverlayPanel>
 
             <OverlayPanel
@@ -2478,8 +2536,6 @@ export default function InventoryManagement() {
                 )}
               </div>
             </OverlayPanel>
-          </div>
-        )}
 
         {activeTab === 'suppliers' && (
           <div className="grid gap-6 xl:grid-cols-[0.9fr,1.1fr]">
