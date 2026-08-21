@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ArrowLeft, BarChart3, ClipboardCheck, FileText, MapPin, PlayCircle, Plus, Printer, Settings, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, BarChart3, CheckSquare, ClipboardCheck, FileText, MapPin, PlayCircle, Plus, Printer, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 
 import { Alert } from '@components/Alert';
@@ -17,6 +17,23 @@ import {
 
 type BannerState = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;
 type TabKey = 'overview' | 'questions' | 'hall-tickets' | 'seating' | 'attendance' | 'evaluation' | 'results' | 'reports';
+type BankQuestion = {
+  id: string;
+  question_code?: string;
+  prompt_text: string;
+  subject?: string;
+  chapter?: string;
+  topic?: string;
+  difficulty_level?: string;
+  question_type?: string;
+  marks?: number;
+  negative_marks?: number;
+  option_items?: Array<Record<string, unknown>>;
+  answer_key?: Record<string, unknown>;
+  explanation?: string;
+  source_name?: string;
+  tags?: string[];
+};
 
 const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
   { key: 'overview', label: 'Overview', icon: FileText },
@@ -52,6 +69,12 @@ export default function OfflineExamDetails() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [banner, setBanner] = useState<BannerState>(null);
+  const [showQuestionBankPicker, setShowQuestionBankPicker] = useState(false);
+  const [questionBankLoading, setQuestionBankLoading] = useState(false);
+  const [questionBankImporting, setQuestionBankImporting] = useState(false);
+  const [questionBankSearch, setQuestionBankSearch] = useState('');
+  const [questionBankItems, setQuestionBankItems] = useState<BankQuestion[]>([]);
+  const [selectedBankQuestionIds, setSelectedBankQuestionIds] = useState<string[]>([]);
 
   useEffect(() => {
     const routeBanner = (location.state as { banner?: BannerState } | null)?.banner;
@@ -70,6 +93,11 @@ export default function OfflineExamDetails() {
     if (!examId) return;
     void loadTabData(activeTab);
   }, [activeTab, examId]);
+
+  useEffect(() => {
+    if (!showQuestionBankPicker) return;
+    void loadQuestionBankOptions();
+  }, [showQuestionBankPicker]);
 
   const loadExamData = async () => {
     if (!examId) return;
@@ -168,6 +196,103 @@ export default function OfflineExamDetails() {
       navigate('/offline-exams', { state: { banner: { type: 'success', message: 'Offline exam deleted.' } } });
     } catch (requestError) {
       setBanner({ type: 'error', message: getRequestErrorMessage(requestError, 'Delete failed.') });
+    }
+  };
+
+  const loadQuestionBankOptions = async () => {
+    try {
+      setQuestionBankLoading(true);
+      const params: Record<string, unknown> = { limit: 200 };
+      if (exam.exam_type) {
+        params.exam_type_slug = String(exam.exam_type).toLowerCase();
+      }
+      const firstSubject = examSubjects[0];
+      if (firstSubject) {
+        params.subject = firstSubject;
+      }
+      const response = await apiService.listQBQuestions(params);
+      setQuestionBankItems((response.data || []) as BankQuestion[]);
+    } catch (requestError) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(requestError, 'Question bank load nahi ho paya.') });
+    } finally {
+      setQuestionBankLoading(false);
+    }
+  };
+
+  const filteredQuestionBankItems = useMemo(() => {
+    const searchValue = questionBankSearch.trim().toLowerCase();
+    if (!searchValue) return questionBankItems;
+    return questionBankItems.filter((question) =>
+      [
+        question.prompt_text,
+        question.question_code,
+        question.subject,
+        question.chapter,
+        question.topic,
+        ...(question.tags || []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(searchValue),
+    );
+  }, [questionBankItems, questionBankSearch]);
+
+  const toggleBankQuestionSelection = (questionId: string) => {
+    setSelectedBankQuestionIds((current) =>
+      current.includes(questionId) ? current.filter((id) => id !== questionId) : [...current, questionId],
+    );
+  };
+
+  const mapBankQuestionTypeToOfflineType = (value?: string) => {
+    if (value === 'single_choice') return 'mcq';
+    if (value === 'multiple_choice') return 'multiple_choice';
+    return value || 'mcq';
+  };
+
+  const handleImportSelectedBankQuestions = async () => {
+    if (!examId || !selectedBankQuestionIds.length) return;
+    try {
+      setQuestionBankImporting(true);
+      const selectedQuestions = filteredQuestionBankItems.filter((question) => selectedBankQuestionIds.includes(question.id));
+      await Promise.all(
+        selectedQuestions.map((question, index) =>
+          apiService.createOfflineExamQuestion({
+            exam_id: examId,
+            display_order: questions.length + index + 1,
+            question_code: question.question_code,
+            question_type: mapBankQuestionTypeToOfflineType(question.question_type),
+            difficulty_level: question.difficulty_level || 'medium',
+            prompt_text: question.prompt_text,
+            option_items: question.option_items || [],
+            answer_key: question.answer_key || {},
+            explanation: question.explanation || undefined,
+            marks: Number(question.marks || 1),
+            negative_marks: Number(question.negative_marks || 0),
+            metadata: {
+              subject: question.subject || undefined,
+              chapter: question.chapter || undefined,
+              topic: question.topic || undefined,
+              source: question.source_name || 'question_bank',
+              bank_question_id: question.id,
+              imported_from: 'question_bank',
+              tags: question.tags || [],
+            },
+          }),
+        ),
+      );
+      setBanner({
+        type: 'success',
+        message: `${selectedBankQuestionIds.length} question${selectedBankQuestionIds.length > 1 ? 's' : ''} added from Question Bank.`,
+      });
+      setShowQuestionBankPicker(false);
+      setQuestionBankSearch('');
+      setSelectedBankQuestionIds([]);
+      await loadTabData('questions');
+    } catch (requestError) {
+      setBanner({ type: 'error', message: getRequestErrorMessage(requestError, 'Question bank import nahi ho paya.') });
+    } finally {
+      setQuestionBankImporting(false);
     }
   };
 
@@ -312,16 +437,30 @@ export default function OfflineExamDetails() {
         <section className={`${offlineExamCardClass} p-5`}>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">Question Paper ({questions.length} questions)</h2>
-            {canManage && (
-              <button
-                type="button"
-                onClick={() => navigate(`/offline-exams/build/${examId}`)}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#c07a10] px-3 py-2 text-sm font-semibold text-white hover:bg-[#a6650b]"
-              >
-                <Plus className="h-4 w-4" />
-                Add Question
-              </button>
-            )}
+            {canManage ? (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedBankQuestionIds([]);
+                    setQuestionBankSearch('');
+                    setShowQuestionBankPicker(true);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <FileText className="h-4 w-4" />
+                  Add from Question Bank
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/offline-exams/build/${examId}`)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#c07a10] px-3 py-2 text-sm font-semibold text-white hover:bg-[#a6650b]"
+                >
+                  <Plus className="h-4 w-4" />
+                  Create / Edit Questions
+                </button>
+              </div>
+            ) : null}
           </div>
           {questions.length === 0 ? (
             <p className="text-sm text-slate-600">No questions added yet. Add questions from the Question Bank or create new ones.</p>
@@ -344,6 +483,131 @@ export default function OfflineExamDetails() {
           )}
         </section>
       )}
+
+      {showQuestionBankPicker ? (
+        <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/30 backdrop-blur-[1px]">
+          <div className="flex h-full w-full max-w-2xl flex-col border-l border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Add from Question Bank</h3>
+                <p className="mt-1 text-sm text-slate-500">Select existing bank questions and add them into this question paper.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuestionBankPicker(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="border-b border-slate-200 px-5 py-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={questionBankSearch}
+                  onChange={(event) => setQuestionBankSearch(event.target.value)}
+                  placeholder="Search bank questions by text, subject, chapter, topic..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:border-[#d58a17] focus:bg-white"
+                />
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                <span>{filteredQuestionBankItems.length} available</span>
+                <span>{selectedBankQuestionIds.length} selected</span>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {questionBankLoading ? (
+                <LoadingSpinner message="Question bank load ho raha hai..." />
+              ) : filteredQuestionBankItems.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-12 text-center">
+                  <p className="text-sm font-medium text-slate-600">No bank questions found</p>
+                  <p className="mt-1 text-sm text-slate-400">Search ko change karke dekhiye ya question bank mein questions add kijiye.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredQuestionBankItems.map((question) => {
+                    const selected = selectedBankQuestionIds.includes(question.id);
+                    return (
+                      <button
+                        key={question.id}
+                        type="button"
+                        onClick={() => toggleBankQuestionSelection(question.id)}
+                        className={`w-full rounded-2xl border p-4 text-left transition ${
+                          selected
+                            ? 'border-[#d58a17] bg-amber-50/40 ring-2 ring-amber-100'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 text-slate-500">
+                            {selected ? <CheckSquare className="h-5 w-5 text-[#d58a17]" /> : <Square className="h-5 w-5" />}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+                              {question.question_code ? (
+                                <span className="rounded-full bg-blue-100 px-2.5 py-1 font-semibold text-blue-700">
+                                  {question.question_code}
+                                </span>
+                              ) : null}
+                              {question.subject ? (
+                                <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+                                  {question.subject}
+                                </span>
+                              ) : null}
+                              {question.chapter ? (
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600">
+                                  {question.chapter}
+                                </span>
+                              ) : null}
+                              {question.topic ? (
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600">
+                                  {question.topic}
+                                </span>
+                              ) : null}
+                              <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">
+                                {question.marks || 1} marks
+                              </span>
+                            </div>
+                            <p className="text-sm font-medium leading-6 text-slate-900">{question.prompt_text}</p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              {question.question_type || 'mcq'} · {question.difficulty_level || 'medium'} · {question.source_name || 'Question Bank'}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+              <p className="text-sm text-slate-500">
+                Selected questions exam paper ke end mein append honge.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowQuestionBankPicker(false)}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleImportSelectedBankQuestions()}
+                  disabled={!selectedBankQuestionIds.length || questionBankImporting}
+                  className="rounded-lg bg-[#c07a10] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a6650b] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {questionBankImporting ? 'Adding...' : `Add ${selectedBankQuestionIds.length || ''} Question${selectedBankQuestionIds.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {activeTab === 'hall-tickets' && (
         <section className={`${offlineExamCardClass} p-5`}>
